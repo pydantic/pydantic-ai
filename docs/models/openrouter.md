@@ -135,7 +135,7 @@ result = agent.run_sync([
 ])
 ```
 
-The OpenRouter Responses API uses the same request-wide TTL and usage fields as OpenAI. Restricting the downstream provider to `openai` avoids routing explicit-cache requests to endpoints where these fields are not documented. OpenRouter currently documents explicit breakpoints only on `input_text` blocks, so a `CachePoint` after an image or file raises [`UserError`][pydantic_ai.exceptions.UserError] instead of sending an unsupported request shape.
+The OpenRouter Responses API uses the same request-wide TTL and usage fields as OpenAI. Restricting the downstream provider to `openai` avoids routing explicit-cache requests to endpoints where these fields are not documented. OpenRouter currently documents explicit breakpoints only on text blocks, so place `CachePoint` markers after text content.
 
 ### Caching via Model Settings
 

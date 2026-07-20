@@ -90,10 +90,6 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
 
-    def _customize_model_profile(self, model_name: str, profile: ModelProfile) -> ModelProfile:
-        """Customize a class-level model profile using provider instance state."""
-        return profile
-
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         """Update the SDK client's internal HTTP client reference.
 

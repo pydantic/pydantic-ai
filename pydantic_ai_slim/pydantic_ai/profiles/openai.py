@@ -52,9 +52,6 @@ See https://platform.openai.com/docs/guides/reasoning for details.
 """
 
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
-OpenAIPromptCacheMode = Literal['implicit', 'explicit']
-OpenAIChatPromptCacheBreakpointType = Literal['text', 'image_url', 'input_audio', 'file']
-OpenAIResponsesPromptCacheBreakpointType = Literal['input_text', 'input_image', 'input_file']
 
 
 @dataclass(frozen=True)
@@ -272,32 +269,12 @@ class OpenAIModelProfile(ModelProfile, total=False):
     setting is sent as `max_tokens` instead.
     """
 
-    openai_chat_prompt_cache_breakpoint_types: frozenset[OpenAIChatPromptCacheBreakpointType]
-    """Chat content block types that accept OpenAI-style explicit prompt cache breakpoints. Default: empty.
+    openai_supports_prompt_cache_breakpoints: bool
+    """Whether the model supports OpenAI explicit prompt cache breakpoints. Default: False.
 
-    This is a provider API capability rather than an intrinsic model characteristic, so it is enabled by
-    providers for supported models instead of by `openai_model_profile()`.
-    """
-
-    openai_responses_prompt_cache_breakpoint_types: frozenset[OpenAIResponsesPromptCacheBreakpointType]
-    """Responses content block types that accept OpenAI-style explicit prompt cache breakpoints. Default: empty.
-
-    This is separate from `openai_chat_prompt_cache_breakpoint_types` because compatible providers may expose
-    the feature through only one API flavor or support a narrower set of content block types.
-    """
-
-    openai_chat_prompt_cache_supported_modes: frozenset[OpenAIPromptCacheMode]
-    """Request-level prompt cache modes accepted by the provider's Chat API. Default: empty.
-
-    The OpenAI provider enables both modes for GPT-5.6 models. Compatible providers may support explicit cache
-    breakpoints without accepting OpenAI's implicit mode.
-    """
-
-    openai_responses_prompt_cache_supported_modes: frozenset[OpenAIPromptCacheMode]
-    """Request-level prompt cache modes accepted by the provider's Responses API. Default: empty.
-
-    This is separate from `openai_chat_prompt_cache_supported_modes` because compatible providers may expose
-    request-level cache controls through only one API flavor.
+    When enabled, [`CachePoint`][pydantic_ai.messages.CachePoint] markers are translated into
+    `prompt_cache_breakpoint` fields on the preceding content block, on both the Chat Completions and
+    Responses APIs. When disabled, `CachePoint` markers are filtered out.
     """
 
 
@@ -310,26 +287,8 @@ def validate_openai_profile(profile: ModelProfile) -> None:
         )
 
 
-def openai_prompt_cache_profile(model_name: str) -> OpenAIModelProfile | None:
-    """Get the full OpenAI prompt-cache protocol profile fragment for a model.
-
-    Returns the request modes and Chat and Responses breakpoint types for GPT-5.6 models, or `None` for other
-    model families. Providers implementing this wire contract can opt in by merging the result with the
-    intrinsic [`openai_model_profile`][pydantic_ai.profiles.openai.openai_model_profile]. Compatible
-    APIs with a narrower contract should declare their own breakpoint types instead.
-    """
-    if not model_name.startswith('gpt-5.6'):
-        return None
-    return OpenAIModelProfile(
-        openai_chat_prompt_cache_breakpoint_types=frozenset({'text', 'image_url', 'input_audio', 'file'}),
-        openai_responses_prompt_cache_breakpoint_types=frozenset({'input_text', 'input_image', 'input_file'}),
-        openai_chat_prompt_cache_supported_modes=frozenset({'implicit', 'explicit'}),
-        openai_responses_prompt_cache_supported_modes=frozenset({'implicit', 'explicit'}),
-    )
-
-
 def openai_model_profile(model_name: str) -> ModelProfile:
-    """Get the intrinsic model profile for an OpenAI model."""
+    """Get the model profile for an OpenAI model."""
     reasoning = _reasoning_support(model_name)
 
     # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models, including gpt-5.6
@@ -355,6 +314,12 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5', 'gpt-5.6'))
     supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
 
+    # Explicit prompt cache breakpoints are supported on gpt-5.6 and later models, on both the
+    # Chat Completions and Responses APIs. Like the other gates in this function, this enumerates
+    # known versions rather than matching open-endedly.
+    # See https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints.
+    supports_prompt_cache_breakpoints = model_name.startswith('gpt-5.6')
+
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
@@ -375,6 +340,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_reasoning_effort_none=reasoning.can_be_disabled,
         openai_responses_supports_reasoning_mode=reasoning.supports_mode,
         openai_supports_phase=supports_phase,
+        openai_supports_prompt_cache_breakpoints=supports_prompt_cache_breakpoints,
         supported_native_tools=supported_native_tools,
     )
 

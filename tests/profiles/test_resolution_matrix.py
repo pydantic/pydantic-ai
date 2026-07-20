@@ -43,7 +43,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -123,6 +123,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_responses_supports_reasoning_mode': False,
     'openai_responses_requires_function_call_status_none': False,
     'openai_supports_phase': False,
+    'openai_supports_prompt_cache_breakpoints': False,
     'openai_chat_supports_document_input': True,
     # AnthropicModelProfile subclass defaults
     'anthropic_supports_fast_speed': False,
@@ -307,68 +308,43 @@ def test_openai_gpt_5_6():
             'openai_reasoning_enabled_by_default': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_mode': True,
-            'openai_chat_prompt_cache_breakpoint_types': frozenset({'file', 'image_url', 'input_audio', 'text'}),
-            'openai_responses_prompt_cache_breakpoint_types': frozenset({'input_file', 'input_image', 'input_text'}),
-            'openai_chat_prompt_cache_supported_modes': frozenset({'implicit', 'explicit'}),
-            'openai_responses_prompt_cache_supported_modes': frozenset({'implicit', 'explicit'}),
             'openai_supports_phase': True,
+            'openai_supports_prompt_cache_breakpoints': True,
         }
     )
 
 
 @pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
-def test_openai_gpt_5_6_capabilities(model_name: str):
+def test_openai_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
     from pydantic_ai.providers.openai import OpenAIProvider
-
-    intrinsic_profile = openai_model_profile(model_name)
-    assert 'openai_chat_prompt_cache_breakpoint_types' not in intrinsic_profile
-    assert 'openai_responses_prompt_cache_breakpoint_types' not in intrinsic_profile
-    assert 'openai_chat_prompt_cache_supported_modes' not in intrinsic_profile
-    assert 'openai_responses_prompt_cache_supported_modes' not in intrinsic_profile
 
     profile = OpenAIProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_mode') is True
-    assert profile.get('openai_chat_prompt_cache_breakpoint_types') == frozenset(
-        {'file', 'image_url', 'input_audio', 'text'}
-    )
-    assert profile.get('openai_responses_prompt_cache_breakpoint_types') == frozenset(
-        {'input_file', 'input_image', 'input_text'}
-    )
-    assert profile.get('openai_chat_prompt_cache_supported_modes') == frozenset({'implicit', 'explicit'})
-    assert profile.get('openai_responses_prompt_cache_supported_modes') == frozenset({'implicit', 'explicit'})
 
 
 @pytest.mark.parametrize(
     'model_name',
     ['openai/gpt-5.6-sol', 'openai/gpt-5.6-terra', 'openai/gpt-5.6-luna'],
 )
-def test_openrouter_openai_gpt_5_6_capabilities(model_name: str):
+def test_openrouter_openai_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     profile = OpenRouterProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_mode') is True
-    assert not profile.get('openai_chat_prompt_cache_breakpoint_types')
-    assert profile.get('openai_responses_prompt_cache_breakpoint_types') == frozenset({'input_text'})
-    assert not profile.get('openai_chat_prompt_cache_supported_modes')
-    assert profile.get('openai_responses_prompt_cache_supported_modes') == frozenset({'explicit'})
 
 
 @pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
-def test_azure_gpt_5_6_capabilities(model_name: str):
+def test_azure_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
     from pydantic_ai.providers.azure import AzureProvider
 
     profile = AzureProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_mode') is True
-    assert not profile.get('openai_chat_prompt_cache_breakpoint_types')
-    assert not profile.get('openai_responses_prompt_cache_breakpoint_types')
-    assert not profile.get('openai_chat_prompt_cache_supported_modes')
-    assert not profile.get('openai_responses_prompt_cache_supported_modes')
 
 
 def test_openai_gpt_4o():

@@ -550,38 +550,13 @@ class _OpenAIPromptCacheBreakpoint(TypedDict):
     mode: Literal['explicit']
 
 
-class _OpenAIPromptCacheRequestOptions(TypedDict, total=False):
-    prompt_cache_options: OpenAIPromptCacheOptions
-
-
-def _get_openai_prompt_cache_request_options(
-    supported_modes: frozenset[str],
-    model_settings: OpenAIChatModelSettings,
-) -> _OpenAIPromptCacheRequestOptions:
-    request_options: _OpenAIPromptCacheRequestOptions = {}
-    if (
-        prompt_cache_options := model_settings.get('openai_prompt_cache_options')
-    ) is not None and prompt_cache_options.get('mode', 'implicit') in supported_modes:
-        request_options['prompt_cache_options'] = prompt_cache_options
-    return request_options
-
-
 def _add_openai_prompt_cache_breakpoint(
     content: Sequence[ChatCompletionContentPartParam | responses.ResponseInputContentParam],
-    supported_breakpoint_types: frozenset[str],
 ) -> None:
     if not content:
         raise UserError(
             '`CachePoint` cannot be the first item in an OpenAI user prompt; '
             'it must follow content to attach the cache breakpoint to.'
-        )
-
-    content_type = content[-1]['type']
-    if content_type not in supported_breakpoint_types:
-        supported_types = ', '.join(sorted(supported_breakpoint_types))
-        raise UserError(
-            f'`CachePoint` cannot follow an OpenAI {content_type!r} content block for this provider; '
-            f'supported content block types are: {supported_types}.'
         )
 
     cache_breakpoint: _OpenAIPromptCacheBreakpoint = {'mode': 'explicit'}
@@ -658,13 +633,12 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """
 
     openai_prompt_cache_options: OpenAIPromptCacheOptions
-    """Controls implicit and explicit prompt cache breakpoints for GPT-5.6 models.
+    """Controls implicit and explicit prompt cache breakpoints, supported by GPT-5.6 and later models.
 
     Explicit breakpoints are added to user content with [`CachePoint`][pydantic_ai.messages.CachePoint].
     OpenAI applies the request-wide `ttl` to every breakpoint and ignores `CachePoint.ttl`.
-    This setting is ignored when the resolved model profile does not support the selected request mode for the
-    API flavor in use. The `ttl` here is independent of the `openai_prompt_cache_retention` setting, which
-    OpenAI deprecates for GPT-5.6 and later models.
+    The `ttl` here is independent of the `openai_prompt_cache_retention` setting, which OpenAI deprecates
+    for GPT-5.6 and later models.
 
     See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
     for more information.
@@ -1088,12 +1062,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     store=model_settings.get('openai_store', OMIT),
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                     prompt_cache_retention=prompt_cache_retention,
+                    prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
-                    **_get_openai_prompt_cache_request_options(
-                        profile.get('openai_chat_prompt_cache_supported_modes', frozenset()),
-                        model_settings,
-                    ),
                 )
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.system, self.model_name):
@@ -1792,9 +1763,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         before the default mapping (e.g. `OpenRouterModel` translates `CachePoint` into a
         `cache_control` breakpoint on the preceding part).
         """
-        supported_breakpoint_types = self.profile.get('openai_chat_prompt_cache_breakpoint_types', frozenset())
-        if isinstance(item, CachePoint) and supported_breakpoint_types:
-            _add_openai_prompt_cache_breakpoint(content, supported_breakpoint_types)
+        if isinstance(item, CachePoint) and self.profile.get('openai_supports_prompt_cache_breakpoints', False):
+            _add_openai_prompt_cache_breakpoint(content)
         else:
             mapped_item = await self._map_content_item(item)
             if mapped_item is not None:
@@ -2539,14 +2509,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     include=include or OMIT,
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                     prompt_cache_retention=prompt_cache_retention,
+                    prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
                     background=model_settings.get('openai_background', OMIT),
                     timeout=timeout,
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
-                    **_get_openai_prompt_cache_request_options(
-                        profile.get('openai_responses_prompt_cache_supported_modes', frozenset()),
-                        model_settings,
-                    ),
                 )
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.system, self.model_name):
@@ -3356,11 +3323,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 elif isinstance(item, UploadedFile):
                     content.append(self._map_uploaded_file_to_response_content(item))  # pyright: ignore[reportArgumentType]
                 elif isinstance(item, CachePoint):
-                    supported_breakpoint_types = self.profile.get(
-                        'openai_responses_prompt_cache_breakpoint_types', frozenset()
-                    )
-                    if supported_breakpoint_types:
-                        _add_openai_prompt_cache_breakpoint(content, supported_breakpoint_types)
+                    if self.profile.get('openai_supports_prompt_cache_breakpoints', False):
+                        _add_openai_prompt_cache_breakpoint(content)
                 elif is_multi_modal_content(item):
                     content.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'user prompts'))  # pyright: ignore[reportArgumentType]
                 else:

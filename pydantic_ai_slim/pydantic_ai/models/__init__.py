@@ -17,7 +17,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
 from types import TracebackType
-from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
 from typing_extensions import Self, TypeAliasType, TypedDict
@@ -64,12 +64,18 @@ from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._known_model_names import KnownModelName as KnownModelName
 
+if TYPE_CHECKING:
+    from ..agent.abstract import AbstractAgent
+    from ..usage import RunUsage
+
 DEFAULT_HTTP_TIMEOUT: int = 600
 """Default HTTP timeout in seconds for API requests.
 
 This matches the default timeout used by OpenAI's Python client.
 See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
 """
+
+ModelContextDepsT = TypeVar('ModelContextDepsT')
 
 
 @cache
@@ -189,6 +195,38 @@ class ModelRequestContext:
     messages: list[ModelMessage]
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
+
+
+@dataclass(frozen=True, kw_only=True)
+class ModelResolutionContext(Generic[ModelContextDepsT]):
+    """Context used to resolve a model ID before a model is available.
+
+    This is narrower than [`RunContext`][pydantic_ai.tools.RunContext] because model
+    resolution happens before a run context can contain its resolved model.
+    """
+
+    agent: AbstractAgent[ModelContextDepsT, Any]
+    """The agent whose model is being resolved."""
+
+    deps: ModelContextDepsT
+    """The dependencies supplied for this run."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
+    """Context used by a capability to select the model for a request step."""
+
+    model: Model | None
+    """The lower-precedence model on the first step, then the model used for the previous step."""
+
+    run_step: int
+    """The request step being selected, starting at `1`."""
+
+    messages: list[ModelMessage]
+    """The message history available before this request step."""
+
+    usage: RunUsage
+    """Usage accumulated by the run before this request step."""
 
 
 class Model(ABC, Generic[InterfaceClient]):
@@ -592,8 +630,7 @@ class Model(ABC, Generic[InterfaceClient]):
         Resolution order (later layers override earlier ones):
           1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
           2. The provider's `model_profile(model_name)` result — provider-specific defaults
-             for this model, adjusted by the provider's `_customize_model_profile()` hook
-             for capabilities that depend on provider instance state.
+             for this model.
           3. The user's `profile=` argument — partial dict merged on top, OR a callable
              `(default) -> profile` for full control.
 
@@ -605,9 +642,6 @@ class Model(ABC, Generic[InterfaceClient]):
         provider_profile: ModelProfile = {}
         if (provider := self.provider) is not None:
             provider_profile = provider.model_profile(self.model_name) or {}
-            provider_profile = provider._customize_model_profile(  # pyright: ignore[reportPrivateUsage]
-                self.model_name, provider_profile
-            )
         resolved = merge_profile(DEFAULT_PROFILE, provider_profile)
 
         # Step 3: user override
