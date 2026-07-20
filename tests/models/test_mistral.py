@@ -3344,7 +3344,8 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
 # These are kwarg-level unit tests rather than VCR tests: the cassette matcher isn't sensitive to
 # the request body, so a dropped or mis-mapped `reasoning_effort` would still replay green against
 # a recording. Asserting the SDK kwarg directly is what pins the mapping; the mistralai SDK omits
-# `UNSET` fields from the request body at serialization.
+# `UNSET` fields from the request body at serialization. Wire-level pinning of the disable signal
+# belongs in tests/test_thinking_wire_contract.py once Mistral cassettes are recorded.
 
 
 @pytest.mark.parametrize(
@@ -3385,14 +3386,14 @@ async def test_reasoning_effort_not_sent_for_unsupported_model(allow_model_reque
     assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
 
 
-@pytest.mark.parametrize('thinking', [True, 'minimal', 'low', 'medium', 'high', 'xhigh'])
+@pytest.mark.parametrize('thinking', [True, False, 'minimal', 'low', 'medium', 'high', 'xhigh'])
 async def test_reasoning_effort_not_sent_for_always_on_model(
     allow_model_requests: None, thinking: ThinkingLevel
 ) -> None:
-    """`magistral` always reasons, so `reasoning_effort` is never sent for any enabled level.
+    """`magistral` always reasons, so `reasoning_effort` is never sent for any `thinking` value.
 
-    `thinking=False` is stripped upstream for always-on models, so it can't reach the model and
-    is covered by the unsupported-model case instead.
+    Enabled levels reach `_translate_thinking` and are dropped by its always-on guard;
+    `thinking=False` is stripped upstream in `prepare_request` and never reaches the model.
     """
     c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
     mock_client = MockMistralAI(completions=c)
