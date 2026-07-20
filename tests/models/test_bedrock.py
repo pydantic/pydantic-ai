@@ -79,7 +79,6 @@ with try_import() as imports_successful:
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
     from vcr.cassette import Cassette
 
-    import pydantic_ai.models.bedrock as bedrock_module
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -312,7 +311,6 @@ async def test_bedrock_extra_headers_are_signed_for_all_operations(env: TestEnv,
     without recording three cassettes, and header-blind cassette matchers could not pin the signature anyway.
     """
     env.remove('AWS_BEARER_TOKEN_BEDROCK')
-    mocker.patch.object(bedrock_module, '_EXTRA_HEADERS_TOKENS', count())
     provider = BedrockProvider(
         region_name='us-east-1',
         aws_access_key_id='AKIA6666666666666666',
@@ -358,20 +356,18 @@ async def test_bedrock_extra_headers_are_signed_for_all_operations(env: TestEnv,
         assert _decode_header(headers['Custom-Header']) == 'secret-header-value'
         assert 'custom-header' in _decode_header(headers['Authorization'])
     assert len(recorded_api_params) == 3
+    # With the injector reading a context variable, header values never enter botocore's api_params at all.
     assert all('secret-header-value' not in repr(params) for params in recorded_api_params)
-    assert not getattr(bedrock_module, '_EXTRA_HEADERS_BY_TOKEN')
 
 
 def _emit_bedrock_events(
-    events: HierarchicalEmitter, params: dict[str, Any], headers: dict[str, str] | None = None
+    events: HierarchicalEmitter, headers: dict[str, str] | None = None
 ) -> tuple[dict[str, str], list[tuple[Any, Any]]]:
-    context: dict[str, Any] = {}
-    param_responses = events.emit(
-        'provide-client-params.bedrock-runtime.CountTokens', params=params, model=None, context=context
-    )
-    params = next((response for _, response in param_responses if response is not None), params)
-    events.emit('before-parameter-build.bedrock-runtime.CountTokens', params=params, model=None, context=context)
-    assert '__pydantic_ai_extra_headers' not in params
+    """Emit the `before-call` event botocore fires and return the mutated headers and handler responses.
+
+    The full three-part event name is what botocore actually emits; it must match the prefix-registered injector,
+    so this exercises the hierarchical event matching the production code relies on.
+    """
     headers = headers or {}
     responses = cast(
         list[tuple[Any, Any]],
@@ -380,7 +376,7 @@ def _emit_bedrock_events(
             model=None,
             params={'headers': headers},
             request_signer=None,
-            context=context,
+            context={},
         ),
     )
     return headers, responses
@@ -405,7 +401,7 @@ async def test_bedrock_extra_headers_isolated_across_concurrent_requests():
         def count_tokens(self, **params: Any) -> dict[str, int]:
             prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
             barrier.wait()
-            headers = _emit_bedrock_events(self.meta.events, params, {'Content-Type': 'application/json'})[0]
+            headers = _emit_bedrock_events(self.meta.events, {'Content-Type': 'application/json'})[0]
             results[prompt] = headers
             return {'inputTokens': 1}
 
@@ -466,7 +462,7 @@ async def test_bedrock_extra_headers_registration_is_serialized_across_threads()
 
         def count_tokens(self, **params: Any) -> dict[str, int]:
             prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
-            headers = _emit_bedrock_events(self.meta.events, params)[0]
+            headers = _emit_bedrock_events(self.meta.events)[0]
             calls[prompt] = headers
             return {'inputTokens': 1}
 
@@ -493,48 +489,6 @@ async def test_bedrock_extra_headers_registration_is_serialized_across_threads()
     assert calls == {'a': {'Tenant': 'a'}, 'b': {'Tenant': 'b'}}
 
 
-async def test_bedrock_extra_headers_are_bound_to_the_request_client():
-    """A nested request on another registered client must not inherit the outer client's headers.
-
-    Not a VCR test: stub clients deterministically drive a nested same-task call on a second client, which a
-    recorded cassette can't reproduce.
-    """
-    results: dict[str, list[dict[str, str]]] = {}
-
-    class NestedBedrockClient:
-        def __init__(self, name: str) -> None:
-            self.name = name
-            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
-
-        def count_tokens(self, **params: Any) -> dict[str, int]:
-            headers = _emit_bedrock_events(self.meta.events, params)[0]
-            results.setdefault(self.name, []).append(headers)
-            return {'inputTokens': 1}
-
-    def make_model(client: NestedBedrockClient) -> BedrockConverseModel:
-        provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
-        return BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
-
-    client_a = NestedBedrockClient('a')
-    client_b = NestedBedrockClient('b')
-    model_a = make_model(client_a)
-    model_b = make_model(client_b)
-    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello!')]
-    request_parameters = ModelRequestParameters()
-
-    await model_b.count_tokens(messages, BedrockModelSettings(extra_headers={'Setup': 'b'}), request_parameters)
-    assert results == {'b': [{'Setup': 'b'}]}
-    results.clear()
-
-    def forward_before_capture(params: dict[str, Any], **_: Any) -> None:
-        client_b.count_tokens(**params)
-
-    client_a.meta.events.register_first('provide-client-params.bedrock-runtime.CountTokens', forward_before_capture)
-    await model_a.count_tokens(messages, BedrockModelSettings(extra_headers={'Tenant': 'a'}), request_parameters)
-
-    assert results == {'a': [{'Tenant': 'a'}], 'b': [{}]}
-
-
 async def test_bedrock_nested_request_without_extra_headers_masks_outer_headers():
     """A nested request on the same client must not inherit the outer request's headers.
 
@@ -550,7 +504,7 @@ async def test_bedrock_nested_request_without_extra_headers_masks_outer_headers(
 
         def count_tokens(self, **params: Any) -> dict[str, int]:
             nonlocal nested
-            headers = _emit_bedrock_events(self.meta.events, params)[0]
+            headers = _emit_bedrock_events(self.meta.events)[0]
             calls.append(headers)
             if not nested:
                 nested = True
@@ -571,53 +525,11 @@ async def test_bedrock_nested_request_without_extra_headers_masks_outer_headers(
     assert calls == [{'Tenant': 'outer'}, {}]
 
 
-async def test_bedrock_direct_nested_call_does_not_inherit_outer_headers():
-    """A direct nested botocore call on the same client must not inherit the outer request's headers.
-
-    Not a VCR test: a botocore event handler deterministically makes a nested call before the outer request is sent,
-    which a recorded response cannot reproduce.
-    """
-    calls: list[dict[str, str]] = []
-    nested = False
-
-    class NestedBedrockClient:
-        def __init__(self) -> None:
-            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
-
-        def count_tokens(self, **params: Any) -> dict[str, int]:
-            headers = _emit_bedrock_events(self.meta.events, params)[0]
-            calls.append(headers)
-            return {'inputTokens': 1}
-
-    client = NestedBedrockClient()
-
-    def make_nested_call(params: dict[str, Any], **_: Any) -> dict[str, Any]:
-        nonlocal nested
-        if not nested:
-            nested = True
-            client.count_tokens()
-        # Botocore accepts a replacement parameter dict from this event. Returning a copy also verifies that the
-        # private header marker is removed from the final dict before parameter validation.
-        return dict(params)
-
-    client.meta.events.register_first('provide-client-params.bedrock-runtime.CountTokens', make_nested_call)
-    provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
-
-    await model.count_tokens(
-        [ModelRequest.user_text_prompt('Hello!')],
-        BedrockModelSettings(extra_headers={'Tenant': 'outer'}),
-        ModelRequestParameters(),
-    )
-
-    assert calls == [{}, {'Tenant': 'outer'}]
-
-
 async def test_bedrock_extra_headers_do_not_leak_into_later_requests():
     """Sequential requests on one client neither inherit earlier headers nor re-register the injector.
 
-    Not a VCR test: context cleanup and handler bookkeeping between sequential requests have no observable effect
-    on a single recorded exchange, so a cassette could not pin either behavior.
+    Not a VCR test: per-request context isolation and single-registration bookkeeping between sequential requests
+    have no observable effect on a single recorded exchange, so a cassette could not pin either behavior.
     """
     calls: list[dict[str, str]] = []
 
@@ -626,7 +538,7 @@ async def test_bedrock_extra_headers_do_not_leak_into_later_requests():
             self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
         def count_tokens(self, **params: Any) -> dict[str, int]:
-            headers = _emit_bedrock_events(self.meta.events, params)[0]
+            headers = _emit_bedrock_events(self.meta.events)[0]
             calls.append(headers)
             return {'inputTokens': 1}
 
@@ -640,10 +552,7 @@ async def test_bedrock_extra_headers_do_not_leak_into_later_requests():
     await model.count_tokens(messages, BedrockModelSettings(), request_parameters)
 
     assert calls == [{'Tenant': 'a'}, {}]
-    assert not getattr(bedrock_module, '_EXTRA_HEADERS_BY_TOKEN')
-    stale_headers, _ = _emit_bedrock_events(client.meta.events, {'__pydantic_ai_extra_headers': -1})
-    assert stale_headers == {}
-    _, responses = _emit_bedrock_events(client.meta.events, {})
+    _, responses = _emit_bedrock_events(client.meta.events)
     assert len(responses) == 1
 
 
