@@ -143,7 +143,8 @@ _BedrockCallResult = TypeVar('_BedrockCallResult')
 
 
 def _capture_extra_headers(client_id: int, params: dict[str, Any], context: dict[str, Any], **_: Any) -> None:
-    if token := params.pop(_EXTRA_HEADERS_PARAM, None):
+    token = params.pop(_EXTRA_HEADERS_PARAM, None)
+    if token is not None:
         with _EXTRA_HEADERS_TOKEN_LOCK:
             marker = _EXTRA_HEADERS_BY_TOKEN.get(token)
         if marker is not None:
