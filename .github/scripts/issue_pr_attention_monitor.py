@@ -570,7 +570,7 @@ def reconcile(client: GitHubClient, repo: str, *, now: dt.datetime, escalations:
                 lines.append(line)
                 if should_escalate and escalations is not None:
                     escalations.append(number)
-        except (urllib.error.HTTPError, RuntimeError) as exc:
+        except (urllib.error.HTTPError, RuntimeError, ValueError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')

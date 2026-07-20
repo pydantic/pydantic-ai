@@ -731,6 +731,27 @@ def test_one_item_failure_does_not_block_later_items():
     assert any(call[0] == 'POST' and call[1].endswith('/issues/2/comments') for call in client.calls)
 
 
+def test_invalid_event_timestamp_does_not_block_later_items():
+    client = FakeClient(
+        {
+            1: item(1, labels=[monitor._ACTION_LABEL]),
+            2: item(2, labels=[monitor._ACTION_LABEL]),
+        }
+    )
+    client.timelines[1] = [
+        {
+            'event': 'labeled',
+            'created_at': 'invalid',
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        }
+    ]
+
+    with pytest.raises(RuntimeError, match=r'#1: ValueError'):
+        monitor.reconcile(client, 'r', now=NOW)
+    assert any(call[0] == 'POST' and call[1].endswith('/issues/2/comments') for call in client.calls)
+
+
 def test_snapshot_is_inside_harness_workspace_and_writer_has_only_fixed_output():
     workflow = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.md'
     text = workflow.read_text()
