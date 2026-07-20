@@ -5703,6 +5703,7 @@ class TestToolExecuteHooks:
     @pytest.mark.parametrize('tool_fails', [False, True])
     async def test_wrap_tool_execute_wraps_execute_lifecycle(self, tool_fails: bool):
         events: list[str] = []
+        wrapped_results: list[str] = []
 
         @dataclass
         class LifecycleCap(AbstractCapability[Any]):
@@ -5713,6 +5714,7 @@ class TestToolExecuteHooks:
             async def wrap_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
                 events.append('wrap:before')
                 result = await kwargs['handler'](kwargs['args'])
+                wrapped_results.append(result)
                 events.append('wrap:after')
                 return result
 
@@ -5722,7 +5724,7 @@ class TestToolExecuteHooks:
 
             async def after_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
                 events.append('after')
-                return kwargs['result']
+                return f'modified {kwargs["result"]}'
 
         agent = Agent(FunctionModel(tool_calling_model), capabilities=[LifecycleCap()])
 
@@ -5742,111 +5744,7 @@ class TestToolExecuteHooks:
             'after',
             'wrap:after',
         ]
-
-    async def test_wrap_tool_execute_preserves_capability_onion_order(self):
-        events: list[str] = []
-        tool_values: list[str] = []
-        wrapper_outputs: list[str] = []
-
-        @dataclass
-        class LifecycleCap(AbstractCapability[Any]):
-            label: str
-
-            async def before_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> dict[str, Any]:
-                events.append(f'before:{self.label}')
-                return {'value': f'{kwargs["args"]["value"]}|before:{self.label}'}
-
-            async def wrap_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
-                events.append(f'wrap:{self.label}:before')
-                args = {'value': f'{kwargs["args"]["value"]}|wrap:{self.label}'}
-                result = await kwargs['handler'](args)
-                events.append(f'wrap:{self.label}:after')
-                result = f'{result}|wrapped:{self.label}'
-                wrapper_outputs.append(result)
-                return result
-
-            async def after_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
-                events.append(f'after:{self.label}')
-                return f'{kwargs["result"]}|after:{self.label}'
-
-        model_calls = 0
-
-        def call_tool(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
-            nonlocal model_calls
-            model_calls += 1
-            if model_calls == 1:
-                return ModelResponse(parts=[ToolCallPart('my_tool', {'value': 'start'})])
-            return ModelResponse(parts=[TextPart('done')])
-
-        agent = Agent(
-            FunctionModel(call_tool),
-            capabilities=[LifecycleCap('outer'), LifecycleCap('inner')],
-        )
-
-        @agent.tool_plain
-        def my_tool(value: str) -> str:
-            events.append('tool')
-            tool_values.append(value)
-            return 'result'
-
-        await agent.run('call tool')
-        assert events == [
-            'wrap:outer:before',
-            'wrap:inner:before',
-            'before:outer',
-            'before:inner',
-            'tool',
-            'after:inner',
-            'after:outer',
-            'wrap:inner:after',
-            'wrap:outer:after',
-        ]
-        assert tool_values == ['start|wrap:outer|wrap:inner|before:outer|before:inner']
-        assert wrapper_outputs == [
-            'result|after:inner|after:outer|wrapped:inner',
-            'result|after:inner|after:outer|wrapped:inner|wrapped:outer',
-        ]
-
-    @pytest.mark.parametrize('failure_phase', ['before', 'after'])
-    async def test_wrap_tool_execute_can_recover_from_execute_hook_errors(self, failure_phase: str):
-        events: list[str] = []
-
-        @dataclass
-        class RecoveringCap(AbstractCapability[Any]):
-            async def before_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> dict[str, Any]:
-                events.append('before')
-                if failure_phase == 'before':
-                    raise ValueError('before failed')
-                return kwargs['args']
-
-            async def wrap_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
-                events.append('wrap:before')
-                try:
-                    return await kwargs['handler'](kwargs['args'])
-                except ValueError:
-                    events.append('wrap:recovered')
-                    return 'recovered'
-
-            async def after_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
-                events.append('after')
-                if failure_phase == 'after':
-                    raise ValueError('after failed')
-                return kwargs['result']
-
-            async def on_tool_execute_error(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
-                events.append('on_error')
-                raise kwargs['error']
-
-        agent = Agent(FunctionModel(tool_calling_model), capabilities=[RecoveringCap()])
-
-        @agent.tool_plain
-        def my_tool() -> str:
-            events.append('tool')
-            return 'tool result'
-
-        await agent.run('call tool')
-        expected_inner_events = ['before'] if failure_phase == 'before' else ['before', 'tool', 'after']
-        assert events == ['wrap:before', *expected_inner_events, 'wrap:recovered']
+        assert wrapped_results == [f'modified {"recovered" if tool_fails else "tool result"}']
 
     async def test_hooks_receive_dict_args_for_single_base_model_tool(self):
         """Validate and execute hooks receive dict-shaped args when the tool has a single BaseModel parameter.

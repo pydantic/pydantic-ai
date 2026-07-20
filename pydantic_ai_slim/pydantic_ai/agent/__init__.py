@@ -57,6 +57,7 @@ from ..capabilities import (
     ModelSelection,
     ModelSelector,
     ToolSearch as ToolSearchCap,
+    WrapperCapability,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
@@ -1453,8 +1454,31 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_output_retries=effective_output_toolset_max_retries,
         )
         toolset = await toolset.for_run(initial_ctx)
+
+        tool_instrumentations: list[tuple[str, InstrumentationCap]] = []
+        for capability_id, capability in capabilities_dict.items():
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if isinstance(capability, InstrumentationCap):
+                tool_instrumentations.append((capability_id, capability))
+
+        async def instrument_tool_call(
+            ctx: RunContext[Any], call: _messages.ToolCallPart, handler: Callable[[], Awaitable[Any]]
+        ) -> Any:
+            for capability_id, instrumentation in reversed(tool_instrumentations):
+                if capability_id in ctx.available_capability_ids:
+                    handler = functools.partial(
+                        instrumentation._instrument_tool_call,  # pyright: ignore[reportPrivateUsage]
+                        call,
+                        handler,
+                    )
+            return await handler()
+
         tool_manager = ToolManager[AgentDepsT](
-            toolset, root_capability=run_capability, default_max_retries=self._max_tool_retries
+            toolset,
+            root_capability=run_capability,
+            default_max_retries=self._max_tool_retries,
+            _instrument_tool_call=instrument_tool_call if tool_instrumentations else None,
         )
 
         # Build instructions with per-run capability contributions

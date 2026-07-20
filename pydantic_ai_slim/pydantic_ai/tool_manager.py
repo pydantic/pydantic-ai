@@ -41,45 +41,8 @@ _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar
 )
 
 
-async def _instrument_tool_call(
-    root_capability: AbstractCapability[Any],
-    ctx: RunContext[Any],
-    call: ToolCallPart,
-    handler: Callable[[], Awaitable[Any]],
-) -> Any:
-    """Run a tool call through active instrumentation capabilities."""
-    from .capabilities.combined import CombinedCapability
-    from .capabilities.instrumentation import Instrumentation
-    from .capabilities.wrapper import WrapperCapability
-
-    instrumentations: list[Instrumentation] = []
-    seen: set[int] = set()
-
-    def collect(capability: AbstractCapability[Any]) -> None:
-        if capability.defer_loading and (capability.id is None or capability.id not in ctx.available_capability_ids):
-            return
-        while isinstance(capability, WrapperCapability):
-            capability = capability.wrapped
-        if isinstance(capability, CombinedCapability):
-            for child in capability.capabilities:
-                collect(child)
-        elif isinstance(capability, Instrumentation) and id(capability) not in seen:
-            seen.add(id(capability))
-            instrumentations.append(capability)
-
-    collect(root_capability)
-
-    def wrap(instrumentation: Instrumentation, inner: Callable[[], Awaitable[Any]]) -> Callable[[], Awaitable[Any]]:
-        async def wrapped() -> Any:
-            return await instrumentation._instrument_tool_call(  # pyright: ignore[reportPrivateUsage]
-                call, inner
-            )
-
-        return wrapped
-
-    for instrumentation in reversed(instrumentations):
-        handler = wrap(instrumentation, handler)
-    return await handler()
+_ToolCallHandler = Callable[[], Awaitable[Any]]
+_InstrumentToolCall = Callable[[RunContext[Any], ToolCallPart, _ToolCallHandler], Awaitable[Any]]
 
 
 @dataclass
@@ -131,6 +94,8 @@ class ToolManager(Generic[AgentDepsT]):
     """Names of tools that failed in this run step."""
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
+    _instrument_tool_call: _InstrumentToolCall | None = field(default=None, repr=False)
+    """Run-scoped tool instrumentation assembled by the agent."""
 
     @classmethod
     @contextmanager
@@ -169,6 +134,7 @@ class ToolManager(Generic[AgentDepsT]):
             ctx=ctx,
             tools=await toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
+            _instrument_tool_call=self._instrument_tool_call,
         )
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
@@ -552,10 +518,8 @@ class ToolManager(Generic[AgentDepsT]):
                 validated, usage=ctx.usage, wrap_validation_errors=wrap_validation_errors
             )
 
-        if self.root_capability is not None:
-            return await _instrument_tool_call(
-                self.root_capability, validated.ctx, validated.call, execute_tool_call_impl
-            )
+        if self._instrument_tool_call is not None:
+            return await self._instrument_tool_call(validated.ctx, validated.call, execute_tool_call_impl)
         return await execute_tool_call_impl()
 
     # --- Output tool methods (output hooks, no tool hooks) ---
