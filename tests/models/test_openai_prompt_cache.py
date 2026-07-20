@@ -137,6 +137,7 @@ async def test_openai_chat_multiple_cache_points(allow_model_requests: None):
 
     await Agent(model).run(['Product docs.', CachePoint(), 'Session context.', CachePoint(), 'Question.'])
 
+    assert 'prompt_cache_options' not in get_mock_chat_completion_kwargs(mock_client)[0]
     assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
         [
             {
@@ -150,6 +151,30 @@ async def test_openai_chat_multiple_cache_points(allow_model_requests: None):
                     {
                         'type': 'text',
                         'text': 'Session context.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    },
+                    {'type': 'text', 'text': 'Question.'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_openai_chat_adjacent_cache_points_collapse(allow_model_requests: None):
+    """Back-to-back markers idempotently mark the same block: one breakpoint, no error."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model).run(['Product docs.', CachePoint(), CachePoint(), 'Question.'])
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Product docs.',
                         'prompt_cache_breakpoint': {'mode': 'explicit'},
                     },
                     {'type': 'text', 'text': 'Question.'},
@@ -220,7 +245,7 @@ async def test_openai_chat_cache_point_first_content_raises(allow_model_requests
     mock_client = MockOpenAI.create_mock(chat_completion())
     model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
 
-    with pytest.raises(UserError, match='`CachePoint` cannot be the first item in an OpenAI user prompt'):
+    with pytest.raises(UserError, match='CachePoint cannot be the first content in a user message'):
         await Agent(model).run([CachePoint(), 'This should fail.'])
 
     assert get_mock_chat_completion_kwargs(mock_client) == []
@@ -345,6 +370,7 @@ async def test_openai_responses_multiple_cache_points(allow_model_requests: None
 
     await Agent(model).run(['Product docs.', CachePoint(), 'Session context.', CachePoint(), 'Question.'])
 
+    assert 'prompt_cache_options' not in get_mock_responses_kwargs(mock_client)[0]
     assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
         [
             {
@@ -443,7 +469,7 @@ async def test_openai_responses_cache_point_first_content_raises(allow_model_req
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
 
-    with pytest.raises(UserError, match='`CachePoint` cannot be the first item in an OpenAI user prompt'):
+    with pytest.raises(UserError, match='CachePoint cannot be the first content in a user message'):
         await Agent(model).run([CachePoint(), 'This should fail.'])
 
     assert get_mock_responses_kwargs(mock_client) == []
@@ -618,6 +644,55 @@ async def test_openai_responses_stream_maps_cache_write_usage(allow_model_reques
         cache_read_tokens=1920,
         output_tokens=300,
         details={'reasoning_tokens': 10},
+    )
+
+
+async def test_openai_chat_usage_without_cache_write_tokens(allow_model_requests: None):
+    """Token details lacking `cache_write_tokens` leave the usage field at 0."""
+    mock_client = MockOpenAI.create_mock(
+        chat_completion(
+            usage=CompletionUsage(
+                completion_tokens=1,
+                prompt_tokens=2,
+                total_tokens=3,
+                prompt_tokens_details=PromptTokensDetails(cached_tokens=1),
+            )
+        )
+    )
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    result = await Agent(model).run('Hello')
+
+    assert result.usage == RunUsage(requests=1, input_tokens=2, cache_read_tokens=1, output_tokens=1)
+
+
+async def test_openai_responses_usage_without_cache_write_tokens(allow_model_requests: None):
+    """Token details lacking `cache_write_tokens` leave the usage field at 0.
+
+    The SDK parses API responses without validation, so the wire shape can omit the field
+    (as OpenRouter's Responses endpoint does); `model_construct` reproduces that shape.
+    """
+    mock_client = MockOpenAIResponses.create_mock(
+        responses_completion(
+            usage=ResponseUsage(
+                input_tokens=20,
+                input_tokens_details=InputTokensDetails.model_construct(cached_tokens=5),
+                output_tokens=3,
+                output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+                total_tokens=23,
+            )
+        )
+    )
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    result = await Agent(model).run('Hello')
+
+    assert result.usage == RunUsage(
+        requests=1,
+        input_tokens=20,
+        cache_read_tokens=5,
+        output_tokens=3,
+        details={'reasoning_tokens': 0},
     )
 
 

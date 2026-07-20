@@ -104,12 +104,12 @@ OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-prac
     - **Gemini** models support caching for system instructions and normal message content, but [OpenRouter uses only the last breakpoint across normal message content for Gemini caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching#how-gemini-prompt-caching-works-on-openrouter).
       Use `openrouter_cache_messages` or [`CachePoint`][pydantic_ai.messages.CachePoint] when that final message boundary is intentional; use `openrouter_cache_instructions` only for fully static system context. TTL values are ignored by Gemini.
       Cached Gemini `systemInstruction` content is immutable, so put dynamic prompt segments in a later user message instead of after cached system instructions.
-    - **OpenAI GPT-5.6** models use OpenAI's `prompt_cache_options` and `prompt_cache_breakpoint` protocol, not `cache_control`. OpenRouter exposes this protocol only through the Responses API.
+    - **OpenAI GPT-5.6** models use OpenAI's `prompt_cache_options` and `prompt_cache_breakpoint` protocol, not `cache_control`. See [OpenAI GPT-5.6 explicit caching](#openai-gpt-56-explicit-caching) below.
     - **Minimum token thresholds** apply; see OpenRouter's [minimum token requirements](https://openrouter.ai/docs/guides/best-practices/prompt-caching#minimum-token-requirements) for current provider-specific values.
 
 ### OpenAI GPT-5.6 explicit caching
 
-[`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] uses the Chat Completions API, where OpenRouter currently supports only automatic caching for OpenAI models. For explicit GPT-5.6 breakpoints, combine [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with [`OpenRouterProvider`][pydantic_ai.providers.openrouter.OpenRouterProvider]:
+[`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] does not currently translate [`CachePoint`][pydantic_ai.messages.CachePoint] into OpenAI's breakpoint protocol (OpenAI models on OpenRouter still get automatic caching). For explicit GPT-5.6 breakpoints, combine [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with [`OpenRouterProvider`][pydantic_ai.providers.openrouter.OpenRouterProvider]:
 
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint

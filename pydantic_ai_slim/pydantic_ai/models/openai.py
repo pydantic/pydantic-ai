@@ -555,8 +555,8 @@ def _add_openai_prompt_cache_breakpoint(
 ) -> None:
     if not content:
         raise UserError(
-            '`CachePoint` cannot be the first item in an OpenAI user prompt; '
-            'it must follow content to attach the cache breakpoint to.'
+            'CachePoint cannot be the first content in a user message - '
+            'there must be previous content to attach the cache breakpoint to.'
         )
 
     cache_breakpoint: _OpenAIPromptCacheBreakpoint = {'mode': 'explicit'}
