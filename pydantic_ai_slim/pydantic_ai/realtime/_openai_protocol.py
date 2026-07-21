@@ -20,7 +20,7 @@ import base64
 import hashlib
 import json
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -53,6 +53,8 @@ from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from ._base import (
     AudioDelta,
+    ConversationCreated,
+    ConversationItemCreated,
     InputSpeechEndEvent,
     InputSpeechStartEvent,
     InputTranscript,
@@ -346,6 +348,36 @@ def obj(value: Any) -> dict[str, Any]:
     return cast('dict[str, Any]', value) if isinstance(value, dict) else {}
 
 
+def map_conversation_event(
+    data: dict[str, Any], *, replayed: bool | None = None
+) -> ConversationCreated | ConversationItemCreated | None:
+    """Map xAI's conversation handshake and item lifecycle events to codec control events.
+
+    OpenAI emits similarly shaped lifecycle events during ordinary streaming, but doesn't support
+    resumption. The shared OpenAI mapper deliberately doesn't call this helper; xAI opts in from its
+    provider-specific mapper so OpenAI's observable codec stream remains unchanged.
+    """
+    event_type = data.get('type')
+    if event_type == 'conversation.created':
+        conversation_id = _str_field(obj(data.get('conversation')), 'id')
+        return ConversationCreated(conversation_id) if conversation_id else None
+    if event_type in ('conversation.item.added', 'conversation.item.created'):
+        item = obj(data.get('item'))
+        item_id = _str_field(item, 'id') or _str_field(data, 'item_id') or None
+        tool_call_id = _str_field(item, 'call_id') or _str_field(data, 'call_id') or None
+        if item_id is not None or tool_call_id is not None:
+            # An item is only part of a resumption replay when the reconnect handshake explicitly says
+            # so (`replayed=True`, set by the burst-capture callback bounded by `session.updated`). A
+            # live-stream lifecycle event — including the server's echo of a client-created item — is
+            # never a replay, so it defaults to `replayed=False` and is not suppressed.
+            return ConversationItemCreated(
+                item_id=item_id,
+                tool_call_id=tool_call_id,
+                replayed=bool(replayed),
+            )
+    return None
+
+
 def loads_obj(raw: str) -> dict[str, Any]:
     """Parse a JSON text frame into an object, raising `ValueError` if it decodes to a non-object.
 
@@ -583,12 +615,19 @@ def tool_choice_config(tool_choice: ToolChoice) -> str | dict[str, Any] | None:
     return None  # multi-tool restriction / ToolOrOutput: not expressible in realtime
 
 
-async def expect_event(ws: ClientConnection, expected_type: str, *, timeout: float) -> dict[str, Any]:
+async def expect_event(
+    ws: ClientConnection,
+    expected_type: str,
+    *,
+    timeout: float,
+    on_unexpected: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     """Read events until one of `expected_type` arrives, raising on a server error or timeout.
 
     Unrelated events received during the handshake (e.g. rate limit notices) are skipped rather than
-    treated as a protocol violation. `timeout` bounds the total wait so `connect()` fails predictably
-    instead of hanging if the expected event never arrives.
+    treated as a protocol violation, and passed to `on_unexpected` when supplied (xAI uses this to
+    capture its resumption replay burst). `timeout` bounds the total wait so `connect()` fails
+    predictably instead of hanging if the expected event never arrives.
     """
     deadline = time.monotonic() + timeout
     while True:
@@ -604,3 +643,5 @@ async def expect_event(ws: ClientConnection, expected_type: str, *, timeout: flo
             return data
         if event_type == 'error':
             raise RuntimeError(f'OpenAI realtime error during handshake: {_error_message(data.get("error"))}')
+        if on_unexpected is not None:
+            on_unexpected(data)

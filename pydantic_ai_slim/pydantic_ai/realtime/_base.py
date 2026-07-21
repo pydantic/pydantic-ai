@@ -362,6 +362,8 @@ class ToolCall:
 
     OpenAI-protocol providers report calls before `response.done`, which carries usage; the session
     uses this signal to keep all calls and their usage on the same `ModelResponse`."""
+    item_id: str | None = None
+    """Provider conversation-item ID for this call, when available."""
 
 
 @dataclass
@@ -437,13 +439,42 @@ class SessionUsageEvent:
 class ReconnectedEvent:
     """The connection dropped and was automatically re-established.
 
-    Session configuration (instructions, tools, voice, ...) is restored on every reconnect. OpenAI and
-    xAI start with fresh server-side conversation state; Gemini restores conversation state when
-    session resumption is enabled.
+    Session configuration (instructions, tools, voice, ...) is restored on every reconnect. OpenAI
+    starts with fresh server-side conversation state; Gemini and xAI restore conversation state when
+    their session-resumption support is enabled (xAI enables it automatically when `reconnect` is set).
     """
 
     event_kind: Literal['reconnected'] = 'reconnected'
     """Event type identifier, used as a discriminator."""
+
+
+@dataclass
+class ConversationCreated:
+    """An OpenAI-protocol server assigned a conversation ID.
+
+    This is a codec-level control event. Providers consume it during their handshake when possible;
+    the session silently consumes any instance that reaches the live stream.
+    """
+
+    conversation_id: str
+    """Provider-assigned conversation ID."""
+
+
+@dataclass
+class ConversationItemCreated:
+    """An OpenAI-protocol server reported a conversation item.
+
+    xAI uses `replayed=True` for item events emitted during the resume handshake. The session consumes
+    those items and remembers their newly assigned IDs so any follow-on content or tool events aren't
+    appended or executed again.
+    """
+
+    item_id: str | None = None
+    """Provider-assigned conversation-item ID, when present."""
+    tool_call_id: str | None = None
+    """Provider-assigned tool-call ID, for function call and result items."""
+    replayed: bool = False
+    """Whether the provider identified this item as part of a resumption replay."""
 
 
 @dataclass
@@ -475,6 +506,8 @@ RealtimeCodecEvent = TypeAliasType(
     | InputSpeechEndEvent
     | SessionUsageEvent
     | ReconnectedEvent
+    | ConversationCreated
+    | ConversationItemCreated
     | PartStartEvent
     | PartEndEvent
     | SessionErrorEvent,
@@ -753,9 +786,10 @@ class ReconnectPolicy:
 
     On a dropped connection the session is re-dialed and its configuration (instructions, tools,
     voice, ...) re-applied, emitting a [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] event. What
-    server-side state survives depends on the provider: OpenAI Realtime, Azure Voice Live, and xAI start a fresh turn
-    (the audio buffer and prior turns are lost), while Gemini Live restores conversation state when
-    `google_enable_session_resumption=True` (a prerequisite for reconnecting there).
+    server-side state survives depends on the provider: OpenAI Realtime and Azure Voice Live start a
+    fresh turn (the audio buffer and prior turns are lost), while Gemini Live and xAI restore prior
+    turns. Gemini requires `google_enable_session_resumption=True`; xAI enables native resumption
+    automatically whenever a reconnect policy is set.
     """
 
     max_attempts: int = 3

@@ -39,7 +39,7 @@ from pydantic_ai.realtime import (
     Transcript,
     TurnDetection,
 )
-from pydantic_ai.realtime._base import SessionErrorEvent
+from pydantic_ai.realtime._base import ConversationCreated, ConversationItemCreated, SessionErrorEvent
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
@@ -98,8 +98,34 @@ def test_map_delegates_audio_and_transcript_and_tool_calls() -> None:
         text='hel', is_final=False
     )
     assert map_event(
-        {'type': 'response.function_call_arguments.done', 'call_id': 'c1', 'name': 'get_weather', 'arguments': '{}'}
-    ) == ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}', response_usage_follows=True)
+        {
+            'type': 'response.function_call_arguments.done',
+            'item_id': 'item-call',
+            'call_id': 'c1',
+            'name': 'get_weather',
+            'arguments': '{}',
+        }
+    ) == ToolCall(
+        tool_call_id='c1',
+        tool_name='get_weather',
+        args='{}',
+        response_usage_follows=True,
+        item_id='item-call',
+    )
+
+
+def test_map_conversation_resumption_events() -> None:
+    assert map_event({'type': 'conversation.created', 'conversation': {'id': 'conversation-1'}}) == ConversationCreated(
+        'conversation-1'
+    )
+    # A live-stream item lifecycle event is never a resumption replay (only the reconnect handshake's
+    # burst-capture marks items `replayed=True`), so it maps with `replayed=False` and is not suppressed.
+    assert map_event(
+        {
+            'type': 'conversation.item.created',
+            'item': {'id': 'item-1', 'type': 'function_call', 'call_id': 'call-1'},
+        }
+    ) == ConversationItemCreated(item_id='item-1', tool_call_id='call-1', replayed=False)
 
 
 def test_connection_map_event_override_matches_module() -> None:
@@ -153,6 +179,12 @@ def test_session_config_shape() -> None:
             {'type': 'function', 'name': 'get_weather', 'description': 'Weather', 'parameters': {'type': 'object'}}
         ],
     }
+
+
+def test_session_config_resumption_follows_reconnect_policy() -> None:
+    assert 'resumption' not in _model()._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = _model(reconnect=rt_xai.ReconnectPolicy())._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert config['resumption'] == {'enabled': True}
 
 
 def test_session_config_transcription_auto_by_default() -> None:
@@ -288,14 +320,25 @@ class _DropAfterHandshake(FakeWebSocket):
         yield  # pragma: no cover  (makes this an async generator)
 
 
+class _DropAfterFrames(FakeWebSocket):
+    """Yields all post-handshake frames, then simulates an abnormal connection loss."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        while self._incoming:
+            yield self._incoming.pop(0)
+        raise rt_xai.websockets.ConnectionClosed(None, None)
+
+
 class _RecordingConnect:
     """Stand-in for `websockets.connect` that hands out sockets in order and records closes."""
 
     def __init__(self, sockets: list[FakeWebSocket]) -> None:
         self._sockets = iter(sockets)
         self.closed: list[FakeWebSocket] = []
+        self.urls: list[str] = []
 
     def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> Any:
+        self.urls.append(url)
         ws = next(self._sockets)
         recorder = self
 
@@ -316,6 +359,10 @@ def _created() -> str:
 
 def _updated() -> str:
     return json.dumps({'type': 'session.updated'})
+
+
+def _conversation_created(conversation_id: str = 'conversation-1') -> str:
+    return json.dumps({'type': 'conversation.created', 'conversation': {'id': conversation_id}})
 
 
 @pytest.mark.anyio
@@ -462,8 +509,8 @@ async def test_connect_rejects_seeded_audio(monkeypatch: pytest.MonkeyPatch) -> 
 async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.MonkeyPatch) -> None:
     """A reconnect through `connect()`'s own dial closes the dropped socket before opening the next."""
     transcript = json.dumps({'type': 'response.output_audio_transcript.done', 'transcript': 'hi'})
-    dropped = _DropAfterHandshake([_created(), _updated()])
-    good = FakeWebSocket([_created(), _updated(), transcript])
+    dropped = _DropAfterHandshake([_created(), _conversation_created(), _updated()])
+    good = FakeWebSocket([_created(), _conversation_created(), _updated(), transcript])
     connect = _RecordingConnect([dropped, good])
     monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
 
@@ -473,6 +520,90 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
 
     assert events == [ReconnectedEvent(), Transcript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]  # both the dropped and the current socket are closed
+    assert connect.urls == [
+        'wss://api.x.ai/v1/realtime?model=grok-voice-latest',
+        'wss://api.x.ai/v1/realtime?model=grok-voice-latest&conversation_id=conversation-1',
+    ]
+    assert json.loads(dropped.sent[0])['session']['resumption'] == {'enabled': True}
+    assert json.loads(good.sent[0])['session']['resumption'] == {'enabled': True}
+
+
+@pytest.mark.anyio
+async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Resumed items are suppressed even when xAI assigns new IDs to the replayed copies."""
+    dropped = _DropAfterFrames(
+        [
+            _created(),
+            _conversation_created(),
+            _updated(),
+            json.dumps(
+                {
+                    'type': 'conversation.item.added',
+                    'item': {'id': 'item-user', 'type': 'message', 'role': 'user'},
+                }
+            ),
+            json.dumps(
+                {
+                    'type': 'response.output_audio_transcript.done',
+                    'item_id': 'item-assistant',
+                    'transcript': 'Hello back.',
+                }
+            ),
+            json.dumps({'type': 'response.done', 'response': {'id': 'response-1', 'status': 'completed'}}),
+        ]
+    )
+    resumed = FakeWebSocket(
+        [
+            _created(),
+            _conversation_created(),
+            json.dumps(
+                {
+                    'type': 'conversation.item.added',
+                    'item': {'id': 'replayed-item-user', 'type': 'message', 'role': 'user'},
+                }
+            ),
+            json.dumps(
+                {
+                    'type': 'conversation.item.added',
+                    'item': {'id': 'replayed-item-assistant', 'type': 'message', 'role': 'assistant'},
+                }
+            ),
+            _updated(),
+            # Defensive duplicate content after the replay marker proves suppression happens by ID,
+            # rather than merely because `conversation.item.created` itself has no history mapping.
+            json.dumps(
+                {
+                    'type': 'response.output_audio_transcript.done',
+                    'item_id': 'replayed-item-assistant',
+                    'transcript': 'Hello back.',
+                }
+            ),
+        ]
+    )
+    monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([dropped, resumed]))
+
+    agent = Agent()
+    async with agent.realtime_session(model=_model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0))) as session:
+        await session.send('Hello.')
+        events = [event async for event in session]
+
+    assert sum(isinstance(event, ReconnectedEvent) for event in events) == 1
+    messages = session.all_messages()
+    assert len(messages) == 2
+    assert isinstance(messages[0], ModelRequest)
+    assert isinstance(messages[0].parts[0], UserPromptPart)
+    assert messages[0].parts[0].content == 'Hello.'
+    assert isinstance(messages[1], ModelResponse)
+    assert messages[1].parts == [
+        SpeechPart(
+            speaker='assistant',
+            transcript='Hello back.',
+            id='item-assistant',
+            provider_name='xai',
+        )
+    ]
 
 
 @pytest.mark.anyio
@@ -482,7 +613,7 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
     The dial nulls `cm` before re-dialing, so when the re-dial fails (an expected `OSError`) and the
     session ends via a `SessionErrorEvent`, teardown finds `cm` already `None` and skips the close.
     """
-    dropped = _DropAfterHandshake([_created(), _updated()])
+    dropped = _DropAfterHandshake([_created(), _conversation_created(), _updated()])
 
     class _DropThenFail:
         """First `connect()` yields a socket that drops after the handshake; the re-dial refuses."""

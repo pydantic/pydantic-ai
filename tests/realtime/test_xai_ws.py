@@ -31,11 +31,11 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import PartStartEvent, TurnCompleteEvent
+from pydantic_ai.realtime import PartStartEvent, ReconnectedEvent, ReconnectPolicy, TurnCompleteEvent
 from pydantic_ai.realtime._base import SessionErrorEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
-from .ws_cassettes import RealtimeCassette
+from .ws_cassettes import CassetteClose, CassetteMessage, RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
@@ -238,7 +238,15 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
     tool_response = messages[1]
     assert isinstance(tool_response, ModelResponse)
     tool_calls = [p for p in tool_response.parts if isinstance(p, ToolCallPart)]
-    assert tool_calls == [ToolCallPart(tool_name='get_weather', args=IsStr(), tool_call_id=IsStr())]
+    assert tool_calls == [
+        ToolCallPart(
+            tool_name='get_weather',
+            args=IsStr(),
+            tool_call_id=IsStr(),
+            id=IsStr(),
+            provider_name='xai',
+        )
+    ]
     assert (tool_response.usage.input_tokens, tool_response.usage.output_tokens) == (7, 82)
     tool_return = messages[2]
     assert isinstance(tool_return, ModelRequest)
@@ -320,3 +328,86 @@ async def test_message_history_seeding(xai_ws_cassette: tuple[XaiProvider, Realt
     assert isinstance(reply_part, SpeechPart)
     transcript = (reply_part.transcript or '').lower()
     assert 'alice' in transcript and 'teal' in transcript
+
+
+async def test_session_resumption_after_drop(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:
+    """A forced WebSocket drop resumes the native xAI conversation without duplicating prior turns."""
+    provider, cassette = xai_ws_cassette
+    model = XaiRealtimeModel(MODEL, provider=provider, reconnect=ReconnectPolicy(base_delay=0.0, jitter=False))
+    agent = Agent(instructions='Answer in one short sentence.')
+
+    events: list[Any] = []
+    disconnected = False
+    sent_followup = False
+    async with agent.realtime_session(model=model) as session:
+        await session.send('Remember exactly: the code word is cobalt. Briefly acknowledge it.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+                events.append(event)
+                if isinstance(event, TurnCompleteEvent) and not disconnected:
+                    disconnected = True
+                    await cassette.disconnect()
+                elif isinstance(event, ReconnectedEvent):
+                    await session.send('What code word did I ask you to remember?')
+                    sent_followup = True
+                elif sent_followup and isinstance(event, TurnCompleteEvent):
+                    break
+
+    updates = sent_frames_containing(cassette, 'resumption')
+    assert len(updates) == 2
+    assert all(update['session']['resumption'] == {'enabled': True} for update in updates)
+    assert sum(isinstance(event, ReconnectedEvent) for event in events) == 1
+
+    conversation_ids = [
+        message.data['conversation']['id']
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.data.get('type') == 'conversation.created'
+    ]
+    assert len(conversation_ids) == 2
+    assert conversation_ids[0] == conversation_ids[1]
+    close_index = next(
+        i for i, interaction in enumerate(cassette.interactions) if isinstance(interaction, CassetteClose)
+    )
+    followup_index = next(
+        i
+        for i, interaction in enumerate(cassette.interactions)
+        if i > close_index
+        and isinstance(interaction, CassetteMessage)
+        and interaction.direction == 'sent'
+        and 'What code word' in str(interaction.data)
+    )
+    replayed_items = [
+        interaction.data['item']
+        for interaction in cassette.interactions[close_index + 1 : followup_index]
+        if isinstance(interaction, CassetteMessage)
+        and interaction.data.get('type') in ('conversation.item.created', 'conversation.item.added')
+    ]
+    assert replayed_items
+    assert any('cobalt' in str(item).lower() for item in replayed_items)
+
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == [
+        'ModelRequest',
+        'ModelResponse',
+        'ModelRequest',
+        'ModelResponse',
+    ]
+    first_prompts = [
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+    assert first_prompts == [
+        'Remember exactly: the code word is cobalt. Briefly acknowledge it.',
+        'What code word did I ask you to remember?',
+    ]
+    responses = [message for message in messages if isinstance(message, ModelResponse)]
+    assert len(responses) == 2
+    first_part = responses[0].parts[0]
+    assert isinstance(first_part, SpeechPart)
+    assert 'cobalt' in (first_part.transcript or '').lower()
+    final_part = responses[-1].parts[0]
+    assert isinstance(final_part, SpeechPart)
+    assert 'cobalt' in (final_part.transcript or '').lower()

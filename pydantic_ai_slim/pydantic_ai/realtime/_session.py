@@ -66,6 +66,8 @@ from ._base import (
     CancelResponse,
     ClearAudio,
     CommitAudio,
+    ConversationCreated,
+    ConversationItemCreated,
     CreateResponse,
     ImageInput,
     InputSpeechEndEvent,
@@ -358,6 +360,8 @@ class RealtimeSession:
         # `all_messages` only); `_history` is what happened during this session (surfaced by both).
         self._seeded: list[ModelMessage] = list(message_history or [])
         self._history: list[ModelMessage] = []
+        self._replayed_item_ids: set[str] = set()
+        self._replayed_tool_call_ids: set[str] = set()
 
         # In-flight assistant response being assembled. Parts finalize into `_response_parts`, which
         # becomes a `ModelResponse` at the turn boundary (or when a tool call splits the turn).
@@ -1027,6 +1031,24 @@ class RealtimeSession:
         # streaming consumer still sees the user turn boundary.
         return [PartStartEvent(index=0, part=part), PartEndEvent(index=0, part=part)]
 
+    def _is_replayed_item(self, item_id: str | None, tool_call_id: str | None = None) -> bool:
+        """Whether an xAI resumption replay already exists in local history."""
+        return (item_id is not None and item_id in self._replayed_item_ids) or (
+            tool_call_id is not None and tool_call_id in self._replayed_tool_call_ids
+        )
+
+    def _accept_item(self, item_id: str | None, tool_call_id: str | None = None) -> bool:
+        """Return `False` for an xAI item that belongs to the resumption replay burst."""
+        return not self._is_replayed_item(item_id, tool_call_id)
+
+    def _handle_conversation_item(self, event: ConversationItemCreated) -> None:
+        """Remember IDs assigned to xAI's replay burst so related events are suppressed."""
+        if event.replayed:
+            if event.item_id is not None:
+                self._replayed_item_ids.add(event.item_id)
+            if event.tool_call_id is not None:
+                self._replayed_tool_call_ids.add(event.tool_call_id)
+
     def _translate_event(self, event: _TranslatableEvent) -> list[RealtimeEvent]:
         """Translate a low-level codec event into shared session events, building history as a side effect.
 
@@ -1035,13 +1057,19 @@ class RealtimeSession:
         (the pump-consumed variants narrowed out) so the final `assert_never` gives static exhaustiveness.
         """
         if isinstance(event, AudioDelta):
+            if not self._accept_item(event.item_id):
+                return []
             return self._handle_assistant_audio(event.data, item_id=event.item_id)
         if isinstance(event, Transcript):
+            if not self._accept_item(event.item_id):
+                return []
             # `is_final` doesn't end the part — the turn ends on `TurnCompleteEvent`; a final transcript just
             # carries the full text, which `_accumulate_transcript` reconciles against the deltas. Plain
             # text output (`output_text`) becomes a `TextPart`, an audio transcript a `SpeechPart`.
             return self._handle_assistant_transcript(event.text, output_text=event.output_text, item_id=event.item_id)
         if isinstance(event, InputTranscript):
+            if not self._accept_item(event.item_id):
+                return []
             return self._handle_input_transcript(event.text, event.is_final, item_id=event.item_id)
         if isinstance(event, InputSpeechEndEvent):
             # The user's speech segment ended (server VAD). Finalize an audio-only user turn from retained
@@ -1282,10 +1310,23 @@ class RealtimeSession:
         event: RealtimeCodecEvent,
     ) -> bool:
         """Process one upstream event onto the queue; return `True` to stop the pump (a limit tripped)."""
+        if isinstance(event, ConversationCreated):
+            return False
+        if isinstance(event, ConversationItemCreated):
+            self._handle_conversation_item(event)
+            return False
         if isinstance(event, ToolCall):
+            if not self._accept_item(event.item_id, event.tool_call_id):
+                return False
             self._check_tool_call_limit()
             self.usage.tool_calls += 1
-            call_part = ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id)
+            call_part = ToolCallPart(
+                tool_name=event.tool_name,
+                args=event.args,
+                tool_call_id=event.tool_call_id,
+                id=event.item_id,
+                provider_name=self._provider_name if event.item_id is not None else None,
+            )
             for out in self._handle_tool_call_part(
                 call_part,
                 response_usage_follows=event.response_usage_follows,
