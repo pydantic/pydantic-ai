@@ -121,6 +121,7 @@ _CAPABILITY_PAGE_META = {
     'exa-search.md': ('exa', 'Exa Search'),
     'compaction.md': ('compaction', 'Compaction'),
     'overflowing-tool-output.md': ('overflowing_tool_output', 'Overflowing Tool Output'),
+    'cache-stability.md': ('cache_stability', 'Cache Stability Monitor'),
     'step-persistence.md': ('step_persistence', 'Step Persistence'),
     'media.md': ('media', 'Media Externalization'),
     'subagents.md': ('subagents', 'Subagents'),

@@ -120,6 +120,7 @@ Each capability is a self-contained battery you drop into an agent's `capabiliti
 | [Exa Search](exa-search.md) | Web research backed by the [Exa](https://exa.ai) search API: `web_search` returns results with their most relevant excerpts, `get_page` reads a specific URL in full, and opt-in `deep_search` synthesizes a cited answer in one call. Output is budgeted per tool. | `exa` |
 | [Compaction](compaction.md) | Keeps a run within token limits: sliding-window trimming, LLM-powered summarization of older messages, and warnings before the context or iteration ceiling is hit. | -- |
 | [Overflowing Tool Output](overflowing-tool-output.md) | Reduces an oversized tool return when it is produced -- truncate, spill to a queryable file, or summarize -- so a large payload does not persist in history and get re-sent every request. | -- |
+| [Cache Stability Monitor](cache-stability.md) | Warns when a run's prompt-cache hit collapses between model requests -- a moved cacheable prefix or an expired provider cache -- reading the provider's own `cache_read_tokens` verdict. | -- |
 | [Step Persistence](step-persistence.md) | Saves and restores full conversation state; snapshot, resume (`continue_run`), and fork (`fork_run`) a run. | -- |
 | [Media](media.md) | Offloads large `BinaryContent` to content-addressed stores (local or S3) so big media does not bloat message history. | -- |
 | [Subagents](subagents.md) | Delegates subtasks to specialized child agents through a delegate tool. | -- |

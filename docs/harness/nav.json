@@ -11,6 +11,7 @@
       { "label": "Exa Search", "slug": "exa-search" },
       { "label": "Compaction", "slug": "compaction" },
       { "label": "Overflowing Tool Output", "slug": "overflowing-tool-output" },
+      { "label": "Cache Stability Monitor", "slug": "cache-stability" },
       { "label": "Step Persistence", "slug": "step-persistence" },
       { "label": "Media", "slug": "media" },
       { "label": "Subagents", "slug": "subagents" },
