@@ -11,11 +11,36 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.messages import (
+    AudioUrl,
+    BinaryContent,
+    CachePoint,
+    CompactionPart,
+    DocumentUrl,
+    FilePart,
+    ImageUrl,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    RetryPromptPart,
+    SpeechPart,
+    SystemPromptPart,
+    TextContent,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UploadedFile,
+    UserPromptPart,
+    VideoUrl,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
@@ -648,43 +673,170 @@ async def test_connect_without_tools_omits_tools(monkeypatch: pytest.MonkeyPatch
 
 @pytest.mark.anyio
 async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pydantic_ai.messages import (
-        ModelRequest,
-        ModelResponse,
-        SpeechPart,
-        SystemPromptPart,
-        TextPart,
-        ToolCallPart,
-        UserPromptPart,
-    )
+    async def download_image(*args: Any, **kwargs: Any) -> Any:
+        return {'data': b'url-image', 'data_type': 'image/png'}
 
+    monkeypatch.setattr('pydantic_ai.realtime._base.download_item', download_image)
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     history = [
-        ModelRequest(parts=[SystemPromptPart(content='sys'), UserPromptPart(content='earlier question')]),
-        ModelResponse(parts=[TextPart(content='earlier answer'), ToolCallPart(tool_name='t', args='{}')]),
-        ModelRequest(parts=[SpeechPart(speaker='user', transcript='spoken question')]),
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='sys'),
+                UserPromptPart(content=['earlier question', TextContent(' with context'), CachePoint()]),
+                UserPromptPart(content=[CachePoint(), '']),
+                SpeechPart(speaker='user', transcript=''),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='reasoning',
+                    signature='session-bound',
+                    provider_name='openai',
+                    provider_details={'encrypted_content': 'secret'},
+                ),
+                ThinkingPart(content='', signature='signature-only', provider_name='openai'),
+                TextPart(content=''),
+                TextPart(content='earlier answer'),
+                SpeechPart(speaker='assistant', transcript=''),
+                NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='native-call'),
+                NativeToolReturnPart(tool_name='web_search', content='native metadata', tool_call_id='native-call'),
+                ToolCallPart(tool_name='weather', args={'city': 'Paris'}, tool_call_id='call-1'),
+                ToolCallPart(tool_name='lookup', args='{"id":1}', tool_call_id='call-2'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='weather', content='sunny', tool_call_id='call-1'),
+                RetryPromptPart(tool_name='lookup', content='invalid id', tool_call_id='call-2'),
+                RetryPromptPart(content='answer in prose'),
+                UserPromptPart(
+                    content=[
+                        ImageUrl(url='https://example.com/a.png'),
+                        BinaryContent(data=b'inline-image', media_type='image/png'),
+                    ]
+                ),
+                SpeechPart(speaker='user', transcript='spoken question'),
+            ]
+        ),
         ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='spoken answer')]),
     ]
     model = OpenAIRealtimeModel('gpt-realtime')
     async with _connect(model, 'x', messages=history):
         pass
 
-    # After the `session.update` handshake frame, one `conversation.item.create` per projected item.
-    # System parts and tool calls are dropped (text/transcript projection only).
     items = [json.loads(frame) for frame in ws.sent[1:]]
-    assert [(i['type'], i['item']['role'], i['item']['content'][0]) for i in items] == [
-        ('conversation.item.create', 'user', {'type': 'input_text', 'text': 'earlier question'}),
-        ('conversation.item.create', 'assistant', {'type': 'output_text', 'text': 'earlier answer'}),
-        ('conversation.item.create', 'user', {'type': 'input_text', 'text': 'spoken question'}),
-        ('conversation.item.create', 'assistant', {'type': 'output_text', 'text': 'spoken answer'}),
-    ]
+    assert items == snapshot(
+        [
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {'type': 'input_text', 'text': 'earlier question'},
+                        {'type': 'input_text', 'text': ' with context'},
+                    ],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'assistant',
+                    'content': [{'type': 'output_text', 'text': '<think>\nreasoning\n</think>'}],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'assistant',
+                    'content': [{'type': 'output_text', 'text': 'earlier answer'}],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'function_call',
+                    'name': 'weather',
+                    'call_id': 'call-1',
+                    'arguments': '{"city":"Paris"}',
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'function_call',
+                    'name': 'lookup',
+                    'call_id': 'call-2',
+                    'arguments': '{"id":1}',
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {'type': 'function_call_output', 'call_id': 'call-1', 'output': 'sunny'},
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'function_call_output',
+                    'call_id': 'call-2',
+                    'output': 'invalid id\n\nFix the errors and try again.',
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.',
+                        }
+                    ],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {'type': 'input_image', 'image_url': 'data:image/png;base64,dXJsLWltYWdl'},
+                        {'type': 'input_image', 'image_url': 'data:image/png;base64,aW5saW5lLWltYWdl'},
+                    ],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [{'type': 'input_text', 'text': 'spoken question'}],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'assistant',
+                    'content': [{'type': 'output_text', 'text': 'spoken answer'}],
+                },
+            },
+        ]
+    )
+    assert 'session-bound' not in json.dumps(items)
+    assert 'encrypted_content' not in json.dumps(items)
 
 
-async def test_connect_seeds_multimodal_user_prompt_as_text(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A `UserPromptPart` with list content is projected to its text, dropping the multimodal parts.
-    from pydantic_ai.messages import ImageUrl, ModelRequest, UserPromptPart
+async def test_connect_seeds_multimodal_user_prompt_as_native_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def download_image(*args: Any, **kwargs: Any) -> Any:
+        return {'data': b'png', 'data_type': 'image/png'}
 
+    monkeypatch.setattr('pydantic_ai.realtime._base.download_item', download_image)
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     history = [
@@ -694,9 +846,231 @@ async def test_connect_seeds_multimodal_user_prompt_as_text(monkeypatch: pytest.
     async with _connect(model, 'x', messages=history):
         pass
     items = [json.loads(frame) for frame in ws.sent[1:]]
-    assert [(i['item']['role'], i['item']['content'][0]) for i in items] == [
-        ('user', {'type': 'input_text', 'text': 'describe this'}),
+    assert items[0]['item']['content'] == [
+        {'type': 'input_image', 'image_url': 'data:image/png;base64,cG5n'},
+        {'type': 'input_text', 'text': 'describe this'},
     ]
+
+
+@pytest.mark.anyio
+async def test_connect_seeds_multimodal_tool_return(monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [
+        ModelResponse(parts=[ToolCallPart(tool_name='inspect', args={}, tool_call_id='call-image')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='inspect',
+                    tool_call_id='call-image',
+                    content=[
+                        'done',
+                        BinaryContent(data=b'result-image', media_type='image/png', identifier='result.png'),
+                    ],
+                )
+            ]
+        ),
+    ]
+
+    async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
+        pass
+
+    assert [json.loads(frame) for frame in ws.sent[1:]] == snapshot(
+        [
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'function_call',
+                    'name': 'inspect',
+                    'call_id': 'call-image',
+                    'arguments': '{}',
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'function_call_output',
+                    'call_id': 'call-image',
+                    'output': '["done","See file result.png."]',
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {'type': 'input_text', 'text': 'This is file result.png:'},
+                        {'type': 'input_image', 'image_url': 'data:image/png;base64,cmVzdWx0LWltYWdl'},
+                    ],
+                },
+            },
+        ]
+    )
+
+
+@pytest.mark.anyio
+async def test_connect_remaps_long_tool_call_id_and_keeps_pending_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    long_id = 'pyd_ai_0123456789abcdef0123456789abcdef'
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='done', args={}, tool_call_id=long_id),
+                ToolCallPart(tool_name='pending', args={}, tool_call_id='pending-call'),
+            ]
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='done', content='ok', tool_call_id=long_id)]),
+    ]
+
+    async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
+        pass
+
+    items = [json.loads(frame)['item'] for frame in ws.sent[1:]]
+    assert items == snapshot(
+        [
+            {
+                'type': 'function_call',
+                'name': 'done',
+                'call_id': 'dc48ed0580f3898b7fe60753ced829ff',
+                'arguments': '{}',
+            },
+            {
+                'type': 'function_call',
+                'name': 'pending',
+                'call_id': 'pending-call',
+                'arguments': '{}',
+            },
+            {
+                'type': 'function_call_output',
+                'call_id': 'dc48ed0580f3898b7fe60753ced829ff',
+                'output': 'ok',
+            },
+        ]
+    )
+
+
+@pytest.mark.anyio
+async def test_connect_rejects_orphan_tool_return(monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [ModelRequest(parts=[ToolReturnPart(tool_name='weather', content='sunny', tool_call_id='missing')])]
+
+    with pytest.raises(UserError, match=r"tool 'weather' with call ID 'missing'.*no preceding `ToolCallPart`"):
+        async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
+            pass  # pragma: no cover
+
+
+@pytest.mark.anyio
+async def test_connect_seeds_retained_user_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [
+        ModelRequest(parts=[SpeechPart(speaker='user', audio=BinaryContent(data=b'pcm-audio', media_type='audio/pcm'))])
+    ]
+
+    async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
+        pass
+
+    assert json.loads(ws.sent[1])['item'] == {
+        'type': 'message',
+        'role': 'user',
+        'content': [{'type': 'input_audio', 'audio': 'cGNtLWF1ZGlv'}],
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('content_kind', ['audio-url', 'video-url', 'document-url', 'binary', 'uploaded'])
+async def test_connect_rejects_unseedable_user_content(monkeypatch: pytest.MonkeyPatch, content_kind: str) -> None:
+    content = {
+        'audio-url': AudioUrl(url='https://example.com/a.mp3'),
+        'video-url': VideoUrl(url='https://example.com/a.mp4'),
+        'document-url': DocumentUrl(url='https://example.com/a.pdf'),
+        'binary': BinaryContent(data=b'pdf', media_type='application/pdf'),
+        'uploaded': UploadedFile(file_id='file-1', provider_name='openai', media_type='application/pdf'),
+    }[content_kind]
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [ModelRequest(parts=[UserPromptPart(content=[content])])]
+
+    with pytest.raises(UserError, match='cannot be seeded into openai realtime history'):
+        async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
+            pass  # pragma: no cover
+
+
+@pytest.mark.anyio
+async def test_connect_rejects_image_url_returning_non_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def download_document(*args: Any, **kwargs: Any) -> Any:
+        return {'data': b'not-image', 'data_type': 'application/pdf'}
+
+    monkeypatch.setattr('pydantic_ai.realtime._base.download_item', download_document)
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/a.png')])])]
+
+    with pytest.raises(UserError, match='`ImageUrl` resolved to unsupported media type'):
+        async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
+            pass  # pragma: no cover
+
+
+@pytest.mark.anyio
+async def test_connect_rejects_unseedable_speech_and_response_parts(monkeypatch: pytest.MonkeyPatch) -> None:
+    histories = [
+        (
+            [ModelRequest(parts=[SpeechPart(speaker='user')])],
+            'without a transcript or retained audio',
+        ),
+        (
+            [
+                ModelRequest(
+                    parts=[
+                        SpeechPart(
+                            speaker='user',
+                            audio=BinaryContent(data=b'not-audio', media_type='application/pdf'),
+                        )
+                    ]
+                )
+            ],
+            '`SpeechPart.audio` with media type',
+        ),
+        (
+            [
+                ModelResponse(
+                    parts=[
+                        SpeechPart(
+                            speaker='assistant',
+                            audio=BinaryContent(data=b'audio', media_type='audio/pcm'),
+                        )
+                    ]
+                )
+            ],
+            'assistant `SpeechPart` without a transcript',
+        ),
+        (
+            [ModelResponse(parts=[FilePart(content=BinaryContent(data=b'file', media_type='application/pdf'))])],
+            '`FilePart`',
+        ),
+    ]
+    for history, match in histories:
+        ws = FakeWebSocket([_created(), _updated()])
+        monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+        with pytest.raises(UserError, match=re.escape(match)):
+            async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
+                pass  # pragma: no cover
+
+
+@pytest.mark.anyio
+async def test_connect_seed_skips_compaction_parts(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Provider-session-bound compaction state can't round-trip into another session; like the classic
+    # model adapters crossing APIs, seeding skips it silently rather than erroring.
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [ModelResponse(parts=[CompactionPart(content='summary'), TextPart(content='the answer')])]
+    async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
+        pass
+    items = [json.loads(frame)['item'] for frame in ws.sent[1:]]
+    assert [c['text'] for item in items for c in item['content']] == ['the answer']
 
 
 @pytest.mark.anyio
@@ -1240,7 +1614,9 @@ def test_profile() -> None:
         profile.get('supports_interruption'),
         profile.get('supports_output_truncation'),
         profile.get('supports_session_seeding'),
-    ) == (True, True, True, True, True)
+        profile.get('supports_seeding_images'),
+        profile.get('supports_seeding_audio'),
+    ) == (True, True, True, True, True, True, True)
     assert profile.get('supported_native_tools') == frozenset()
 
 

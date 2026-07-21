@@ -9,7 +9,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal
 
@@ -18,7 +18,16 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.messages import (
+    BinaryContent,
+    ImageUrl,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SpeechPart,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
@@ -60,7 +69,7 @@ def _connect(
     model: XaiRealtimeModel,
     instructions: str,
     *,
-    messages: list[ModelMessage] | None = None,
+    messages: Sequence[ModelMessage] | None = None,
 ) -> AbstractAsyncContextManager[XaiRealtimeConnection]:
     return model.connect(
         messages=[*(messages or ()), ModelRequest(parts=[], instructions=instructions)],
@@ -113,6 +122,8 @@ def test_profile() -> None:
         supports_interruption=True,
         supports_output_truncation=False,
         supports_session_seeding=True,
+        supports_seeding_images=False,
+        supports_seeding_audio=False,
         supported_native_tools=frozenset(),
     )
 
@@ -371,8 +382,6 @@ async def test_agent_realtime_session_rejects_native_tools() -> None:
 @pytest.mark.anyio
 async def test_connect_seeds_message_history_as_output_text(monkeypatch: pytest.MonkeyPatch) -> None:
     """Seeded assistant turns are sent as `output_text` items (as xAI, like OpenAI, expects)."""
-    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
-
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(ws))
     history = [
@@ -403,6 +412,36 @@ async def test_connect_seeds_message_history_as_output_text(monkeypatch: pytest.
             },
         },
     ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('image_kind', ['url', 'binary'])
+async def test_connect_rejects_seeded_image(monkeypatch: pytest.MonkeyPatch, image_kind: str) -> None:
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(ws))
+    image = (
+        ImageUrl(url='https://example.com/image.png')
+        if image_kind == 'url'
+        else BinaryContent(data=b'image', media_type='image/png')
+    )
+    history = [ModelRequest(parts=[UserPromptPart(content=[image])])]
+
+    with pytest.raises(UserError, match='xai realtime history seeding does not support images'):
+        async with _connect(_model(), 'x', messages=history):
+            pass  # pragma: no cover
+
+
+@pytest.mark.anyio
+async def test_connect_rejects_seeded_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(ws))
+    history = [
+        ModelRequest(parts=[SpeechPart(speaker='user', audio=BinaryContent(data=b'audio', media_type='audio/pcm'))])
+    ]
+
+    with pytest.raises(UserError, match='xai realtime history seeding does not support retained user audio'):
+        async with _connect(_model(), 'x', messages=history):
+            pass  # pragma: no cover
 
 
 @pytest.mark.anyio

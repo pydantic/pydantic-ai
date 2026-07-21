@@ -24,6 +24,7 @@ from typing import Any, Literal, cast
 from weakref import WeakKeyDictionary
 
 from anyio import Lock
+from typing_extensions import assert_never
 
 try:
     from google.genai import Client, errors as genai_errors, types as genai_types
@@ -38,13 +39,24 @@ from .._instrumentation import get_instructions
 from .._utils import generate_tool_call_id
 from ..exceptions import UserError
 from ..messages import (
+    BinaryContent,
+    CompactionPart,
+    FilePart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponsePart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartEndEvent,
     PartStartEvent,
+    RetryPromptPart,
     SpeechPart,
+    SystemPromptPart,
     TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from ..models import ModelRequestParameters
@@ -59,6 +71,7 @@ from ..models.google import (
     _map_url_context_metadata,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
+from ..profiles import DEFAULT_THINKING_TAGS
 from ..providers import Provider, infer_provider
 from ..settings import ThinkingEffort, ThinkingLevel
 from ..tools import ToolDefinition
@@ -73,6 +86,7 @@ from ._base import (
     RealtimeConnection,
     RealtimeInput,
     RealtimeModel,
+    RealtimeModelProfile,
     RealtimeModelSettings,
     ReconnectedEvent,
     ReconnectPolicy,
@@ -87,7 +101,8 @@ from ._base import (
     TurnDetection,
     inject_trace_context,
     reconnect_with_backoff,
-    user_prompt_text,
+    seed_speech_content,
+    seed_user_content,
 )
 
 
@@ -244,34 +259,129 @@ def _automatic_vad_from_turn_detection(turn_detection: TurnDetection) -> Automat
     )
 
 
-def _seed_turns(messages: Sequence[ModelMessage]) -> list[genai_types.Content | genai_types.ContentDict]:
-    """Project prior conversation to Gemini `Content` turns (text/transcript only, v1).
+async def _seed_turns(
+    messages: Sequence[ModelMessage], *, profile: RealtimeModelProfile, provider_name: str
+) -> list[genai_types.Content | genai_types.ContentDict]:
+    """Map prior history to Gemini `clientContent.turns`.
 
-    User prompts and user-spoken transcripts become `user` turns; assistant text and assistant-spoken
-    transcripts become `model` turns. `SystemPromptPart`s are skipped (`system_instruction` covers
-    system-level guidance) and tool calls/results are skipped (full tool-round replay is out of scope
-    for v1). Content that can't be projected is dropped rather than erroring.
+    Text, transcripts, inline images, and tag-wrapped thinking are replayed in part order. Gemini Live
+    rejects function parts in `clientContent.turns`, so function calls and results are projected as
+    structured text: `[Tool call: name(args)]`, `[Tool "name" returned: result]`, and
+    `[Tool "name" error: error]`. Native-tool parts are skipped because they describe provider-executed
+    work whose answer text is already retained.
+
+    Thinking signatures and `provider_details` are provider-session-bound and are not replayed.
+    `SystemPromptPart`s are routed through `system_instruction`, and `CachePoint`s are ignored. Gemini
+    does not accept audio in seeded turns, so speech requires a transcript. Other unrepresentable
+    content raises [`UserError`][pydantic_ai.exceptions.UserError].
     """
     turns: list[genai_types.Content | genai_types.ContentDict] = []
+    supports_images = profile.get('supports_seeding_images', False)
+    supports_audio = profile.get('supports_seeding_audio', False)
     for message in messages:
-        texts: list[str] = []
         if isinstance(message, ModelRequest):
-            for req_part in message.parts:
-                if isinstance(req_part, UserPromptPart) and (text := user_prompt_text(req_part)):
-                    texts.append(text)
-                elif isinstance(req_part, SpeechPart) and req_part.transcript:
-                    texts.append(req_part.transcript)
+            parts = await _seed_request_parts(
+                message.parts,
+                provider_name=provider_name,
+                supports_images=supports_images,
+                supports_audio=supports_audio,
+            )
             role = 'user'
         else:
-            for resp_part in message.parts:
-                if isinstance(resp_part, TextPart) and resp_part.content:
-                    texts.append(resp_part.content)
-                elif isinstance(resp_part, SpeechPart) and resp_part.transcript:
-                    texts.append(resp_part.transcript)
+            parts = _seed_response_parts(message.parts, provider_name=provider_name, supports_audio=supports_audio)
             role = 'model'
-        if texts:
-            turns.append(genai_types.Content(role=role, parts=[genai_types.Part(text=t) for t in texts]))
+        if parts:
+            turns.append(genai_types.Content(role=role, parts=parts))
     return turns
+
+
+async def _seed_request_parts(
+    message_parts: Sequence[ModelRequestPart],
+    *,
+    provider_name: str,
+    supports_images: bool,
+    supports_audio: bool,
+) -> list[genai_types.Part]:
+    parts: list[genai_types.Part] = []
+    for part in message_parts:
+        if isinstance(part, SystemPromptPart):
+            continue
+        elif isinstance(part, UserPromptPart):
+            parts.extend(
+                _genai_user_parts(
+                    await seed_user_content(part, provider_name=provider_name, supports_images=supports_images)
+                )
+            )
+        elif isinstance(part, SpeechPart):
+            content = seed_speech_content(part, provider_name=provider_name, supports_audio=supports_audio)
+            assert isinstance(content, str)
+            if content:
+                parts.append(genai_types.Part(text=content))
+        elif isinstance(part, ToolReturnPart):
+            output, user_content = part.model_response_str_and_user_content()
+            parts.append(genai_types.Part(text=f'[Tool "{part.tool_name}" returned: {output}]'))
+            if user_content:
+                parts.extend(
+                    _genai_user_parts(
+                        await seed_user_content(
+                            UserPromptPart(content=user_content),
+                            provider_name=provider_name,
+                            supports_images=supports_images,
+                        )
+                    )
+                )
+        elif isinstance(part, RetryPromptPart):
+            output = part.model_response()
+            text = output if part.tool_name is None else f'[Tool "{part.tool_name}" error: {output}]'
+            parts.append(genai_types.Part(text=text))
+        else:
+            assert_never(part)
+    return parts
+
+
+def _seed_response_parts(
+    message_parts: Sequence[ModelResponsePart], *, provider_name: str, supports_audio: bool
+) -> list[genai_types.Part]:
+    parts: list[genai_types.Part] = []
+    for part in message_parts:
+        if isinstance(part, TextPart):
+            if part.content:
+                parts.append(genai_types.Part(text=part.content))
+        elif isinstance(part, ThinkingPart):
+            if part.content:
+                start_tag, end_tag = DEFAULT_THINKING_TAGS
+                parts.append(genai_types.Part(text='\n'.join([start_tag, part.content, end_tag])))
+        elif isinstance(part, ToolCallPart):
+            parts.append(genai_types.Part(text=f'[Tool call: {part.tool_name}({part.args_as_json_str()})]'))
+        elif isinstance(part, (NativeToolCallPart, NativeToolReturnPart)):
+            continue
+        elif isinstance(part, SpeechPart):
+            content = seed_speech_content(part, provider_name=provider_name, supports_audio=supports_audio)
+            if content:
+                assert isinstance(content, str)
+                parts.append(genai_types.Part(text=content))
+        elif isinstance(part, CompactionPart):
+            # Provider-session-bound compaction state can't round-trip into another session; classic
+            # model adapters skip it when crossing APIs (e.g. Chat Completions), and seeding matches.
+            continue
+        elif isinstance(part, FilePart):
+            raise UserError(
+                f'`FilePart` cannot be seeded into {provider_name} realtime history. '
+                'Convert it to text or filter it from `message_history` before connecting.'
+            )
+        else:
+            assert_never(part)
+    return parts
+
+
+def _genai_user_parts(content: Sequence[str | BinaryContent]) -> list[genai_types.Part]:
+    return [
+        genai_types.Part(text=item)
+        if isinstance(item, str)
+        else genai_types.Part(inline_data=genai_types.Blob(data=item.data, mime_type=item.media_type))
+        for item in content
+        if not isinstance(item, str) or item
+    ]
 
 
 def _tool_def_to_genai(tool: ToolDefinition) -> genai_types.FunctionDeclaration:
@@ -673,7 +783,7 @@ class GoogleRealtimeModel(RealtimeModel):
             # Seed prior conversation once, after the initial connect, as inactive context turns (no
             # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
             # resumption restores server state, and a `ReconnectedEvent` starts a fresh turn.
-            if turns := _seed_turns(messages):
+            if turns := await _seed_turns(messages, profile=self.profile, provider_name=self.system):
                 await session.send_client_content(turns=turns, turn_complete=False)
             yield GoogleRealtimeConnection(
                 session,

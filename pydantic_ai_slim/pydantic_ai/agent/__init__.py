@@ -3009,9 +3009,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 available to tools and capabilities.
             conversation_id: Optional conversation id, set on the run context and the telemetry span
                 so a realtime session can be correlated with other runs.
-            message_history: Prior conversation to seed the session with. It is projected to the
-                provider's initial conversation items (text/transcript only — audio is not replayed)
-                and included in [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages]
+            message_history: Prior conversation to seed the session with. Replayable text, transcripts,
+                thinking, tool rounds, images, and supported retained user audio are projected to the
+                provider's initial conversation items; unrepresentable content raises `UserError`. The
+                history is included in [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages]
                 (but not `new_messages()`). Hand off from a prior session or a standard
                 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] by passing its messages here.
             audio_retention: How much spoken audio the session retains in its history, on top of

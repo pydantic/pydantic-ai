@@ -5,24 +5,41 @@ from __future__ import annotations as _annotations
 import asyncio
 import json
 import random
-from collections.abc import AsyncIterator
+import re
+from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from contextvars import ContextVar
 from typing import Any, Literal, cast
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    BinaryContent,
+    CachePoint,
+    CompactionPart,
+    FilePart,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartEndEvent,
     PartStartEvent,
+    RetryPromptPart,
+    SpeechPart,
+    SystemPromptPart,
+    TextContent,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
@@ -72,7 +89,7 @@ def _connect(
     model: GoogleRealtimeModel,
     instructions: str,
     *,
-    messages: list[ModelMessage] | None = None,
+    messages: Sequence[ModelMessage] | None = None,
 ) -> AbstractAsyncContextManager[GoogleRealtimeConnection]:
     return model.connect(
         messages=[*(messages or ()), ModelRequest(parts=[], instructions=instructions)],
@@ -297,11 +314,15 @@ def test_profile() -> None:
         profile.get('supports_manual_turn_control'),
         profile.get('supports_interruption'),
         profile.get('supports_session_seeding'),
+        profile.get('supports_seeding_images'),
+        profile.get('supports_seeding_audio'),
     ) == (
         True,
         False,
         False,
         True,
+        True,
+        False,
     )
     assert profile.get('supported_native_tools') == frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
 
@@ -765,58 +786,150 @@ async def test_connect_streams_events() -> None:
     assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
 
 
-async def test_connect_seeds_message_history() -> None:
-    from pydantic_ai.messages import (
-        ModelRequest,
-        ModelResponse,
-        SpeechPart,
-        SystemPromptPart,
-        TextPart,
-        ToolCallPart,
-        UserPromptPart,
-    )
+async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def download_image(*args: Any, **kwargs: Any) -> Any:
+        return {'data': b'url-image', 'data_type': 'image/png'}
 
     session = _RecordingSession([[_turn('hi')]])
 
     history = [
-        ModelRequest(parts=[SystemPromptPart(content='sys'), UserPromptPart(content='earlier question')]),
-        ModelResponse(parts=[TextPart(content='earlier answer'), ToolCallPart(tool_name='t', args='{}')]),
-        ModelRequest(parts=[SpeechPart(speaker='user', transcript='spoken question')]),
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='sys'),
+                UserPromptPart(content=['earlier question', TextContent(' with context'), CachePoint()]),
+                UserPromptPart(content=[CachePoint(), '']),
+                SpeechPart(speaker='user', transcript=''),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='reasoning',
+                    signature='session-bound',
+                    provider_name='google',
+                    provider_details={'thought_signature': 'secret'},
+                ),
+                ThinkingPart(content='', signature='signature-only', provider_name='google'),
+                TextPart(content=''),
+                TextPart(content='earlier answer'),
+                SpeechPart(speaker='assistant', transcript=''),
+                NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='native-call'),
+                NativeToolReturnPart(tool_name='web_search', content='native metadata', tool_call_id='native-call'),
+                ToolCallPart(tool_name='weather', args={'city': 'Paris'}, tool_call_id='call-1'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='weather',
+                    content=[
+                        'sunny',
+                        BinaryContent(data=b'tool-image', media_type='image/png', identifier='weather.png'),
+                    ],
+                    tool_call_id='call-1',
+                ),
+                ToolReturnPart(tool_name='plain', content='ok', tool_call_id='plain-call'),
+                RetryPromptPart(tool_name='weather', content='invalid city', tool_call_id='call-1'),
+                RetryPromptPart(content='answer in prose'),
+                UserPromptPart(
+                    content=[
+                        ImageUrl(url='https://example.com/a.png'),
+                        BinaryContent(data=b'inline-image', media_type='image/png'),
+                    ]
+                ),
+                SpeechPart(speaker='user', transcript='spoken question'),
+            ]
+        ),
         ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='spoken answer')]),
     ]
+    monkeypatch.setattr('pydantic_ai.realtime._base.download_item', download_image)
     model = _model(session)
     async with _connect(model, 'x', messages=history) as conn:
         _ = [e async for e in conn]
 
-    # A single seed batch of context turns, sent without `turn_complete` so the model doesn't respond.
-    # System parts and tool calls are dropped (text/transcript projection only).
     seeded = session.client_content[0]
     assert seeded['turn_complete'] is False
     turns = seeded['turns']
-    assert [(t.role, [p.text for p in t.parts]) for t in turns] == [
-        ('user', ['earlier question']),
-        ('model', ['earlier answer']),
-        ('user', ['spoken question']),
-        ('model', ['spoken answer']),
-    ]
+    assert [turn.model_dump(exclude_none=True) for turn in turns] == snapshot(
+        [
+            {
+                'parts': [{'text': 'earlier question'}, {'text': ' with context'}],
+                'role': 'user',
+            },
+            {
+                'parts': [
+                    {'text': '<think>\nreasoning\n</think>'},
+                    {'text': 'earlier answer'},
+                    {'text': '[Tool call: weather({"city":"Paris"})]'},
+                ],
+                'role': 'model',
+            },
+            {
+                'parts': [
+                    {'text': '[Tool "weather" returned: ["sunny","See file weather.png."]]'},
+                    {'text': 'This is file weather.png:'},
+                    {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
+                    {'text': '[Tool "plain" returned: ok]'},
+                    {'text': '[Tool "weather" error: invalid city\n\nFix the errors and try again.]'},
+                    {'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.'},
+                    {'inline_data': {'data': b'url-image', 'mime_type': 'image/png'}},
+                    {'inline_data': {'data': b'inline-image', 'mime_type': 'image/png'}},
+                    {'text': 'spoken question'},
+                ],
+                'role': 'user',
+            },
+            {'parts': [{'text': 'spoken answer'}], 'role': 'model'},
+        ]
+    )
+    assert 'session-bound' not in repr(turns)
+    assert 'thought_signature' not in repr(turns)
 
 
-async def test_connect_seed_drops_non_text_and_textless_turns() -> None:
-    # A list-content user prompt is projected to its text (multimodal parts dropped); a response with
-    # no projectable text (only a tool call) yields no turn at all.
-    from pydantic_ai.messages import ImageUrl, ModelRequest, ModelResponse, ToolCallPart, UserPromptPart
-
+async def test_connect_seed_projects_tool_calls_as_text() -> None:
     session = _RecordingSession([[_turn('hi')]])
-    history = [
-        ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/a.png'), 'describe this'])]),
-        ModelResponse(parts=[ToolCallPart(tool_name='t', args='{}')]),
-    ]
+    history = [ModelResponse(parts=[ToolCallPart(tool_name='t', args='{}')])]
     model = _model(session)
     async with _connect(model, 'x', messages=history) as conn:
         _ = [e async for e in conn]
 
     turns = session.client_content[0]['turns']
-    assert [(t.role, [p.text for p in t.parts]) for t in turns] == [('user', ['describe this'])]
+    assert [(t.role, [p.text for p in t.parts]) for t in turns] == [('model', ['[Tool call: t({})]'])]
+
+
+async def test_connect_rejects_audio_only_user_turn() -> None:
+    session = _RecordingSession()
+    history = [
+        ModelRequest(parts=[SpeechPart(speaker='user', audio=BinaryContent(data=b'pcm-audio', media_type='audio/pcm'))])
+    ]
+
+    with pytest.raises(UserError, match='google realtime history seeding does not support retained user audio'):
+        async with _connect(_model(session), 'x', messages=history):
+            pass  # pragma: no cover
+
+
+async def test_connect_rejects_unseedable_response_parts() -> None:
+    histories = [
+        ([ModelResponse(parts=[SpeechPart(speaker='assistant')])], 'assistant `SpeechPart`'),
+        (
+            [ModelResponse(parts=[FilePart(content=BinaryContent(data=b'file', media_type='application/pdf'))])],
+            '`FilePart`',
+        ),
+    ]
+    for history, match in histories:
+        with pytest.raises(UserError, match=re.escape(match)):
+            async with _connect(_model(_RecordingSession()), 'x', messages=history):
+                pass  # pragma: no cover
+
+
+async def test_connect_seed_skips_compaction_parts() -> None:
+    # Provider-session-bound compaction state can't round-trip into another session; like the classic
+    # model adapters crossing APIs, seeding skips it silently rather than erroring.
+    session = _RecordingSession()
+    history = [ModelResponse(parts=[CompactionPart(content='summary'), TextPart(content='the answer')])]
+    async with _connect(_model(session), 'x', messages=history):
+        pass
+    turns = session.client_content[0]['turns']
+    assert [part.text for turn in turns for part in turn.parts] == ['the answer']
 
 
 async def test_connect_wires_reconnect_only_with_resumption() -> None:

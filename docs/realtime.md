@@ -108,9 +108,7 @@ session:
 | Method | Sends |
 | --- | --- |
 | [`send_audio`][pydantic_ai.realtime.RealtimeSession.send_audio] | A chunk of microphone audio (PCM16). |
-| [`send`][pydantic_ai.realtime.RealtimeSession.send] | A complete text turn. |
-| [`send`][pydantic_ai.realtime.RealtimeSession.send] | An image as conversation context (e.g. a video frame). |
-| [`send`][pydantic_ai.realtime.RealtimeSession.send] | Any typed session input, or plain `str` / image or audio [`BinaryContent`][pydantic_ai.messages.BinaryContent]. |
+| [`send`][pydantic_ai.realtime.RealtimeSession.send] | Everything else: a complete text turn (`str`), an image as conversation context — e.g. a video frame — (image [`BinaryContent`][pydantic_ai.messages.BinaryContent]), or any typed session input. |
 
 ## Events
 
@@ -124,8 +122,8 @@ Spoken content (both the user's and the model's) streams as an
 
 | Event | Meaning |
 | --- | --- |
-| [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] | A new part started — a `SpeechPart` (assistant or user) or a `ToolCallPart`. |
-| [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | An [`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta]: `audio_chunk` for playback and/or `transcript_delta` for incremental text. |
+| [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] | A new part started — a `SpeechPart` (assistant or user), a `ToolCallPart`, or a plain `TextPart` when [`output_modality='text'`](#configuring-the-session). |
+| [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | An [`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta]: `audio_chunk` for playback and/or `transcript_delta` for incremental text (a [`TextPartDelta`][pydantic_ai.messages.TextPartDelta] in text mode). |
 | [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | A part completed; `part.transcript` holds the full transcript (and retained `audio`, per `audio_retention`). |
 | [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] | The session began executing a tool the model requested (carries the `ToolCallPart`). |
 | [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | The tool finished and its `ToolReturnPart` result was sent back to the model. |
@@ -181,10 +179,23 @@ async def main(prior_history):
     print(summary.output)
 ```
 
-Seeding is a **text/transcript projection**: the prior conversation's transcripts and text are
-replayed to the provider as initial conversation items, but audio is not (see
-[Not yet supported](#not-yet-supported)). Seeding requires a provider that accepts it — see
-[model profile](#model-profile).
+Seeding projects every replayable part of the prior conversation into the provider's initial
+conversation items: text, speech transcripts, tag-wrapped thinking, function-tool calls and results,
+and images. OpenAI and xAI replay function tools as native call/result items; Gemini Live cannot put
+function parts in seeded turns, so it uses readable `[Tool call: ...]` and
+`[Tool "..." returned: ...]` / `[Tool "..." error: ...]` text instead. Thinking signatures and
+provider details are not replayed because they belong to the provider session that produced them.
+Provider-executed native-tool metadata is also omitted: the answer it produced is already in the
+history, and the execution itself cannot be replayed in a new session.
+
+Content that cannot be represented is rejected with a [`UserError`][pydantic_ai.exceptions.UserError]
+instead of being dropped silently. In particular, video, documents, uploaded-file references, and
+model-generated files cannot be seeded. Speech transcripts are preferred over retained audio. When a
+user [`SpeechPart`][pydantic_ai.messages.SpeechPart] has no transcript, OpenAI can replay retained
+input audio; Gemini and xAI cannot. Enable `input_transcription_model` or `audio_retention` when
+capturing the original session, or filter unseedable parts from `message_history` before connecting.
+Assistant speech always requires a transcript. See the [model profile](#model-profile) for provider
+support.
 
 ### Retaining audio
 
@@ -453,6 +464,8 @@ aren't universal. Each model reports its support through
 | [`supports_interruption`][pydantic_ai.realtime.RealtimeModelProfile.supports_interruption] | [`interrupt`](#turn-taking-and-barge-in) | ✅ | ❌ | ✅ |
 | [`supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation] | [`interrupt(audio_end_ms=…)`](#turn-taking-and-barge-in) | ✅ | ❌ | ❌ |
 | [`supports_session_seeding`][pydantic_ai.realtime.RealtimeModelProfile.supports_session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ | ✅ |
+| [`supports_seeding_images`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_images] | Images in `message_history` | ✅ | ✅ | ❌ |
+| [`supports_seeding_audio`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_audio] | Transcript-less retained user audio in `message_history` | ✅ | ❌ | ❌ |
 
 Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
 exposes neither the manual turn verbs nor an explicit `interrupt()`. xAI Grok Voice supports
@@ -696,7 +709,7 @@ ones that are specific to the request-response graph (faking them would be misle
 | `capabilities` | ⚠️ **setup + tool hooks only** — see [Capabilities](#capabilities) below |
 | `usage`, `usage_limits` | ✅ accumulate / enforce (token + tool-call limits; see [Usage and cost](#usage-and-cost)) |
 | `metadata`, `conversation_id` | ✅ set on the `RunContext` (and telemetry span) for tools/correlation |
-| `message_history` | ✅ seeds the session (text/transcript projection; audio not replayed) and is included in `all_messages()` |
+| `message_history` | ✅ seeds replayable text, transcripts, thinking, tool rounds, images, and supported retained user audio; included in `all_messages()` |
 | `output_type` | ❌ no structured output → [delegate](#delegating-to-a-text-agent) |
 | `conversation_id` (as history) | ❌ live conversation state lives on the provider; for Gemini see [session resumption](#reconnecting) |
 | `user_prompt` | ❌ stream input with `send_audio` / `send` / `send` instead |
@@ -704,6 +717,18 @@ ones that are specific to the request-response graph (faking them would be misle
 
 Realtime-only: `audio_retention` keeps spoken audio bytes on the history parts. Tool calls always run
 concurrently with the session.
+
+[Deferred tools](deferred-tools.md) work in a session to the extent they can be resolved *live*: a
+[`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability handler is
+invoked inline when a tool [requires approval](deferred-tools.md) or raises
+[`CallDeferred`][pydantic_ai.exceptions.CallDeferred], and can approve, deny, or answer the call on
+the spot. What has no realtime analog is the graph's *pause*: a session can't end with a
+`DeferredToolRequests` output and wait for out-of-band results, so when no handler resolves the
+call, the model instead receives an explanation that the tool can't be completed during a realtime
+session, and the conversation continues. Similarly,
+[`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] raises when called from a realtime tool —
+there is no between-steps delivery point; send follow-up context into the conversation with
+[`session.send()`][pydantic_ai.realtime.RealtimeSession.send] instead.
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
@@ -808,7 +833,7 @@ Some capabilities are intentionally out of scope:
 - **Bounded structured-output runs.** A session has no `output_type` or `session.run()` with an output schema — [delegate to a text agent](#delegating-to-a-text-agent) for structured results.
 - **Realtime-specific capability hooks.** Capabilities run their [tool-lifecycle hooks](#relationship-to-run-iter) only; there are no before/after-exchange hooks.
 - **Dynamic instructions mid-session.** Instructions are resolved once at connect and not re-evaluated during the session.
-- **Audio replay when seeding history.** Seeding a session with `message_history=` projects text and transcripts only; prior audio is not replayed (see [Message history](#message-history)).
+- **Provider-limited audio replay when seeding history.** OpenAI can replay retained user audio when a [`SpeechPart`][pydantic_ai.messages.SpeechPart] has no transcript. Gemini and xAI cannot seed retained audio, and no provider can seed assistant audio; use transcripts or filter those parts before connecting (see [Message history](#message-history)).
 - **Proactive resume before Gemini's session cap.** Gemini Live signals an upcoming disconnect (`GoAway`) near its session-length limit; the session doesn't yet resume proactively on that signal, only [reconnecting](#reconnecting) after a drop.
 
 ## Implementing a provider

@@ -875,8 +875,7 @@ class RealtimeSession:
                 # conversation flowing.
                 reason = 'requires approval' if isinstance(e, ApprovalRequired) else 'runs externally'
                 result = (
-                    f'Error: The {call.tool_name!r} tool {reason} and cannot be completed during a '
-                    'realtime session.'
+                    f'Error: The {call.tool_name!r} tool {reason} and cannot be completed during a realtime session.'
                 )
             except Exception as e:
                 result = f'Error: {e}'

@@ -99,6 +99,8 @@ class XaiProvider(Provider[AsyncClient]):
             'supports_manual_turn_control': True,
             'supports_interruption': True,
             'supports_session_seeding': True,
+            'supports_seeding_images': False,
+            'supports_seeding_audio': False,
         }
 
     @overload

@@ -330,6 +330,8 @@ def test_profile_allow_seeding() -> None:
         supports_interruption=True,
         supports_output_truncation=True,
         supports_session_seeding=True,
+        supports_seeding_images=True,
+        supports_seeding_audio=True,
         supports_thinking=False,  # GA `gpt-realtime` is not a reasoning model
         supported_native_tools=frozenset(),
     )

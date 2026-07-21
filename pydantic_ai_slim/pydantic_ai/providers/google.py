@@ -55,6 +55,8 @@ class BaseGoogleProvider(Provider[Client], ABC):
         return {
             'supports_image_input': True,
             'supports_session_seeding': True,
+            'supports_seeding_images': True,
+            'supports_seeding_audio': False,
             'supported_native_tools': frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
             # Native-audio Gemini Live models support a thinking config (verified live).
             'supports_thinking': 'native-audio' in model_name,

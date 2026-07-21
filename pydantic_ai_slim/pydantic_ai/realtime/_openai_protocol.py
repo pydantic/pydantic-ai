@@ -17,19 +17,36 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from typing_extensions import assert_never
+
+from ..exceptions import UserError
 from ..messages import (
+    BinaryContent,
+    CompactionPart,
+    FilePart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
+    ModelResponsePart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    RetryPromptPart,
     SpeechPart,
+    SystemPromptPart,
     TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
+from ..profiles import DEFAULT_THINKING_TAGS
 from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from ._base import (
@@ -38,12 +55,14 @@ from ._base import (
     InputSpeechStartEvent,
     InputTranscript,
     RealtimeCodecEvent,
+    RealtimeModelProfile,
     SessionErrorEvent,
     ToolCall,
     Transcript,
     TurnCompleteEvent,
     TurnDetection,
-    user_prompt_text,
+    seed_speech_content,
+    seed_user_content,
 )
 
 if TYPE_CHECKING:
@@ -102,34 +121,198 @@ def tool_def_to_openai(tool: ToolDefinition) -> dict[str, Any]:
     return result
 
 
-def seed_items(messages: Sequence[ModelMessage]) -> list[dict[str, Any]]:
-    """Project prior conversation to OpenAI `conversation.item.create` items (text/transcript only, v1).
+async def seed_items(
+    messages: Sequence[ModelMessage], *, profile: RealtimeModelProfile, provider_name: str
+) -> list[dict[str, Any]]:
+    """Map prior history to OpenAI-protocol `conversation.item.create` items.
 
-    User prompts and user-spoken transcripts become `input_text` user items; assistant text and
-    assistant-spoken transcripts become `output_text` assistant items. `SystemPromptPart`s are skipped (the
-    `instructions` session field covers system-level guidance), and tool calls/results are skipped —
-    seeding a `function_call_output` without its originating call item is invalid, and full tool-round
-    replay is out of scope for v1. Content that can't be projected is dropped rather than erroring.
+    Text, transcripts, images, retained user audio, thinking, and function-tool rounds are replayed in
+    part order. Thinking becomes tag-wrapped assistant text; its signature and `provider_details` are
+    provider-session-bound and are not replayed. Native-tool parts are metadata about how an answer was
+    produced and are skipped while the answer itself is retained. `SystemPromptPart`s are routed through
+    the session `instructions` field, and `CachePoint`s are ignored.
+
+    Retained user audio is decoded by the new session's configured input-audio format. Assistant audio
+    cannot be inserted by the API, so assistant speech requires a transcript. Any other content that
+    cannot be represented faithfully raises [`UserError`][pydantic_ai.exceptions.UserError].
     """
     items: list[dict[str, Any]] = []
+    call_ids: dict[str, str] = {}
+    seeded_calls: set[str] = set()
+    supports_images = profile.get('supports_seeding_images', False)
+    supports_audio = profile.get('supports_seeding_audio', False)
+
     for message in messages:
         if isinstance(message, ModelRequest):
-            for req_part in message.parts:
-                if isinstance(req_part, UserPromptPart) and (text := user_prompt_text(req_part)):
-                    items.append(_message_item('user', 'input_text', text))
-                elif isinstance(req_part, SpeechPart) and req_part.transcript:
-                    items.append(_message_item('user', 'input_text', req_part.transcript))
+            items.extend(
+                await _seed_request_items(
+                    message.parts,
+                    provider_name=provider_name,
+                    supports_images=supports_images,
+                    supports_audio=supports_audio,
+                    call_ids=call_ids,
+                    seeded_calls=seeded_calls,
+                )
+            )
         else:
-            for resp_part in message.parts:
-                if isinstance(resp_part, TextPart) and resp_part.content:
-                    items.append(_message_item('assistant', 'output_text', resp_part.content))
-                elif isinstance(resp_part, SpeechPart) and resp_part.transcript:
-                    items.append(_message_item('assistant', 'output_text', resp_part.transcript))
+            items.extend(
+                _seed_response_items(
+                    message.parts,
+                    provider_name=provider_name,
+                    supports_audio=supports_audio,
+                    call_ids=call_ids,
+                    seeded_calls=seeded_calls,
+                )
+            )
     return items
 
 
-def _message_item(role: str, content_type: str, text: str) -> dict[str, Any]:
-    return {'type': 'message', 'role': role, 'content': [{'type': content_type, 'text': text}]}
+async def _seed_request_items(
+    parts: Sequence[ModelRequestPart],
+    *,
+    provider_name: str,
+    supports_images: bool,
+    supports_audio: bool,
+    call_ids: dict[str, str],
+    seeded_calls: set[str],
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for part in parts:
+        if isinstance(part, SystemPromptPart):
+            continue
+        elif isinstance(part, UserPromptPart):
+            if content := _user_content_items(
+                await seed_user_content(part, provider_name=provider_name, supports_images=supports_images)
+            ):
+                items.append(_message_item('user', content))
+        elif isinstance(part, SpeechPart):
+            content = seed_speech_content(part, provider_name=provider_name, supports_audio=supports_audio)
+            if isinstance(content, str):
+                if content:
+                    items.append(_message_item('user', [_text_content('input_text', content)]))
+            else:
+                items.append(_message_item('user', [{'type': 'input_audio', 'audio': content.base64}]))
+        elif isinstance(part, ToolReturnPart):
+            _require_seeded_call(part.tool_name, part.tool_call_id, seeded_calls)
+            output, user_content = part.model_response_str_and_user_content()
+            items.append(
+                {
+                    'type': 'function_call_output',
+                    'call_id': _seed_call_id(part.tool_call_id, call_ids),
+                    'output': output,
+                }
+            )
+            if user_content and (
+                content := _user_content_items(
+                    await seed_user_content(
+                        UserPromptPart(content=user_content),
+                        provider_name=provider_name,
+                        supports_images=supports_images,
+                    )
+                )
+            ):
+                items.append(_message_item('user', content))
+        elif isinstance(part, RetryPromptPart):
+            output = part.model_response()
+            if part.tool_name is None:
+                items.append(_message_item('user', [_text_content('input_text', output)]))
+            else:
+                _require_seeded_call(part.tool_name, part.tool_call_id, seeded_calls)
+                items.append(
+                    {
+                        'type': 'function_call_output',
+                        'call_id': _seed_call_id(part.tool_call_id, call_ids),
+                        'output': output,
+                    }
+                )
+        else:
+            assert_never(part)
+    return items
+
+
+def _seed_response_items(
+    parts: Sequence[ModelResponsePart],
+    *,
+    provider_name: str,
+    supports_audio: bool,
+    call_ids: dict[str, str],
+    seeded_calls: set[str],
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for part in parts:
+        if isinstance(part, TextPart):
+            if part.content:
+                items.append(_message_item('assistant', [_text_content('output_text', part.content)]))
+        elif isinstance(part, ThinkingPart):
+            if part.content:
+                start_tag, end_tag = DEFAULT_THINKING_TAGS
+                text = '\n'.join([start_tag, part.content, end_tag])
+                items.append(_message_item('assistant', [_text_content('output_text', text)]))
+        elif isinstance(part, ToolCallPart):
+            call_id = _seed_call_id(part.tool_call_id, call_ids)
+            seeded_calls.add(part.tool_call_id)
+            items.append(
+                {
+                    'type': 'function_call',
+                    'name': part.tool_name,
+                    'call_id': call_id,
+                    'arguments': part.args_as_json_str(),
+                }
+            )
+        elif isinstance(part, (NativeToolCallPart, NativeToolReturnPart)):
+            continue
+        elif isinstance(part, SpeechPart):
+            content = seed_speech_content(part, provider_name=provider_name, supports_audio=supports_audio)
+            if content:
+                assert isinstance(content, str)
+                items.append(_message_item('assistant', [_text_content('output_text', content)]))
+        elif isinstance(part, CompactionPart):
+            # Provider-session-bound compaction state can't round-trip into another session; classic
+            # model adapters skip it when crossing APIs (e.g. Chat Completions), and seeding matches.
+            continue
+        elif isinstance(part, FilePart):
+            raise UserError(
+                f'`FilePart` cannot be seeded into {provider_name} realtime history. '
+                'Convert it to text or filter it from `message_history` before connecting.'
+            )
+        else:
+            assert_never(part)
+    return items
+
+
+def _seed_call_id(tool_call_id: str, call_ids: dict[str, str]) -> str:
+    """Return a stable wire ID no longer than the OpenAI protocol's 32-character limit."""
+    if wire_id := call_ids.get(tool_call_id):
+        return wire_id
+    wire_id = tool_call_id if len(tool_call_id) <= 32 else hashlib.sha256(tool_call_id.encode()).hexdigest()[:32]
+    call_ids[tool_call_id] = wire_id
+    return wire_id
+
+
+def _require_seeded_call(tool_name: str, tool_call_id: str, seeded_calls: set[str]) -> None:
+    if tool_call_id not in seeded_calls:
+        raise UserError(
+            f'Cannot seed output for tool {tool_name!r} with call ID {tool_call_id!r}: no preceding '
+            '`ToolCallPart` with that ID was included in `message_history`.'
+        )
+
+
+def _user_content_items(content: Sequence[str | BinaryContent]) -> list[dict[str, Any]]:
+    return [
+        _text_content('input_text', item)
+        if isinstance(item, str)
+        else {'type': 'input_image', 'image_url': item.data_uri}
+        for item in content
+        if not isinstance(item, str) or item
+    ]
+
+
+def _text_content(content_type: Literal['input_text', 'output_text'], text: str) -> dict[str, Any]:
+    return {'type': content_type, 'text': text}
+
+
+def _message_item(role: Literal['user', 'assistant'], content: list[dict[str, Any]]) -> dict[str, Any]:
+    return {'type': 'message', 'role': role, 'content': content}
 
 
 def _str_field(data: dict[str, Any], key: str, default: str = '') -> str:

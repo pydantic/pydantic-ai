@@ -19,19 +19,29 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from typing_extensions import TypeAliasType, TypedDict
+from typing_extensions import TypeAliasType, TypedDict, assert_never
 
-from ..exceptions import UnexpectedModelBehavior
+from ..exceptions import UnexpectedModelBehavior, UserError
 from ..messages import (
+    AudioUrl,
+    BinaryContent,
+    CachePoint,
+    DocumentUrl,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ImageUrl,
     ModelMessage,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    SpeechPart,
+    TextContent,
+    UploadedFile,
+    UserContent,
     UserPromptPart,
+    VideoUrl,
 )
-from ..models import AbstractModel, ModelRequestParameters
+from ..models import AbstractModel, ModelRequestParameters, download_item
 from ..native_tools import AbstractNativeTool
 from ..settings import ThinkingLevel, ToolChoice
 from ..usage import RequestUsage
@@ -510,6 +520,10 @@ class RealtimeModelProfile(TypedDict, total=False):
     supports both; xAI Grok Voice supports cancellation but not truncation."""
     supports_session_seeding: bool
     """Whether the model can seed a session with prior conversation (`message_history`)."""
+    supports_seeding_images: bool
+    """Whether prior images can be included when seeding a session with `message_history`."""
+    supports_seeding_audio: bool
+    """Whether retained user audio can be included when seeding a session with `message_history`."""
     supports_thinking: bool
     """Whether the model supports reasoning/thinking configuration via the
     [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting — OpenAI's `gpt-realtime-2*`
@@ -531,6 +545,8 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_interruption': False,
     'supports_output_truncation': False,
     'supports_session_seeding': False,
+    'supports_seeding_images': False,
+    'supports_seeding_audio': False,
     'supported_native_tools': frozenset(),
 }
 """Fully populated default realtime model profile."""
@@ -629,9 +645,9 @@ class RealtimeModel(AbstractModel):
 
         Args:
             messages: Prior conversation and the current request carrying session instructions,
-                projected to the provider's
-                initial conversation items. Only text/transcript content is seeded (v1): audio is not
-                replayed. Providers degrade gracefully, dropping content they can't project.
+                projected to the provider's initial conversation items. Replayable text, transcripts,
+                thinking, tool rounds, images, and retained user audio are seeded according to the
+                model profile; content the provider cannot represent raises `UserError`.
             model_settings: Optional provider-specific settings.
             model_request_parameters: Function and native tools available to the session.
 
@@ -713,8 +729,97 @@ def inject_trace_context(headers: MutableMapping[str, str]) -> None:
     inject(headers)
 
 
-def user_prompt_text(part: UserPromptPart) -> str:
-    """Extract the plain text from a `UserPromptPart` (dropping multimodal content for text seeding)."""
-    if isinstance(part.content, str):
-        return part.content
-    return ''.join(item for item in part.content if isinstance(item, str))
+SeedContent = TypeAliasType('SeedContent', 'str | BinaryContent')
+"""Provider-neutral text or image/audio bytes ready for realtime history seeding."""
+
+
+async def seed_user_content(part: UserPromptPart, *, provider_name: str, supports_images: bool) -> list[SeedContent]:
+    """Normalize a `UserPromptPart` to replayable text and image content.
+
+    Image URLs are downloaded because realtime history APIs accept inline image bytes, not arbitrary
+    HTTPS URLs. `CachePoint`s are deliberately ignored, matching request-response model adapters.
+    Other file kinds cannot be represented faithfully and raise [`UserError`][pydantic_ai.exceptions.UserError].
+    """
+    content: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
+    result: list[SeedContent] = []
+    for item in content:
+        if isinstance(item, str):
+            result.append(item)
+        elif isinstance(item, TextContent):
+            result.append(item.content)
+        elif isinstance(item, CachePoint):
+            continue
+        elif isinstance(item, ImageUrl):
+            if not supports_images:
+                raise UserError(
+                    f'{provider_name} realtime history seeding does not support images. '
+                    'Remove the image from `message_history` or use a realtime provider that supports image seeding.'
+                )
+            downloaded = await download_item(item, data_format='bytes')
+            image = BinaryContent(data=downloaded['data'], media_type=downloaded['data_type'])
+            if not image.is_image:
+                raise UserError(
+                    f'`ImageUrl` resolved to unsupported media type {image.media_type!r} while seeding '
+                    f'{provider_name} realtime history. Use a URL that returns an image or filter it from '
+                    '`message_history`.'
+                )
+            result.append(image)
+        elif isinstance(item, BinaryContent):
+            if not item.is_image:
+                raise UserError(
+                    f'`BinaryContent` with media type {item.media_type!r} cannot be seeded into '
+                    f'{provider_name} realtime history. Convert it to text or an image, or filter it from '
+                    '`message_history`.'
+                )
+            if not supports_images:
+                raise UserError(
+                    f'{provider_name} realtime history seeding does not support images. '
+                    'Remove the image from `message_history` or use a realtime provider that supports image seeding.'
+                )
+            result.append(item)
+        elif isinstance(item, (AudioUrl, VideoUrl, DocumentUrl, UploadedFile)):
+            content_type = item.__class__.__name__
+            raise UserError(
+                f'`{content_type}` cannot be seeded into {provider_name} realtime history. '
+                'Convert it to text or an inline image, or filter it from `message_history`.'
+            )
+        else:
+            assert_never(item)
+    return result
+
+
+def seed_speech_content(
+    part: SpeechPart,
+    *,
+    provider_name: str,
+    supports_audio: bool,
+) -> SeedContent:
+    """Return replayable content for a `SpeechPart`, preferring its transcript.
+
+    Only retained user audio can be replayed, and only when the provider profile explicitly supports
+    it. Assistant audio cannot be inserted into any supported realtime history API.
+    """
+    if part.transcript is not None:
+        return part.transcript
+    if part.speaker == 'assistant':
+        raise UserError(
+            f'An assistant `SpeechPart` without a transcript cannot be seeded into {provider_name} realtime history. '
+            'Enable output transcription or filter the part from `message_history` before connecting.'
+        )
+    if part.audio is None:
+        raise UserError(
+            'A user `SpeechPart` without a transcript or retained audio cannot be seeded into realtime history. '
+            'Enable `input_transcription_model` or `audio_retention`, or filter the part from `message_history` '
+            'before connecting.'
+        )
+    if not part.audio.is_audio:
+        raise UserError(
+            f'`SpeechPart.audio` with media type {part.audio.media_type!r} cannot be seeded into realtime history. '
+            'Use retained audio bytes or filter the part from `message_history` before connecting.'
+        )
+    if not supports_audio:
+        raise UserError(
+            f'{provider_name} realtime history seeding does not support retained user audio. '
+            'Enable input transcription so the turn has a transcript, or filter the part from `message_history`.'
+        )
+    return part.audio
