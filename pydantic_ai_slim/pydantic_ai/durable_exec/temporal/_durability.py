@@ -20,7 +20,7 @@ from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities import DynamicCapability
+from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     WrapModelRequestHandler,
@@ -487,12 +487,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         retry semantics). Reject by class identity: if a leaf in `ctx.root_capability`
         has a type the bound chain didn't see, raise `UserError`.
 
-        Skipped when the bound tree contains a `DynamicCapability` — the resolved
-        factory result replaces the `DynamicCapability` in the run-time tree, so the
-        runtime-class check would falsely reject any class produced by the factory.
-        Issue #5253 tracks proper end-to-end durable support for `DynamicCapability`
-        toolsets; until that lands, the static class check is relaxed for any agent
-        that uses dynamic capabilities.
+        Resolved dynamic capability wrappers and their delegated leaves are exempt:
+        their toolsets are dispatched through pre-registered dynamic activities,
+        while their capability hooks always run in workflow code.
 
         No equivalent check on DBOS/Prefect: their durable units (steps, tasks) are
         plain decorated callables registered at first-use rather than worker boot, so
@@ -500,13 +497,14 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         assert ctx.root_capability is not None
 
-        if any(issubclass(cls, DynamicCapability) for cls in self._bound_capability_classes):
-            # A `DynamicCapability`'s factory result *replaces* it in the run-time tree, so any
-            # factory-produced class would look like an unauthorized runtime addition and be
-            # falsely rejected; skip the check entirely for such agents until #5253 lands.
-            return
+        runtime_capabilities = leaf_capabilities(ctx.root_capability)
+        exempt: set[int] = set()
+        for capability in runtime_capabilities:
+            if isinstance(capability, ResolvedDynamicCapability):
+                exempt.add(id(capability))
+                exempt.update(id(leaf) for leaf in leaf_capabilities(capability.wrapped))
 
-        runtime_classes = {type(cap) for cap in leaf_capabilities(ctx.root_capability)}
+        runtime_classes = {type(cap) for cap in runtime_capabilities if id(cap) not in exempt}
         # Capabilities that opt in via `_safe_at_runtime = True` (e.g. `Instrumentation`,
         # auto-injected per-run by `Agent.iter()` when `instrument=…` / `LogfirePlugin` is
         # used) don't introduce new toolsets, native tools, or model wrapping, so they

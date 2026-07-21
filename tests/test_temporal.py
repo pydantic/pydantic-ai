@@ -64,6 +64,7 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import (
     MCP,
     Capability,
+    DynamicCapability,
     Instrumentation,
     NativeTool,
     ProcessEventStream,
@@ -5790,15 +5791,9 @@ def test_durability_rejects_runtime_added_capabilities():
     bound._validate_per_run_capabilities(make_ctx(bound_chain))  # pyright: ignore[reportPrivateUsage]
 
 
-def test_durability_skips_per_run_check_when_dynamic_capability_bound():
-    """Per-run validation is skipped when the bound chain contains a `DynamicCapability`.
-
-    A `DynamicCapability` resolves to a different capability instance per run, so the
-    static-class check would falsely reject any class produced by the factory. Issue
-    #5253 tracks proper end-to-end durable support; until then, the check is relaxed.
-    """
+def test_durability_rejects_per_run_capability_when_dynamic_capability_bound():
+    """A bound `DynamicCapability` does not exempt unrelated per-run capabilities."""
     from pydantic_ai._run_context import RunContext
-    from pydantic_ai.capabilities import DynamicCapability
     from pydantic_ai.capabilities.abstract import AbstractCapability
     from pydantic_ai.capabilities.combined import CombinedCapability
     from pydantic_ai.result import RunUsage
@@ -5812,17 +5807,16 @@ def test_durability_skips_per_run_check_when_dynamic_capability_bound():
     agent = Agent(
         _durability_fn_model,
         name='dynamic_cap_test',
-        capabilities=[durability, lambda ctx: None],
+        capabilities=[durability, DynamicCapability(capability_func=lambda ctx: None, id='dyn')],
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
     assert any(issubclass(cls, DynamicCapability) for cls in bound._bound_capability_classes)  # pyright: ignore[reportPrivateUsage]
 
-    # Even with an unregistered class in the runtime chain, validation passes
-    # because a `DynamicCapability` is in the bound chain.
     runtime_chain = CombinedCapability([*agent.root_capability.capabilities, _UnregisteredCap()])
     ctx = RunContext[None](deps=None, model=_durability_fn_model, usage=RunUsage(), root_capability=runtime_chain)
-    bound._validate_per_run_capabilities(ctx)  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match='Capabilities added per-run inside a Temporal workflow'):
+        bound._validate_per_run_capabilities(ctx)  # pyright: ignore[reportPrivateUsage]
 
 
 # --- get_serialization_name returns None ---
@@ -7310,6 +7304,67 @@ async def test_durability_dynamic_toolset_in_workflow(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot('{"get_dynamic_weather":"Weather in a for Alice: sunny."}')
+
+
+@dataclass
+class _TemporalDynamicToolCapability(AbstractCapability[Any]):
+    def get_toolset(self) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any]()
+
+        @toolset.tool_plain
+        def dynamic_capability_tool() -> str:
+            assert activity.in_activity()
+            return 'called in activity'
+
+        return toolset
+
+
+def _temporal_dynamic_capability_factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+    return _TemporalDynamicToolCapability()
+
+
+_temporal_dynamic_capability_agent = Agent(
+    TestModel(),
+    name='temporal_dynamic_capability_agent',
+    capabilities=[
+        DynamicCapability(capability_func=_temporal_dynamic_capability_factory, id='dyn'),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class TemporalDynamicCapabilityWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _temporal_dynamic_capability_agent.run('Call the tool')).output
+
+
+async def test_durability_dynamic_capability_tool_runs_in_activity(client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalDynamicCapabilityWorkflow],
+        plugins=[AgentPlugin(_temporal_dynamic_capability_agent)],
+    ):
+        output = await client.execute_workflow(
+            TemporalDynamicCapabilityWorkflow.run,
+            id='test_temporal_dynamic_capability',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == '{"dynamic_capability_tool":"called in activity"}'
+
+
+def test_durability_dynamic_capability_requires_id() -> None:
+    with pytest.raises(UserError, match=r"DynamicCapability\(\.\.\., id='user-tools'\)"):
+        Agent(
+            TestModel(),
+            name='idless_dynamic_capability',
+            capabilities=[
+                DynamicCapability(capability_func=_temporal_dynamic_capability_factory),
+                TemporalDurability(),
+            ],
+        )
 
 
 # --- ToolReturn metadata round-trip ---

@@ -43,7 +43,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import MCP, Capability
+from pydantic_ai.capabilities import MCP, Capability, DynamicCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UsageLimitExceeded, UserError
@@ -2702,6 +2702,30 @@ async def test_dbos_durability_allows_runtime_function_toolset(dbos: DBOS) -> No
         'Call the runtime tool.', toolsets=[FunctionToolset(tools=[runtime_tool], id='runtime_fn')]
     )
     assert result.output == 'done'
+
+
+async def test_dbos_durability_dynamic_capability_tool_runs_inline(dbos: DBOS) -> None:
+    calls: list[str] = []
+
+    def dynamic_tool() -> str:
+        calls.append('called')
+        return 'dynamic result'
+
+    def factory(ctx: RunContext[Any]) -> Capability[Any]:
+        return Capability(tools=[dynamic_tool])
+
+    agent = Agent(
+        TestModel(),
+        name='dbos_dynamic_capability',
+        capabilities=[DynamicCapability(capability_func=factory, id='dyn'), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Call the tool')).output
+
+    assert await run_agent() == '{"dynamic_tool":"dynamic result"}'
+    assert calls == ['called']
 
 
 async def test_dbos_durability_rejects_runtime_mcp_toolset(dbos: DBOS) -> None:

@@ -12,7 +12,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
@@ -42,7 +42,15 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import MCP, Capability, Instrumentation, ProcessEventStream, ResolveModelId, Toolset
+from pydantic_ai.capabilities import (
+    MCP,
+    Capability,
+    DynamicCapability,
+    Instrumentation,
+    ProcessEventStream,
+    ResolveModelId,
+    Toolset,
+)
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext, create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -1921,6 +1929,30 @@ async def test_prefect_durability_outside_flow() -> None:
 
     result = await agent.run('Hello outside')
     assert result.output == 'Echo: Hello outside'
+
+
+async def test_prefect_durability_dynamic_capability_tool_runs_inline() -> None:
+    calls: list[str] = []
+
+    def dynamic_tool() -> str:
+        calls.append('called')
+        return 'dynamic result'
+
+    def factory(ctx: RunContext[Any]) -> Capability[Any]:
+        return Capability(tools=[dynamic_tool])
+
+    agent = Agent(
+        TestModel(),
+        name='prefect_dynamic_capability',
+        capabilities=[DynamicCapability(capability_func=factory, id='dyn'), PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Call the tool')).output
+
+    assert await run_agent() == '{"dynamic_tool":"dynamic result"}'
+    assert calls == ['called']
 
 
 def test_prefect_durability_requires_agent_name() -> None:
