@@ -28,6 +28,8 @@ from ..messages import (
     AudioUrl,
     BinaryContent,
     CachePoint,
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     DocumentUrl,
     FinishReason,
     FunctionToolCallEvent,
@@ -502,6 +504,8 @@ RealtimeEvent = TypeAliasType(
     | PartEndEvent
     | FunctionToolCallEvent
     | FunctionToolResultEvent
+    | DeferredToolRequestsEvent
+    | DeferredToolResultsEvent
     | TurnCompleteEvent
     | InputSpeechStartEvent
     | InputSpeechEndEvent
@@ -515,7 +519,9 @@ Content is streamed as the shared [`PartStartEvent`][pydantic_ai.messages.PartSt
 events (carrying [`SpeechPart`][pydantic_ai.messages.SpeechPart]s and
 [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s), tool execution as
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
-[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], and the rest as realtime
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], inline deferred resolution
+as [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] /
+[`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent], and the rest as realtime
 control-plane events.
 """
 
@@ -721,6 +727,12 @@ class RealtimeModel(AbstractModel):
     def model_name(self) -> str:
         """The model name, e.g. `gpt-realtime`."""
         raise NotImplementedError
+
+    @property
+    def base_url(self) -> str | None:
+        """The provider API base URL, when this model is backed by a provider."""
+        provider: Provider[object] | None = getattr(self, '_provider', None)
+        return provider.base_url if provider is not None else None
 
     @property
     def profile(self) -> RealtimeModelProfile:

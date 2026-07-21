@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Generator
+from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -41,6 +41,12 @@ ParallelExecutionMode = Literal['parallel', 'sequential', 'parallel_ordered_even
 _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar(
     'parallel_execution_mode', default='parallel'
 )
+
+InlineDeferredResultHandler = Callable[[DeferredToolRequests, DeferredToolResults], Awaitable[None]]
+"""Internal callback for observing a deferred call that a capability resolved inline."""
+
+ToolValidationHandler = Callable[[bool], Awaitable[None]]
+"""Internal callback for observing a tool call's argument-validation result."""
 
 
 @dataclass
@@ -775,6 +781,8 @@ class ToolManager(Generic[AgentDepsT]):
         approved: bool = False,
         metadata: Any = None,
         wrap_validation_errors: bool = True,
+        on_inline_deferred: InlineDeferredResultHandler | None = None,
+        on_validate: ToolValidationHandler | None = None,
     ) -> ToolDenied | ToolReturn[Any] | Any:
         """Handle a tool call by validating the arguments, calling the tool, and handling retries.
 
@@ -794,6 +802,8 @@ class ToolManager(Generic[AgentDepsT]):
                 state is left untouched — useful for nested callers (e.g. sandboxed
                 tool dispatch) where the call shouldn't consume the agent's retry
                 budget and the raw exception is what the caller wants to surface.
+            on_inline_deferred: Internal callback invoked when a capability resolves a deferred call inline.
+            on_validate: Internal callback invoked with the argument-validation outcome before execution.
 
         Returns:
             The tool's return value on success — possibly a [`ToolReturn`][pydantic_ai.messages.ToolReturn]
@@ -816,16 +826,28 @@ class ToolManager(Generic[AgentDepsT]):
             CallDeferred / ApprovalRequired: No handler resolved the call, or the
                 approved tool re-raised a deferral.
         """
-        validated = await self.validate_tool_call(
-            call,
-            approved=approved,
-            metadata=metadata,
-            wrap_validation_errors=wrap_validation_errors,
-        )
+        try:
+            validated = await self.validate_tool_call(
+                call,
+                approved=approved,
+                metadata=metadata,
+                wrap_validation_errors=wrap_validation_errors,
+            )
+        except UnexpectedModelBehavior:
+            if on_validate is not None:
+                await on_validate(False)
+            raise
+        if on_validate is not None:
+            await on_validate(validated.args_valid)
         try:
             return await self.execute_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
         except (CallDeferred, ApprovalRequired) as exc:
-            return await self._resolve_single_deferred(call, exc, wrap_validation_errors=wrap_validation_errors)
+            return await self._resolve_single_deferred(
+                call,
+                exc,
+                wrap_validation_errors=wrap_validation_errors,
+                on_inline_deferred=on_inline_deferred,
+            )
 
     async def resolve_deferred_tool_calls(
         self,
@@ -850,6 +872,7 @@ class ToolManager(Generic[AgentDepsT]):
         exc: CallDeferred | ApprovalRequired,
         *,
         wrap_validation_errors: bool = True,
+        on_inline_deferred: InlineDeferredResultHandler | None = None,
     ) -> ToolDenied | ToolReturn[Any] | Any:
         """Resolve a single deferred tool call inline using the capability handler.
 
@@ -900,6 +923,9 @@ class ToolManager(Generic[AgentDepsT]):
         tool_call_result = deferred_results.to_tool_call_results().get(call.tool_call_id)
         if tool_call_result is None:
             raise exc
+
+        if on_inline_deferred is not None:
+            await on_inline_deferred(requests, deferred_results)
 
         if isinstance(tool_call_result, ToolDenied):
             # Surface the denial as a return value, not an exception. Callers must

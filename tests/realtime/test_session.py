@@ -7,7 +7,7 @@ import io
 import wave
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from inline_snapshot import snapshot
@@ -27,9 +27,12 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     BinaryContent,
     BinaryImage,
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -546,6 +549,7 @@ async def test_tool_call_events_carry_real_parts() -> None:
     call_event = next(e for e in events if isinstance(e, FunctionToolCallEvent))
     result_event = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert call_event.part == ToolCallPart(tool_name='f', args='{"x": 1}', tool_call_id='tc')
+    assert call_event.args_valid is True
     result_part = result_event.part
     assert isinstance(result_part, ToolReturnPart)
     assert (result_part.tool_name, result_part.content, result_part.tool_call_id) == ('f', '42', 'tc')
@@ -569,6 +573,8 @@ async def test_invalid_json_args_reported_without_calling_tool() -> None:
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc_4', tool_name='noop', args='not json')])
     session = RealtimeSession(conn, _noop_runner)
     events = await collect_events(session)
+    call = next(e for e in events if isinstance(e, FunctionToolCallEvent))
+    assert call.args_valid is False
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert isinstance(result.part, RetryPromptPart)
     assert 'could not parse tool arguments' in str(result.part.content)
@@ -630,7 +636,7 @@ async def test_response_model_name_prefers_server_reported() -> None:
 
 
 async def test_agent_realtime_session_threads_provider_name() -> None:
-    agent: Agent[None, str] = Agent()
+    agent: Agent[object, str] = Agent()
     model = FakeRealtimeModel(FakeRealtimeConnection([Transcript(text='hi', is_final=True), TurnCompleteEvent()]))
     async with agent.realtime_session(model=model) as session:
         _ = [event async for event in session]
@@ -747,9 +753,9 @@ async def test_tool_completion_drained_between_events() -> None:
             'PartStartEvent',
             'PartEndEvent',
             'FunctionToolCallEvent',
+            'FunctionToolResultEvent',
             'PartStartEvent',
             'PartDeltaEvent',
-            'FunctionToolResultEvent',
             'PartDeltaEvent',
         ]
     )
@@ -1029,7 +1035,17 @@ async def test_send_accepts_plain_content() -> None:
         ]
     )
     assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsDatetime())])]
+        [
+            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[BinaryImage(data=b'image', media_type='image/png')],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
     )
 
 
@@ -1040,6 +1056,28 @@ async def test_send_accepts_sequence() -> None:
     await session.send(['look at this', BinaryImage(data=b'image', media_type='image/png')])
 
     assert conn.sent == [TextInput(text='look at this'), ImageInput(data=b'image', mime_type='image/png')]
+
+
+async def test_image_history_retention_samples_and_round_trips() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner, retain_images_every_n=2)
+    images = [BinaryImage(data=f'image-{index}'.encode(), media_type='image/png') for index in range(4)]
+
+    for image in images:
+        await session.send(image)
+
+    assert conn.sent == [ImageInput(data=image.data, mime_type='image/png') for image in images]
+    assert session.all_messages() == [
+        ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())]),
+        ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())]),
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_json(session.all_messages())
+    assert ModelMessagesTypeAdapter.validate_json(serialized) == session.all_messages()
+
+
+async def test_image_history_retention_must_be_positive() -> None:
+    with pytest.raises(UserError, match='`retain_images_every_n` must be at least 1'):
+        RealtimeSession(FakeRealtimeConnection([]), _noop_runner, retain_images_every_n=0)
 
 
 async def test_send_rejects_unsupported_binary_content() -> None:
@@ -1886,6 +1924,23 @@ async def test_agent_realtime_session_audio_retention_forwarded() -> None:
     assert response.parts[0].audio == _wav_content(b'\x07')
 
 
+async def test_agent_realtime_session_image_retention_forwarded() -> None:
+    agent: Agent[None, str] = Agent()
+    conn = FakeRealtimeConnection([])
+    model = FakeRealtimeModel(conn)
+    images = [BinaryImage(data=bytes([index]), media_type='image/png') for index in range(3)]
+
+    async with agent.realtime_session(model=model, retain_images_every_n=2) as session:
+        for image in images:
+            await session.send(image)
+        retained = session.new_messages()
+
+    assert retained == [
+        ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())]),
+        ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())]),
+    ]
+
+
 async def test_agent_realtime_session_additional_instructions() -> None:
     agent: Agent[None, str] = Agent(instructions='Default')
     conn = FakeRealtimeConnection([TurnCompleteEvent()])
@@ -1968,6 +2023,8 @@ async def test_agent_realtime_session_invalid_args_return_retry_message() -> Non
     async with agent.realtime_session(model=model) as session:
         events = [e async for e in session]
 
+    call = next(e for e in events if isinstance(e, FunctionToolCallEvent))
+    assert call.args_valid is False
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert isinstance(result.part, RetryPromptPart)
     assert 'validation error' in result.part.model_response()
@@ -1983,6 +2040,57 @@ class _ToolRoundConnection(FakeRealtimeConnection):
         while len(self.sent) < 1:
             await asyncio.sleep(0)
         yield ToolCall(tool_call_id='tc2', tool_name='double', args='{"x": 2}')
+
+
+class _EnqueueConnection(FakeRealtimeConnection):
+    """Hold the turn boundary until the tool result has been sent."""
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield ToolCall(tool_call_id='tc', tool_name='queue_followup', args='{}')
+        while not any(isinstance(item, ToolResult) for item in self.sent):
+            await asyncio.sleep(0)
+        yield TurnCompleteEvent()
+
+
+@pytest.mark.parametrize(
+    ('priority', 'sent_types'),
+    [
+        ('asap', ['TextInput', 'ToolResult']),
+        ('when_idle', ['ToolResult', 'TextInput']),
+    ],
+)
+async def test_agent_realtime_session_delivers_enqueued_text(
+    priority: Literal['asap', 'when_idle'], sent_types: list[str]
+) -> None:
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool
+    def queue_followup(ctx: RunContext[object]) -> str:
+        assert ctx.enqueue('follow-up context', priority=priority) is not None
+        return 'queued'
+
+    conn = _EnqueueConnection([])
+    async with agent.realtime_session(model=FakeRealtimeModel(conn)) as session:
+        _ = [event async for event in session]
+
+    assert [type(item).__name__ for item in conn.sent] == sent_types
+    assert session.new_messages()[-1] == ModelRequest(
+        parts=[UserPromptPart(content='follow-up context', timestamp=IsDatetime())]
+    )
+
+
+async def test_agent_realtime_session_rejects_non_text_enqueue() -> None:
+    agent: Agent[object, str] = Agent()
+
+    @agent.tool
+    def queue_image(ctx: RunContext[object]) -> str:
+        ctx.enqueue(BinaryImage(data=b'image', media_type='image/png'))
+        return 'unreachable'  # pragma: no cover
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='queue_image', args='{}')])
+    async with agent.realtime_session(model=FakeRealtimeModel(conn)) as session:
+        with pytest.raises(UserError, match='currently supports one plain-text prompt per call'):
+            _ = [event async for event in session]
 
 
 async def test_agent_realtime_session_retry_limit_advances_across_tool_rounds() -> None:
@@ -2071,6 +2179,13 @@ async def test_agent_realtime_session_denied_tool_returns_denial_message() -> No
     async with agent.realtime_session(model=model, capabilities=[HandleDeferredToolCalls(handler=deny)]) as session:
         events = [e async for e in session]
 
+    lifecycle = [event for event in events if isinstance(event, (DeferredToolRequestsEvent, DeferredToolResultsEvent))]
+    assert lifecycle == [
+        DeferredToolRequestsEvent(
+            DeferredToolRequests(approvals=[ToolCallPart(tool_name='danger', args={}, tool_call_id='tc')])
+        ),
+        DeferredToolResultsEvent(DeferredToolResults(approvals={'tc': False})),
+    ]
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert isinstance(result.part, ToolReturnPart)
     assert result.part.outcome == 'denied'

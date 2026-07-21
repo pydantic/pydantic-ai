@@ -2975,6 +2975,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         conversation_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session backed by the agent's tools.
 
@@ -3042,6 +3043,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             audio_retention: How much spoken audio the session retains in its history, on top of
                 transcripts. Defaults to `'transcript_only'` (drop audio bytes); see
                 [`AudioRetention`][pydantic_ai.realtime.AudioRetention].
+            retain_images_every_n: Keep one of every `N` images sent during the session in message
+                history. Defaults to `1`, which keeps every image. Increase this for high-rate camera
+                or screen streams to trade complete visual history for lower memory use.
         """
         from ..realtime import RealtimeModel, RealtimeSession, infer_realtime_model
 
@@ -3203,10 +3207,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     instrumentation=session_instrumentation_settings,
                     model_name=model.model_name,
                     provider_name=model.system,
+                    provider_url=model.base_url,
                     agent_name=self.name,
                     usage=run_context.usage,
                     usage_limits=usage_limits,
                     audio_retention=audio_retention,
+                    retain_images_every_n=retain_images_every_n,
                     message_history=message_history,
                     profile=model_profile,
                     conversation_id=conversation_id,

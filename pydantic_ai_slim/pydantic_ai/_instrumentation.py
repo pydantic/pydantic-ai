@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from pydantic_ai.messages import ModelMessage, ModelResponse
-    from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+    from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.settings import ModelSettings
 
@@ -131,13 +131,13 @@ def safe_to_json(value: object) -> bytes:
         return json.dumps(value, separators=(',', ':')).encode()
 
 
-def model_attributes(model: Model) -> dict[str, AttributeValue]:
+def provider_attributes(system: str, base_url: str | None = None) -> dict[str, AttributeValue]:
+    """Build the provider and server attributes shared by classic and realtime `chat` spans."""
     attributes: dict[str, AttributeValue] = {
-        GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,  # New OTel standard attribute
-        GEN_AI_SYSTEM_ATTRIBUTE: model.system,  # Preserved for backward compatibility (deprecated)
-        GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
+        GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,  # New OTel standard attribute
+        GEN_AI_SYSTEM_ATTRIBUTE: system,  # Preserved for backward compatibility (deprecated)
     }
-    if base_url := model.base_url:
+    if base_url:
         try:
             parsed = urlparse(base_url)
         except Exception:  # pragma: no cover
@@ -148,6 +148,30 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
             if parsed.port:  # pragma: no branch
                 attributes['server.port'] = parsed.port
 
+    return attributes
+
+
+def model_attributes(model: AbstractModel) -> dict[str, AttributeValue]:
+    return {
+        **provider_attributes(model.system, model.base_url),
+        GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
+    }
+
+
+def model_metric_attributes(
+    provider_name: str | None,
+    request_model: AttributeValue | None,
+    response_model: AttributeValue | None,
+) -> dict[str, AttributeValue]:
+    """Build the dimensions shared by classic and realtime per-response metrics."""
+    attributes: dict[str, AttributeValue] = {'gen_ai.operation.name': 'chat'}
+    if provider_name is not None:
+        attributes[GEN_AI_PROVIDER_NAME_ATTRIBUTE] = provider_name
+        attributes[GEN_AI_SYSTEM_ATTRIBUTE] = provider_name
+    if request_model is not None:
+        attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE] = request_model
+    if response_model is not None:
+        attributes['gen_ai.response.model'] = response_model
     return attributes
 
 
@@ -238,6 +262,22 @@ def response_attributes(
     return attributes
 
 
+def response_price_calculation(response: ModelResponse) -> PriceCalculation | None:
+    """Calculate a response price without allowing pricing-data failures to break a run."""
+    if response.model_name is None:
+        return None
+    try:
+        return response.cost()
+    except LookupError:
+        return None
+    except Exception as e:
+        warnings.warn(
+            f'Failed to get cost from response: {type(e).__name__}: {e}',
+            CostCalculationFailedWarning,
+        )
+        return None
+
+
 class _FinishModelRequestSpan(Protocol):
     """The `finish` callback yielded by `open_model_request_span`.
 
@@ -314,28 +354,14 @@ def open_model_request_span(
                 price_calculation = None
 
                 def _record_metrics() -> None:
-                    metric_attributes = {
-                        GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,
-                        GEN_AI_SYSTEM_ATTRIBUTE: system,
-                        'gen_ai.operation.name': operation,
-                        'gen_ai.request.model': request_model,
-                        'gen_ai.response.model': response_model,
-                    }
+                    metric_attributes = model_metric_attributes(system, request_model, response_model)
                     settings.record_metrics(response, price_calculation, metric_attributes, time_to_first_chunk)
 
                 record_metrics = _record_metrics
 
                 # Compute cost before the `is_recording()` gate so `_record_metrics`
                 # always emits cost data, even when the span is dropped by sampling.
-                try:
-                    price_calculation = response.cost()
-                except LookupError:
-                    pass
-                except Exception as e:
-                    warnings.warn(
-                        f'Failed to get cost from response: {type(e).__name__}: {e}',
-                        CostCalculationFailedWarning,
-                    )
+                price_calculation = response_price_calculation(response)
 
                 if not span.is_recording():
                     return

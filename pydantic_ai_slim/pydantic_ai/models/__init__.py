@@ -250,6 +250,11 @@ class AbstractModel(ABC):
         raise NotImplementedError()
 
     @property
+    def base_url(self) -> str | None:
+        """The base URL for the provider API, if available."""
+        return None
+
+    @property
     def model_id(self) -> str:
         """The fully qualified model name in `'provider:model_name'` format."""
         return f'{self.system}:{self.model_name}'
@@ -724,11 +729,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
 
         return resolved
-
-    @property
-    def base_url(self) -> str | None:
-        """The base URL for the provider API, if available."""
-        return None
 
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
         """Raise `UserError` if an `UploadedFile` references a different provider than this model."""

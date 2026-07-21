@@ -25,6 +25,8 @@ from inline_snapshot import snapshot
 
 pytest.importorskip('opentelemetry.sdk')  # only installed via the optional `logfire` extra
 
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import Histogram, InMemoryMetricReader
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -116,6 +118,10 @@ class _Model(RealtimeModel):
         return 'openai'
 
     @property
+    def base_url(self) -> str:
+        return 'https://api.openai.com/v1'
+
+    @property
     def profile(self) -> RealtimeModelProfile:
         return RealtimeModelProfile(
             supports_image_input=True,
@@ -140,15 +146,27 @@ class _Model(RealtimeModel):
 def _settings(
     *, include_content: bool = True, use_aggregated_usage_attribute_names: bool = True
 ) -> tuple[InstrumentationSettings, InMemorySpanExporter]:
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    settings = InstrumentationSettings(
-        tracer_provider=provider,
+    settings, exporter, _ = _settings_with_metrics(
         include_content=include_content,
         use_aggregated_usage_attribute_names=use_aggregated_usage_attribute_names,
     )
     return settings, exporter
+
+
+def _settings_with_metrics(
+    *, include_content: bool = True, use_aggregated_usage_attribute_names: bool = True
+) -> tuple[InstrumentationSettings, InMemorySpanExporter, InMemoryMetricReader]:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    metric_reader = InMemoryMetricReader()
+    settings = InstrumentationSettings(
+        tracer_provider=provider,
+        meter_provider=MeterProvider(metric_readers=[metric_reader]),
+        include_content=include_content,
+        use_aggregated_usage_attribute_names=use_aggregated_usage_attribute_names,
+    )
+    return settings, exporter, metric_reader
 
 
 async def _ok_runner(name: str, args: dict[str, Any], call_id: str) -> str:
@@ -244,6 +262,8 @@ async def test_session_and_tool_spans_with_usage() -> None:
     chat = spans['chat gpt-realtime']
     assert chat.attributes is not None
     assert chat.attributes['gen_ai.output.type'] == 'speech'
+    assert chat.attributes['gen_ai.provider.name'] == 'openai'
+    assert chat.attributes['server.address'] == 'api.openai.com'
     assert sess.context is not None
     assert chat.parent is not None and chat.parent.span_id == sess.context.span_id
     assert tool.parent is not None and tool.parent.span_id == sess.context.span_id
@@ -371,16 +391,16 @@ async def test_conversation_span_tree() -> None:
 
     # Two turns → three `chat` spans (the first turn splits around the tool call) plus one
     # `execute_tool` span, all direct children of the one session span. Children are ordered by start
-    # time: the tool span starts last here because the synthetic connection emits every event without
-    # yielding, so the concurrent tool only runs after the pump has drained and opened all `chat` spans.
+    # time: validation completes before the call event is surfaced, so the tool begins after the first
+    # `chat` span and remains a sibling of the later response spans.
     assert _span_tree(exporter) == snapshot(
         [
             {
                 'realtime gpt-realtime': [
                     {'chat gpt-realtime': []},
-                    {'chat gpt-realtime': []},
-                    {'chat gpt-realtime': []},
                     {'execute_tool get_weather': []},
+                    {'chat gpt-realtime': []},
+                    {'chat gpt-realtime': []},
                 ]
             }
         ]
@@ -668,6 +688,7 @@ async def test_chat_span_matches_instrumented_model_shape() -> None:
         instrumentation=settings,
         model_name='gpt-realtime',
         provider_name='openai',
+        provider_url='https://api.openai.com:8443/v1',
     )
     _ = await collect_events(session)
 
@@ -678,8 +699,12 @@ async def test_chat_span_matches_instrumented_model_shape() -> None:
     assert chat.attributes['gen_ai.response.model'] == 'gpt-realtime'
     assert chat.attributes['gen_ai.provider.name'] == 'openai'
     assert chat.attributes['gen_ai.system'] == 'openai'
+    assert chat.attributes['server.address'] == 'api.openai.com'
+    assert chat.attributes['server.port'] == 8443
     assert chat.attributes['gen_ai.response.id'] == 'resp-1'
     assert chat.attributes['gen_ai.response.finish_reasons'] == ('stop',)
+    cost = chat.attributes['operation.cost']
+    assert isinstance(cost, (int, float)) and cost > 0
     # Per-response usage under the standard (non-aggregated) namespace, exactly as the classic path.
     assert chat.attributes['gen_ai.usage.input_tokens'] == 10
     assert chat.attributes['gen_ai.usage.output_tokens'] == 4
@@ -695,15 +720,84 @@ async def test_chat_span_matches_instrumented_model_shape() -> None:
         },
     ]
     assert 'gen_ai.input.messages' in json.loads(str(chat.attributes['logfire.json_schema']))['properties']
-    # Honest omissions vs. the classic `chat` span: no server address, request parameters/settings,
-    # or cost (the session has no provider base URL and does not calculate per-response cost).
+    # Honest omissions vs. the classic `chat` span: no per-turn request parameters/settings.
     for omitted in (
-        'server.address',
         'model_request_parameters',
         'gen_ai.request.temperature',
-        'operation.cost',
     ):
         assert omitted not in chat.attributes
+
+
+async def test_per_response_token_metrics_match_classic_dimensions() -> None:
+    settings, _, metric_reader = _settings_with_metrics()
+    conn = _Connection(
+        [
+            InputTranscript(text='first', is_final=True),
+            Transcript(text='one'),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            TurnCompleteEvent(),
+            InputTranscript(text='second', is_final=True),
+            Transcript(text='two'),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=7, output_tokens=3)),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        provider_name='openai',
+        provider_url='https://api.openai.com/v1',
+    )
+    _ = await collect_events(session)
+
+    metrics_data = metric_reader.get_metrics_data()
+    assert metrics_data is not None
+    token_metric = next(
+        metric
+        for resource in metrics_data.resource_metrics
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+        if metric.name == 'gen_ai.client.token.usage'
+    )
+    assert isinstance(token_metric.data, Histogram)
+    points: dict[str, dict[str, Any]] = {}
+    for point in token_metric.data.data_points:
+        attributes = dict(point.attributes or {})
+        token_type = attributes['gen_ai.token.type']
+        assert isinstance(token_type, str)
+        points[token_type] = {
+            'attributes': attributes,
+            'count': point.count,
+            'sum': point.sum,
+        }
+    assert points == {
+        'input': {
+            'attributes': {
+                'gen_ai.provider.name': 'openai',
+                'gen_ai.system': 'openai',
+                'gen_ai.operation.name': 'chat',
+                'gen_ai.request.model': 'gpt-realtime',
+                'gen_ai.response.model': 'gpt-realtime',
+                'gen_ai.token.type': 'input',
+            },
+            'count': 2,
+            'sum': 17,
+        },
+        'output': {
+            'attributes': {
+                'gen_ai.provider.name': 'openai',
+                'gen_ai.system': 'openai',
+                'gen_ai.operation.name': 'chat',
+                'gen_ai.request.model': 'gpt-realtime',
+                'gen_ai.response.model': 'gpt-realtime',
+                'gen_ai.token.type': 'output',
+            },
+            'count': 2,
+            'sum': 7,
+        },
+    }
 
 
 async def test_include_content_false_redacts_chat_span_messages() -> None:

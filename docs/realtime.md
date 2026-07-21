@@ -194,6 +194,8 @@ Spoken content (both the user's and the model's) streams as a
 | [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | The completed part: speech has `transcript` and optional retained `audio`, text has `content`, and tool parts carry their own fields. |
 | [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] | The session began executing a tool the model requested (carries the `ToolCallPart`). |
 | [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | The tool finished and produced a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]. Normally the result is sent to the model; a provider-cancelled call records a synthetic cancellation result only in local history. |
+| [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | The original deferred or approval-required requests resolved by an inline capability handler. |
+| [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | The inline handler supplied results and normal tool processing continues. |
 
 The remaining realtime control-plane events:
 
@@ -215,14 +217,15 @@ extraction, or follow-up. Spoken turns are recorded as
 [`SpeechPart`][pydantic_ai.messages.SpeechPart]s; everything else is the
 ordinary [`ModelRequest`][pydantic_ai.messages.ModelRequest] /
 [`ModelResponse`][pydantic_ai.messages.ModelResponse] shape, including tool calls and results.
-Images and video frames streamed with `send()` are provider context but are not stored in session
-history; retain them separately if a later handoff must include them.
+Images and video frames streamed with `send()` are recorded as user image turns by default, so a
+later handoff includes the visual context the realtime model received. For high-rate camera or screen
+streams, use `retain_images_every_n` to sample the recorded frames and limit history memory use.
 
 The session exposes two snapshots (each a copy, so it won't change as the session continues):
 
 | Method | Returns |
 | --- | --- |
-| [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] | The seeded history plus completed spoken/text turns and tool rounds recorded by this session. |
+| [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] | The seeded history plus completed spoken/text turns, retained images, and tool rounds recorded by this session. |
 | [`session.new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] | Only the recorded messages created during this session. |
 
 Seed a session with `message_history=` and hand its history off to a text agent afterwards:
@@ -284,6 +287,16 @@ only finalized history audio is wrapped in a WAV container.
 When you [hand off](#delegating-to-a-text-agent) to a standard model, retained user audio is forwarded
 to models whose profile declares audio-input support; other models receive the transcript instead.
 Assistant speech is always handed off as transcript text.
+
+### Retaining images
+
+`retain_images_every_n=1` (the default) records every image sent with
+[`session.send()`][pydantic_ai.realtime.RealtimeSession.send]. Set it to `N > 1` to keep the first
+image and then one of every `N` sent images. The provider still receives every frame; sampling only
+affects local [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] and
+[`new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] history. Keeping every image is
+the least surprising choice for one-off vision prompts, while sampling avoids unbounded memory growth
+for continuous video.
 
 ## Configuring the session
 
@@ -831,8 +844,9 @@ ones that are specific to the request-response graph (faking them would be misle
 | `retries` | ❌ no per-session argument or output-validation retries; agent-level tool retries still apply |
 | `deferred_tool_results`, `event_stream_handler` | ❌ graph-only (the session *is* the event stream) |
 
-Realtime-only: `audio_retention` keeps spoken audio bytes on the history parts. Tool calls always run
-concurrently with the session.
+Realtime-only: `audio_retention` keeps spoken audio bytes on the history parts, while
+`retain_images_every_n` controls image-history sampling. Tool calls always run concurrently with the
+session.
 
 [Deferred tools](deferred-tools.md) work in a session to the extent they can be resolved *live*: a
 [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability handler is
@@ -841,10 +855,13 @@ invoked inline when a tool [requires approval](deferred-tools.md) or raises
 the spot. What has no realtime analog is the graph's *pause*: a session can't end with a
 `DeferredToolRequests` output and wait for out-of-band results, so when no handler resolves the
 call, the model instead receives an explanation that the tool can't be completed during a realtime
-session, and the conversation continues. Similarly,
-[`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] raises when called from a realtime tool —
-there is no between-steps delivery point; send follow-up context into the conversation with
-[`session.send()`][pydantic_ai.realtime.RealtimeSession.send] instead.
+session, and the conversation continues.
+
+[`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] accepts one plain-text prompt per call from a
+realtime tool. The default `priority='asap'` sends it into the live conversation promptly;
+`priority='when_idle'` sends it after the next [`TurnCompleteEvent`](#events). Delivered text is
+recorded as a normal user turn. Multimodal content and prebuilt message/part sequences are rejected
+because the realtime live-input channel cannot preserve their full classic-run semantics.
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
@@ -896,6 +913,9 @@ What does **not** run in a session (no corresponding stage):
   [event stream](#events), not an agent-run one,
 - output hooks (`*_output_validate`, `*_output_process`, `prepare_output_tools`) — a session has no
   `output_type` ([delegate](#delegating-to-a-text-agent) structured output to a text agent),
+- history-processing hooks — `ProcessHistory` and other classic-run history processors are not
+  applied to `message_history` before realtime session seeding; the supplied history is projected
+  directly into provider seed items,
 - deferred capability loading.
 
 So a capability that scopes, guards, or instruments **tools**, or contributes tools/toolsets/native
@@ -948,6 +968,7 @@ Some capabilities are intentionally out of scope:
 - **Session resumption beyond automatic reconnect.** You can't persist a handle and resume a session in a later process; recovery is limited to in-process [reconnection](#reconnecting).
 - **Bounded structured-output runs.** A session has no `output_type` or `session.run()` with an output schema — [delegate to a text agent](#delegating-to-a-text-agent) for structured results.
 - **Realtime-specific capability hooks.** Capabilities run once for setup and apply their instructions, toolsets, and native tools; tool-lifecycle hooks also run, but there are no before/after-exchange hooks.
+- **History processing during realtime seeding.** History processors run on classic agent runs, not when a realtime session seeds `message_history`; preprocess the history before passing it when redaction, summarization, or filtering is required.
 - **Dynamic instructions mid-session.** Instructions are resolved once at connect and not re-evaluated during the session.
 - **Provider-limited audio replay when seeding history.** OpenAI and Azure Voice Live can replay retained user audio when a [`SpeechPart`][pydantic_ai.messages.SpeechPart] has no transcript. Gemini and xAI cannot seed retained audio, and no provider can seed assistant audio; use transcripts or filter those parts before connecting (see [Message history](#message-history)).
 - **Proactive resume before Gemini's session cap.** Gemini Live signals an upcoming disconnect (`GoAway`) near its session-length limit, but the session only [reconnects](#reconnecting) after a drop.
