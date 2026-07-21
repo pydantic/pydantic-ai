@@ -26,8 +26,8 @@ These controls belong to `ImageGenerationSettings` and the direct image adapters
 `fallback_model` path, direct-only geometry values are ignored with a warning that points users to
 `native=False, local='provider:image-model'`.
 
-The name is `dimensions`, not `resolution`, because xAI already uses “resolution” for its `1k`/`2k`
-quality tiers and Google uses “image size” for `512`/`1K`/`2K`/`4K` tiers. A `(width, height)` tuple
+The name is `dimensions`, not `resolution`, because xAI already uses "resolution" for its `1k`/`2k`
+quality tiers and Google uses "image size" for `512`/`1K`/`2K`/`4K` tiers. A `(width, height)` tuple
 also makes the unit and ordering explicit.
 
 ## Provider Ownership
