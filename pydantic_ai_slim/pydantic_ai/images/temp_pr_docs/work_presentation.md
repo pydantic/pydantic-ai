@@ -263,7 +263,9 @@ unrelated changes in `models/openai.py`, `models/google.py`, native tool schemas
 The Python constructor accepts runtime `ImageGenerator`, `ImageGenerationModel`, `Tool`, and callable objects. Agent
 specs cannot serialize those objects, so `ImageGeneration.from_spec()` exposes the same parameter names but restricts
 `local` to a serializable direct model name, `False`, or `None`. A test enforces parameter-name parity and snapshots the
-schema. This follows the existing `MCP.from_spec()` separation and avoids a one-off JSON-schema suppression.
+schema. JSON and YAML decode `dimensions` as a two-item list, so `from_spec()` normalizes it to the tuple required by the
+runtime settings contract. This follows the existing `MCP.from_spec()` separation and avoids a one-off JSON-schema
+suppression.
 
 ## Instrumentation and Privacy
 

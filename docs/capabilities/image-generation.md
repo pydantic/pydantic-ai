@@ -71,4 +71,14 @@ with `local='provider:image-model'` to apply the [direct geometry settings](../i
 Direct model names such as `local='openai:gpt-image-1.5'` can be represented in JSON or YAML agent specs. Runtime
 objects accepted by the Python constructor — `ImageGenerator`, `ImageGenerationModel`, `Tool`, and callables — are not
 serializable and must be configured in Python. [`from_spec()`][pydantic_ai.capabilities.ImageGeneration.from_spec]
-keeps that serializable subset explicit while exposing the same setting names.
+keeps that serializable subset explicit while exposing the same setting names. Write `dimensions` as the two-item array
+used by JSON and YAML; Pydantic AI converts it to the `(width, height)` tuple used by the Python API:
+
+```yaml
+model: anthropic:claude-sonnet-4-6
+capabilities:
+  - ImageGeneration:
+      native: false
+      local: openai:gpt-image-2
+      dimensions: [1280, 720]
+```

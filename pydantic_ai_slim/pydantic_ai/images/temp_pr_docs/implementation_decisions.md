@@ -556,6 +556,18 @@ because they explain why the implementation changed.
   distinction usable without making every signature unmanageably long.
 - **Validation:** documentation examples, Ruff, Pyright, MkDocs build, and generated anchor links pass.
 
+### DEC-060: Normalize Agent Spec dimensions at the serialization boundary
+
+- **Status:** implemented after edge-case review.
+- **Problem:** JSON and YAML represent `(width, height)` as an array. `Agent.from_spec()` passed that decoded list through
+  `ImageGeneration.from_spec()` unchanged, while the direct settings validator requires the public Python tuple shape.
+- **Decision:** keep `ImageDimensions = tuple[int, int]` and the fixed two-item Agent Spec schema. Normalize decoded lists
+  to tuples inside `ImageGeneration.from_spec()` before constructing the runtime capability.
+- **Reason:** `from_spec()` owns the serialized/runtime boundary. Accepting lists throughout the direct image API would
+  widen a public contract only to accommodate the wire representation of Agent Specs.
+- **Validation:** a public `Agent.from_spec()` regression test supplies JSON/YAML-shaped `[1280, 720]` and asserts that
+  the resulting capability stores `(1280, 720)` and can resolve its direct image toolset.
+
 ## Questions to Resolve with Maintainers
 
 The current implementation is strongest where provider contracts are verified and intentionally conservative. Review is

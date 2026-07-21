@@ -214,12 +214,32 @@ def test_agent_from_spec_direct_image_generation():
     agent = Agent.from_spec(
         {
             'model': 'test',
-            'capabilities': [{'ImageGeneration': {'native': False, 'local': 'openai:gpt-image-1.5'}}],
+            'capabilities': [
+                {
+                    'ImageGeneration': {
+                        'native': False,
+                        'local': 'openai:gpt-image-1.5',
+                        'dimensions': [1280, 720],
+                    }
+                }
+            ],
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
     cap = next(c for c in children if isinstance(c, ImageGeneration))
+    assert cap.dimensions == (1280, 720)
+    assert isinstance(cap.dimensions, tuple)
     assert cap.get_toolset() is not None
+
+
+def test_agent_from_spec_rejects_invalid_image_dimensions_length():
+    with pytest.raises(ValueError, match='`dimensions` must contain exactly two integers'):
+        Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [{'ImageGeneration': {'local': False, 'dimensions': [1280]}}],
+            }
+        )
 
 
 def test_agent_from_spec_web_fetch():

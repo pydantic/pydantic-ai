@@ -272,6 +272,11 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         represented in an agent spec. A direct image model name is serializable and can be passed
         as `local='provider:model'`.
         """
+        if isinstance(dimensions, list):
+            if len(dimensions) != 2:
+                raise UserError('Image generation `dimensions` must contain exactly two integers')
+            dimensions = (dimensions[0], dimensions[1])
+
         return cls(
             native=native,
             local=local,
