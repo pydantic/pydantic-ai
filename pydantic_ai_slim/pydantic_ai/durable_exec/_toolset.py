@@ -8,6 +8,7 @@ from pydantic import Discriminator, Tag
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -50,9 +51,7 @@ class _ModelRetry:
 
 
 def _result_discriminator(value: Any) -> str:
-    if isinstance(value, ToolReturn) or (
-        isinstance(value, dict) and value.get('kind') == 'tool-return'  # pyright: ignore[reportUnknownMemberType]
-    ):
+    if isinstance(value, ToolReturn) or (is_str_dict(value) and value.get('kind') == 'tool-return'):
         return 'tool-return'
     return 'content'
 
@@ -65,16 +64,30 @@ _ToolReturnResult = Annotated[
 
 @dataclass
 class _ToolReturn:
+    """Legacy wire shape retained for decoding in-flight durable executions."""
+
     result: _ToolReturnResult
     kind: Literal['tool_return'] = 'tool_return'
 
 
-CallToolResult = Annotated[_ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn, Discriminator('kind')]
+@dataclass
+class _ToolContentResult:
+    result: ToolReturnContent
+    kind: Literal['tool_content_result'] = 'tool_content_result'
+
+
+CallToolResult = Annotated[
+    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn | _ToolContentResult,
+    Discriminator('kind'),
+]
 
 
 async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
     try:
-        return _ToolReturn(result=await coro)
+        result = await coro
+        if is_str_dict(result) and result.get('kind') == 'tool-return':
+            return _ToolContentResult(result=result)
+        return _ToolReturn(result=result)
     except ApprovalRequired as exc:
         return _ApprovalRequired(metadata=exc.metadata)
     except CallDeferred as exc:
@@ -84,7 +97,7 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
 
 
 def unwrap_tool_call_result(result: CallToolResult) -> Any:
-    if isinstance(result, _ToolReturn):
+    if isinstance(result, _ToolReturn | _ToolContentResult):
         return result.result
     if isinstance(result, _ApprovalRequired):
         raise ApprovalRequired(metadata=result.metadata)
@@ -144,8 +157,7 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
         """The engine's base per-operation config for this toolset (e.g. a Temporal `ActivityConfig`)."""
 
     @property
-    def id(self) -> str:
-        assert self.wrapped.id is not None
+    def id(self) -> str | None:
         return self.wrapped.id
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:

@@ -108,11 +108,11 @@ Because the same agent works inside and outside a Prefect flow, [`PrefectDurabil
 
 For more information on how to use Prefect in Python applications, see their [Python documentation](https://docs.prefect.io/v3/how-to-guides/workflows/write-and-run).
 
-### Wrapper-agent path
+### Wrapper-agent path (deprecated)
 
-[`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] remains supported as the wrapper-agent alternative to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability].
+!!! warning "Deprecated"
+    [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] is the original wrapper-agent path for Prefect integration and will be removed in v3. New code should use the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] capability shown above.
 
-!!! warning "Migration"
     **When migrating, you must wrap the run in a flow yourself.** `PrefectAgent` wrapped `run` / `run_sync` as a Prefect flow automatically; `PrefectDurability` deliberately does not — a run is only durable when `agent.run()` is called inside your own `@flow`. Porting the constructor arguments but calling `agent.run()` directly produces a run that works but is **not durable**.
 
 Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] to get a durable agent variant that routes model requests, tool calls, and MCP communication through Prefect tasks:

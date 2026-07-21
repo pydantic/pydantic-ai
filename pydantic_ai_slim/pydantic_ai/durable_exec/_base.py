@@ -314,9 +314,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         result to rebuild the same `Model` on the other side via
         `_resolve_model_for_request`.
 
-        Instances are matched by identity after stripping `WrapperModel` layers,
-        so e.g. an `InstrumentedModel`-wrapped default still takes the default's
-        fast path. The `model_id` fallback covers models built from a run-time
+        Exact registered instances are matched before stripping `WrapperModel` layers,
+        so a registered behavior-changing wrapper keeps its own ID while an unregistered
+        `InstrumentedModel`-wrapped default still takes the default's fast path. The
+        `model_id` fallback covers models built from a run-time
         string (via `resolve_model_id`) and models an outer capability swaps in
         via `before_model_request`: the worker rebuilds them by looking the
         `model_id` up in the registry, then falling back to the `resolve_model_id`
@@ -325,6 +326,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         can rebuild — a pre-built instance with a custom provider, client, or
         settings that isn't registered in `models=` will not survive it faithfully.
         """
+        for model_id, registered in self._models_by_id.items():
+            if registered is model:
+                return None if model_id == 'default' else model_id
+
         unwrapped = unwrap_model(model)
         for model_id, registered in self._models_by_id.items():
             if unwrap_model(registered) is unwrapped:

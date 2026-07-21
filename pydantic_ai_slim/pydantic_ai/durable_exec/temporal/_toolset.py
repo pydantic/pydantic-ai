@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import ConfigDict, with_config
+from pydantic.errors import PydanticUserError
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 from typing_extensions import Self
 
@@ -18,6 +21,7 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -112,6 +116,15 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         return await self._wrap_call_tool_result(toolset.call_tool(name, args_dict, ctx, tool))
 
 
+def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
+    """Return a copy of `retry_policy` with the framework's non-retryable errors ensured."""
+    retry_policy = copy.copy(retry_policy) if retry_policy else RetryPolicy()
+    existing = retry_policy.non_retryable_error_types or []
+    additional = [UserError.__name__, PydanticUserError.__name__, UnexpectedModelBehavior.__name__]
+    retry_policy.non_retryable_error_types = [*existing, *(name for name in additional if name not in existing)]
+    return retry_policy
+
+
 def resolve_tool_activity_config(
     tool: ToolsetTool[Any] | None,
     tool_name: str,
@@ -123,7 +136,7 @@ def resolve_tool_activity_config(
     `tool_activity_config` dict keyed by tool name. Returns an `ActivityConfig` dict
     (possibly empty), or `False` to skip activity wrapping.
     """
-    return cast(
+    config = cast(
         'ActivityConfig | Literal[False]',
         resolve_tool_durable_config(
             tool,
@@ -133,6 +146,12 @@ def resolve_tool_activity_config(
             config_type_label='ActivityConfig',
         ),
     )
+    if config is False:
+        return False
+    config = copy.copy(config)
+    if 'retry_policy' in config:
+        config['retry_policy'] = with_non_retryable_errors(config.get('retry_policy'))
+    return config
 
 
 def toolset_temporal_activities(toolset: AbstractToolset[Any]) -> list[Callable[..., Any]]:

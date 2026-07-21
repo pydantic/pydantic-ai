@@ -6479,6 +6479,27 @@ def test_completed_streamed_response_deprecated_positional_init(
     assert stream.model_request_parameters is replay_mrp
 
 
+async def test_completed_streamed_response_deprecated_replay_events(
+    replay_mrp: models.ModelRequestParameters, replay_response: ModelResponse
+) -> None:
+    with pytest.warns(PydanticAIDeprecationWarning) as warning_records:
+        stream = CompletedStreamedResponse(  # pyright: ignore[reportDeprecated]
+            replay_mrp,
+            replay_response,
+            replay_events=True,
+        )
+    assert any('`replay_events`' in str(warning.message) for warning in warning_records)
+    assert [event async for event in stream]
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='`replay_events`'):
+        keyword_stream = CompletedStreamedResponse(  # pyright: ignore[reportDeprecated]
+            model_request_parameters=replay_mrp,
+            response=replay_response,
+            replay_events=True,
+        )
+    assert [event async for event in keyword_stream]
+
+
 def test_completed_streamed_response_deprecated_import_path() -> None:
     """The pre-v3 `pydantic_ai.models.wrapper` import path still works, with a warning.
 

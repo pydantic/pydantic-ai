@@ -34,7 +34,7 @@ def resolve_tool_task_config(
                     f'(`TaskConfig`) or `False`, got {type(metadata_config).__name__}.'
                 )
             return cast('TaskConfig', metadata_config)
-    # Fallback: per-tool dict passed to `PrefectAgent`. An explicit `None`
+    # Fallback: per-tool dict passed to the deprecated `PrefectAgent`. An explicit `None`
     # disables wrapping; a missing key means "use the base config".
     if tool_name in tool_task_config:
         fallback = tool_task_config[tool_name]

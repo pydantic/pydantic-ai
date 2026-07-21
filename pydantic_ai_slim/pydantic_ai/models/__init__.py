@@ -1052,6 +1052,27 @@ class CompletedStreamedResponse(StreamedResponse):
     ) -> None: ...
 
     @overload
+    @deprecated('Use `events` instead of `replay_events`.')
+    def __init__(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        response: ModelResponse,
+        /,
+        *,
+        replay_events: bool = False,
+    ) -> None: ...
+
+    @overload
+    @deprecated('Use `events` instead of `replay_events`.')
+    def __init__(
+        self,
+        response: ModelResponse,
+        *,
+        model_request_parameters: ModelRequestParameters,
+        replay_events: bool = False,
+    ) -> None: ...
+
+    @overload
     @deprecated('Pass the response first and `model_request_parameters` as a keyword argument.')
     def __init__(self, model_request_parameters: ModelRequestParameters, response: ModelResponse, /) -> None: ...
 
@@ -1061,7 +1082,15 @@ class CompletedStreamedResponse(StreamedResponse):
         model_request_parameters: ModelRequestParameters | ModelResponse | None = None,
         *,
         events: bool | list[ModelResponseStreamEvent] = False,
+        replay_events: bool | None = None,
     ):
+        if replay_events is not None:
+            warnings.warn(
+                '`replay_events` is deprecated; use `events` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            events = replay_events
         if isinstance(response, ModelRequestParameters):
             # The positional `(model_request_parameters, response)` order predates the move
             # from `pydantic_ai.models.wrapper` to `pydantic_ai.models`.

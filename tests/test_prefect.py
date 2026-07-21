@@ -1,3 +1,8 @@
+# pyright: reportDeprecated=false
+# `PrefectAgent` (the wrapper-agent path) is deprecated in favor of the
+# `PrefectDurability` capability, but this file still exercises both paths in
+# parallel for parity. Silenced at file level rather than annotating every
+# individual usage.
 from __future__ import annotations
 
 import os
@@ -43,6 +48,7 @@ from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext, c
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -65,6 +71,7 @@ try:
     from pydantic_ai.durable_exec.prefect._cache_policies import (
         PrefectAgentInputs,
         _replace_run_context,  # pyright: ignore[reportPrivateUsage]
+        _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
@@ -92,7 +99,13 @@ from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
-# The legacy `MCPServer*` / `FastMCPToolset` classes are deprecated in favor of `MCPToolset`.
+# `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`, and
+# the legacy `MCPServer*` / `FastMCPToolset` classes are deprecated in favor of `MCPToolset`.
+# These tests exercise the wrapper-agent path on purpose; suppress the warnings here
+# rather than globally in `pyproject.toml`. The `pytestmark` entries below cover warnings
+# emitted *inside* test functions; the `filterwarnings` calls below cover warnings emitted
+# at module import time (e.g. module-level construction of `PrefectAgent`).
+warnings.filterwarnings('ignore', message='`PrefectAgent` is deprecated', category=DeprecationWarning)
 warnings.filterwarnings(
     'ignore',
     message=r'`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated',
@@ -103,6 +116,7 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
+    pytest.mark.filterwarnings('ignore:`PrefectAgent` is deprecated:DeprecationWarning'),
     pytest.mark.filterwarnings(
         'ignore:`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated:DeprecationWarning'
     ),
@@ -705,6 +719,37 @@ async def test_toolset_without_id():
     """Test that agents can be created with toolsets without IDs."""
     # This is allowed in Prefect
     PrefectAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
+
+
+async def test_prefect_toolset_legacy_constructors() -> None:
+    calls = 0
+
+    async def fail() -> str:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError('failed')
+
+    function_toolset = FunctionToolset()
+    function_toolset.add_function(fail)
+    wrapped_function = PrefectFunctionToolset(
+        function_toolset,
+        task_config=TaskConfig(retries=1, retry_delay_seconds=0),
+        tool_task_config={},
+    )
+    assert wrapped_function.wrapped is function_toolset
+    assert wrapped_function.id is None
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = (await wrapped_function.get_tools(ctx))['fail']
+    with pytest.warns(UserWarning, match='without a flow run id'):
+        with pytest.raises(RuntimeError, match='failed'):
+            await wrapped_function.call_tool('fail', {}, ctx, tool)
+    assert calls == 2
+
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+    wrapped_mcp = PrefectMCPToolset(mcp_toolset, task_config={})
+    assert wrapped_mcp.wrapped is mcp_toolset
+    assert wrapped_mcp.id is None
 
 
 async def test_capability_contributed_toolset_id_from_capability():
@@ -1398,6 +1443,25 @@ async def test_cache_policy_per_run_ids_excluded_but_dict_keys_kept():
     assert tool_args_hash1 != tool_args_hash2
 
 
+def test_cache_policy_keeps_user_dataclass_fields():
+    @dataclass
+    class CacheDeps:
+        timestamp: str
+        run_id: str
+        conversation_id: str
+
+    deps = CacheDeps(timestamp='user-time', run_id='user-run', conversation_id='user-conversation')
+    ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+
+    projected = _strip_cache_excluded_fields(_replace_run_context({'ctx': ctx}))
+
+    assert projected['ctx']['deps'] == {
+        'timestamp': 'user-time',
+        'run_id': 'user-run',
+        'conversation_id': 'user-conversation',
+    }
+
+
 async def test_cache_policy_with_tuples():
     """Test that cache policy handles tuples with timestamps correctly."""
     cache_policy = PrefectAgentInputs()
@@ -1461,9 +1525,6 @@ def test_cache_key_run_context_projection_is_exhaustive():
     """
     # Fields that legitimately don't belong in the cache key, each with its reason.
     cache_irrelevant = {
-        'deps',  # user object; hashed separately as a task input, not via RunContext
-        'agent',  # the agent instance, identified by task source not run state
-        'model',  # live Model instance, not hashable run state
         'usage',  # accumulates per run; not an input that should fork the cache
         'tracer',  # tracing plumbing, not run state
         'tool_manager',  # live ToolManager, not hashable run state
@@ -1911,6 +1972,26 @@ async def test_prefect_durability_outside_flow() -> None:
     assert result.output == 'Echo: Hello outside'
 
 
+async def test_prefect_durability_tool_config_is_ignored_outside_flow() -> None:
+    calls = 0
+    agent = Agent(
+        TestModel(),
+        name='durability_outside_tool_config',
+        retries=0,
+        capabilities=[PrefectDurability(tool_task_config=TaskConfig(retries=1, retry_delay_seconds=0))],
+    )
+
+    @agent.tool_plain
+    def fail() -> str:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError('failed')
+
+    with pytest.raises(RuntimeError, match='failed'):
+        await agent.run('Call the tool')
+    assert calls == 1
+
+
 def test_prefect_durability_requires_agent_name() -> None:
     """PrefectDurability raises UserError when the agent has no name."""
     with pytest.raises(UserError, match='unique `name`'):
@@ -1966,6 +2047,31 @@ async def test_prefect_durability_runtime_registered_model() -> None:
 
     assert await run_by_key() == 'alt-response'
     assert await run_by_instance() == 'alt-response'
+
+
+class _BehaviorChangingWrapper(WrapperModel):
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='wrapped-response')])
+
+
+async def test_prefect_durability_runtime_registered_wrapper_model() -> None:
+    wrapped = _BehaviorChangingWrapper(_durability_fn_model)
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_runtime_registered_wrapper',
+        capabilities=[PrefectDurability(models={'wrapped': wrapped})],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('hello', model=wrapped)).output
+
+    assert await run_agent() == 'wrapped-response'
 
 
 async def test_prefect_durability_override_registered_model() -> None:
@@ -2027,16 +2133,14 @@ async def test_prefect_durability_resolve_model_id_capability_is_deps_aware() ->
         capabilities=[ResolveModelId(_prefect_tenant_resolver), PrefectDurability()],
     )
 
-    # Separate flow runs so each request gets its own task-cache scope: within one flow the
-    # `'tenant-model'` model task caches by input and would replay the first tenant's result.
     @flow
-    async def run_agent(model_id: str, tenant: str) -> str:
-        return (await agent.run('hi', model=model_id, deps=tenant)).output
+    async def run_agent() -> tuple[str, str, str]:
+        first = await agent.run('hi', model='tenant-model', deps='acme')
+        second = await agent.run('hi', model='tenant-model', deps='globex')
+        fallback = await agent.run('hi', model='test', deps='acme')
+        return first.output, second.output, fallback.output
 
-    assert await run_agent('tenant-model', 'acme') == 'tenant:acme'
-    assert await run_agent('tenant-model', 'globex') == 'tenant:globex'
-    # A string the resolver doesn't recognize defers to the default `infer_model` flow.
-    assert await run_agent('test', 'acme') == 'success (no tool calls)'
+    assert await run_agent() == ('tenant:acme', 'tenant:globex', 'success (no tool calls)')
 
 
 async def test_prefect_durability_alias_default_model() -> None:

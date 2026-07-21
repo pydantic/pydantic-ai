@@ -1,3 +1,8 @@
+# pyright: reportDeprecated=false
+# `DBOSAgent` (the wrapper-agent path) is deprecated in favor of the
+# `DBOSDurability` capability, but this file still exercises both paths in
+# parallel for parity. Silenced at file level rather than annotating every
+# individual usage.
 from __future__ import annotations
 
 import asyncio
@@ -5,6 +10,7 @@ import os
 import re
 import time
 import uuid
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -88,10 +94,18 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 from ._inline_snapshot import snapshot
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
+# `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
+# These tests exercise the wrapper-agent path on purpose; suppress the warning here
+# rather than globally in `pyproject.toml`. The `pytestmark` entry below covers warnings
+# emitted *inside* test functions; the `filterwarnings` call below covers warnings emitted
+# at module import time (e.g. `simple_dbos_agent = DBOSAgent(...)`).
+warnings.filterwarnings('ignore', message='`DBOSAgent` is deprecated', category=DeprecationWarning)
+
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='dbos'),
+    pytest.mark.filterwarnings('ignore:`DBOSAgent` is deprecated:DeprecationWarning'),
 ]
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
@@ -2201,6 +2215,21 @@ async def test_dbos_durability_per_step_model_selector_uses_selected_model(dbos:
         'primary',
         name='durability_per_step_model_selector',
         capabilities=[SelectModel(lambda ctx: _dbos_alt_model), durability],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hello')).output
+
+    assert await run_agent() == 'alt-response'
+
+
+async def test_dbos_durability_per_step_model_selector_preserves_alias(dbos: DBOS) -> None:
+    durability = DBOSDurability(models={'primary': _durability_fn_model, 'alt': _dbos_alt_model})
+    agent = Agent(
+        'primary',
+        name='durability_per_step_model_selector_alias',
+        capabilities=[SelectModel(lambda ctx: 'alt'), durability],
     )
 
     @DBOS.workflow()
