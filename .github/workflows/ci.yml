@@ -48,7 +48,17 @@ jobs:
       # synced venv out-of-band instead (--no-deps: pydantic-ai-slim is already
       # present from the workspace). Keep the pin in sync with the runner's
       # (.github/scripts/pydantic-ai-runner).
-      - run: uv pip install --no-deps "pydantic-ai-harness>=0.4.0"
+      - run: uv pip install --no-deps "pydantic-ai-harness==0.7.0" "pydantic-monty==0.0.16"
+
+      - name: Test GitHub agentic workflow policy
+        env:
+          UV_NO_SYNC: "1"
+        run: >-
+          uv run pytest
+          .github/scripts/test_pydantic_ai_runner.py::test_attention_dynamic_workflow_is_bounded_to_specialists
+          .github/scripts/test_pydantic_ai_runner.py::test_attention_dynamic_workflow_runs_bounded_fanout
+          .github/scripts/test_pydantic_ai_runner.py::test_dynamic_workflow_gate_env_toggles_run_workflow_tool
+          .github/scripts/test_issue_pr_attention_monitor.py
 
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:

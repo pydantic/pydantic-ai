@@ -854,3 +854,14 @@ def is_text_like_media_type(media_type: str) -> bool:
         or media_type.endswith('+xml')
         or media_type in ('application/x-yaml', 'application/yaml')
     )
+
+
+def format_inlined_text_file(text: str, *, media_type: str, identifier: str) -> str:
+    """Format text file content with delimiters for inlining into a text prompt."""
+    return '\n'.join(
+        [
+            f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
+            text,
+            f'-----END FILE id="{identifier}"-----',
+        ]
+    )

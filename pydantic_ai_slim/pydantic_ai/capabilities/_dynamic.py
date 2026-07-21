@@ -56,6 +56,8 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
             capability = await capability
         if capability is None:
             return self
+        assert ctx.agent is not None, 'CapabilityFunc requires an agent run context'
+        capability = capability.for_agent(ctx.agent)
         return await capability.for_run(ctx)
 
 

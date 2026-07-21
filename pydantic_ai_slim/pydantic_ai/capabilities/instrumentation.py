@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
@@ -65,6 +65,12 @@ class Instrumentation(AbstractCapability[Any]):
 
     Other capabilities can add attributes to these spans using the OpenTelemetry API
     (`opentelemetry.trace.get_current_span().set_attribute(key, value)`).
+    """
+
+    _safe_at_runtime: ClassVar[bool] = True
+    """Workflow-side only — no toolsets, native tools, or model wrapping introduced — so safe
+    to attach per-run even when a durability capability is bound. Internal flag read by the
+    bundled durable-execution integrations.
     """
 
     settings: InstrumentationSettings = field(default_factory=lambda: _default_settings())

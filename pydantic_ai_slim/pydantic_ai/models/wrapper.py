@@ -1,84 +1,23 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator
+import warnings
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 from typing_extensions import Self
 
 from .._run_context import RunContext
-from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
+from .._warnings import PydanticAIDeprecationWarning
+from ..messages import ModelMessage, ModelResponse
 from ..profiles import ModelProfile
 from ..providers import Provider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse, infer_model
 
-
-class CompletedStreamedResponse(StreamedResponse):
-    """A `StreamedResponse` that wraps an already-completed `ModelResponse`.
-
-    Used by durable execution integrations (Temporal, Prefect, DBOS) where the
-    actual stream is consumed within a task/activity and only the final response
-    is returned.
-    """
-
-    def __init__(
-        self,
-        model_request_parameters: ModelRequestParameters,
-        response: ModelResponse,
-        *,
-        replay_events: bool = False,
-    ):
-        super().__init__(model_request_parameters)
-        self.response = response
-        self._replay_events = replay_events
-
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        # The underlying stream was already consumed elsewhere (e.g. inside a durable-execution
-        # step/activity), so we only have the final response. By default we emit nothing: the
-        # events were already delivered to the consumer (e.g. an `event_stream_handler`) where the
-        # stream was originally consumed, and `get()` carries the final response.
-        #
-        # When `replay_events` is set, the original consumption discarded the events without
-        # delivering them (no handler), so replay the response's parts as `PartStartEvent`s — one
-        # per part, each carrying the full content — so this behaves like a real (if coarse)
-        # `StreamedResponse`. A consumer that drives the stream via events (e.g. the continuation
-        # composite stitching segments, or `stream_text()`) would otherwise observe an empty stream
-        # and lose all content, even though `get()` holds the full response.
-        if not self._replay_events:
-            return
-        for i, part in enumerate(self.response.parts):
-            yield self._parts_manager.handle_part(vendor_part_id=i, part=part)
-
-    async def close_stream(self) -> None:
-        # The stream was already consumed by the durable execution wrapper.
-        pass
-
-    def get(self) -> ModelResponse:
-        return self.response
-
-    @property
-    def usage(self) -> RequestUsage:
-        return self.response.usage  # pragma: no cover
-
-    @property
-    def model_name(self) -> str:
-        return self.response.model_name or ''  # pragma: no cover
-
-    @property
-    def provider_name(self) -> str:
-        return self.response.provider_name or ''  # pragma: no cover
-
-    @property
-    def provider_url(self) -> str | None:
-        return self.response.provider_url  # pragma: no cover
-
-    @property
-    def timestamp(self) -> datetime:
-        return self.response.timestamp  # pragma: no cover
+__all__ = ['WrapperModel']
 
 
 @dataclass(init=False)
@@ -110,6 +49,12 @@ class WrapperModel(Model):
     ) -> ModelResponse:
         return await self.wrapped.request(messages, model_settings, model_request_parameters)
 
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        return await self.wrapped.cancel_suspended_response(response)
+
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        return self.wrapped.continuation_delay(response)
+
     async def count_tokens(
         self,
         messages: list[ModelMessage],
@@ -125,12 +70,6 @@ class WrapperModel(Model):
         instructions: str | None = None,
     ) -> ModelResponse:
         return await self.wrapped.compact_messages(request_context, instructions=instructions)  # pragma: no cover
-
-    async def cancel_suspended_response(self, response: ModelResponse) -> None:
-        return await self.wrapped.cancel_suspended_response(response)
-
-    def continuation_delay(self, response: ModelResponse) -> float | None:
-        return self.wrapped.continuation_delay(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -181,3 +120,17 @@ class WrapperModel(Model):
 
     def __getattr__(self, item: str):
         return getattr(self.wrapped, item)
+
+
+def __getattr__(name: str) -> Any:
+    if name == 'CompletedStreamedResponse':
+        warnings.warn(
+            '`CompletedStreamedResponse` has moved from `pydantic_ai.models.wrapper` to `pydantic_ai.models`; '
+            'import it from there instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        from . import CompletedStreamedResponse
+
+        return CompletedStreamedResponse
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

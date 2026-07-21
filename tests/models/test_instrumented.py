@@ -2234,6 +2234,41 @@ async def test_instrumented_model_tolerates_lone_surrogates_in_request_parameter
     assert 'weather' in attrs['model_request_parameters']['function_tools'][0]['name']
 
 
+async def test_instrumented_model_excludes_request_parameters(capfire: CaptureLogfire):
+    """`include_model_request_parameters=False` omits the `model_request_parameters` span attribute.
+
+    `gen_ai.tool.definitions` is emitted independently of this setting, so the tools available for a
+    request are still recorded on the span.
+    """
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}},
+    )
+
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(include_model_request_parameters=False))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello')], timestamp=IsDatetime())]
+    await model.request(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(function_tools=[tool_def]),
+    )
+
+    attrs = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)[0]['attributes']
+    assert 'model_request_parameters' not in attrs
+    assert 'model_request_parameters' not in attrs['logfire.json_schema']['properties']
+    assert attrs['gen_ai.tool.definitions'] == snapshot(
+        [
+            {
+                'type': 'function',
+                'name': 'get_weather',
+                'description': 'Get the weather',
+                'parameters': {'type': 'object', 'properties': {'city': {'type': 'string'}}},
+            }
+        ]
+    )
+
+
 async def test_instrumented_model_request_error(capfire: CaptureLogfire):
     """Test _instrument() when the wrapped model raises before finish() is called."""
 

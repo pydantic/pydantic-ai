@@ -37,12 +37,12 @@ from .. import (
 )
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
-from .._template import TemplateStr
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
+from ..template import TemplateStr
 from ..tool_manager import ToolManager
 from ..tools import (
     AgentDepsT,
@@ -126,12 +126,12 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
 
     Lazily starts a background `run()` task on the first `__anext__()` and forwards its events over a memory
     object stream, ending with a single trailing `AgentRunResultEvent` that carries the run's result. Entering
-    the context manager without iterating therefore never starts a run (#6162).
+    the context manager without iterating therefore never starts a run (https://github.com/pydantic/pydantic-ai/issues/6162).
 
     This is a hand-written iterator class rather than an `async def` generator on purpose: generator cleanup
     runs by throwing `GeneratorExit` into the suspended frame during finalization, which on Python 3.10/3.11
     can resume the frame under a different `Context` and raise the `pydantic_ai.current_run_context` token
-    error (#5132). Driving cleanup explicitly through `aclose()` keeps teardown in the caller's task and
+    error (https://github.com/pydantic/pydantic-ai/issues/5132). Driving cleanup explicitly through `aclose()` keeps teardown in the caller's task and
     context.
     """
 
@@ -321,7 +321,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Resolve the agent's configured system prompts into `SystemPromptPart`s.
 
         Returns a list suitable for prepending to a `ModelRequest`. Static strings and
-        runners decorated with [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt]
+        runners decorated with [`@agent.system_prompt`][pydantic_ai.agent.Agent.system_prompt]
         are evaluated using a minimal `RunContext` built from the provided kwargs — useful
         when reconstructing a `message_history` that should carry the agent's configured
         system prompt (e.g. in UI adapters or after history compaction).
@@ -473,8 +473,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -662,8 +662,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -814,10 +814,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -877,7 +877,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                         async def stream_to_final(
                             stream: AgentStream,
-                        ) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
+                        ) -> AsyncIterator[_messages.AgentStreamEvent]:
                             nonlocal final_result_event
                             async for event in stream:
                                 yield event
@@ -1116,10 +1116,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1284,7 +1284,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1474,7 +1474,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
