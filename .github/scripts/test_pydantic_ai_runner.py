@@ -676,6 +676,9 @@ def test_attention_dynamic_workflow_is_bounded_to_specialists():
     workflow = shim.attention_dynamic_workflow(TestModel())
     assert workflow.max_agent_calls == 2
     assert workflow.max_retries == 1
+    # Wall-clock while awaiting the specialists' asyncio.gather: generous
+    # enough for two real model calls, still bounded well under the job timeout.
+    assert workflow.resource_limits == {'max_duration_secs': 300}
     assert workflow.forward_usage is False
     assert workflow.inherit_model is True
     assert workflow.sub_agent_usage_limits is not None

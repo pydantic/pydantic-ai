@@ -15,9 +15,12 @@ import urllib.parse
 import urllib.request
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal, cast
 
-from typing_extensions import TypedDict
+# Stdlib-only imports: production invokes this script with the runner's bare
+# `python`, which has no third-party packages installed. The repo-wide ban on
+# `typing.TypedDict` exists for pydantic validation on Python 3.10/3.11, and
+# this script uses no pydantic.
+from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
@@ -208,7 +211,9 @@ def _candidate_context(
 
 def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[dict[str, Any]]:
     before = (now - _SLA).date().isoformat()
-    excluded = f'-label:"{_ACTION_LABEL}"'
+    # An escalated item stays dormant until the reconcile sweep sees real
+    # activity and removes the marker; only then may a fresh lifecycle start.
+    excluded = f'-label:"{_ACTION_LABEL}" -label:"{_ESCALATED_LABEL}"'
     query = urllib.parse.quote_plus(f'repo:{repo} is:open updated:<{before} {excluded}')
     first = cast(dict[str, Any], client.get(f'/search/issues?q={query}&sort=updated&order=asc&per_page=1'))
     total = min(int(first.get('total_count') or 0), 1_000)
@@ -233,7 +238,12 @@ def build_snapshot(client: GitHubClient, repo: str, *, now: dt.datetime) -> dict
         current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
         labels = _labels(current)
         updated_at = str(current['updated_at'])
-        if current.get('state') != 'open' or _parse_time(updated_at) > cutoff or _ACTION_LABEL in labels:
+        if (
+            current.get('state') != 'open'
+            or _parse_time(updated_at) > cutoff
+            or _ACTION_LABEL in labels
+            or _ESCALATED_LABEL in labels
+        ):
             continue
         recent_activity, pr_context = _candidate_context(client, repo, current)
         candidates.append(
@@ -361,9 +371,9 @@ def _maintainer_assignees(client: GitHubClient, repo: str, item: Mapping[str, An
     return sorted(maintainers, key=str.casefold)
 
 
-def _ensure_recipients(client: GitHubClient, repo: str, number: int, item: Mapping[str, Any]) -> list[str]:
-    if maintainers := _maintainer_assignees(client, repo, item):
-        return maintainers
+def _ensure_recipients(client: GitHubClient, repo: str, number: int, maintainers: Sequence[str]) -> list[str]:
+    if maintainers:
+        return list(maintainers)
     assigned = cast(
         dict[str, Any],
         client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [_FALLBACK_OWNER]}),
@@ -416,7 +426,7 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
             for label in labels.intersection(_STAGE_LABELS):
                 _remove_label(client, repo, number, label)
             _add_labels(client, repo, number, [_ACTION_LABEL])
-            recipients = _ensure_recipients(client, repo, number, current)
+            recipients = _ensure_recipients(client, repo, number, _maintainer_assignees(client, repo, current))
             mentions = ' '.join(f'@{login}' for login in recipients)
             lines.append(f'#{number}: requested maintainer attention from {mentions}')
         except (urllib.error.HTTPError, RuntimeError) as exc:
@@ -521,12 +531,17 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
     for label in labels.intersection(_STAGE_LABELS):
         if label != current_stage_label:
             _remove_label(client, repo, number, label)
-    recipients = _ensure_recipients(client, repo, number, current)
+    maintainers = _maintainer_assignees(client, repo, current)
     reminder_transition = _transition(events, 1) if current_stage == 2 else None
     acknowledged_since = reminder_transition[0] if reminder_transition is not None else transition_at
-    if _acknowledged(timeline, acknowledged_since, recipients):
+    if _acknowledged(timeline, acknowledged_since, maintainers or [_FALLBACK_OWNER]):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer acknowledged the request', False
+    # Queueing the Slack escalation must never depend on a GitHub write
+    # succeeding, so the fallback assignment happens only below this point.
+    if current_stage == 2:
+        return f'#{number}: queued private Slack escalation', True
+    recipients = _ensure_recipients(client, repo, number, maintainers)
     if current_stage == 1:
         current_body = _reminder(recipients)
         if not _fixed_comment_exists(timeline, current_body, transition_at):
@@ -534,8 +549,6 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
             _add_labels(client, repo, number, [_PINGED_LABEL])
             client.post(f'/repos/{repo}/issues/{number}/comments', {'body': current_body})
             return f'#{number}: restored maintainer reminder', False
-    if current_stage == 2:
-        return f'#{number}: queued private Slack escalation', True
     if now - transition_at < _SLA:
         return None
     if current_stage == 0:
@@ -550,8 +563,37 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
     return f'#{number}: queued private Slack escalation', True
 
 
-def reconcile(client: GitHubClient, repo: str, *, now: dt.datetime, escalations: list[int] | None = None) -> list[str]:
-    """Advance a bounded batch of active attention requests."""
+def _sweep_escalated_item(client: GitHubClient, repo: str, number: int) -> str | None:
+    """Wake one dormant escalated item once real activity arrives on it."""
+    current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+    labels = _labels(current)
+    if current.get('state') != 'open' or _ACTION_LABEL in labels or _ESCALATED_LABEL not in labels:
+        return None
+    events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
+    transition = _transition(events, 2)
+    if transition is None or _actor(transition[1]) != 'github-actions[bot]':
+        _complete(client, repo, number, labels)
+        return f'#{number}: removed a foreign attention transition'
+    timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
+    if any(
+        _actor(event) != 'github-actions[bot]'
+        and (event_time := _event_time(event)) is not None
+        and event_time > transition[0]
+        for event in timeline
+    ):
+        _remove_label(client, repo, number, _ESCALATED_LABEL)
+        return f'#{number}: restored attention eligibility after new activity'
+    return None
+
+
+def reconcile(
+    client: GitHubClient, repo: str, *, now: dt.datetime, escalations: list[int] | None = None
+) -> tuple[list[str], list[str]]:
+    """Advance a bounded batch of active attention requests.
+
+    Per-item failures are returned rather than raised so that escalations
+    queued by healthy items always reach the Slack delivery job.
+    """
     ensure_labels(client, repo)
     encoded = urllib.parse.quote(_ACTION_LABEL, safe='')
     items = cast(
@@ -576,9 +618,26 @@ def reconcile(client: GitHubClient, repo: str, *, now: dt.datetime, escalations:
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')
     if len(items) == _RECONCILE_LIMIT:
         lines.append('additional attention items remain for a later rotated batch')
-    if failures:
-        raise RuntimeError('Failed to reconcile attention: ' + '; '.join(failures))
-    return lines
+    encoded_escalated = urllib.parse.quote(_ESCALATED_LABEL, safe='')
+    dormant = cast(
+        list[dict[str, Any]],
+        client.get(
+            f'/repos/{repo}/issues?state=open&labels={encoded_escalated}'
+            f'&sort=updated&direction=asc&per_page={_RECONCILE_LIMIT}'
+        ),
+    )
+    for item in dormant:
+        number = int(item['number'])
+        if _ACTION_LABEL in _labels(item):
+            continue
+        try:
+            if line := _sweep_escalated_item(client, repo, number):
+                lines.append(line)
+        except (urllib.error.HTTPError, RuntimeError, ValueError) as exc:
+            if isinstance(exc, urllib.error.HTTPError):
+                exc.close()
+            failures.append(f'#{number}: {type(exc).__name__}: {exc}')
+    return lines, failures
 
 
 def _write_escalations(repo: str, numbers: Sequence[int], path: str) -> None:
@@ -652,6 +711,7 @@ def main() -> int:
     client = GitHubClient(token)
     repo = os.environ.get('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
     now = dt.datetime.now(dt.timezone.utc)
+    failures: list[str] = []
     if args.mode == 'snapshot':
         lines = write_snapshot(client, repo, args.snapshot_path, now=now)
     elif args.mode == 'apply':
@@ -660,7 +720,7 @@ def main() -> int:
         lines = apply_decisions(client, repo, args.agent_output, args.snapshot_path)
     elif args.mode == 'reconcile':
         escalations: list[int] = []
-        lines = reconcile(client, repo, now=now, escalations=escalations)
+        lines, failures = reconcile(client, repo, now=now, escalations=escalations)
         _write_escalations(repo, escalations, args.escalation_path)
     else:
         source = os.environ.get('ATTENTION_ESCALATIONS')
@@ -670,10 +730,12 @@ def main() -> int:
             else json.loads(Path(args.escalation_path).read_text(encoding='utf-8'))
         )
         lines = finalize_escalations(client, repo, _escalation_numbers(loaded))
-    _write_summary(lines)
+    _write_summary(lines + [f'failed: {failure}' for failure in failures])
     for line in lines:
         print(line)
-    return 0
+    for failure in failures:
+        print(f'failed: {failure}', file=sys.stderr)
+    return 1 if failures else 0
 
 
 if __name__ == '__main__':

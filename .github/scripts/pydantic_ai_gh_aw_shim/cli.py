@@ -213,7 +213,9 @@ def attention_dynamic_workflow(model: Model) -> DynamicWorkflow[object]:
         forward_usage=False,
         inherit_model=True,
         sub_agent_usage_limits=UsageLimits(request_limit=2),
-        resource_limits={'max_duration_secs': 10},
+        # Wall-clock, and it keeps counting while awaiting the prompt-mandated
+        # asyncio.gather of both specialists — real model calls need minutes.
+        resource_limits={'max_duration_secs': 300},
     )
 
 

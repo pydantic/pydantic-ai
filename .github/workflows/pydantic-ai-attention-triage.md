@@ -25,7 +25,7 @@ tools:
 safe-outputs:
   footer: false
   activation-comments: false
-  report-failure-as-issue: false
+  report-failure-as-issue: true
   noop:
     report-as-issue: false
   missing-tool: false
@@ -65,7 +65,9 @@ safe-outputs:
         - name: Restore exact candidate allowlist
           uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
           with:
-            name: attention-candidates-${{ github.run_id }}-${{ github.run_attempt }}
+            # No run_attempt suffix: "Re-run failed jobs" re-evaluates the
+            # attempt number but only the original upload exists.
+            name: attention-candidates-${{ github.run_id }}
             path: ${{ github.workspace }}
         - name: Apply validated maintainer attention
           env:
@@ -92,9 +94,10 @@ pre-agent-steps:
   - name: Preserve exact candidate allowlist
     uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
     with:
-      name: attention-candidates-${{ github.run_id }}-${{ github.run_attempt }}
+      name: attention-candidates-${{ github.run_id }}
       path: attention-candidates.json
       retention-days: 1
+      overwrite: true
 imports:
   - shared/tool-hints.md
   - shared/repo-context.md
