@@ -18,7 +18,9 @@ from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES,
     TOKEN_HISTOGRAM_BOUNDARIES,
+    MessageJsonCache,
     get_instructions,
+    message_json_fragment,
     open_model_request_span,
     safe_to_json,
 )
@@ -192,12 +194,38 @@ class InstrumentationSettings:
                 result.append(otel_message)
         return result
 
+    def _input_messages_json(
+        self, input_messages: list[ModelMessage], message_json_cache: MessageJsonCache | None
+    ) -> bytes:
+        """Serialize the input message history to a JSON array.
+
+        With a `message_json_cache` (agent runs, where the growing history is re-serialized every
+        request), each message's fragment is cached and concatenated, keeping the per-request cost
+        proportional to new messages rather than the whole history. Without a cache (one-off
+        requests), the whole history is serialized in a single call.
+        """
+        if message_json_cache is None:
+            return safe_to_json(self.messages_to_otel_messages(input_messages))
+
+        fragments: list[bytes] = []
+        for message in input_messages:
+            entry = message_json_cache.get(id(message))
+            if entry is not None and entry[0] is message.parts:
+                fragment = entry[1]
+            else:
+                fragment = message_json_fragment(self, message)
+                message_json_cache[id(message)] = (message.parts, fragment)
+            if fragment:
+                fragments.append(fragment)
+        return b'[' + b','.join(fragments) + b']'
+
     def handle_messages(
         self,
         input_messages: list[ModelMessage],
         response: ModelResponse,
         span: Span,
         parameters: ModelRequestParameters | None = None,
+        message_json_cache: MessageJsonCache | None = None,
     ):
         output_messages = self.messages_to_otel_messages([response])
         assert len(output_messages) == 1
@@ -207,7 +235,7 @@ class InstrumentationSettings:
         system_instructions_attributes = self.system_instructions_attributes(instructions)
 
         attributes: dict[str, AttributeValue] = {
-            'gen_ai.input.messages': safe_to_json(self.messages_to_otel_messages(input_messages)).decode(),
+            'gen_ai.input.messages': self._input_messages_json(input_messages, message_json_cache).decode(),
             'gen_ai.output.messages': safe_to_json([output_message]).decode(),
             **system_instructions_attributes,
             'logfire.json_schema': to_json(

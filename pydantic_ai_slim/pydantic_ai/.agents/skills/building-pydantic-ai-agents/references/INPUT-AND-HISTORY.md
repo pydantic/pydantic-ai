@@ -73,6 +73,8 @@ Use `RunContext.enqueue(...)` (from a tool or capability hook) or `AgentRun.enqu
 
 `enqueue` is variadic; each positional arg is one item: a piece of `UserContent` (a `str` or multi-modal content like an `ImageUrl`), a `ModelRequestPart` (e.g. a `SystemPromptPart`), or a complete `ModelRequest`/`ModelResponse`. Adjacent user content is gathered into one `UserPromptPart`. Pass an existing list by spreading it (`enqueue(*items)`).
 
+Never mutate messages already in the history in place (e.g. `ctx.messages[0].parts[0].content = '...'`) — enqueue new content, or rewrite history via `ProcessHistory` by building new message objects. In-place mutation is unsupported: instrumentation caches each message's serialized form per run, so later request spans record stale `gen_ai.input.messages` (a `MessageHistoryMutatedWarning` is emitted at run end when detected).
+
 ```python
 from pydantic_ai import Agent, RunContext
 

@@ -7,7 +7,7 @@ from collections.abc import Callable, Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
 from opentelemetry import context as otel_context
@@ -84,8 +84,42 @@ public and holds only the *inputs* to `Model.request[_stream]`.
 """
 
 
+MessageJsonCache: TypeAlias = dict[int, tuple[object, bytes]]
+"""Per-run cache of input messages' serialized OTel JSON fragments.
+
+Maps `id(message)` to `(message.parts, fragment_bytes)`. Created fresh per agent run and discarded
+when the run ends, so it never outlives the run whose messages it caches. The stored `parts` list
+doubles as a validity token and a liveness guard:
+
+- An entry is only served while `entry_parts is message.parts`, so a message whose `parts` list is
+  reassigned (e.g. dynamic system prompt re-evaluation) is re-serialized rather than served stale.
+- Holding a strong reference to the list keeps it alive, so a message dropped from history mid-run
+  (e.g. by a history processor) can't have both its own and its parts list's `id` recycled by new
+  history objects into a false cache hit.
+
+This caching is what makes the per-request `gen_ai.input.messages` attribute O(new messages) instead
+of O(history). It relies on an invariant that framework code must uphold: never mutate a history
+message's fields in place after it may have been serialized for a span — build new message/part
+objects or reassign `.parts` instead. User code mutating history in place mid-run is unsupported
+(see `MessageHistoryMutatedWarning`).
+"""
+
+
 class CostCalculationFailedWarning(Warning):
     """Warning raised when cost calculation fails."""
+
+
+class MessageHistoryMutatedWarning(Warning):
+    """Warning raised when in-place mutation of the message history is detected at the end of a run.
+
+    Mutating messages that are already part of the run's history in place (e.g.
+    `ctx.messages[0].parts[0].content = '...'` from a tool) is not supported: the per-request
+    `gen_ai.input.messages` span attribute caches each message's serialized form, so spans recorded
+    after the mutation may not match the messages actually sent to the model. The run-level
+    `pydantic_ai.all_messages` attribute is always serialized fresh and does reflect the mutation.
+    To transform history mid-run, build new message or part objects instead — e.g. via a history
+    processor ([`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory]).
+    """
 
 
 def get_agent_run_baggage_attributes() -> dict[str, Any]:
@@ -127,6 +161,33 @@ def safe_to_json(value: object) -> bytes:
         return to_json(value)
     except PydanticSerializationError:
         return json.dumps(value, separators=(',', ':')).encode()
+
+
+def message_json_fragment(settings: InstrumentationSettings, message: ModelMessage) -> bytes:
+    """Serialize one message to its OTel JSON fragment: comma-joined objects without enclosing brackets.
+
+    A single `ModelMessage` can map to multiple OTel `ChatMessage`s (a `ModelRequest` splits into
+    system/user messages) or to none (an empty request), so the fragment is the whole serialized
+    array with the outer `[` and `]` stripped — fragments then concatenate into a single array.
+    """
+    return safe_to_json(settings.messages_to_otel_messages([message]))[1:-1]
+
+
+def has_stale_message_json(
+    settings: InstrumentationSettings, messages: Sequence[ModelMessage], cache: MessageJsonCache
+) -> bool:
+    """Detect whether in-place mutation made any cached message fragment stale.
+
+    Re-serializes each message that still has a valid cache entry (same `parts` list) and compares
+    bytes — an O(history) pass meant to run once per run, at the end. Entries whose `parts` token no
+    longer matches are skipped: reassigning `.parts` is the supported mutation style and the next
+    serialization would have refreshed them, so they can't have produced a stale span.
+    """
+    for message in messages:
+        entry = cache.get(id(message))
+        if entry is not None and entry[0] is message.parts and entry[1] != message_json_fragment(settings, message):
+            return True
+    return False
 
 
 def model_attributes(model: Model) -> dict[str, AttributeValue]:
@@ -216,6 +277,7 @@ class _FinishModelRequestSpan(Protocol):
 def open_model_request_span(
     settings: InstrumentationSettings,
     request_context: ModelRequestContext,
+    message_json_cache: MessageJsonCache | None = None,
 ) -> Generator[tuple[_FinishModelRequestSpan, ModelRequestContext]]:
     """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
 
@@ -226,6 +288,9 @@ def open_model_request_span(
     response with OTel tool-call metadata and records outcome attributes. Token/cost metrics are
     recorded *after* the span closes so backends that aggregate from span attributes don't
     double-count.
+
+    `message_json_cache` is a per-run cache reused across requests so the growing input history
+    isn't re-serialized in full each time; the agent flow passes one, one-off requests pass `None`.
     """
     # TODO Missing attributes:
     #  - error.type: unclear if we should do something here or just always rely on span exceptions
@@ -309,7 +374,9 @@ def open_model_request_span(
                 if not span.is_recording():
                     return
 
-                settings.handle_messages(prepared_request_context.messages, response, span, prepared_parameters)
+                settings.handle_messages(
+                    prepared_request_context.messages, response, span, prepared_parameters, message_json_cache
+                )
 
                 attributes_to_set: dict[str, Any] = {
                     **response.usage.opentelemetry_attributes(),

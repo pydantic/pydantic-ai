@@ -511,6 +511,9 @@ A `priority` controls when the enqueued content is delivered:
 
 Adjacent part-style items (user content and [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s) are coalesced into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete messages stay separate. This lets a single call inject an interleaved exchange — for example a synthetic tool call (a [`ModelResponse`][pydantic_ai.messages.ModelResponse]) followed by its result (a [`ModelRequest`][pydantic_ai.messages.ModelRequest]). The content must end in a request, so the agent has something to respond to.
 
+!!! warning "Don't mutate existing messages in place"
+    `enqueue` and [history processors](#processing-message-history) change the conversation by adding or building *new* message objects, and are the supported ways to do so. Mutating a message that's already part of the history in place (e.g. `ctx.messages[0].parts[0].content = '...'` from a tool) is not supported: [instrumentation](logfire.md) caches each message's serialized form for the duration of a run, so the `gen_ai.input.messages` attribute recorded on later model request spans may not reflect the mutation. When this is detected at the end of a run, a `MessageHistoryMutatedWarning` is emitted; the run-level `pydantic_ai.all_messages` attribute always reflects the final history.
+
 ### From inside a tool or hook
 
 Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a
