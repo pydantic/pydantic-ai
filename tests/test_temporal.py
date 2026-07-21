@@ -6,7 +6,7 @@ import os
 import re
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -148,7 +148,11 @@ try:
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
-    from pydantic_ai.durable_exec.temporal._toolset import resolve_tool_activity_config
+    from pydantic_ai.durable_exec.temporal._toolset import (
+        TemporalWrapperToolset,
+        resolve_tool_activity_config,
+        toolset_temporal_activities,
+    )
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
@@ -1795,7 +1799,7 @@ async def test_dynamic_toolset_instructions_in_workflow(allow_model_requests: No
 
 
 def test_dynamic_toolset_temporal_activities():
-    """`TemporalDynamicToolset` collects instructions inside `get_tools`, so it has no separate `get_instructions` activity."""
+    """The temporalized dynamic toolset collects instructions inside `get_tools`, so it has no separate `get_instructions` activity."""
     activity_names = {
         ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
         for activity in dynamic_instructions_temporal_agent.temporal_activities
@@ -1803,6 +1807,41 @@ def test_dynamic_toolset_temporal_activities():
     prefix = 'agent__dynamic_instructions_agent__dynamic_toolset__dynamic_instruction_toolset'
     assert {f'{prefix}__get_tools', f'{prefix}__call_tool'} <= activity_names
     assert f'{prefix}__get_instructions' not in activity_names
+
+
+async def test_temporal_wrapper_toolset_extension_surface():
+    """`TemporalWrapperToolset` stays the base for custom `temporalize_toolset_func` toolsets.
+
+    No in-core toolset subclasses it anymore (the factories build the shared durable toolsets),
+    but it remains public for the deprecated `TemporalAgent`'s `temporalize_toolset_func`
+    extension point, so its surface is pinned here the way a custom subclass would use it.
+    """
+
+    def sentinel_activity() -> None: ...  # pragma: no cover
+
+    class _CustomTemporalToolset(TemporalWrapperToolset[None]):
+        @property
+        def temporal_activities(self) -> list[Callable[..., Any]]:
+            return [sentinel_activity]
+
+    toolset = _CustomTemporalToolset(FunctionToolset[None](id='custom_wrapped'))
+    assert toolset.id == 'custom_wrapped'
+    assert toolset_temporal_activities(toolset) == [sentinel_activity]
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    assert await toolset.for_run_step(ctx) is toolset
+
+    # Outside a workflow the wrapper enters/exits its wrapped toolset; inside one, exit is a no-op.
+    async with toolset:
+        pass
+    with patch('pydantic_ai.durable_exec.temporal._toolset.workflow.in_workflow', return_value=True):
+        assert await toolset.__aexit__(None, None, None) is None
+
+    async def return_value() -> str:
+        return 'value'
+
+    wrapped_result = await toolset._wrap_call_tool_result(return_value())  # pyright: ignore[reportPrivateUsage]
+    assert toolset._unwrap_call_tool_result(wrapped_result) == 'value'  # pyright: ignore[reportPrivateUsage]
 
 
 # --- DynamicToolset instructions refresh across run steps (issue #5282 follow-up) ---
