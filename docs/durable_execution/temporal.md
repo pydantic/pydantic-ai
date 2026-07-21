@@ -66,6 +66,8 @@ See the [Temporal documentation](https://docs.temporal.io/evaluate/understanding
 
 ## Durable Agent
 
+To make a run durable, call `agent.run()` inside a Temporal workflow executed on a worker; outside one, the agent runs as a normal, non-durable agent.
+
 Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] [capability](../capabilities/overview.md). The agent stays a normal `Agent` everywhere — outside a workflow it behaves transparently, and inside a workflow the capability routes model requests, tool calls, and MCP server communication through Temporal activities.
 
 !!! warning "A run is durable only inside a workflow"
