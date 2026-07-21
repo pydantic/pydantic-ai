@@ -86,6 +86,7 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
     def _unwrap_call_tool_result(self, result: CallToolResult) -> Any:
         return unwrap_tool_call_result(result)
 
+
 def resolve_tool_activity_config(
     tool: ToolsetTool[Any] | None,
     tool_name: str,

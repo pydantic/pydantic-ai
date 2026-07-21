@@ -78,7 +78,9 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             ctx = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
-            return await self._wrap_call_tool_result(call_dynamic_tool(self.wrapped, params.name, params.tool_args, ctx))
+            return await self._wrap_call_tool_result(
+                call_dynamic_tool(self.wrapped, params.name, params.tool_args, ctx)
+            )
 
         call_tool_activity.__annotations__['deps'] = deps_type
 

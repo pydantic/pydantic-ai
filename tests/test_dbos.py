@@ -2792,9 +2792,7 @@ async def test_dbos_durability_dynamic_capability_mcp_runs_in_steps(dbos: DBOS) 
     def call_then_answer(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
             return ModelResponse(parts=[TextPart('done')])
-        return ModelResponse(
-            parts=[ToolCallPart('celsius_to_fahrenheit', {'celsius': 0}, tool_call_id='call-1')]
-        )
+        return ModelResponse(parts=[ToolCallPart('celsius_to_fahrenheit', {'celsius': 0}, tool_call_id='call-1')])
 
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
         return Capability(
