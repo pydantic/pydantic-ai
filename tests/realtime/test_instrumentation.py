@@ -651,15 +651,21 @@ async def test_session_span_without_model_or_usage() -> None:
 
 
 async def test_chat_span_closed_for_contentless_response() -> None:
-    # Audio with no transcript opens a `chat` span (first content) but finalizes with no response
-    # parts, so the span closes without attaching messages.
+    # Audio with no retained content still proves a response happened by opening a `chat` span, so
+    # history and instrumentation retain its empty response envelope.
     settings, exporter = _settings()
     conn = _Connection([AudioDelta(data=b'\x00\x01'), TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
     assert chat.attributes is not None
-    assert 'gen_ai.output.messages' not in chat.attributes
+    assert json.loads(str(chat.attributes['gen_ai.output.messages'])) == [
+        {'role': 'assistant', 'parts': [], 'finish_reason': 'stop'}
+    ]
+    response = session.new_messages()[0]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == []
+    assert session.usage.requests == 1
 
 
 async def test_session_usage_without_aggregated_attribute_names() -> None:

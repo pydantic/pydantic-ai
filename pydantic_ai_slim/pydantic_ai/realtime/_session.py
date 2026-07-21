@@ -385,6 +385,11 @@ class RealtimeSession:
         self._pending_response_usage = RequestUsage()
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
+        self._response_finalized_before_terminal = False
+        # User requests sent while a response is in flight are held until that response is finalized,
+        # so the pump remains the sole writer for that portion of history and a caller cannot splice a
+        # request between an assistant response's streamed parts.
+        self._pending_sent_requests: list[ModelRequest] = []
         self._active_assistant: SpeechPart | TextPart | None = None
         self._active_assistant_index = 0
         self._assistant_transcript = ''
@@ -552,7 +557,7 @@ class RealtimeSession:
         """
         if isinstance(content, str):
             await self._connection.send(TextInput(text=content))
-            self._history.append(
+            self._record_sent_request(
                 ModelRequest(parts=[UserPromptPart(content=content)], conversation_id=self._conversation_id)
             )
         elif isinstance(content, BinaryContent):
@@ -569,7 +574,7 @@ class RealtimeSession:
             await self.send_audio(content.data)
         elif isinstance(content, TextInput):
             await self._connection.send(content)
-            self._history.append(
+            self._record_sent_request(
                 ModelRequest(parts=[UserPromptPart(content=content.text)], conversation_id=self._conversation_id)
             )
         elif isinstance(content, ImageInput):
@@ -600,10 +605,25 @@ class RealtimeSession:
         self._require_capability(self._profile.get('supports_image_input', False), 'send', 'image input')
         await self._connection.send(ImageInput(data=content.data, mime_type=content.media_type))
         if self._sent_image_count % self._retain_images_every_n == 0:
-            self._history.append(
+            self._record_sent_request(
                 ModelRequest(parts=[UserPromptPart(content=[content])], conversation_id=self._conversation_id)
             )
         self._sent_image_count += 1
+
+    def _record_sent_request(self, request: ModelRequest) -> None:
+        """Record a sent request without interleaving it with an in-flight assistant response."""
+        response_in_flight = bool(
+            self._active_assistant is not None
+            or self._response_parts
+            or self._native_tool_parts
+            or self._pending_provider_response_id is not None
+            or self._pending_finish_reason is not None
+            or self._pending_response_usage != RequestUsage()
+        )
+        if response_in_flight:
+            self._pending_sent_requests.append(request)
+        else:
+            self._history.append(request)
 
     async def send_audio(self, data: bytes) -> None:
         """Stream a chunk of audio to the model."""
@@ -674,17 +694,30 @@ class RealtimeSession:
         `output_modalities=('text',)` responses) over the default
         [`SpeechPart`][pydantic_ai.messages.SpeechPart] (spoken audio and its transcript).
         """
-        if self._active_assistant is not None:
+        active = self._active_assistant
+        events: list[RealtimeEvent] = []
+        if active is not None:
+            active_item_id = active.id
+            item_changed = active_item_id is not None and item_id is not None and active_item_id != item_id
+            modality_changed = output_text != isinstance(active, TextPart)
+            if item_changed or modality_changed:
+                events.extend(self._finalize_assistant_part())
+                active = None
+        if active is not None:
             if isinstance(self._active_assistant, SpeechPart) and item_id and self._active_assistant.id is None:
                 self._active_assistant = replace(
                     self._active_assistant,
                     id=item_id,
                     provider_name=self._provider_name,
                 )
-            return []
+            return events
         self._ensure_chat_span()
         part: SpeechPart | TextPart = (
-            TextPart(content='')
+            TextPart(
+                content='',
+                id=item_id,
+                provider_name=self._provider_name if item_id else None,
+            )
             if output_text
             else SpeechPart(
                 speaker='assistant',
@@ -696,7 +729,8 @@ class RealtimeSession:
         self._active_assistant = part
         self._active_assistant_index = len(self._response_parts)
         self._assistant_transcript = ''
-        return [PartStartEvent(index=self._active_assistant_index, part=part)]
+        events.append(PartStartEvent(index=self._active_assistant_index, part=part))
+        return events
 
     def _handle_assistant_transcript(
         self, text: str, *, output_text: bool = False, item_id: str | None = None
@@ -753,6 +787,7 @@ class RealtimeSession:
         finish_reason: FinishReason | None = None,
         provider_details: dict[str, Any] | None = None,
         interrupted: bool = False,
+        response_occurred: bool = False,
     ) -> None:
         """Finalize the current assistant response's parts into a `ModelResponse` in history."""
         response: ModelResponse | None = None
@@ -762,7 +797,17 @@ class RealtimeSession:
         # Native tool parts (web grounding / code execution) lead the response (call+return, then
         # speech), matching the classic `GoogleModel`, which prepends them ahead of the assistant's text.
         parts = [*self._native_tool_parts, *self._response_parts]
-        if parts:
+        # Parts prove a response happened. For an output-less response, only terminal/pending provider
+        # metadata (or an interruption) does; a bare logical turn boundary must not invent a response.
+        response_occurred = bool(
+            response_occurred
+            or parts
+            or self._pending_provider_response_id is not None
+            or self._pending_finish_reason is not None
+            or self._pending_response_usage != RequestUsage()
+            or self._chat_span is not None
+        )
+        if response_occurred:
             response = ModelResponse(
                 parts=parts,
                 usage=self._pending_response_usage,
@@ -791,6 +836,9 @@ class RealtimeSession:
                     self._insert_tool_return(call_part, request)
                 if self._asap_drain_deferred:
                     self._asap_drain_ready = True
+        if self._pending_sent_requests:
+            self._history.extend(self._pending_sent_requests)
+            self._pending_sent_requests = []
         self._end_chat_span(input_messages, response)
         self._response_parts = []
         self._native_tool_parts = []
@@ -875,6 +923,15 @@ class RealtimeSession:
         events = self._finalize_user()
         events.extend(self._finalize_audio_only_user())
         events.extend(self._finalize_assistant_part())
+        already_finalized = bool(
+            self._response_finalized_before_terminal
+            and not self._response_parts
+            and not self._native_tool_parts
+            and self._pending_provider_response_id is None
+            and self._pending_finish_reason is None
+            and self._pending_response_usage == RequestUsage()
+        )
+        self._response_finalized_before_terminal = False
         self._finalize_response(
             provider_response_id=event.provider_response_id,
             # An interrupted turn (barge-in) isn't an error and has no dedicated `FinishReason`; leave
@@ -884,6 +941,15 @@ class RealtimeSession:
             or (None if event.interrupted or event.provider_details is not None else 'stop'),
             provider_details=event.provider_details,
             interrupted=event.interrupted,
+            response_occurred=bool(
+                not already_finalized
+                and (
+                    event.provider_response_id is not None
+                    or event.finish_reason is not None
+                    or event.provider_details is not None
+                    or event.interrupted
+                )
+            ),
         )
         events.append(event)
         return events
@@ -1422,6 +1488,9 @@ class RealtimeSession:
                     provider_response_id=event.provider_response_id,
                     finish_reason=event.finish_reason,
                 )
+                # OpenAI emits this usage immediately before `response.done`; the response is complete
+                # already, so that terminal must not append a second, empty `ModelResponse`.
+                self._response_finalized_before_terminal = True
             if self._asap_drain_ready:
                 self._asap_drain_ready = False
                 await self._drain_pending_messages('asap')

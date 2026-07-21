@@ -1485,6 +1485,41 @@ async def test_session_stamps_openai_response_metadata(
     assert (speech.id, speech.provider_name) == ('item-1', 'openai')
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ('status', 'raw_reason', 'finish_reason', 'state'),
+    [
+        ('incomplete', 'max_output_tokens', 'length', 'complete'),
+        ('failed', None, 'error', 'complete'),
+        ('cancelled', None, None, 'interrupted'),
+    ],
+)
+async def test_session_records_empty_openai_response(
+    status: str, raw_reason: str | None, finish_reason: FinishReason | None, state: str
+) -> None:
+    response_data: dict[str, Any] = {'id': 'resp-empty', 'status': status, 'output': []}
+    if raw_reason is not None:
+        response_data['status_details'] = {'reason': raw_reason}
+    done = json.dumps({'type': 'response.done', 'response': response_data})
+    connection = OpenAIRealtimeConnection(FakeWebSocket([done]))  # type: ignore[arg-type]
+    session = RealtimeSession(connection, make_tool_manager(), provider_name='openai')
+
+    async with session:
+        _ = [event async for event in session]
+
+    response = session.new_messages()[0]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == []
+    assert response.provider_name == 'openai'
+    assert response.provider_response_id == 'resp-empty'
+    assert response.finish_reason == finish_reason
+    assert response.provider_details == {
+        'status': status,
+        **({'finish_reason': raw_reason} if raw_reason is not None else {}),
+    }
+    assert response.state == state
+
+
 class DroppingWebSocket(FakeWebSocket):
     """A websocket whose iteration raises `ConnectionClosed`, simulating a dropped connection."""
 

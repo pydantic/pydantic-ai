@@ -334,6 +334,107 @@ async def test_assistant_transcript_final_only() -> None:
     )
 
 
+async def test_multiple_assistant_items_fold_into_one_response() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            Transcript(text='first', is_final=True, item_id='item-1'),
+            Transcript(text='second', is_final=True, item_id='item-2', output_text=True),
+            TurnCompleteEvent(provider_response_id='response-1', finish_reason='stop'),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, provider_name='openai')
+
+    _ = await collect_events(session)
+
+    assert session.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    SpeechPart(speaker='assistant', transcript='first', id='item-1', provider_name='openai'),
+                    TextPart(content='second', id='item-2', provider_name='openai'),
+                ],
+                provider_name='openai',
+                provider_response_id='response-1',
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            )
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ('finish_reason', 'provider_details'),
+    [
+        ('length', {'status': 'incomplete', 'finish_reason': 'max_output_tokens'}),
+        ('error', {'status': 'failed'}),
+    ],
+)
+async def test_empty_terminal_response_is_recorded(
+    finish_reason: Literal['length', 'error'], provider_details: dict[str, Any]
+) -> None:
+    conn = FakeRealtimeConnection(
+        [
+            TurnCompleteEvent(
+                provider_response_id='response-empty',
+                finish_reason=finish_reason,
+                provider_details=provider_details,
+            )
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, conversation_id='conversation-1')
+
+    _ = await collect_events(session)
+
+    assert session.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[],
+                provider_details=provider_details,
+                provider_response_id='response-empty',
+                timestamp=IsDatetime(),
+                finish_reason=finish_reason,
+                conversation_id='conversation-1',
+            )
+        ]
+    )
+    assert session.usage.requests == 1
+
+
+async def test_empty_interrupted_response_is_recorded() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            TurnCompleteEvent(
+                interrupted=True,
+                provider_response_id='response-cancelled',
+                provider_details={'status': 'cancelled'},
+            )
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    _ = await collect_events(session)
+
+    assert session.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[],
+                provider_details={'status': 'cancelled'},
+                provider_response_id='response-cancelled',
+                timestamp=IsDatetime(),
+                state='interrupted',
+            )
+        ]
+    )
+
+
+async def test_bare_turn_boundary_does_not_create_empty_response() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([TurnCompleteEvent()]), _noop_runner)
+
+    _ = await collect_events(session)
+
+    assert session.new_messages() == []
+
+
 async def test_user_transcript_final_becomes_request() -> None:
     conn = FakeRealtimeConnection(
         [InputTranscript(text='what is ', is_final=False), InputTranscript(text='the weather', is_final=True)]
@@ -543,6 +644,7 @@ async def test_tool_call_round_builds_classic_history() -> None:
             'FunctionToolResultEvent',
         ]
     )
+
     assert conn.sent == [ToolResult(tool_call_id='tc_1', output='Sunny, 22C')]
     # History mirrors a classic tool-call round: user request, tool-call response, tool result, answer.
     assert session.new_messages() == snapshot(
@@ -568,6 +670,39 @@ async def test_tool_call_round_builds_classic_history() -> None:
             ),
         ]
     )
+
+
+async def test_tool_response_finalized_on_usage_is_not_duplicated_at_terminal() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(
+                tool_call_id='tc-1',
+                tool_name='noop',
+                args='{}',
+                response_usage_follows=True,
+            ),
+            SessionUsageEvent(
+                usage=RequestUsage(output_tokens=1),
+                provider_response_id='response-tool',
+                finish_reason='tool_call',
+            ),
+            TurnCompleteEvent(
+                provider_response_id='response-tool',
+                finish_reason='stop',
+                provider_details={'status': 'completed'},
+            ),
+        ]
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'done'
+
+    session = RealtimeSession(conn, runner)
+    _ = await collect_events(session)
+
+    responses = [message for message in session.new_messages() if isinstance(message, ModelResponse)]
+    assert len(responses) == 1
+    assert isinstance(responses[0].parts[0], ToolCallPart)
 
 
 async def test_tool_call_events_carry_real_parts() -> None:
@@ -1204,6 +1339,50 @@ async def test_send_text_adds_user_prompt_to_history() -> None:
     await session.send('turn it up')
     assert session.new_messages() == snapshot(
         [ModelRequest(parts=[UserPromptPart(content='turn it up', timestamp=IsDatetime())], conversation_id='c1')]
+    )
+
+
+async def test_send_during_response_is_recorded_after_response() -> None:
+    response_started = asyncio.Event()
+    continue_response = asyncio.Event()
+
+    class MidResponseConnection(RealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            assert content == TextInput(text='next turn')
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield Transcript(text='first ', item_id='assistant-1')
+            response_started.set()
+            await continue_response.wait()
+            yield Transcript(text='response', is_final=True, item_id='assistant-1')
+            yield TurnCompleteEvent(provider_response_id='response-1', finish_reason='stop')
+
+    session = RealtimeSession(MidResponseConnection(), _noop_runner)
+    async with session:
+        stream = session.__aiter__()
+
+        async def next_event() -> RealtimeEvent:
+            return await anext(stream)
+
+        events_task = asyncio.create_task(next_event())
+        await response_started.wait()
+        await session.send('next turn')
+        continue_response.set()
+        first_event = await events_task
+        remaining_events = [event async for event in stream]
+
+    assert isinstance(first_event, PartStartEvent)
+    assert isinstance(remaining_events[-1], TurnCompleteEvent)
+    assert session.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='first response', id='assistant-1')],
+                provider_response_id='response-1',
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+            ModelRequest(parts=[UserPromptPart(content='next turn', timestamp=IsDatetime())]),
+        ]
     )
 
 
