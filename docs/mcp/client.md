@@ -27,7 +27,7 @@ Each `MCPToolset` instance is a [toolset](../toolsets.md) and can be registered 
 
 You can use [`async with agent`][pydantic_ai.agent.Agent.__aenter__] to open and close connections to all registered MCP toolsets (and in the case of stdio servers, start and stop the subprocesses) around the context where they'll be used in agent runs. You can also use `async with toolset` to manage the lifecycle of a specific toolset directly, for example if you'd like to share it across multiple agents. If you don't explicitly enter one of these context managers, the toolset will be opened and closed automatically as needed.
 
-Note that a shared `MCPToolset` instance connects to the server as a single identity; if your users have their own credentials for the MCP server, see [per-user authentication](#per-user-authentication).
+An MCP session is shared exactly as far as you share it: everything inside an explicit `async with agent:` / `async with toolset:` — including agent runs elsewhere while it's open — uses the one session it opened, while concurrent callers that each enter on their own (or don't enter at all) each get their own session. A session connects to the server as a single identity, so only share one across users who should be the same identity; see [per-user authentication](#per-user-authentication).
 
 ### Streamable HTTP
 
@@ -443,10 +443,9 @@ For HTTP transports, `MCPToolset` accepts an `auth` argument: a bearer token str
 
 In a multi-user or multi-tenant application, each user typically has their own credentials for the MCP server, such as a tenant-scoped bearer token.
 
-!!! warning "A shared `MCPToolset` instance is a single identity"
-    An `MCPToolset` instance maintains one MCP session that's shared by all concurrent agent runs using it: the connection is established (and authentication resolved) by whichever run needs it first, and only torn down once the last one finishes. Deriving credentials per-request from task-local state like a [`ContextVar`][contextvars.ContextVar] inside an `httpx.Auth` does not work on a shared instance: overlapping runs will silently send their requests with the credentials of whichever run opened the session.
+Because authentication is resolved (and the MCP session initialized) in the context that opens the connection, an MCP session is inherently a single identity. Concurrent agent runs that don't explicitly enter the agent or toolset each open their own session, so per-user credentials can't leak between them — but don't wrap runs on behalf of *different* users in a single `async with agent:` / `async with toolset:` block, as everything inside shares the one session (and identity) it opened.
 
-To make requests with the credentials of the user in question, each concurrent run needs its own `MCPToolset` instance so that it establishes its own authenticated session. The recommended way to do this is to build the toolset [dynamically](../toolsets.md#dynamically-building-a-toolset) using the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator: the decorated function is passed the [run context][pydantic_ai.tools.RunContext] and can read the user's credentials from the run's [dependencies](../dependencies.md):
+The recommended way to authenticate as the user in question is to build the toolset [dynamically](../toolsets.md#dynamically-building-a-toolset) using the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator: the decorated function is passed the [run context][pydantic_ai.tools.RunContext] and can read the user's credentials from the run's [dependencies](../dependencies.md):
 
 ```python {title="mcp_per_user_auth.py"}
 from dataclasses import dataclass
@@ -478,7 +477,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-Because the per-run toolset's session is established inside the run itself, credentials held in a `ContextVar` also resolve correctly with this pattern — but passing them through deps is more explicit and doesn't depend on task-local state.
+Because each run's session is established inside the run itself, credentials held in task-local state like a [`ContextVar`][contextvars.ContextVar] (e.g. inside an `httpx.Auth` on a shared `MCPToolset` instance) also resolve to the right user per run — but passing them through deps is more explicit and doesn't depend on task-local state.
 
 As an alternative to a dynamic toolset, you can construct a new `MCPToolset` yourself for each request and pass it to the [`toolsets` argument](../toolsets.md) of the agent run methods.
 

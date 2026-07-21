@@ -6,8 +6,9 @@ import os
 import re
 import ssl
 from abc import ABC
-from collections.abc import Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeAlias, cast, overload
@@ -21,7 +22,7 @@ from typing_extensions import Self, assert_never
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 from .direct import model_request
-from .toolsets.abstract import AbstractToolset, ToolsetTool
+from .toolsets.abstract import AbstractToolset, ToolsetTool, implicit_enter, is_implicit_enter
 
 try:
     from mcp import types as mcp_types
@@ -667,6 +668,31 @@ keeps the conflict checks in sync with the actual default values, so changing a 
 silently break the conflict check."""
 
 
+@dataclass
+class _MCPSession:
+    """A single open MCP session owned by an `MCPToolset`.
+
+    An `MCPToolset` can hold multiple sessions at once — one per calling context that entered it —
+    so that concurrent callers don't silently share a connection (and therefore an identity: auth
+    is resolved, and the MCP session initialized, in the context that opens the connection).
+    Everything scoped to one connection lives here rather than on the toolset: the initialize-time
+    server metadata, and the tool/resource/prompt list caches (servers may expose different lists
+    per session, e.g. based on the session's credentials).
+    """
+
+    owner: MCPToolset[Any]
+    client: FastMCPClient[Any]
+    exit_stack: AsyncExitStack
+    server_info: mcp_types.Implementation
+    server_capabilities: ServerCapabilities
+    instructions: str | None
+    ref_count: int = 1
+    closed: bool = False
+    cached_tools: list[mcp_types.Tool] | None = None
+    cached_resources: list[Resource] | None = None
+    cached_prompts: list[Prompt] | None = None
+
+
 @dataclass(init=False, repr=False)
 class MCPToolset(AbstractToolset[AgentDepsT]):
     """A toolset for connecting to an MCP server.
@@ -792,14 +818,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     """
 
     _id: str | None
-    _server_info: mcp_types.Implementation | None
-    _server_capabilities: ServerCapabilities | None
-    _instructions: str | None
-    _cached_tools: list[mcp_types.Tool] | None
-    _cached_resources: list[Resource] | None
-    _cached_prompts: list[Prompt] | None
-    _running_count: int
-    _exit_stack: AsyncExitStack | None
+    _sessions: list[_MCPSession]
+    _shared_session: _MCPSession | None
+    _session_var: ContextVar[_MCPSession | None]
+    _template_client_reserved: bool
     _user_message_handler: MessageHandlerT | None
 
     @functools.cached_property
@@ -984,14 +1006,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.sampling_model = sampling_model
         self.log_level = log_level
 
-        self._server_info = None
-        self._server_capabilities = None
-        self._instructions = None
-        self._cached_tools = None
-        self._cached_resources = None
-        self._cached_prompts = None
-        self._running_count = 0
-        self._exit_stack = None
+        self._sessions = []
+        self._shared_session = None
+        self._session_var = ContextVar('_MCPToolset_session', default=None)
+        self._template_client_reserved = False
 
     @property
     def id(self) -> str | None:
@@ -1011,15 +1029,49 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     def tool_name_conflict_hint(self) -> str:
         return 'Wrap the toolset with `.prefixed("...")` to disambiguate tool names from multiple MCP servers.'
 
+    def _joinable_session(self) -> _MCPSession | None:
+        """The open session the current context would use: its own, or the explicitly-opened one.
+
+        The context's own session (recorded by `__aenter__` in `_session_var`) wins; a session the
+        user explicitly opened via `async with toolset:` / `async with agent:` is the fallback.
+        Sessions opened implicitly by *other* contexts are never returned: their ambient context
+        (and e.g. request-scoped credentials) may differ from the current caller's.
+        """
+        session = self._session_var.get()
+        if session is not None and not session.closed and session.owner is self:
+            return session
+        shared = self._shared_session
+        if shared is not None and not shared.closed:
+            return shared
+        return None
+
+    @property
+    def _current_session(self) -> _MCPSession | None:
+        """The session the current context would use, falling back to the oldest open session.
+
+        The fallback keeps initialize-time metadata (`server_info` etc.) readable from tasks other
+        than the one that entered the toolset, matching the pre-session-scoping behavior.
+        """
+        session = self._joinable_session()
+        if session is not None:
+            return session
+        return self._sessions[0] if self._sessions else None
+
+    @property
+    def _session(self) -> _MCPSession:
+        session = self._current_session
+        assert session is not None, f'`{self.__class__.__name__}` must be entered before use'
+        return session
+
     @property
     def server_info(self) -> mcp_types.Implementation:
         """The server-implementation info sent during initialization.
 
         Raises [`AttributeError`][AttributeError] when accessed before the toolset has been entered.
         """
-        if self._server_info is None:
+        if (session := self._current_session) is None:
             raise AttributeError(f'`{self.__class__.__name__}.server_info` is only available after initialization.')
-        return self._server_info
+        return session.server_info
 
     @property
     def capabilities(self) -> ServerCapabilities:
@@ -1027,9 +1079,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
         Raises [`AttributeError`][AttributeError] when accessed before the toolset has been entered.
         """
-        if self._server_capabilities is None:
+        if (session := self._current_session) is None:
             raise AttributeError(f'`{self.__class__.__name__}.capabilities` is only available after initialization.')
-        return self._server_capabilities
+        return session.server_capabilities
 
     @property
     def instructions(self) -> str | None:
@@ -1037,14 +1089,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
         Raises [`AttributeError`][AttributeError] when accessed before the toolset has been entered.
         """
-        if not self._initialized:
+        if (session := self._current_session) is None:
             raise AttributeError(f'`{self.__class__.__name__}.instructions` is only available after initialization.')
-        return self._instructions
+        return session.instructions
 
     @property
     def is_running(self) -> bool:
-        """Whether the toolset is currently entered (the FastMCP session is open)."""
-        return self._running_count > 0
+        """Whether the toolset is currently entered (at least one FastMCP session is open)."""
+        return len(self._sessions) > 0
 
     def set_sampling_model(self, model: models.Model) -> None:
         """Set the [`sampling_model`][pydantic_ai.mcp.MCPToolset.sampling_model] on an already-constructed toolset.
@@ -1056,68 +1108,148 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.sampling_model = model
         self.client.set_sampling_callback(_build_sampling_handler(model))  # pyright: ignore[reportUnknownMemberType]
 
-    @property
-    def _initialized(self) -> bool:
-        return self._server_info is not None
-
     def _invalidate_tools_cache(self) -> None:
-        self._cached_tools = None
+        # A `list_changed` notification arrives on one session, but the wrapped message handler
+        # can't tell which one it belongs to — invalidate across all open sessions. Every session
+        # has the handler: `Client.new()` preserves custom message handlers on cloned clients.
+        for session in self._sessions:
+            session.cached_tools = None
 
     def _invalidate_resources_cache(self) -> None:
-        self._cached_resources = None
+        for session in self._sessions:
+            session.cached_resources = None
 
     def _invalidate_prompts_cache(self) -> None:
-        self._cached_prompts = None
+        for session in self._sessions:
+            session.cached_prompts = None
 
     async def __aenter__(self) -> Self:
+        """Enter the toolset, opening an MCP session scoped to the current context.
+
+        A session is shared exactly as far as the entering context is shared: re-entering from the
+        same context (or a task spawned after entering) joins the existing session, while entering
+        from an unrelated concurrent context opens a separate session. This keeps auth — which is
+        resolved in the context that opens the connection — from leaking between concurrent callers
+        (e.g. per-request credentials in a multi-tenant app).
+
+        A session opened by an *explicit* `async with toolset:` / `async with agent:` is also
+        joined by agent runs that enter the toolset implicitly, so entering around a batch of
+        concurrent runs is the way to share one connection between them.
+        """
+        implicit = is_implicit_enter()
         async with self._enter_lock:
-            if self._running_count == 0:
-                # Build the exit stack inside an `async with` so any failure after
-                # `enter_async_context(self.client)` cleans up the open session — only commit the
-                # stack and write `_server_info`/`_server_capabilities`/`_instructions` to `self`
-                # once initialization fully succeeds, so `_initialized` can't see stale data from a
-                # session that got torn down mid-setup.
-                async with AsyncExitStack() as exit_stack:
-                    await exit_stack.enter_async_context(self.client)
-                    init_result = self.client.initialize_result
-                    assert init_result is not None, 'FastMCP Client initialization returned no result'
-                    server_info = init_result.serverInfo
-                    server_capabilities = ServerCapabilities.from_mcp_sdk(init_result.capabilities)
-                    instructions = init_result.instructions
-                    if self.log_level is not None:
-                        await self.client.session.set_logging_level(self.log_level)
-                    self._exit_stack = exit_stack.pop_all()
-                    self._server_info = server_info
-                    self._server_capabilities = server_capabilities
-                    self._instructions = instructions
-            self._running_count += 1
+            session = self._session_var.get()
+            if session is not None and not session.closed and session.owner is self:
+                session.ref_count += 1
+                return self
+            if implicit and (shared := self._shared_session) is not None and not shared.closed:
+                shared.ref_count += 1
+                self._session_var.set(shared)
+                return self
+            client = self._reserve_client()
+        # Connect outside the lock so concurrent entrants perform their handshakes in parallel —
+        # sessions are per-context, so there's no singleton invariant to protect while connecting.
+        try:
+            session = await self._open_session(client)
+        except BaseException:
+            if client is self.client:
+                async with self._enter_lock:
+                    self._template_client_reserved = False
+            raise
+        async with self._enter_lock:
+            if client is self.client:
+                self._template_client_reserved = False
+            self._sessions.append(session)
+            self._session_var.set(session)
+            if not implicit and self._shared_session is None:
+                self._shared_session = session
         return self
+
+    def _reserve_client(self) -> FastMCPClient[Any]:
+        """Pick the client to back a new session; must be called while holding `_enter_lock`.
+
+        The template `self.client` backs the first session so `toolset.client` reflects the live
+        session in the common single-session case; overlapping sessions get independent clones via
+        `Client.new()`. The reservation flag keeps two concurrent entrants from both picking the
+        template before either has committed a session — they'd silently share the underlying
+        FastMCP session.
+        """
+        if self._template_client_reserved or any(session.client is self.client for session in self._sessions):
+            return self.client.new()
+        self._template_client_reserved = True
+        return self.client
+
+    async def _open_session(self, client: FastMCPClient[Any]) -> _MCPSession:
+        # Build the exit stack inside an `async with` so any failure after
+        # `enter_async_context(client)` cleans up the open session — the `_MCPSession` is only
+        # constructed (and committed by the caller) once initialization fully succeeds.
+        async with AsyncExitStack() as exit_stack:
+            await exit_stack.enter_async_context(client)
+            init_result = client.initialize_result
+            assert init_result is not None, 'FastMCP Client initialization returned no result'
+            if self.log_level is not None:
+                await client.session.set_logging_level(self.log_level)
+            return _MCPSession(
+                owner=self,
+                client=client,
+                exit_stack=exit_stack.pop_all(),
+                server_info=init_result.serverInfo,
+                server_capabilities=ServerCapabilities.from_mcp_sdk(init_result.capabilities),
+                instructions=init_result.instructions,
+            )
+        raise AssertionError('unreachable')  # pragma: no cover
 
     async def __aexit__(self, *args: Any) -> bool | None:
         async with self._enter_lock:
-            if self._running_count == 0:
-                raise ValueError(f'`{self.__class__.__name__}.__aexit__` called more times than `__aenter__`')
-            self._running_count -= 1
-            if self._running_count == 0 and self._exit_stack is not None:
-                await self._exit_stack.aclose()
-                self._exit_stack = None
-                self._server_info = None
-                self._server_capabilities = None
-                self._instructions = None
-                self._cached_tools = None
-                self._cached_resources = None
-                self._cached_prompts = None
+            session = self._session_var.get()
+            if session is None or session.closed or session.owner is not self:
+                # `__aexit__` may run in a different task/context than the matching `__aenter__`
+                # (e.g. when a framework moves cleanup to another task). With a single open session
+                # the intent is unambiguous; with several, picking one could close another caller's
+                # session out from under them, so refuse instead of guessing.
+                if not self._sessions:
+                    raise ValueError(f'`{self.__class__.__name__}.__aexit__` called more times than `__aenter__`')
+                if len(self._sessions) > 1:
+                    raise ValueError(
+                        f'`{self.__class__.__name__}.__aexit__` was called from a context that did not enter the '
+                        'toolset while multiple sessions are open; call `__aexit__` from the entering context instead.'
+                    )
+                session = self._sessions[0]
+            session.ref_count -= 1
+            if session.ref_count == 0:
+                session.closed = True
+                self._sessions.remove(session)
+                if self._shared_session is session:
+                    self._shared_session = None
+                await session.exit_stack.aclose()
         return None
+
+    @asynccontextmanager
+    async def _borrow_session(self) -> AsyncGenerator[_MCPSession]:
+        """Enter the toolset as an implicit entrant and yield the current context's session.
+
+        Used around every direct operation (`list_tools`, `direct_call_tool`, resource and prompt
+        methods) so a standalone call joins the context's or the explicitly-opened session when one
+        exists, and otherwise opens a short-lived private session — without registering it as
+        shared state that unrelated concurrent callers would join.
+        """
+        with implicit_enter():
+            await self.__aenter__()
+        try:
+            yield self._session
+        finally:
+            await self.__aexit__(None, None, None)
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> messages.InstructionPart | None:
         """Return the server's instructions if `include_instructions` is enabled."""
         if not self.include_instructions:
             return None
-        if not self._initialized or self._instructions is None:
+        session = self._current_session
+        if session is None or session.instructions is None:
             return None
-        # Instructions are captured once during `__aenter__` and don't change across runs while
-        # the toolset stays entered — so they're static from the agent's perspective, not dynamic.
-        return messages.InstructionPart(content=self._instructions, dynamic=False)
+        # Instructions are captured once when the session is opened and don't change across runs
+        # while it stays open — so they're static from the agent's perspective, not dynamic.
+        return messages.InstructionPart(content=session.instructions, dynamic=False)
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve the tools currently exposed by the server.
@@ -1126,12 +1258,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         are cached and invalidated by `notifications/tools/list_changed` or the toolset's last
         `__aexit__`.
         """
-        if self.cache_tools and self._cached_tools is not None:
-            return self._cached_tools
-        async with self:
-            tools = await self.client.list_tools()
+        if self.cache_tools and (session := self._joinable_session()) is not None and session.cached_tools is not None:
+            return session.cached_tools
+        async with self._borrow_session() as session:
+            tools = await session.client.list_tools()
             if self.cache_tools:
-                self._cached_tools = tools
+                session.cached_tools = tools
             return tools
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -1189,15 +1321,15 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             ModelRetry: If the tool errors and `tool_error_behavior='retry'` (the default).
             fastmcp.exceptions.ToolError: If the tool errors and `tool_error_behavior='error'`.
         """
-        async with self:
+        async with self._borrow_session() as session:
             try:
                 if use_task:
-                    tool_task: ToolTask = await self.client.call_tool(
+                    tool_task: ToolTask = await session.client.call_tool(
                         name=name, arguments=args, task=True, meta=metadata
                     )
                     result: CallToolResult = await tool_task.result()
                 else:
-                    result = await self.client.call_tool(name=name, arguments=args, meta=metadata)
+                    result = await session.client.call_tool(name=name, arguments=args, meta=metadata)
             except ToolError as e:
                 if self.tool_error_behavior == 'retry':
                     raise exceptions.ModelRetry(message=str(e)) from e
@@ -1263,18 +1395,22 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             MCPError: If the server returns an error.
         """
-        if self.cache_prompts and self._cached_prompts is not None:
-            return self._cached_prompts
-        async with self:
-            if not self.capabilities.prompts:
+        if (
+            self.cache_prompts
+            and (session := self._joinable_session()) is not None
+            and session.cached_prompts is not None
+        ):
+            return session.cached_prompts
+        async with self._borrow_session() as session:
+            if not session.server_capabilities.prompts:
                 return []
             try:
-                mcp_prompts = await self.client.list_prompts()
+                mcp_prompts = await session.client.list_prompts()
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
             prompts = [Prompt.from_mcp_sdk(p) for p in mcp_prompts]
             if self.cache_prompts:
-                self._cached_prompts = prompts
+                session.cached_prompts = prompts
             return prompts
 
     async def get_prompt(self, name: str, arguments: dict[str, str] | None = None) -> PromptResult:
@@ -1288,14 +1424,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             MCPError: If the server doesn't advertise the `prompts` capability, or if it returns
                 an error response.
         """
-        async with self:
-            if not self.capabilities.prompts:
+        async with self._borrow_session() as session:
+            if not session.server_capabilities.prompts:
                 raise MCPError(
                     message=f'Server does not advertise the `prompts` capability; cannot get prompt {name!r}.',
                     code=-32601,
                 )
             try:
-                result = await self.client.get_prompt(name, arguments)
+                result = await session.client.get_prompt(name, arguments)
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
             return PromptResult(
@@ -1318,18 +1454,22 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             MCPError: If the server returns an error.
         """
-        if self.cache_resources and self._cached_resources is not None:
-            return self._cached_resources
-        async with self:
-            if not self.capabilities.resources:
+        if (
+            self.cache_resources
+            and (session := self._joinable_session()) is not None
+            and session.cached_resources is not None
+        ):
+            return session.cached_resources
+        async with self._borrow_session() as session:
+            if not session.server_capabilities.resources:
                 return []
             try:
-                mcp_resources = await self.client.list_resources()
+                mcp_resources = await session.client.list_resources()
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
             resources = [Resource.from_mcp_sdk(r) for r in mcp_resources]
             if self.cache_resources:
-                self._cached_resources = resources
+                session.cached_resources = resources
             return resources
 
     async def list_resource_templates(self) -> list[ResourceTemplate]:
@@ -1340,11 +1480,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             MCPError: If the server returns an error.
         """
-        async with self:
-            if not self.capabilities.resources:
+        async with self._borrow_session() as session:
+            if not session.server_capabilities.resources:
                 return []
             try:
-                mcp_templates = await self.client.list_resource_templates()
+                mcp_templates = await session.client.list_resource_templates()
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
         return [ResourceTemplate.from_mcp_sdk(t) for t in mcp_templates]
@@ -1374,9 +1514,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             MCPError: If the server returns an error.
         """
         resource_uri = uri if isinstance(uri, str) else uri.uri
-        async with self:
+        async with self._borrow_session() as session:
             try:
-                contents = await self.client.read_resource(AnyUrl(resource_uri))
+                contents = await session.client.read_resource(AnyUrl(resource_uri))
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
 
@@ -1468,10 +1608,43 @@ def _build_transport(
     )
 
 
+class _NonClosingHTTPClient:
+    """Delegating proxy that shields a user-supplied `httpx.AsyncClient` from being closed.
+
+    The MCP SDK `async with`-closes whatever the transport's `httpx_client_factory` returns, on
+    every session teardown. A user-supplied `http_client` is shared by all of the toolset's
+    sessions and owned by the user, so it must survive: this proxy forwards everything to the real
+    client but turns lifecycle calls into no-ops. (`httpx.AsyncClient` doesn't require entering
+    before use, so skipping `__aenter__` on the real client is safe.)
+    """
+
+    def __init__(self, client: httpx.AsyncClient):
+        self._pai_client = client
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._pai_client, name)
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
+
 def _make_httpx_client_factory(
     http_client: httpx.AsyncClient,
 ) -> Callable[..., httpx.AsyncClient]:
-    """Return an `httpx_client_factory` that always returns the user-supplied `http_client`."""
+    """Return an `httpx_client_factory` that always returns the user-supplied `http_client`.
+
+    The returned client is shielded from the per-session close the MCP SDK performs on
+    factory-created clients, since it's shared by all of the toolset's sessions and owned by the user.
+    """
+    # The proxy is duck-type compatible with the `httpx.AsyncClient` surface the transport uses;
+    # the cast satisfies the `McpHttpClientFactory` protocol's declared return type.
+    proxied = cast(httpx.AsyncClient, _NonClosingHTTPClient(http_client))
 
     def factory(
         headers: dict[str, str] | None = None,
@@ -1481,7 +1654,7 @@ def _make_httpx_client_factory(
         # which the mcp SDK's `McpHttpClientFactory` protocol doesn't declare.
         follow_redirects: bool = True,
     ) -> httpx.AsyncClient:
-        return http_client
+        return proxied
 
     return factory
 

@@ -95,6 +95,7 @@ from ..toolsets._dynamic import (
     ToolsetFunc,
 )
 from ..toolsets._tool_search import parse_discovered_tools
+from ..toolsets.abstract import implicit_enter
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
@@ -1718,7 +1719,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Enter toolset AFTER context vars are propagated so that
             # toolset __aenter__/__aexit__ run inside the run span context
             # (set by the Instrumentation capability's wrap_run).
-            await stack.enter_async_context(toolset)
+            with implicit_enter():
+                await stack.enter_async_context(toolset)
 
             async def _finalize_result(r: AgentRunResult[Any]) -> None:
                 """Call after_run, store the result override, and clear any pending error."""

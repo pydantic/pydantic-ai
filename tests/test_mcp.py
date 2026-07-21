@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import json
 import re
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from unittest import mock
 from unittest.mock import AsyncMock
 
 import anyio
@@ -23,10 +25,12 @@ import httpx
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import models
+from pydantic_ai import Agent, models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
+from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -41,6 +45,7 @@ with try_import() as imports_successful:
     from fastmcp.exceptions import ToolError
     from fastmcp.prompts import Message
     from fastmcp.server import FastMCP
+    from fastmcp.server.dependencies import get_context
     from fastmcp.server.tasks import TaskConfig
     from mcp import types as mcp_types
     from mcp.shared.exceptions import McpError
@@ -67,6 +72,7 @@ with try_import() as imports_successful:
         ResourceTemplate,
         ServerCapabilities,
         _make_httpx_client_factory,  # pyright: ignore[reportPrivateUsage]
+        _NonClosingHTTPClient,  # pyright: ignore[reportPrivateUsage]
         load_mcp_toolsets,
     )
     from pydantic_ai.messages import TextContent
@@ -101,20 +107,26 @@ class TestMCPToolsetConstruction:
         toolset = MCPToolset('https://example.com/mcp', http_client=client)
         assert isinstance(toolset.client.transport, StreamableHttpTransport)
         assert toolset.client.transport.httpx_client_factory is not None
-        assert toolset.client.transport.httpx_client_factory() is client
+        proxied = toolset.client.transport.httpx_client_factory()
+        assert isinstance(proxied, _NonClosingHTTPClient)
+        assert proxied._pai_client is client  # pyright: ignore[reportPrivateUsage]
         # FastMCP's StreamableHttpTransport calls the factory with `follow_redirects`, which the
         # mcp SDK's `McpHttpClientFactory` protocol doesn't declare; the factory must accept it.
-        factory = _make_httpx_client_factory(client)
-        assert factory(follow_redirects=True) is client
+        proxied = _make_httpx_client_factory(client)(follow_redirects=True)
+        assert isinstance(proxied, _NonClosingHTTPClient)
+        assert proxied._pai_client is client  # pyright: ignore[reportPrivateUsage]
 
     def test_sse_url_with_http_client_uses_factory(self):
         client = httpx.AsyncClient()
         toolset = MCPToolset('https://example.com/sse', http_client=client)
         assert isinstance(toolset.client.transport, SSETransport)
         assert toolset.client.transport.httpx_client_factory is not None
-        assert toolset.client.transport.httpx_client_factory() is client
-        factory = _make_httpx_client_factory(client)
-        assert factory(follow_redirects=True) is client
+        proxied = toolset.client.transport.httpx_client_factory()
+        assert isinstance(proxied, _NonClosingHTTPClient)
+        assert proxied._pai_client is client  # pyright: ignore[reportPrivateUsage]
+        proxied = _make_httpx_client_factory(client)(follow_redirects=True)
+        assert isinstance(proxied, _NonClosingHTTPClient)
+        assert proxied._pai_client is client  # pyright: ignore[reportPrivateUsage]
 
     def test_http_kwargs_with_non_url_input_raises(self):
         """HTTP-only kwargs (headers/auth/verify/http_client) must error out when the connection
@@ -271,6 +283,19 @@ async def fastmcp_server() -> FastMCP[None]:
         """A tool that always raises an error — used to test error handling."""
         raise ValueError('boom')
 
+    # Strong references keep sessions alive so `is`-identity below can't be confused by
+    # a freed session's memory being reused for a later one.
+    seen_sessions: list[Any] = []
+
+    @server.tool()
+    async def session_marker() -> str:
+        """Return an identifier unique to the MCP session this call arrived on."""
+        session = get_context().session
+        if not any(seen is session for seen in seen_sessions):
+            seen_sessions.append(session)
+        index = next(i for i, seen in enumerate(seen_sessions) if seen is session)
+        return f'session-{index}'
+
     @server.tool()
     async def image_tool() -> ImageContent:
         """A tool that returns an image content block."""
@@ -404,7 +429,7 @@ class TestMCPToolsetIntegration:
         assert toolset.is_running is False
 
     async def test_aexit_called_before_aenter_raises(self, fastmcp_server: FastMCP[None]):
-        """Calling `__aexit__` before any `__aenter__` should raise — `_running_count` is 0."""
+        """Calling `__aexit__` before any `__aenter__` should raise — no session is open."""
         toolset = MCPToolset(fastmcp_server)
         with pytest.raises(ValueError, match='called more times than'):
             await toolset.__aexit__(None, None, None)
@@ -450,7 +475,7 @@ class TestMCPToolsetIntegration:
         toolset = MCPToolset(fastmcp_server, cache_tools=False)
         async with toolset:
             await toolset.get_tools(run_context)
-            assert toolset._cached_tools is None  # pyright: ignore[reportPrivateUsage]
+            assert toolset._session.cached_tools is None  # pyright: ignore[reportPrivateUsage]
 
     async def test_call_tool_returns_structured_content(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server)
@@ -577,7 +602,7 @@ class TestMCPToolsetIntegration:
         toolset = MCPToolset(fastmcp_server, cache_resources=False)
         async with toolset:
             await toolset.list_resources()
-            assert toolset._cached_resources is None  # pyright: ignore[reportPrivateUsage]
+            assert toolset._session.cached_resources is None  # pyright: ignore[reportPrivateUsage]
 
     async def test_list_resource_templates(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(fastmcp_server)
@@ -613,7 +638,7 @@ class TestMCPToolsetIntegration:
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
             # Force the capability off to exercise the early-return branches.
-            toolset._server_capabilities = ServerCapabilities()  # pyright: ignore[reportPrivateUsage]
+            toolset._session.server_capabilities = ServerCapabilities()  # pyright: ignore[reportPrivateUsage]
             assert await toolset.list_resources() == []
             assert await toolset.list_resource_templates() == []
 
@@ -697,7 +722,7 @@ class TestMCPToolsetIntegration:
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
             first = await toolset.list_prompts()
-            assert toolset._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
+            assert toolset._session.cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
             second = await toolset.list_prompts()
         assert first == second
 
@@ -705,27 +730,28 @@ class TestMCPToolsetIntegration:
         toolset = MCPToolset(fastmcp_server, cache_prompts=False)
         async with toolset:
             await toolset.list_prompts()
-            assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+            assert toolset._session.cached_prompts is None  # pyright: ignore[reportPrivateUsage]
 
     async def test_prompts_cache_invalidation_on_notification(self, fastmcp_server: FastMCP[None]):
         from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
 
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=None)
-        toolset._cached_prompts = []  # pyright: ignore[reportPrivateUsage]
+        async with toolset:
+            toolset._session.cached_prompts = []  # pyright: ignore[reportPrivateUsage]
 
-        await handler(
-            mcp_types.ServerNotification(
-                root=mcp_types.PromptListChangedNotification(method='notifications/prompts/list_changed')
+            await handler(
+                mcp_types.ServerNotification(
+                    root=mcp_types.PromptListChangedNotification(method='notifications/prompts/list_changed')
+                )
             )
-        )
-        assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+            assert toolset._session.cached_prompts is None  # pyright: ignore[reportPrivateUsage]
 
     async def test_prompts_without_capability(self, fastmcp_server: FastMCP[None]):
         """`list_prompts` returns `[]` and `get_prompt` raises `MCPError` when prompts capability is absent."""
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
-            toolset._server_capabilities = ServerCapabilities()  # pyright: ignore[reportPrivateUsage]
+            toolset._session.server_capabilities = ServerCapabilities()  # pyright: ignore[reportPrivateUsage]
             assert await toolset.list_prompts() == []
             with pytest.raises(MCPError, match='does not advertise the `prompts` capability') as exc_info:
                 await toolset.get_prompt('does_not_matter')
@@ -881,50 +907,54 @@ class TestMCPToolsetIntegration:
 
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=None)
-        toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
-        # `LoggingMessageNotification` is unrelated to any cache.
-        await handler(
-            mcp_types.ServerNotification(
-                root=mcp_types.LoggingMessageNotification(
-                    method='notifications/message',
-                    params=mcp_types.LoggingMessageNotificationParams(level='info', data='hi'),
+        async with toolset:
+            toolset._session.cached_tools = []  # pyright: ignore[reportPrivateUsage]
+            # `LoggingMessageNotification` is unrelated to any cache.
+            await handler(
+                mcp_types.ServerNotification(
+                    root=mcp_types.LoggingMessageNotification(
+                        method='notifications/message',
+                        params=mcp_types.LoggingMessageNotificationParams(level='info', data='hi'),
+                    )
                 )
             )
-        )
-        assert toolset._cached_tools == []  # pyright: ignore[reportPrivateUsage]
+            assert toolset._session.cached_tools == []  # pyright: ignore[reportPrivateUsage]
 
     async def test_message_handler_ignores_non_notification_messages(self, fastmcp_server: FastMCP[None]):
         from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
 
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=None)
-        toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
-        # Exception messages are passed through but shouldn't crash or invalidate caches.
-        await handler(RuntimeError('transport error'))
-        assert toolset._cached_tools == []  # pyright: ignore[reportPrivateUsage]
+        async with toolset:
+            toolset._session.cached_tools = []  # pyright: ignore[reportPrivateUsage]
+            # Exception messages are passed through but shouldn't crash or invalidate caches.
+            await handler(RuntimeError('transport error'))
+            assert toolset._session.cached_tools == []  # pyright: ignore[reportPrivateUsage]
 
     async def test_message_handler_invalidates_caches(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
 
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=None)
-        toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
-        toolset._cached_resources = []  # pyright: ignore[reportPrivateUsage]
+        async with toolset:
+            session = toolset._session  # pyright: ignore[reportPrivateUsage]
+            session.cached_tools = []
+            session.cached_resources = []
 
-        await handler(
-            mcp_types.ServerNotification(
-                root=mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
+            await handler(
+                mcp_types.ServerNotification(
+                    root=mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
+                )
             )
-        )
-        assert toolset._cached_tools is None  # pyright: ignore[reportPrivateUsage]
+            assert session.cached_tools is None
 
-        toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
-        await handler(
-            mcp_types.ServerNotification(
-                root=mcp_types.ResourceListChangedNotification(method='notifications/resources/list_changed')
+            session.cached_tools = []
+            await handler(
+                mcp_types.ServerNotification(
+                    root=mcp_types.ResourceListChangedNotification(method='notifications/resources/list_changed')
+                )
             )
-        )
-        assert toolset._cached_resources is None  # pyright: ignore[reportPrivateUsage]
+            assert session.cached_resources is None
 
     async def test_message_handler_forwards_to_user_handler(self, fastmcp_server: FastMCP[None]):
         from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
@@ -993,6 +1023,193 @@ class TestMCPToolsetIntegration:
         async with toolset:
             with pytest.raises(ToolError):
                 await toolset.direct_call_tool('boom', {})
+
+
+def _session_marker_from(result: AgentRunResult[Any]) -> str:
+    """Extract the `session_marker` tool return from a run's message history."""
+    for message in result.all_messages():
+        for part in message.parts:
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'session_marker':
+                return str(part.content)
+    raise AssertionError('session_marker tool was not called')  # pragma: no cover
+
+
+def _session_marker_model() -> TestModel:
+    return TestModel(call_tools=['session_marker'], custom_output_text='done')
+
+
+class TestMCPSessionScoping:
+    """Which callers share one MCP session: a session is shared exactly as far as you share it.
+
+    Auth is resolved (and the MCP session initialized) in the context that opens the connection,
+    so silently attaching a concurrent caller to another context's session sends its requests
+    under the wrong identity (issue #6411). These tests pin the session topology: concurrent
+    contexts get isolated sessions, while the sharing patterns established in #2818/#4514 —
+    an explicit `async with` around parallel runs, and a module-level toolset entered in a
+    lifespan task and used from sibling request-handler tasks — keep sharing one session.
+    """
+
+    async def test_concurrent_explicit_enters_are_isolated(self, fastmcp_server: FastMCP[None]):
+        """Two overlapping `async with toolset:` callers each get their own session (issue #6411)."""
+        toolset = MCPToolset(fastmcp_server)
+        first_entered = asyncio.Event()
+        second_done = asyncio.Event()
+
+        async def first() -> str:
+            async with toolset:
+                first_entered.set()
+                marker = await toolset.direct_call_tool('session_marker', {})
+                await second_done.wait()
+                return marker
+
+        async def second() -> str:
+            await first_entered.wait()
+            async with toolset:
+                assert len(toolset._sessions) == 2  # pyright: ignore[reportPrivateUsage]
+                try:
+                    return await toolset.direct_call_tool('session_marker', {})
+                finally:
+                    second_done.set()
+
+        first_marker, second_marker = await asyncio.gather(first(), second())
+        assert first_marker != second_marker
+        assert toolset.is_running is False
+
+    async def test_implicit_caller_joins_explicitly_opened_session(self, fastmcp_server: FastMCP[None]):
+        """A direct call from a sibling task joins the explicitly-opened session.
+
+        This is the module-level-singleton pattern: `async with toolset:` in a lifespan task,
+        requests handled in sibling tasks that don't inherit the lifespan task's context.
+        """
+        toolset = MCPToolset(fastmcp_server)
+        opened = asyncio.Event()
+        handler_done = asyncio.Event()
+
+        async def lifespan() -> str:
+            async with toolset:
+                opened.set()
+                marker = await toolset.direct_call_tool('session_marker', {})
+                await handler_done.wait()
+                return marker
+
+        async def handler() -> str:
+            await opened.wait()
+            try:
+                marker = await toolset.direct_call_tool('session_marker', {})
+                assert len(toolset._sessions) == 1  # pyright: ignore[reportPrivateUsage]
+                return marker
+            finally:
+                handler_done.set()
+
+        lifespan_marker, handler_marker = await asyncio.gather(lifespan(), handler())
+        assert lifespan_marker == handler_marker
+
+    async def test_explicit_enter_shares_session_across_parallel_runs(self, fastmcp_server: FastMCP[None]):
+        """`async with agent:` around parallel runs shares one session between them (#2818/#4514)."""
+        toolset = MCPToolset(fastmcp_server)
+        agent = Agent(_session_marker_model(), toolsets=[toolset])
+        async with agent:
+            results = await asyncio.gather(agent.run('call it'), agent.run('call it'))
+        markers = {_session_marker_from(result) for result in results}
+        assert len(markers) == 1
+
+    async def test_concurrent_implicit_runs_get_isolated_sessions(self, fastmcp_server: FastMCP[None]):
+        """Parallel runs that don't explicitly enter the agent/toolset each get their own session,
+        opened in their own context — so per-context state like request-scoped credentials can't
+        leak between them (issue #6411)."""
+        toolset = MCPToolset(fastmcp_server)
+        agent = Agent(_session_marker_model(), toolsets=[toolset])
+        results = await asyncio.gather(agent.run('call it'), agent.run('call it'))
+        markers = {_session_marker_from(result) for result in results}
+        assert len(markers) == 2
+        assert toolset.is_running is False
+
+    async def test_nested_enter_shares_session(self, fastmcp_server: FastMCP[None]):
+        """Re-entering from the same context joins the existing session, and the session stays
+        open until the outermost exit."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            outer = await toolset.direct_call_tool('session_marker', {})
+            async with toolset:
+                inner = await toolset.direct_call_tool('session_marker', {})
+            after_inner_exit = await toolset.direct_call_tool('session_marker', {})
+        assert outer == inner == after_inner_exit
+        assert toolset.is_running is False
+
+    async def test_exit_from_task_without_context_falls_back(self, fastmcp_server: FastMCP[None]):
+        """`__aexit__` from a task that didn't inherit the entering context still closes the
+        session (frameworks sometimes move cleanup to a different task)."""
+        toolset = MCPToolset(fastmcp_server)
+
+        async def enter_only() -> None:
+            await toolset.__aenter__()
+
+        await asyncio.create_task(enter_only())
+        assert toolset.is_running is True
+        await toolset.__aexit__(None, None, None)
+        assert toolset.is_running is False
+
+    async def test_contextless_exit_with_multiple_sessions_raises(self, fastmcp_server: FastMCP[None]):
+        """A contextless `__aexit__` is ambiguous when several sessions are open: closing an
+        arbitrary one could pull another caller's session out from under them, so it refuses."""
+        toolset = MCPToolset(fastmcp_server)
+        entered = asyncio.Semaphore(0)
+        release = asyncio.Event()
+
+        async def enter_and_hold() -> None:
+            async with toolset:
+                entered.release()
+                await release.wait()
+
+        holders = [asyncio.ensure_future(enter_and_hold()) for _ in range(2)]
+        await entered.acquire()
+        await entered.acquire()
+        try:
+            assert len(toolset._sessions) == 2  # pyright: ignore[reportPrivateUsage]
+            with pytest.raises(ValueError, match='did not enter the toolset while multiple sessions are open'):
+                await toolset.__aexit__(None, None, None)
+        finally:
+            release.set()
+            await asyncio.gather(*holders)
+        assert toolset.is_running is False
+
+    async def test_failed_connection_releases_template_client(self, fastmcp_server: FastMCP[None]):
+        """A failed connection releases the template client reservation so the next `__aenter__`
+        can back its session with `toolset.client` again."""
+        toolset = MCPToolset(fastmcp_server)
+        with mock.patch.object(Client, '__aenter__', side_effect=RuntimeError('connect failed')):
+            with pytest.raises(RuntimeError, match='connect failed'):
+                await toolset.__aenter__()
+        assert toolset.is_running is False
+        async with toolset:
+            assert toolset._session.client is toolset.client  # pyright: ignore[reportPrivateUsage]
+
+    async def test_copied_toolset_does_not_join_original_session(self, fastmcp_server: FastMCP[None]):
+        """A (shallow) copy shares the context variable but not session identity: entering the
+        copy opens its own session instead of adopting the original's."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            clone = copy.copy(toolset)
+            async with clone:
+                assert clone._session is not toolset._session  # pyright: ignore[reportPrivateUsage]
+
+    async def test_user_http_client_is_not_closed_by_session_teardown(self):
+        """The MCP SDK `async with`-closes the client its transport factory returns on every
+        session teardown; a user-supplied `http_client` is shared by all sessions and owned by
+        the user, so the factory shields it from lifecycle calls."""
+        client = httpx.AsyncClient()
+        factory = _make_httpx_client_factory(client)
+        # Each session teardown `async with`-closes the factory result; the user's client must
+        # survive repeated teardowns (one per session).
+        for _ in range(2):
+            proxied = factory()
+            async with proxied:
+                pass
+            await proxied.aclose()
+            assert client.is_closed is False
+        # Everything else delegates to the real client.
+        assert factory().headers is client.headers
+        await client.aclose()
 
 
 class TestToolResultMapping:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 
@@ -21,6 +23,36 @@ if TYPE_CHECKING:
     from .prepared import PreparedToolset
     from .renamed import RenamedToolset
     from .set_metadata import SetMetadataToolset
+
+
+_implicit_enter_var: ContextVar[bool] = ContextVar('_implicit_enter_var', default=False)
+
+
+@contextmanager
+def implicit_enter() -> Generator[None]:
+    """Mark toolset `__aenter__` calls in this block as implicit (framework-initiated).
+
+    The framework enters toolsets on the user's behalf around each agent run (and around individual
+    direct operations like an MCP tool call), as opposed to the user explicitly entering a toolset
+    via `async with toolset:` or `async with agent:`. Toolsets whose `__aenter__` allocates a
+    connection-like resource can use [`is_implicit_enter`][pydantic_ai.toolsets.abstract.is_implicit_enter]
+    to tell these apart: an implicit entrant may join a resource the user explicitly opened, but
+    should not implicitly share resources with other concurrent implicit entrants, whose ambient
+    context (and e.g. request-scoped credentials) may differ.
+    """
+    token = _implicit_enter_var.set(True)
+    try:
+        yield
+    finally:
+        _implicit_enter_var.reset(token)
+
+
+def is_implicit_enter() -> bool:
+    """Whether the current toolset `__aenter__` call is implicit (framework-initiated).
+
+    See [`implicit_enter`][pydantic_ai.toolsets.abstract.implicit_enter].
+    """
+    return _implicit_enter_var.get()
 
 
 class SchemaValidatorProt(Protocol):
