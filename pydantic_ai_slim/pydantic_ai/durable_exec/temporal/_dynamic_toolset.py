@@ -11,11 +11,13 @@ from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableDynamicToolset,
     DynamicToolsResult,
+    ToolConfig,
     call_dynamic_tool,
     get_dynamic_tools,
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -105,12 +107,23 @@ def temporalize_dynamic_toolset(
         )
         return unwrap_tool_call_result(result)
 
+    def resolve_tool_config(tool: ToolsetTool[Any] | None, name: str) -> ToolConfig:
+        config = resolve_tool_activity_config(tool, name, tool_activity_config)
+        if config is False:
+            raise UserError(
+                f'Temporal activity config for dynamic toolset tool {name!r} has been explicitly set to `False` '
+                '(activity disabled), but dynamic-toolset tools cannot run inside the workflow: resolving the '
+                'toolset and calling the tool may perform I/O. Remove the opt-out, or move the tool to a static '
+                '`FunctionToolset` (async tools there may opt out of activities).'
+            )
+        return config
+
     return DurableDynamicToolset(
         toolset,
         in_durable_context=workflow.in_workflow,
         get_tools_operation=get_tools_operation,
         call_tool_operation=call_tool_operation,
-        resolve_tool_config=lambda tool, name: resolve_tool_activity_config(tool, name, tool_activity_config),
+        resolve_tool_config=resolve_tool_config,
         # Resolution and lifecycle happen inside the activities (or, outside a workflow,
         # on the resolved toolset that `for_run` hands the run); the construction-time
         # factory itself has nothing to enter.

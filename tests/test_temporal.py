@@ -103,6 +103,8 @@ from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import UsageLimits
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.join import reduce_list_append
@@ -144,6 +146,7 @@ try:
         _heartbeating,  # pyright: ignore[reportPrivateUsage]
         _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.durable_exec.temporal._dynamic_toolset import temporalize_dynamic_toolset
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
@@ -1842,6 +1845,27 @@ async def test_temporal_wrapper_toolset_extension_surface():
 
     wrapped_result = await toolset._wrap_call_tool_result(return_value())  # pyright: ignore[reportPrivateUsage]
     assert toolset._unwrap_call_tool_result(wrapped_result) == 'value'  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_temporal_dynamic_toolset_rejects_activity_opt_out():
+    """`metadata={'temporal': False}` / config `False` is rejected for dynamic-toolset tools.
+
+    Running such a tool inline would resolve the dynamic toolset and call the tool in
+    workflow code, where I/O and thread dispatch are forbidden.
+    """
+    durable = temporalize_dynamic_toolset(
+        DynamicToolset(lambda ctx: None, id='dyn_opt_out'),
+        activity_name_prefix='agent__dyn_opt_out',
+        activity_config={},
+        tool_activity_config={'boom': False},
+        deps_type=type(None),
+    )
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable, tool_def=ToolDefinition(name='boom'), max_retries=1, args_validator=TOOL_SCHEMA_VALIDATOR
+    )
+    with pytest.raises(UserError, match='activity disabled'):
+        await durable.call_tool('boom', {}, ctx, tool)
 
 
 # --- DynamicToolset instructions refresh across run steps (issue #5282 follow-up) ---
