@@ -27,7 +27,7 @@ class ConfusionMatrix(BaseModel):
     class_labels: list[str]
     """Ordered list of class labels (used for both axes)."""
     matrix: list[list[int]]
-    """matrix[expected_idx][predicted_idx] = count of cases."""
+    """`matrix[expected_idx][predicted_idx]` is the count of cases."""
 
 
 class PrecisionRecallPoint(BaseModel):

@@ -13,8 +13,8 @@ from pydantic_ai import (
 )
 from pydantic_ai._utils import fill_run_metadata
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.models import ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
+from pydantic_ai.models import CompletedStreamedResponse, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
@@ -152,5 +152,7 @@ class PrefectModel(WrapperModel):
         # produces content. With a handler, events were already delivered inside the task, so the
         # flow-side stream stays empty to avoid delivering them twice.
         yield CompletedStreamedResponse(
-            model_request_parameters, response, replay_events=self._get_event_stream_handler() is None
+            response,
+            model_request_parameters=model_request_parameters,
+            events=self._get_event_stream_handler() is None,
         )

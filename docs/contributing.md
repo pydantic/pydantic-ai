@@ -84,7 +84,7 @@ How we weigh priorities:
 - **User demand** -- features that more users need get priority. Champion-backed features with production use cases outrank speculative additions.
 - **Provider significance** -- work that affects frontier providers (Anthropic, OpenAI, Google) or providers we know are heavily used gets priority. A model integration for a niche provider will wait; a fix for Anthropic won't.
 - **Roadmap alignment** -- features that align with our current focus areas get priority. Right now that includes the capabilities/hooks API, provider-adaptive tools, and the [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) capability library.
-- **Capabilities over core** -- features that could live as a [capability](capabilities.md) should go to [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) or ship as your own package — that's often the fastest path. Once it has traction, come back and we can talk about upstreaming.
+- **Capabilities over core** -- features that could live as a [capability](capabilities/overview.md) should go to [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) or ship as your own package — that's often the fastest path. Once it has traction, come back and we can talk about upstreaming.
 
 ## If your PR or issue has gone quiet
 
