@@ -11,6 +11,7 @@ cassette is missing offline the `xai_ws_cassette` fixture skips rather than erro
 
 from __future__ import annotations as _annotations
 
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -112,6 +113,40 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
             requests=1,
         )
     )
+
+
+async def test_audio_in_server_vad_turn(
+    xai_ws_cassette: tuple[XaiProvider, RealtimeCassette], assets_path: Path
+) -> None:
+    """A spoken user turn (audio in, server VAD) is transcribed into a user turn in history.
+
+    The default microphone workflow — no explicit turn control, input transcription on by default —
+    must land the user's turn in history, not just the assistant's reply (the dropped-user-turn guard).
+    """
+    provider, _ = xai_ws_cassette
+    model = XaiRealtimeModel(MODEL, provider=provider)
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
+
+    events: list[Any] = []
+    async with agent.realtime_session(model=model) as session:
+        # Stream the clip in ~100 ms chunks like a live mic; the trailing silence lets server VAD end it.
+        for start in range(0, len(pcm), 4800):
+            await session.send_audio(pcm[start : start + 4800])
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+                events.append(event)
+                if isinstance(event, TurnCompleteEvent):
+                    break
+
+    messages = session.all_messages()
+    # Server VAD may split the clip into several short user turns; the invariant is that the spoken
+    # input is transcribed into user history (not dropped) ahead of the assistant's reply.
+    user_speech = [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
+    assert user_speech and all(isinstance(p, SpeechPart) and p.speaker == 'user' for p in user_speech)
+    assert any(isinstance(p, SpeechPart) and p.transcript for p in user_speech)  # at least one transcribed
+    responses = [message for message in messages if isinstance(message, ModelResponse)]
+    assert responses and isinstance(responses[-1].parts[0], SpeechPart)
 
 
 async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:
