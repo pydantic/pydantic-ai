@@ -8644,18 +8644,26 @@ from-spec\
         with pytest.warns(UserWarning, match='end_strategy'):
             await agent.run('hello', spec={'end_strategy': 'exhaustive'})
 
-    async def test_spec_tool_retry_override_warns(self):
-        """Run-time specs can only override the output retry budget."""
+    async def test_spec_tool_retry_override(self):
+        """A run-time spec's tool-retry budget replaces the agent default (3 here, not the agent's 1)."""
+        call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response('ok')
+            return ModelResponse(parts=[ToolCallPart('flaky', {})])
 
-        agent = Agent(FunctionModel(model_fn))
+        agent = Agent(FunctionModel(model_fn), retries={'tools': 1})
 
-        with pytest.warns(UserWarning, match=r"retry field 'tools'.*ignored"):
-            result = await agent.run('hello', spec={'retries': {'tools': 5}})
+        @agent.tool_plain
+        def flaky() -> str:
+            nonlocal call_count
+            call_count += 1
+            raise ModelRetry('again')
 
-        assert result.output == 'ok'
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'flaky' exceeded max retries count of 3"):
+            await agent.run('hello', spec={'retries': {'tools': 3}})
+
+        # initial call + 3 retries, following the spec budget (3), not the agent default (1)
+        assert call_count == 4
 
 
 @dataclass
