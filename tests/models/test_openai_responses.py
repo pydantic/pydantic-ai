@@ -12796,7 +12796,7 @@ async def test_background_mode_reasoning_vcr(allow_model_requests: None, openai_
     background cassette uses a non-reasoning model (gpt-4o) whose `include` is empty, so this is the only
     one that covers the retrieve path that regressed in #6611.
     """
-    model = OpenAIResponsesModel('o4-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
     _, sleep = _tracking_sleep(real_sleep=vcr.record_mode != RecordMode.NONE)
 
@@ -12819,17 +12819,18 @@ async def test_background_mode_reasoning_vcr(allow_model_requests: None, openai_
                 parts=[
                     TextPart(
                         content='2 + 2 = 4.',
-                        id='msg_05ad659ccdddc01f006a5fae3c81f081a1bb34e0fc911aa23d',
+                        id='msg_047f9036fb333784006a5fe9dd449881908fcfe84c03eed1b3',
                         provider_name='openai',
+                        provider_details={'phase': 'final_answer'},
                     )
                 ],
-                usage=RequestUsage(input_tokens=14, output_tokens=53, details={'reasoning_tokens': 0}),
-                model_name='o4-mini-2025-04-16',
+                usage=RequestUsage(input_tokens=14, output_tokens=12, details={'reasoning_tokens': 0}),
+                model_name='gpt-5.6-sol',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
-                provider_response_id='resp_05ad659ccdddc01f006a5fae3b28a481a1b3e60740f864f2e9',
+                provider_response_id='resp_047f9036fb333784006a5fe9db456c819095d041b89bf6629e',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -13373,7 +13374,7 @@ async def test_background_reasoning_retrieve_omits_encrypted_content(allow_model
         retrieve_responses=[_text_response('final', background=True)],
     )
     mock_client = cast(AsyncOpenAI, mock_client)
-    model = OpenAIResponsesModel('o4-mini', provider=OpenAIProvider(openai_client=mock_client))
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
     _, sleep = _tracking_sleep()
 
