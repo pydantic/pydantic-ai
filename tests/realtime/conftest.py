@@ -22,7 +22,6 @@ with try_import() as xai_imports_successful:
 
 with try_import() as azure_imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
-    from pydantic_ai.providers.azure_voicelive import AzureVoiceLiveProvider
 
 if TYPE_CHECKING:
     from pydantic_ai.providers import Provider
@@ -45,9 +44,6 @@ def _realtime_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('OPENAI_API_KEY', 'mock-api-key')
     monkeypatch.setenv('GOOGLE_API_KEY', 'mock-api-key')
     monkeypatch.setenv('XAI_API_KEY', 'mock-api-key')
-    monkeypatch.setenv('AZURE_VOICELIVE_ENDPOINT', 'https://mock.services.ai.azure.com')
-    monkeypatch.setenv('AZURE_VOICELIVE_API_VERSION', '2026-04-10')
-    monkeypatch.setenv('AZURE_VOICELIVE_API_KEY', 'mock-api-key')
     monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://mock.openai.azure.com/openai/v1')
     monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
 
@@ -126,43 +122,21 @@ def xai_ws_cassette(request: pytest.FixtureRequest, xai_api_key: str) -> Iterato
 
 
 @pytest.fixture(scope='session')
-def azure_voicelive_config() -> tuple[str, str, str]:
-    """Capture real Voice Live configuration before function-scoped offline placeholders apply."""
+def azure_config() -> tuple[str, str]:
+    """Capture real Azure OpenAI configuration before offline placeholders apply."""
     return (
-        os.getenv('AZURE_VOICELIVE_ENDPOINT', 'https://mock.services.ai.azure.com'),
-        os.getenv('AZURE_VOICELIVE_API_VERSION', '2026-04-10'),
-        os.getenv('AZURE_VOICELIVE_API_KEY', 'mock-api-key'),
+        os.getenv('AZURE_OPENAI_ENDPOINT', 'https://mock.openai.azure.com'),
+        os.getenv('AZURE_OPENAI_API_KEY', 'mock-api-key'),
     )
 
 
 @pytest.fixture
 def azure_ws_cassette(
-    request: pytest.FixtureRequest, azure_voicelive_config: tuple[str, str, str]
-) -> Iterator[tuple[AzureVoiceLiveProvider, RealtimeCassette]]:
-    """An `AzureVoiceLiveProvider` whose WebSocket is backed by a cassette."""
-    if not azure_imports_successful():  # pragma: no cover
-        pytest.skip('websockets not installed')
-    endpoint, api_version, api_key = azure_voicelive_config
-    with _ws_cassette(request, 'azure') as cassette:
-        yield AzureVoiceLiveProvider(endpoint=endpoint, api_version=api_version, api_key=api_key), cassette
-
-
-@pytest.fixture(scope='session')
-def azure_openai_config() -> tuple[str, str]:
-    """Capture real Azure OpenAI configuration before offline placeholders apply."""
-    return (
-        os.getenv('AZURE_OPENAI_ENDPOINT', 'https://mock.openai.azure.com'),
-        os.getenv('AZURE_VOICELIVE_API_KEY', 'mock-api-key'),
-    )
-
-
-@pytest.fixture
-def azure_openai_ws_cassette(
-    request: pytest.FixtureRequest, azure_openai_config: tuple[str, str]
+    request: pytest.FixtureRequest, azure_config: tuple[str, str]
 ) -> Iterator[tuple[AzureProvider, RealtimeCassette]]:
     """An `AzureProvider` whose Azure OpenAI realtime WebSocket is cassette-backed."""
     if not azure_imports_successful():  # pragma: no cover
         pytest.skip('openai / websockets not installed')
-    endpoint, api_key = azure_openai_config
+    endpoint, api_key = azure_config
     with _ws_cassette(request, 'openai') as cassette:
         yield AzureProvider(azure_endpoint=f'{endpoint.rstrip("/")}/openai/v1', api_key=api_key), cassette

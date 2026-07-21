@@ -507,8 +507,8 @@ class OpenAIRealtimeModel(RealtimeModel):
         if provider.name == 'azure':
             raise UserError(
                 'Azure OpenAI is not supported through `OpenAIRealtimeModel`: its realtime endpoint uses a '
-                'different URL and authentication scheme. Use `AzureOpenAIRealtimeModel` (or the '
-                '`azure:` prefix) for Azure OpenAI realtime, or `AzureRealtimeModel` for Azure AI Voice Live.'
+                'different URL and authentication scheme. Use `AzureRealtimeModel` (or the '
+                '`azure:` prefix) for Azure OpenAI realtime.'
             )
         self._provider = provider
         self._gateway = is_gateway_provider(provider)

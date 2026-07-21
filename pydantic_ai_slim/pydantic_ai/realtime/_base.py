@@ -120,7 +120,7 @@ class RealtimeModelSettings(TypedDict, total=False):
     Gemini ignores this setting.
 
     See the [Tool Choice guide](../tools-advanced.md#tool-choice) for detailed documentation.
-    Restrictions that realtime providers can't express are dropped: OpenAI, Azure Voice Live, and xAI support
+    Restrictions that realtime providers can't express are dropped: OpenAI, Azure OpenAI, and xAI support
     `'auto'`/`'none'`/`'required'` and a single-tool list, but not multi-tool lists or
     [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput].
     """
@@ -481,7 +481,7 @@ class ReconnectedEvent:
     state_restored: bool = False
     """Whether the provider restored prior conversation state on reconnect.
 
-    `False` (OpenAI/Azure OpenAI/Voice Live — the server starts a fresh conversation) means the consumer should
+    `False` (OpenAI/Azure OpenAI — the server starts a fresh conversation) means the consumer should
     treat the session as having lost prior turns; `True` (xAI Grok Voice and Gemini Live, when their native
     session resumption is active) means prior turns were restored.
     """
@@ -830,7 +830,7 @@ class ReconnectPolicy:
 
     On a dropped connection the session is re-dialed and its configuration (instructions, tools,
     voice, ...) re-applied, emitting a [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] event. What
-    server-side state survives depends on the provider: OpenAI Realtime and Azure Voice Live start a
+    server-side state survives depends on the provider: OpenAI Realtime and Azure OpenAI start a
     fresh turn (the audio buffer and prior turns are lost), while Gemini Live and xAI restore prior
     turns. Gemini requires `google_enable_session_resumption=True`; xAI enables native resumption
     automatically whenever a reconnect policy is set.

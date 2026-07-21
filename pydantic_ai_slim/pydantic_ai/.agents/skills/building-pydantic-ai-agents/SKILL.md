@@ -262,11 +262,11 @@ Key facts for building realtime agents:
 - **Check the model profile before calling profile-gated methods**: `model.profile` (a
   `RealtimeModelProfile`, the realtime counterpart to `ModelProfile`) reports
   `supports_manual_turn_control`, `supports_interruption`, `supports_image_input`,
-  `supports_output_truncation`, and `supports_session_seeding`. OpenAI and Azure Voice Live support all of these; Gemini
+  `supports_output_truncation`, and `supports_session_seeding`. OpenAI and Azure OpenAI support all of these; Gemini
   Live lacks `supports_manual_turn_control`, `supports_interruption`, and `supports_output_truncation`
   (automatic VAD only). Calling an unsupported method raises `UserError` up front.
 - **Turn detection**: use the shared `TurnDetection` setting for sensitivity, prefix padding, and
-  silence duration across providers. Use `openai_turn_detection`, `azure_turn_detection`, `xai_turn_detection`, or
+  silence duration across providers. Use `openai_turn_detection`, `xai_turn_detection`, or
   `google_vad` only for finer provider-specific control; when present, they fully override the shared
   setting. Automatic detection is on by default (`True`); set `turn_detection=False` for push-to-talk
   (OpenAI/Azure/xAI only — Gemini has no manual turn controls and raises).

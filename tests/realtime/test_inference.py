@@ -4,7 +4,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.realtime import AzureOpenAIRealtimeModel, infer_realtime_model
+from pydantic_ai.realtime import AzureRealtimeModel, infer_realtime_model
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 from ..conftest import TestEnv, try_import
@@ -21,9 +21,6 @@ def test_infer_realtime_models(env: TestEnv) -> None:
     env.set('OPENAI_API_KEY', 'test')
     env.set('XAI_API_KEY', 'test')
     env.set('GOOGLE_API_KEY', 'test')
-    env.set('AZURE_VOICELIVE_ENDPOINT', 'https://resource.services.ai.azure.com')
-    env.set('AZURE_VOICELIVE_API_VERSION', '2026-04-10')
-    env.set('AZURE_VOICELIVE_API_KEY', 'test')
     env.set('AZURE_OPENAI_ENDPOINT', 'https://resource.openai.azure.com/openai/v1')
     env.set('AZURE_OPENAI_API_KEY', 'test')
 
@@ -41,13 +38,9 @@ def test_infer_realtime_models(env: TestEnv) -> None:
     assert type(google_model).__name__ == 'GoogleRealtimeModel'
     assert google_model.model_name == 'gemini-2.5-flash-native-audio-latest'
 
-    azure_model = infer_realtime_model('azure-voicelive:gpt-realtime')
+    azure_model = infer_realtime_model('azure:gpt-realtime')
     assert type(azure_model).__name__ == 'AzureRealtimeModel'
     assert azure_model.model_name == 'gpt-realtime'
-
-    azure_openai_model = infer_realtime_model('azure:gpt-realtime')
-    assert type(azure_openai_model).__name__ == 'AzureOpenAIRealtimeModel'
-    assert azure_openai_model.model_name == 'gpt-realtime'
 
 
 def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
@@ -71,15 +64,15 @@ def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
     assert direct_model._realtime_url().split('?', 1)[0] == 'wss://api.openai.com/v1/realtime'  # pyright: ignore[reportPrivateUsage]
 
 
-def test_azure_openai_rejects_non_azure_provider(env: TestEnv) -> None:
+def test_azure_rejects_non_azure_provider(env: TestEnv) -> None:
     env.set('OPENAI_API_KEY', 'test')
 
     with pytest.raises(UserError, match='requires an `AzureProvider`'):
-        AzureOpenAIRealtimeModel('gpt-realtime', provider='openai')
+        AzureRealtimeModel('gpt-realtime', provider='openai')
 
 
 def test_infer_realtime_model_unknown_provider() -> None:
-    with pytest.raises(UserError, match='Supported providers are `openai`, `azure`, `azure-voicelive`'):
+    with pytest.raises(UserError, match='Supported providers are `openai`, `azure`, `xai`, and `google`'):
         infer_realtime_model('anthropic:voice')
 
     with pytest.raises(UserError):

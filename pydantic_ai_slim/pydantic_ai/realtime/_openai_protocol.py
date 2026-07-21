@@ -367,11 +367,6 @@ async def user_message_item(
     return _message_item('user', items) if (items := _user_content_items(normalized)) else None
 
 
-def obj(value: Any) -> dict[str, Any]:
-    """Return `value` as a `dict[str, Any]` when it is a mapping, otherwise an empty dict."""
-    return cast('dict[str, Any]', value) if isinstance(value, dict) else {}
-
-
 def map_conversation_event(
     data: dict[str, Any], *, replayed: bool | None = None
 ) -> ConversationCreated | ConversationItemCreated | None:

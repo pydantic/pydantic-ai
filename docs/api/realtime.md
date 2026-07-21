@@ -144,12 +144,10 @@ transcription at the end of each user turn. Authentication comes from an
 
 ::: pydantic_ai.realtime.xai
 
-## Azure AI Voice Live provider
+## Azure OpenAI provider
 
-The Azure AI Voice Live realtime provider reuses the OpenAI Realtime codec and connection like xAI,
-exposes `azure_turn_detection` through
-[`AzureRealtimeModelSettings`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings], authenticates
-with [`AzureVoiceLiveProvider`][pydantic_ai.providers.azure_voicelive.AzureVoiceLiveProvider], and
-requires the `realtime` optional group (`pip install "pydantic-ai-slim[realtime]"`).
+The Azure OpenAI realtime model reuses the OpenAI Realtime codec and connection, authenticates with
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider], and requires the `realtime` optional
+group (`pip install "pydantic-ai-slim[realtime]"`).
 
 ::: pydantic_ai.realtime.azure

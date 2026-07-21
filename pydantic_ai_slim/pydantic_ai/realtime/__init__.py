@@ -1,6 +1,6 @@
 """Realtime multimodal session support for bidirectional streaming models.
 
-This package adds support for native speech-to-speech models (OpenAI Realtime, Azure AI Voice Live,
+This package adds support for native speech-to-speech models (OpenAI Realtime, Azure OpenAI,
 Gemini Live, and xAI Grok Voice) which use a persistent bidirectional connection rather than the
 request-response pattern of the standard [`Model`][pydantic_ai.models.Model] interface.
 
@@ -70,7 +70,6 @@ from ._session import RealtimeSession
 
 if TYPE_CHECKING:
     from .azure import AzureRealtimeModel
-    from .azure_openai import AzureOpenAIRealtimeModel
 
 KnownRealtimeModelName = TypeAliasType(
     'KnownRealtimeModelName',
@@ -79,9 +78,6 @@ KnownRealtimeModelName = TypeAliasType(
         'openai:gpt-realtime-2.1',
         'openai:gpt-realtime-2.1-mini',
         'azure:gpt-realtime',
-        'azure-voicelive:gpt-realtime',
-        'azure-voicelive:gpt-realtime-1.5',
-        'azure-voicelive:gpt-realtime-mini',
         'xai:grok-voice-latest',
         'google:gemini-2.5-flash-native-audio-latest',
         'google:gemini-3.1-flash-live-preview',
@@ -93,7 +89,7 @@ KnownRealtimeModelName = TypeAliasType(
 def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
     """Infer a realtime model from a `provider:model` identifier.
 
-    Accepts a bare provider (`openai`, `azure`, `azure-voicelive`, `xai`, `google`) or a
+    Accepts a bare provider (`openai`, `azure`, `xai`, `google`) or a
     [Pydantic AI Gateway](../gateway.md) route (`gateway/openai:gpt-realtime`), which connects
     through the gateway's built-in provider — the provider string is passed to the realtime model as
     its `provider`, so authentication and the base URL come from
@@ -112,10 +108,6 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
 
         return OpenAIRealtimeModel(model_name, provider=provider)
     if provider == 'azure':
-        from .azure_openai import AzureOpenAIRealtimeModel
-
-        return AzureOpenAIRealtimeModel(model_name)
-    if provider == 'azure-voicelive':
         from .azure import AzureRealtimeModel
 
         return AzureRealtimeModel(model_name)
@@ -129,16 +121,12 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
         return GoogleRealtimeModel(model_name)
     raise UserError(
         f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `azure`, '
-        '`azure-voicelive`, `xai`, and `google`, or `gateway/openai` to route OpenAI realtime '
+        '`xai`, and `google`, or `gateway/openai` to route OpenAI realtime '
         'through the Pydantic AI Gateway.'
     )
 
 
 def __getattr__(name: str) -> object:
-    if name == 'AzureOpenAIRealtimeModel':
-        from .azure_openai import AzureOpenAIRealtimeModel
-
-        return AzureOpenAIRealtimeModel
     if name == 'AzureRealtimeModel':
         from .azure import AzureRealtimeModel
 
@@ -159,7 +147,6 @@ __all__ = (
     'AudioDelta',
     'AudioInput',
     'AudioRetention',
-    'AzureOpenAIRealtimeModel',
     'AzureRealtimeModel',
     'CancelResponse',
     'ClearAudio',

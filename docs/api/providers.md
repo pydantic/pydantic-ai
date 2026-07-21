@@ -22,8 +22,6 @@
 
 ::: pydantic_ai.providers.azure
 
-::: pydantic_ai.providers.azure_voicelive.AzureVoiceLiveProvider
-
 ::: pydantic_ai.providers.cohere
 
 ::: pydantic_ai.providers.voyageai.VoyageAIProvider
