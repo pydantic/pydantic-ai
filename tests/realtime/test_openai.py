@@ -398,6 +398,24 @@ def test_session_config_server_vad_params() -> None:
     }
 
 
+def test_session_config_truncation_modes() -> None:
+    # A plain mode passes through as-is; a retention ratio maps to the retention_ratio truncation shape.
+    auto = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(openai_truncation='disabled'))
+    assert auto._session_config('hi', None, None)['truncation'] == 'disabled'  # pyright: ignore[reportPrivateUsage]
+
+    ratio = OpenAIRealtimeModel(
+        settings=rt_openai.OpenAIRealtimeModelSettings(
+            openai_truncation=rt_openai.RetentionRatioTruncation(retention_ratio=0.8)
+        )
+    )
+    assert ratio._session_config('hi', None, None)['truncation'] == {  # pyright: ignore[reportPrivateUsage]
+        'type': 'retention_ratio',
+        'retention_ratio': 0.8,
+    }
+    # Absent by default so the wire stays byte-identical for sessions that don't set it.
+    assert 'truncation' not in OpenAIRealtimeModel()._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+
+
 def test_session_config_openai_turn_detection_overrides_base() -> None:
     model = OpenAIRealtimeModel(
         settings=rt_openai.OpenAIRealtimeModelSettings(
