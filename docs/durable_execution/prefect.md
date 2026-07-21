@@ -115,6 +115,8 @@ For more information on how to use Prefect in Python applications, see their [Py
 
     **When migrating, you must wrap the run in a flow yourself.** `PrefectAgent` wrapped `run` / `run_sync` as a Prefect flow automatically; `PrefectDurability` deliberately does not — a run is only durable when `agent.run()` is called inside your own `@flow`. Porting the constructor arguments but calling `agent.run()` directly produces a run that works but is **not durable**.
 
+    **In-flight flow runs won't resume from cache across the migration.** Task results recorded under `PrefectAgent` key on the task's source code, so a flow run that retries after you deploy the migration re-executes its model requests and tool calls live instead of replaying the recorded results. Let in-flight flow runs finish before switching if re-execution matters to you.
+
 Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] to get a durable agent variant that routes model requests, tool calls, and MCP communication through Prefect tasks:
 
 ```python {title="prefect_agent.py" test="skip"}
