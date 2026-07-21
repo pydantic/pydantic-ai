@@ -51,7 +51,11 @@ class GoogleImageGenerationSettings(ImageGenerationSettings, total=False):
     # ALL FIELDS MUST BE `google_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     google_image_config: ImageConfigDict
-    """Google image generation configuration, including aspect ratio and image size."""
+    """Google image generation configuration, including aspect ratio and image size.
+
+    For known image models, an unsupported explicit `image_size` raises `UserError`
+    before the request.
+    """
 
 
 @dataclass(init=False)

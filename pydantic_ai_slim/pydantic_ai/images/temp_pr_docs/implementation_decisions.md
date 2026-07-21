@@ -597,6 +597,75 @@ because they explain why the implementation changed.
 - **Validation:** tests cover the base model, dated model string, provider-specific setting precedence, and a JPEG edit;
   both SDK client methods remain uncalled on failure.
 
+### DEC-063: Defer format-specific binary fixtures in the test model
+
+- **Status:** explicitly out of scope for this review checkpoint.
+- **Fact:** `TestImageGenerationModel` can label its fixed PNG bytes as JPEG or WebP when `output_format` changes.
+- **Decision:** do not add format-specific fixtures or force PNG-only output in this checkpoint. Record the mismatch for
+  a focused review of the test-model contract.
+- **Reason:** the current provider and public-runtime fixes prevent invalid requests or corrupt public results; this
+  issue affects the fidelity of a deterministic testing aid and was explicitly deprioritized.
+
+### DEC-064: Validate Google resolution tiers for known image models
+
+- **Status:** implemented after final edge-case review.
+- **Problem:** the compatibility `size` path accepted every Google tier without consulting `model_name`, so known models
+  could receive unsupported `image_size` values and fail only after dispatch.
+- **Decision:** derive supported tiers from the existing private geometry profile. Omit an unsupported normalized `size`
+  with the established best-effort warning; reject an unsupported explicit `google_image_config.image_size` with
+  `UserError`. Keep recognized tiers forward-compatible for unknown model names.
+- **Model behavior:** Gemini 3.1 Flash Lite accepts only `1K`; Gemini 2.5 Flash has no separate size tier; Gemini 3 Pro
+  accepts `1K`, `2K`, and `4K`; Gemini 3.1 Flash also accepts `512`.
+- **Reason:** the existing table already owns these model facts. Reusing it prevents a second allowlist and avoids
+  known-invalid paid requests without restricting future model strings.
+- **Validation:** tests cover every known family, valid and invalid common tiers, explicit native rejection, fixed-size
+  Gemini 2.5 payload omission, and forward-compatible pass-through for an unknown model.
+
+### DEC-065: Omit `input_fidelity` for GPT Image 2 editing
+
+- **Status:** implemented after final edge-case review.
+- **Provider fact:** GPT Image 2 always processes reference images at high fidelity and the Images API requires clients
+  to omit `input_fidelity`.
+- **Decision:** after common/provider-specific precedence, mark the setting unsupported and resolve it to the OpenAI SDK
+  `OMIT` sentinel for GPT Image 2 edits. Emit the normal aggregated warning for both `input_fidelity` and
+  `openai_input_fidelity` input paths.
+- **Reason:** warning-and-omit preserves the best-effort settings contract and keeps cross-model settings reusable while
+  preventing an invalid request.
+- **Validation:** both common and OpenAI-prefixed inputs resolve to the SDK `OMIT` sentinel and emit the unsupported
+  setting warning on an edit request.
+
+### DEC-066: Validate `n` before provider dispatch
+
+- **Status:** implemented after final edge-case review.
+- **Problem:** `n=0` was replaced by provider defaults through truthiness checks, while negative values could produce an
+  empty test result or fail at the provider.
+- **Decision:** require `n` to be a positive, non-boolean integer in the shared settings validator before the
+  `dimensions` early return.
+- **Reason:** this is a provider-independent invariant and therefore belongs in the single preparation path used by
+  every direct adapter, wrapper, test model, and capability fallback.
+- **Validation:** zero, negative, boolean, and non-integer runtime values fail through the public test model path;
+  positive values remain covered by multi-image generation tests.
+
+### DEC-067: Treat malformed OpenAI Base64 as unexpected model behavior
+
+- **Status:** implemented after final edge-case review.
+- **Problem:** permissive Base64 decoding turns malformed text such as `!!!!` into empty bytes, producing an apparently
+  valid empty `BinaryImage`.
+- **Decision:** use strict Base64 validation and translate decoding failures to `UnexpectedModelBehavior`, retaining the
+  provider response body for diagnosis.
+- **Reason:** response corruption is a provider-boundary failure, not a valid empty image. This matches the xAI
+  adapter's established response contract.
+- **Validation:** a malformed mocked OpenAI response raises with the sanitized provider response attached as its body.
+
+### DEC-068: Export `ImageGenerator` from the images module
+
+- **Status:** implemented after final edge-case review.
+- **Problem:** the documented primary class was available from `pydantic_ai` and as an explicit submodule import, but
+  absent from `pydantic_ai.images.__all__`.
+- **Decision:** include `ImageGenerator` in the submodule export list and pin it with a regression test.
+- **Reason:** the public facade and its declared exports should describe the same supported API.
+- **Validation:** the public module regression asserts that `ImageGenerator` is present in `pydantic_ai.images.__all__`.
+
 ## Questions to Resolve with Maintainers
 
 The current implementation is strongest where provider contracts are verified and intentionally conservative. Review is

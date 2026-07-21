@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
@@ -58,7 +59,10 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
     """
 
     openai_input_fidelity: Literal['high', 'low']
-    """OpenAI input fidelity setting for image editing."""
+    """OpenAI input fidelity setting for image editing.
+
+    GPT Image 2 always processes inputs at high fidelity and ignores this setting.
+    """
 
     openai_moderation: Literal['low', 'auto']
     """OpenAI moderation strictness for image generation."""
@@ -210,9 +214,17 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                     'OpenAI image generation response did not contain base64 image data',
                     response.model_dump_json(exclude_none=True),
                 )
+            try:
+                image_data = base64.b64decode(image.b64_json, validate=True)
+            except binascii.Error as e:
+                raise UnexpectedModelBehavior(
+                    'OpenAI image generation response did not contain valid base64 image data',
+                    response.model_dump_json(exclude_none=True),
+                ) from e
+
             images.append(
                 GeneratedImage(
-                    content=BinaryImage(data=base64.b64decode(image.b64_json), media_type=media_type),
+                    content=BinaryImage(data=image_data, media_type=media_type),
                     revised_prompt=image.revised_prompt,
                     size=response.size,
                     quality=response.quality,
@@ -303,9 +315,13 @@ def _resolve_openai_settings(
     ):
         conflicts.append('output_compression')
 
-    if is_edit and moderation is not None:
-        ignored.append('moderation')
-    elif not is_edit and input_fidelity is not None:
+    if is_edit:
+        if moderation is not None:
+            ignored.append('moderation')
+        if is_gpt_image_2(model_name) and input_fidelity is not None:
+            ignored.append('input_fidelity')
+            input_fidelity = None
+    elif input_fidelity is not None:
         ignored.append('input_fidelity')
 
     _validate_openai_background(model_name, background, settings.get('output_format'))
@@ -338,8 +354,7 @@ def _validate_openai_background(
         )
     if output_format not in (None, 'png', 'webp'):
         raise UserError(
-            'OpenAI transparent backgrounds require `output_format="png"` or `"webp"`, '
-            f'got {output_format!r}'
+            f'OpenAI transparent backgrounds require `output_format="png"` or `"webp"`, got {output_format!r}'
         )
 
 

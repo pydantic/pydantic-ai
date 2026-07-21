@@ -33,6 +33,7 @@ __all__ = [
     'ImageGenerationResult',
     'ImageGenerationSettings',
     'ImageGenerationSize',
+    'ImageGenerator',
     'InstrumentedImageGenerationModel',
     'KnownImageGenerationModelName',
     'TestImageGenerationModel',

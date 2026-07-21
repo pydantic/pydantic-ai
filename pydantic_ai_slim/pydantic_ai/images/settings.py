@@ -55,7 +55,7 @@ for the ratio-to-dimensions matrix.
 ImageGenerationSize: TypeAlias = str
 """Provider-dependent image size accepted by direct image model adapters.
 
-OpenAI interprets pixel dimensions, while Google and xAI interpret resolution tiers.
+OpenAI interprets pixel dimensions, while Google and xAI interpret model-specific resolution tiers.
 Prefer provider-specific settings when exact provider behavior matters.
 """
 
@@ -78,6 +78,8 @@ class ImageGenerationSettings(TypedDict, total=False):
     n: int
     """The number of images to generate.
 
+    Must be a positive integer. Boolean values are not accepted.
+
     Supported by: OpenAI and xAI. Google currently supports one image per request.
     """
 
@@ -96,7 +98,8 @@ class ImageGenerationSettings(TypedDict, total=False):
     input_fidelity: Literal['high', 'low']
     """How closely an edit should preserve features of its reference images.
 
-    Supported by: OpenAI image editing.
+    Supported by: OpenAI image editing before GPT Image 2. GPT Image 2 always
+    processes input images at high fidelity, so this setting is ignored for that model.
     """
 
     moderation: Literal['auto', 'low']
@@ -120,9 +123,9 @@ class ImageGenerationSettings(TypedDict, total=False):
     size: ImageGenerationSize
     """The provider-dependent output size.
 
-    OpenAI accepts pixel dimensions; Google accepts `512`, `1K`, `2K`, or `4K`;
-    xAI maps `1K` and `2K` to its resolution tiers. This direct-API compatibility
-    field is not an exact cross-provider resolution abstraction.
+    OpenAI accepts pixel dimensions; known Google models accept a subset of `512`,
+    `1K`, `2K`, and `4K`; xAI maps `1K` and `2K` to its resolution tiers. This
+    direct-API compatibility field is not an exact cross-provider resolution abstraction.
     """
 
     dimensions: ImageDimensions
@@ -172,6 +175,9 @@ def merge_image_generation_settings(
 
 def validate_image_generation_settings(settings: ImageGenerationSettings) -> None:
     """Validate provider-independent image generation setting invariants."""
+    if (n := settings.get('n')) is not None and (not isinstance(n, int) or isinstance(n, bool) or n <= 0):
+        raise UserError('Image generation `n` must be a positive integer')
+
     dimensions = settings.get('dimensions')
     if dimensions is None:
         return

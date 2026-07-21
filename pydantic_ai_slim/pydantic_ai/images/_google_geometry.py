@@ -131,6 +131,12 @@ def resolve_google_geometry(
     provider_size_is_set: bool,
 ) -> _GoogleGeometry:
     """Resolve common and Google-specific geometry to native image config fields."""
+    profile = _google_image_geometry_profile(model_name)
+    if provider_size is not None and profile is not None and not google_supports_image_size(model_name, provider_size):
+        raise UserError(
+            f'Google model {model_name!r} does not support `google_image_config.image_size={provider_size!r}`'
+        )
+
     aspect_ratio = provider_aspect_ratio
     image_size = provider_size
     ignored: list[str] = []
@@ -196,9 +202,13 @@ def resolve_google_aspect_ratio(
 
 
 def google_supports_image_size(model_name: str, image_size: str) -> bool:
-    # `size` is the compatibility path and historically forwards every Google tier.
-    # Only the new exact `dimensions` mapping is restricted by model profile.
-    return image_size in ('512', '1K', '2K', '4K')
+    if image_size not in ('512', '1K', '2K', '4K'):
+        return False
+
+    profile = _google_image_geometry_profile(model_name)
+    if profile is None:
+        return True
+    return any(image_size in sizes for sizes in profile.dimensions.values())
 
 
 def _google_image_geometry_profile(model_name: str) -> _GoogleImageGeometryProfile | None:

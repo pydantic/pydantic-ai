@@ -121,6 +121,10 @@ async def test_image_generator_with_test_model():
     assert test_model.last_settings == {'n': 2}
 
 
+def test_images_module_exports_image_generator():
+    assert 'ImageGenerator' in images_module.__all__
+
+
 async def test_image_generator_settings_precedence():
     test_model = TestImageGenerationModel(settings={'n': 1, 'output_format': 'png', 'quality': 'high'})
     generator = ImageGenerator(test_model, settings={'n': 2, 'quality': 'low'})
@@ -276,6 +280,12 @@ async def test_image_generation_dimensions_are_mutually_exclusive(settings: Imag
         await TestImageGenerationModel().generate('tiny robot', settings=settings)
 
 
+@pytest.mark.parametrize('n', [0, -1, True, cast(int, '1')])
+async def test_image_generation_n_must_be_a_positive_integer(n: int):
+    with pytest.raises(UserError, match=r'`n` must be a positive integer'):
+        await TestImageGenerationModel().generate('tiny robot', settings={'n': n})
+
+
 @pytest.mark.parametrize(
     'dimensions',
     [
@@ -346,6 +356,29 @@ def test_google_geometry_profiles_conflicts_and_unknown_models():
     assert google_geometry.resolve_google_aspect_ratio('future-image-model', '1:2') == ('1:2', None)
     assert google_geometry.resolve_google_aspect_ratio('gemini-3-pro-image', '1:2') is None
     assert google_geometry.resolve_google_dimensions('gemini-3-pro-image', (1024, 1024)) == ('1:1', '1K')
+    assert google_geometry.google_supports_image_size('gemini-3.1-flash-lite-image', '1K')
+    assert not google_geometry.google_supports_image_size('gemini-3.1-flash-lite-image', '4K')
+    assert google_geometry.google_supports_image_size('gemini-3.1-flash-image', '512')
+    assert google_geometry.google_supports_image_size('gemini-3-pro-image', '4K')
+    assert not google_geometry.google_supports_image_size('gemini-3-pro-image', '512')
+    assert not google_geometry.google_supports_image_size('gemini-2.5-flash-image', '1K')
+    assert google_geometry.google_supports_image_size('future-image-model', '4K')
+    future_geometry = google_geometry.resolve_google_geometry(
+        'future-image-model',
+        {},
+        provider_aspect_ratio=None,
+        provider_size='4K',
+        provider_size_is_set=True,
+    )
+    assert future_geometry.image_size == '4K'
+    supported_size = google_geometry.resolve_google_geometry(
+        'gemini-3.1-flash-image',
+        {'size': '2K'},
+        provider_aspect_ratio=None,
+        provider_size=None,
+        provider_size_is_set=False,
+    )
+    assert supported_size.image_size == '2K'
     with pytest.raises(UserError, match='does not support'):
         google_geometry.resolve_google_dimensions('future-image-model', (1024, 1024))
 
@@ -532,7 +565,7 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
     )
 
     try:
-        with pytest.warns(UserWarning, match=r'google image generation.*`quality`'):
+        with pytest.warns(UserWarning, match=r'ignored unsupported settings: `quality`, `size`'):
             result = await model.generate(
                 'replace the subject',
                 images=[
@@ -558,11 +591,11 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
             n=2,
             aspect_ratio='16:9',
             size='2K',
-            google_image_config={'aspect_ratio': '1:1', 'image_size': '1K'},
+            google_image_config={'aspect_ratio': '1:1'},
         )
         with pytest.warns(
             UserWarning,
-            match=r'ignored unsupported settings: `n`.*used provider-specific settings instead of: `aspect_ratio`, `size`',
+            match=r'ignored unsupported settings: `n`, `size`.*used provider-specific settings instead of: `aspect_ratio`',
         ):
             await model.generate('conflicting settings', settings=conflicting_settings)
 
@@ -570,6 +603,12 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
             await model.generate(
                 'unsupported settings',
                 settings=GoogleImageGenerationSettings(size='1024x1024'),
+            )
+
+        with pytest.raises(UserError, match=r"does not support `google_image_config.image_size='4K'`"):
+            await model.generate(
+                'invalid provider size',
+                settings=GoogleImageGenerationSettings(google_image_config={'image_size': '4K'}),
             )
     finally:
         await http_client.aclose()
@@ -606,7 +645,7 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
                 }
             ],
             'generationConfig': {
-                'imageConfig': {'aspectRatio': '1:1', 'imageSize': '1K'},
+                'imageConfig': {'aspectRatio': '1:1'},
                 'responseModalities': ['IMAGE'],
             },
         }
@@ -1631,6 +1670,36 @@ async def test_openai_gpt_image_2_rejects_transparent_background(
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize(
+    'settings',
+    [
+        OpenAIImageGenerationSettings(input_fidelity='low'),
+        OpenAIImageGenerationSettings(openai_input_fidelity='high'),
+    ],
+)
+async def test_openai_gpt_image_2_ignores_input_fidelity_on_edit(settings: OpenAIImageGenerationSettings):
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    mock_client.images.edit.return_value = ImagesResponse.model_construct(
+        data=[Image.model_construct(b64_json='ZWRpdGVk')], output_format='png'
+    )
+    model = OpenAIImageGenerationModel(
+        'gpt-image-2',
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+    )
+
+    with pytest.warns(UserWarning, match=r'ignored unsupported settings: `input_fidelity`'):
+        await model.generate(
+            'edit this image',
+            images=[BinaryImage(data=b'image', media_type='image/png')],
+            settings=settings,
+        )
+
+    mock_client.images.edit.assert_awaited_once()
+    assert mock_client.images.edit.await_args.kwargs['input_fidelity'] is openai_images.OMIT
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 async def test_openai_rejects_transparent_background_with_jpeg_edit():
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
@@ -1694,6 +1763,15 @@ async def test_openai_response_without_image_data():
     )
     with pytest.raises(UnexpectedModelBehavior, match='base64 image data'):
         await model.generate('tiny robot')
+
+    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+        created=123, data=[Image.model_construct(b64_json='!!!!')]
+    )
+    with pytest.raises(UnexpectedModelBehavior, match='valid base64 image data') as exc_info:
+        await model.generate('tiny robot')
+
+    assert exc_info.value.body is not None
+    assert '!!!!' in exc_info.value.body
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
