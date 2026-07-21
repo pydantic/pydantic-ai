@@ -162,7 +162,11 @@ try:
         WebSearchToolParam,
     )
     from openai.types.responses.response_compaction_item_param_param import ResponseCompactionItemParamParam
-    from openai.types.responses.response_create_params import ContextManagement, ToolChoice as ResponsesToolChoice
+    from openai.types.responses.response_create_params import (
+        ContextManagement,
+        Moderation as ResponsesModeration,
+        ToolChoice as ResponsesToolChoice,
+    )
     from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
     from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
     from openai.types.responses.response_input_item_param import ToolSearchCall as ToolSearchCallParam
@@ -812,6 +816,17 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     When enabled, this setting passes `background=True` to the Responses API and opts into
     automatic polling for completion. If the response is still pending (`'queued'` or
     `'in_progress'`), the agent automatically polls for completion using `retrieve()`.
+    """
+
+    openai_moderation: ResponsesModeration
+    """Run moderation on the input and output of the request, e.g. `{'model': 'omni-moderation-latest'}`.
+
+    The moderation results returned by the API are exposed in
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details]
+    under the `'moderation'` key.
+
+    See the [OpenAI moderation documentation](https://platform.openai.com/docs/guides/moderation)
+    for more details.
     """
 
 
@@ -2296,6 +2311,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # `cancel_suspended_response`), independent of the `continuation_delay` poll interval.
             provider_details['background'] = True
 
+        if response.moderation:
+            provider_details['moderation'] = response.moderation.model_dump()
+
         state = _response_status_to_state(response.status, background=bool(response.background))
         if refusal_text is not None:
             items = []
@@ -2524,6 +2542,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     prompt_cache_retention=prompt_cache_retention,
                     prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
                     background=model_settings.get('openai_background', OMIT),
+                    moderation=model_settings.get('openai_moderation', OMIT),
                     timeout=timeout,
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
@@ -3835,6 +3854,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                                 'finish_reason': raw_finish_reason,
                             }
                             self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+
+                    if chunk.response.moderation:
+                        self.provider_details = {
+                            **(self.provider_details or {}),
+                            'moderation': chunk.response.moderation.model_dump(),
+                        }
 
                 elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                     pass  # there's nothing we need to do here
