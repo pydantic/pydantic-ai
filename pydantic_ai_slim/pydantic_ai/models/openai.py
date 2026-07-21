@@ -2299,6 +2299,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # `cancel_suspended_response`), independent of the `continuation_delay` poll interval.
             provider_details['background'] = True
 
+        if response.moderation:
+            provider_details['moderation'] = response.moderation.model_dump()
+
         state = _response_status_to_state(response.status, background=bool(response.background))
         if refusal_text is not None:
             items = []
@@ -3832,6 +3835,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                                 'finish_reason': raw_finish_reason,
                             }
                             self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+
+                    if chunk.response.moderation:
+                        self.provider_details = {
+                            **(self.provider_details or {}),
+                            'moderation': chunk.response.moderation.model_dump(),
+                        }
 
                 elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                     pass  # there's nothing we need to do here
