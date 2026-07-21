@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import inspect
 import re
 import threading
 import warnings
@@ -22573,7 +22574,7 @@ class _RecordingCapability(AbstractCapability[Any]):
 
 
 async def test_dynamic_capability_factory_called_with_run_context() -> None:
-    """The factory receives the run's `RunContext` for capability and toolset resolution."""
+    """The factory receives the run's `RunContext` (with deps) once per run."""
     seen: list[Any] = []
 
     def factory(ctx: RunContext[str]) -> AbstractCapability[Any] | None:
@@ -22583,7 +22584,7 @@ async def test_dynamic_capability_factory_called_with_run_context() -> None:
     agent = Agent(TestModel(), deps_type=str, capabilities=[factory])
     await agent.run('hi', deps='admin')
     await agent.run('hi', deps='guest')
-    assert seen == ['admin', 'admin', 'guest', 'guest']
+    assert seen == ['admin', 'guest']
 
 
 async def test_dynamic_capability_factory_result_is_bound_to_agent() -> None:
@@ -22625,7 +22626,7 @@ async def test_dynamic_capability_async_factory() -> None:
 
     agent = Agent(TestModel(), capabilities=[factory])
     await agent.run('hi')
-    assert calls == 2
+    assert calls == 1
 
 
 async def test_dynamic_capability_returning_none_contributes_nothing() -> None:
@@ -22642,6 +22643,17 @@ async def test_dynamic_capability_returning_none_contributes_nothing() -> None:
     dynamic = DynamicCapability(capability_func=factory)
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     assert await dynamic.for_run(ctx) is dynamic
+
+    # Direct toolset-factory call (unit-style): the standalone fallback — a context without the
+    # run's capability registry, as inside a durable unit — re-resolves the factory, and an async
+    # factory returning `None` still contributes nothing.
+    async def async_none_factory(ctx: RunContext[Any]) -> AbstractCapability[Any] | None:
+        return None
+
+    async_dynamic = DynamicCapability(capability_func=async_none_factory)
+    resolved = async_dynamic.get_toolset().toolset_func(ctx)
+    assert inspect.isawaitable(resolved)
+    assert await resolved is None
 
 
 def test_dynamic_capability_toolset_is_cached_and_inherits_id() -> None:
@@ -22728,7 +22740,7 @@ async def test_dynamic_capability_contributes_toolset() -> None:
     await agent.run('hi', deps=False)
     assert seen_tools == ['special', 'special', '']
     assert seen_temperatures == [0.25, 0.25, None]
-    assert calls == 4
+    assert calls == 2
 
 
 async def test_dynamic_capability_contributes_toolset_function() -> None:
@@ -22778,6 +22790,87 @@ async def test_dynamic_capability_contributes_toolset_function() -> None:
     assert seen_tools == ['func_tool', '', 'func_tool']
 
 
+async def test_dynamic_capability_instructions_and_tools_share_resolved_state() -> None:
+    """Instructions and tools observe the *same* resolved capability instance per run.
+
+    The factory allocates fresh state on every call, so if the contributed toolset were
+    resolved through a second factory invocation, the tool would see different state than
+    the instructions.
+    """
+    resolution_count = 0
+
+    @dataclass
+    class StatefulCap(AbstractCapability):
+        token: str = ''
+
+        def get_instructions(self) -> str:
+            return f'Token is {self.token}.'
+
+        def get_toolset(self):
+            toolset = FunctionToolset()
+
+            @toolset.tool_plain
+            def read_token() -> str:
+                return self.token
+
+            return toolset
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        nonlocal resolution_count
+        resolution_count += 1
+        return StatefulCap(token=f'run-{resolution_count}')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not tool_returns:
+            return ModelResponse(parts=[ToolCallPart(tool_name='read_token', args={}, tool_call_id='read')])
+        return make_text_response(str(tool_returns[0].content))
+
+    agent = Agent(FunctionModel(respond), capabilities=[factory])
+    result = await agent.run('hi')
+    first_request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert first_request.instructions == 'Token is run-1.'
+    assert result.output == 'run-1'
+    assert resolution_count == 1
+
+
+async def test_dynamic_capability_returning_deferred_capability() -> None:
+    """A factory-returned deferred capability keeps its tools hidden until `load_capability`."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def hidden_tool() -> str:
+        return 'now visible'
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return Capability(
+            id='skills',
+            description='Deferred skills.',
+            toolsets=[toolset],
+            defer_loading=True,
+        )
+
+    seen_defer_flags: list[bool] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        hidden_def = next(t for t in info.function_tools if t.name == 'hidden_tool')
+        # `defer_loading=True` is what keeps the tool off the provider wire until loaded.
+        seen_defer_flags.append(hidden_def.defer_loading)
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'skills'}, tool_call_id='load')]
+            )
+        if not any(part.tool_name == 'hidden_tool' for part in tool_returns):
+            return ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='use')])
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(respond), capabilities=[factory])
+    result = await agent.run('hi')
+    assert result.output == 'done'
+    assert seen_defer_flags == [True, False, False]
+
+
 async def test_dynamic_capability_hooks_fire() -> None:
     """Hooks contributed by the resolved capability fire during the run."""
     cap = _RecordingCapability(label='dyn')
@@ -22791,8 +22884,8 @@ async def test_dynamic_capability_hooks_fire() -> None:
     assert 'dyn:before_model_request' in cap.fired
 
 
-async def test_dynamic_capability_factory_called_twice_per_run_not_per_step() -> None:
-    """The factory is called for capability and toolset resolution, not for every model request."""
+async def test_dynamic_capability_factory_called_once_per_run_not_per_step() -> None:
+    """The factory is called once at for_run, not on every model request."""
     calls = 0
 
     def factory(ctx: RunContext) -> AbstractCapability[Any]:
@@ -22814,7 +22907,7 @@ async def test_dynamic_capability_factory_called_twice_per_run_not_per_step() ->
 
     agent = Agent(FunctionModel(respond), toolsets=[toolset], capabilities=[factory])
     await agent.run('hi')
-    assert calls == 2
+    assert calls == 1
 
 
 async def test_dynamic_capability_returning_combined() -> None:
@@ -22935,7 +23028,7 @@ async def test_dynamic_capability_in_run_call() -> None:
     result = await agent.run('hi', capabilities=[factory])
     request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
     assert request.instructions == 'Label is run-time.'
-    assert calls == 2
+    assert calls == 1
 
 
 async def test_dynamic_capability_composes_with_static() -> None:
@@ -22971,7 +23064,7 @@ async def test_dynamic_capability_per_run_isolation() -> None:
     agent = Agent(TestModel(), deps_type=str, capabilities=[factory])
     results = await asyncio.gather(*(agent.run('hi', deps=f'user-{i}') for i in range(5)))
 
-    assert sorted(seen_deps) == [dep for i in range(5) for dep in (f'user-{i}', f'user-{i}')]
+    assert sorted(seen_deps) == ['user-0', 'user-1', 'user-2', 'user-3', 'user-4']
     for i, result in enumerate(results):
         request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
         assert request.instructions == f'Label is user-{i}.'

@@ -11,6 +11,7 @@ from temporalio.workflow import ActivityConfig
 from typing_extensions import Self
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableToolsetBase,
@@ -191,6 +192,16 @@ def temporalize_toolset(
     if isinstance(toolset, DynamicToolset):
         from ._dynamic_toolset import TemporalDynamicToolset
 
+        if toolset.id is None:
+            # Checked here rather than by the caller's generic leaf-id validation because
+            # `TemporalDynamicToolset` needs the `id` to derive its activity names at construction.
+            raise UserError(
+                "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
+                'need to have a unique `id` in order to be used with Temporal. '
+                "The ID will be used to identify the toolset's activities within the workflow. "
+                'Set the dynamic toolset ID with `DynamicToolset(id=...)`, or, when it is contributed '
+                "by a capability, set the capability's `id` (for example, `DynamicCapability(..., id='user-tools')`)."
+            )
         return TemporalDynamicToolset(
             toolset,
             activity_name_prefix=activity_name_prefix,

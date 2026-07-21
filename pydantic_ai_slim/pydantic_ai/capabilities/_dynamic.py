@@ -7,7 +7,7 @@ from typing import TypeAlias
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from .abstract import AbstractCapability
@@ -24,17 +24,17 @@ CapabilityFunc: TypeAlias = Callable[
 class DynamicCapability(AbstractCapability[AgentDepsT]):
     """A capability that builds another capability dynamically using a function that takes the run context.
 
-    The factory is called once per agent run for capability resolution from
-    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run], and once per
-    run for toolset resolution through a contributed dynamic toolset. The factory
-    must therefore be deterministic given `ctx.deps`. The returned capability's
-    instructions, model settings, native tools, and hooks flow through normally;
-    its toolset is exposed through the dynamic toolset.
+    The factory is called once per agent run from
+    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]. The returned
+    capability's instructions, model settings, native tools, and hooks flow through
+    normally; its toolset is exposed through a stable dynamic toolset contributed at
+    agent construction time, which reuses the run's resolved capability instance.
 
-    Under durable execution, the factory is additionally called inside the durable
-    unit whenever tools are listed or called there. Engines that wrap dynamic
-    toolsets (e.g. Temporal) require a stable `id` on `DynamicCapability` because
-    it names those durable units.
+    Under durable execution, the factory additionally re-runs inside the durable
+    unit whenever tools are listed or called there (the durable boundary can't carry
+    the resolved instance), so it must be deterministic given the run's dependencies.
+    Engines that wrap dynamic toolsets (e.g. Temporal) require a stable `id` on
+    `DynamicCapability` because it names those durable units.
 
     Pass a [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] directly
     to `Agent(capabilities=[...])` or `agent.run(capabilities=[...])` and it
@@ -51,7 +51,6 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
     """The function that takes the run context and returns a capability or `None`."""
 
     def __post_init__(self) -> None:
-        self._toolset: DynamicToolset[AgentDepsT] | None = None
         # Forwarding this to the returned capability would be ambiguous: the factory
         # may return None, or a capability that deliberately chose its own loading state/id.
         if self.defer_loading is True:
@@ -59,13 +58,30 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
                 '`defer_loading` is not supported on `DynamicCapability` — '
                 'set it on the capability the factory returns instead.'
             )
+        # Built eagerly: this single instance's identity is what durability engines register
+        # against at agent construction and match at run time, so it must never fork.
+        self._toolset = DynamicToolset(toolset_func=self._resolve_toolset, per_run_step=False, id=self.id)
 
     def get_toolset(self) -> DynamicToolset[AgentDepsT]:
-        if self._toolset is None:
-            self._toolset = DynamicToolset(toolset_func=self._resolve_toolset, per_run_step=False, id=self.id)
         return self._toolset
 
     async def _resolve_toolset(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
+        # Inside a run, `for_run` has already resolved this capability once: reuse that
+        # instance so hooks, instructions, and tools all observe the same per-run state,
+        # and so the factory keeps its once-per-run contract. Read the registry via
+        # `__dict__` because contexts rehydrated across a durable boundary (e.g.
+        # `TemporalRunContext` inside an activity) deliberately don't carry it and raise
+        # on regular attribute access.
+        registry: dict[str, AbstractCapability[AgentDepsT]] = ctx.__dict__.get('capabilities') or {}
+        for capability in registry.values():
+            if isinstance(capability, ResolvedDynamicCapability) and capability.dynamic_toolset is self._toolset:
+                return await _evaluate_agent_toolset(capability.wrapped.get_toolset(), ctx)
+            if capability is self:
+                # `for_run` kept this capability as-is because the factory returned `None`.
+                return None
+        # No resolved instance to reuse: the toolset is being used standalone, or inside a
+        # durable unit (activity) whose deserialized context carries no capability registry —
+        # re-resolve the factory there, where its I/O is allowed.
         capability = self.capability_func(ctx)
         if inspect.isawaitable(capability):
             capability = await capability
@@ -74,16 +90,7 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
         assert ctx.agent is not None, 'CapabilityFunc requires an agent run context'
         capability = capability.for_agent(ctx.agent)
         capability = await capability.for_run(ctx)
-        toolset = capability.get_toolset()
-        if toolset is None or isinstance(toolset, AbstractToolset):
-            # Pyright can't narrow Callable type aliases out of unions after an isinstance check
-            return toolset  # pyright: ignore[reportUnknownVariableType]
-        # A capability may contribute a toolset *function*; evaluate it here, where the
-        # run context is available, instead of nesting another dynamic toolset.
-        resolved: AbstractToolset[AgentDepsT] | None | Awaitable[AbstractToolset[AgentDepsT] | None] = toolset(ctx)
-        if inspect.isawaitable(resolved):
-            resolved = await resolved
-        return resolved
+        return await _evaluate_agent_toolset(capability.get_toolset(), ctx)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         capability = self.capability_func(ctx)
@@ -110,6 +117,19 @@ class ResolvedDynamicCapability(WrapperCapability[AgentDepsT]):
 
     def get_toolset(self) -> DynamicToolset[AgentDepsT]:
         return self.dynamic_toolset
+
+
+async def _evaluate_agent_toolset(
+    toolset: AgentToolset[AgentDepsT] | None, ctx: RunContext[AgentDepsT]
+) -> AbstractToolset[AgentDepsT] | None:
+    """Normalize a capability's toolset contribution: evaluate the toolset-*function* arm with the run context."""
+    if toolset is None or isinstance(toolset, AbstractToolset):
+        # Pyright can't narrow Callable type aliases out of unions after an isinstance check
+        return toolset  # pyright: ignore[reportUnknownVariableType]
+    resolved: AbstractToolset[AgentDepsT] | None | Awaitable[AbstractToolset[AgentDepsT] | None] = toolset(ctx)
+    if inspect.isawaitable(resolved):
+        resolved = await resolved
+    return resolved
 
 
 def wrap_capability_funcs(

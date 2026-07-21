@@ -1867,7 +1867,7 @@ print(counter.count)
 
 Capabilities can be built dynamically ahead of each agent run using a function that takes the agent [`RunContext`][pydantic_ai.tools.RunContext] and returns a capability or `None`. This is useful when the capability — its instructions, model settings, hooks, or contributed toolset — depends on information specific to a run, like its [dependencies](./dependencies.md).
 
-To register a dynamic capability, pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `capabilities` argument of the [`Agent`][pydantic_ai.Agent] constructor or `agent.run()`. Sync and async functions are both supported. The function is called once per run to resolve instructions, model settings, native tools, and hooks. It is called a second time per run to resolve any contributed toolset, so it must return deterministic results given `ctx.deps`.
+To register a dynamic capability, pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `capabilities` argument of the [`Agent`][pydantic_ai.Agent] constructor or `agent.run()`. Sync and async functions are both supported. The function is called once per run and the returned capability replaces it for the rest of the run, so its instructions, model settings, toolsets, native tools, and hooks all flow through normally.
 
 ```python {title="dynamic_capability.py"}
 from dataclasses import dataclass
@@ -1913,7 +1913,7 @@ To return more than one capability from a single factory, wrap them in a [`Combi
 
 !!! note "Durable execution (Temporal, DBOS, Prefect)"
 
-    Dynamic capabilities, including their contributed toolsets, work with durable execution. With [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], set a stable `id` on [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability]; it names the pre-registered activities, where the factory is re-run when tools are listed and called. The factory must be deterministic given `ctx.deps`.
+    Dynamic capabilities, including their contributed toolsets, work with durable execution. With [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], set a stable `id` on [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability]; it names the pre-registered activities, inside which the factory is re-run when tools are listed and called (the activity boundary can't carry the run's resolved capability). The factory must therefore be deterministic given the run's dependencies when used with durable execution.
 
     DBOS and Prefect use the same dynamic capability mechanics, but dynamically resolved toolsets are not wrapped in durable steps or tasks (no `id` required): their tools — including any MCP communication — run inline in the workflow or flow, without step checkpointing or task retries, matching their behavior for [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset].
 
