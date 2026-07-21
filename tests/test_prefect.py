@@ -1,8 +1,3 @@
-# pyright: reportDeprecated=false
-# `PrefectAgent` (the wrapper-agent path) is deprecated in favor of the
-# `PrefectDurability` capability, but this file still exercises both paths in
-# parallel for parity. Silenced at file level rather than annotating every
-# individual usage.
 from __future__ import annotations
 
 import os
@@ -97,13 +92,7 @@ from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
-# `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`, and
-# the legacy `MCPServer*` / `FastMCPToolset` classes are deprecated in favor of `MCPToolset`.
-# These tests exercise the wrapper-agent path on purpose; suppress the warnings here
-# rather than globally in `pyproject.toml`. The `pytestmark` entries below cover warnings
-# emitted *inside* test functions; the `filterwarnings` calls below cover warnings emitted
-# at module import time (e.g. module-level construction of `PrefectAgent`).
-warnings.filterwarnings('ignore', message='`PrefectAgent` is deprecated', category=DeprecationWarning)
+# The legacy `MCPServer*` / `FastMCPToolset` classes are deprecated in favor of `MCPToolset`.
 warnings.filterwarnings(
     'ignore',
     message=r'`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated',
@@ -114,7 +103,6 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
-    pytest.mark.filterwarnings('ignore:`PrefectAgent` is deprecated:DeprecationWarning'),
     pytest.mark.filterwarnings(
         'ignore:`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated:DeprecationWarning'
     ),
@@ -1720,7 +1708,7 @@ def test_resolve_tool_task_config_reads_metadata() -> None:
         args_validator=None,  # pyright: ignore[reportArgumentType]
     )
 
-    # Metadata wins over the per-tool (deprecated `PrefectAgent`) dict.
+    # Metadata wins over the per-tool `PrefectAgent` dict.
     resolved = resolve_tool_task_config(tool, 'fn_tool', {'fn_tool': TaskConfig(timeout_seconds=1.0)})
     assert resolved is metadata_config
 

@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, overload
 from prefect import flow, task
 from prefect.context import FlowRunContext
 from prefect.utilities.asyncutils import run_coro_as_sync
-from typing_extensions import deprecated
 
 from pydantic_ai import (
     AbstractToolset,
@@ -45,19 +44,6 @@ if TYPE_CHECKING:
 from ._types import TaskConfig, default_task_config
 
 
-@deprecated(
-    """`PrefectAgent` is deprecated in favor of the `PrefectDurability` capability. Migrate each constructor argument as follows:
-- With the capability, call `agent.run()` inside a `@flow`; the wrapper did this automatically.
-- `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[PrefectDurability(...)])`.
-- `name=` → set `name=` on `Agent`, or `name=` on `PrefectDurability`.
-- `event_stream_handler=` → pass `event_stream_handler=` to `PrefectDurability`; it runs inside tasks, exactly like before.
-- `mcp_task_config=` → set `mcp_task_config=` on `PrefectDurability`.
-- `model_task_config=` → set `model_task_config=` on `PrefectDurability`.
-- `tool_task_config=` → set `tool_task_config=` on `PrefectDurability`.
-- `tool_task_config_by_name=` → use per-tool `metadata={'prefect': ...}` or a `SetToolMetadata` capability.
-- `event_stream_handler_task_config=` → set `event_stream_handler_task_config=` on `PrefectDurability`.
-- `prefectify_toolset_func=` → not supported on the capability path; open an issue if you need it."""
-)
 class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def __init__(
         self,
@@ -495,7 +481,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 with self._prefect_overrides(toolsets, event_stream_handler=event_stream_handler):
                     # Using `run_coro_as_sync` from Prefect with async `run` to avoid event loop conflicts.
                     result = run_coro_as_sync(
-                        super(PrefectAgent, self).run(  # pyright: ignore[reportDeprecated]
+                        super(PrefectAgent, self).run(
                             user_prompt,
                             output_type=output_type,
                             message_history=message_history,
