@@ -290,7 +290,14 @@ class Transcript:
 
 @dataclass
 class InputTranscript:
-    """A transcription of the user's audio input (partial or final)."""
+    """A transcription of the user's audio input (partial or final).
+
+    The session attributes these to the current user turn by arrival order; it does not carry the
+    provider's per-item id. OpenAI documents input-transcription ordering as not guaranteed between
+    turns, so a fast back-to-back turn could in principle misattribute a late transcript. This is
+    accepted for now (single-turn-at-a-time voice is the norm); thread an item id through if
+    interleaved-turn attribution becomes necessary.
+    """
 
     text: str
     """Transcript text."""
