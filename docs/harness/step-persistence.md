@@ -144,12 +144,13 @@ asyncio.run(main())
 
 ### What "safe to continue from" means
 
-`continue_run` only returns the messages of the latest provider-valid snapshot for that `run_id`. Snapshots are written at two boundaries:
+`continue_run` only returns the messages of the latest provider-valid snapshot for that `run_id`. Snapshots are written at these boundaries:
 
-- after every `CallToolsNode` completes (all tool calls returned), and
-- at `after_run`, as a fallback if the run reached no such boundary.
+- after every `CallToolsNode` completes (all tool calls returned),
+- at `after_run`, as a fallback if the run reached no such boundary, and
+- when a run *fails* against a provider-valid history -- a model request that raises after a clean tool cycle, or output validation that raises after a text response -- so an errored run still exposes its last safe resume point.
 
-A run that crashed mid-tool-call has events (`tool_call_started`) but no snapshot for that point. `continue_run` returns the snapshot from the previous safe boundary, not the failed step. If no continuable snapshot exists at all, `continue_run` raises `LookupError`.
+A run that crashed mid-tool-call has events (`tool_call_started`) but no snapshot for that point: the dangling `ToolCallPart` is not provider-valid, so the error-path capture skips it. `continue_run` returns the snapshot from the previous safe boundary, not the failed step. If no continuable snapshot exists at all, `continue_run` raises `LookupError`.
 
 ## Run lineage: `parent_run_id`
 

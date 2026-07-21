@@ -10,12 +10,12 @@ from uuid import uuid4
 from pydantic_ai import CallToolsNode
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
-from pydantic_ai_harness.step_persistence._context import current_run_id, snapshot_saved
+from pydantic_ai_harness.step_persistence._context import current_run_id, latest_node_history, snapshot_saved
 from pydantic_ai_harness.step_persistence._helpers import is_provider_valid
 from pydantic_ai_harness.step_persistence._store import InMemoryStepStore, StepStore
 from pydantic_ai_harness.step_persistence._types import (
@@ -31,6 +31,16 @@ def _empty_metadata() -> dict[str, str]:
     return {}
 
 
+def _is_resumable_history(messages: list[ModelMessage]) -> bool:
+    """A history worth rescuing as a resume point on error.
+
+    Requires provider-validity (sendable to `Agent.run(message_history=...)`)
+    and at least one model response: a bare user prompt is equivalent to
+    restarting the run, so it is not worth persisting.
+    """
+    return is_provider_valid(messages) and any(isinstance(message, ModelResponse) for message in messages)
+
+
 @dataclass
 class StepPersistence(AbstractCapability[AgentDepsT]):
     """Append-only step log + continuable snapshots + tool-effect ledger.
@@ -40,12 +50,16 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     `ToolEffectRecord` per tool call so the orchestrator can decide whether
     replay is safe, and saves a `ContinuableSnapshot` at every
     provider-valid boundary -- the end of each `CallToolsNode` -- plus a
-    fallback save at `after_run` if the run reached no such boundary.
+    fallback save at `after_run` if the run reached no such boundary. A run
+    that *fails* against a provider-valid history also saves one, so an
+    errored run still exposes its last safe resume point (see
+    `on_model_request_error` and `on_run_error`).
 
     A run that crashes between `before_tool_execute` and `after_tool_execute`
     leaves a visible event trail and a `started` tool-effect record, but no
-    new continuable snapshot -- the latest snapshot reflects the last
-    provider-valid state.
+    new continuable snapshot -- the dangling `ToolCallPart` is not
+    provider-valid, so the latest snapshot reflects the last provider-valid
+    state.
 
     ```python
     from pydantic_ai import Agent
@@ -197,9 +211,11 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         """Push this run's id onto the contextvar so nested delegates can read it."""
         token = current_run_id.set(self._effective_run_id(ctx))
         saved_token = snapshot_saved.set(False)
+        history_token = latest_node_history.set(None)
         try:
             return await handler()
         finally:
+            latest_node_history.reset(history_token)
             snapshot_saved.reset(saved_token)
             current_run_id.reset(token)
 
@@ -262,13 +278,73 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         await self.store.append_event(self._make_event(ctx, kind='run_completed'))
         return result
 
+    def _stash_provider_valid_history(self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]) -> None:
+        """Record `messages` as the latest resume point for `on_run_error` when it is a meaningful one.
+
+        Called at node boundaries, where `ctx.messages` is the live history.
+        A contextvar carries it to `on_run_error`, which cannot read the live
+        history itself (its `RunContext` holds the start-of-run reference).
+        Only a completed node's write reaches `on_run_error`. `after_node_run`
+        never fires for a node that raises, so a failing node stashes nothing;
+        and a model request runs in an isolated context, so a contextvar write
+        inside it does not propagate to `on_run_error`. That is why the
+        model-request path saves directly instead (see `on_model_request_error`).
+        """
+        if _is_resumable_history(messages):
+            latest_node_history.set((messages, ctx.run_step))
+
+    async def _save_continuable_snapshot(
+        self,
+        ctx: RunContext[AgentDepsT],
+        messages: list[ModelMessage],
+        step_index: int,
+    ) -> None:
+        await self.store.save_snapshot(
+            ContinuableSnapshot(
+                run_id=self._effective_run_id(ctx),
+                step_index=step_index,
+                messages=messages,
+                conversation_id=ctx.conversation_id,
+                parent_run_id=self.parent_run_id,
+                agent_name=self.agent_name,
+            )
+        )
+
     async def on_run_error(
         self,
         ctx: RunContext[AgentDepsT],
         *,
         error: BaseException,
     ) -> AgentRunResult[Any]:
-        """Emit `run_failed` so a killed run leaves a visible event trail."""
+        """Rescue the last provider-valid resume point from a completed node, then emit `run_failed`.
+
+        Covers a text response whose following `CallToolsNode` raises inside
+        output validation: `after_node_run` stashed the provider-valid
+        `[prompt, text-response]` history, and this persists it.
+
+        Reads `latest_node_history` rather than `ctx.messages`: the
+        `RunContext` passed to `on_run_error` carries the start-of-run history,
+        not the live message list. The stash only ever holds a provider-valid,
+        past-the-prompt history, so a crash mid-tool-call leaves nothing to
+        rescue and `latest_snapshot` never regresses to an unsendable point.
+
+        The stash reflects the last *completed* node, so it can be older than a
+        snapshot `on_model_request_error` already saved for a failing request
+        later in the same run (that request runs in an isolated context and
+        saves to the store directly, so its newer history never reaches this
+        stash). Skip the save when the store already holds a newer resume point,
+        so a stale stash never supersedes it as `latest_snapshot`. Recency is
+        compared by message count, not `step_index`: absent a history-rewriting
+        processor a run's history only grows, so a longer capture is strictly
+        later, whereas `step_index` repeats across the boundaries within one
+        request cycle (a retried text response and its tool cycle share a step).
+        """
+        stashed = latest_node_history.get()
+        if stashed is not None:
+            messages, step_index = stashed
+            existing = await self.store.latest_snapshot(run_id=self._effective_run_id(ctx))
+            if existing is None or len(messages) > len(existing.messages):
+                await self._save_continuable_snapshot(ctx, messages, step_index)
         await self.store.append_event(self._make_event(ctx, kind='run_failed', error=repr(error)))
         raise error
 
@@ -297,6 +373,18 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         error: Exception,
     ) -> ModelResponse:
+        """Rescue the request payload as a resume point when a model request fails.
+
+        The payload is the provider-valid history the run was about to send --
+        e.g. a resolved tool cycle after a clean `CallToolsNode`, which is
+        never a completed-node boundary (the tool return only enters the
+        history as this request is built). It is saved here, directly to the
+        store, because the contextvar path used by `on_run_error` cannot carry
+        a value out of a model request that raises.
+        """
+        messages = list(request_context.messages)
+        if _is_resumable_history(messages):
+            await self._save_continuable_snapshot(ctx, messages, ctx.run_step)
         await self.store.append_event(self._make_event(ctx, kind='model_request_failed', error=repr(error)))
         raise error
 
@@ -408,9 +496,14 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         has a matching tool return, so the history is provider-valid.
         Snapshots are filtered through `is_provider_valid` defensively in case
         a custom node reshapes history.
+
+        Every node boundary also refreshes `latest_node_history` so that
+        `on_run_error` can rescue the last provider-valid tail when a later
+        node raises before its own `after_node_run` fires.
         """
+        messages = list(ctx.messages)
+        self._stash_provider_valid_history(ctx, messages)
         if isinstance(node, CallToolsNode):
-            messages = list(ctx.messages)
             if is_provider_valid(messages):
                 await self.store.save_snapshot(
                     ContinuableSnapshot(

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai._agent_graph import GraphAgentState  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import (
     ModelMessage,
@@ -25,6 +25,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import ToolDefinition
@@ -1013,6 +1014,222 @@ class TestCrashMidToolCallContract:
         assert is_provider_valid(snap_after_crash.messages) is True
         # And the snapshot is consistent with what the prior successful run produced.
         assert len(snap_after_crash.messages) == len(result.all_messages())
+
+
+class TestOnRunErrorSnapshot:
+    """`on_run_error` rescues a provider-valid resume point no snapshot captured (#253).
+
+    A provider-valid history can exist at a boundary that no snapshot records:
+    the model request after a clean tool cycle (the resolved tool return only
+    enters the history as that request is built) or the `CallToolsNode` after a
+    text response (output validation raising there skips its `after_node_run`).
+    `on_run_error` persists the last such history, and skips when the crash left
+    a dangling tool call -- so `latest_snapshot` never regresses to an
+    unsendable point.
+    """
+
+    async def test_rescues_provider_valid_history_when_next_model_request_raises(self) -> None:
+        """Issue #253 acceptance test: request 1 tool call, request 2 raises.
+
+        The resolved tool cycle `[prompt, response, tool-return]` is
+        provider-valid with no open tool calls, but it is never a completed
+        node boundary, so without this behavior the run leaves no snapshot.
+        `on_run_error` rescues it from the `before_model_request` boundary.
+        """
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prior_responses = [m for m in messages if isinstance(m, ModelResponse)]
+            if not prior_responses:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup-1')])
+            raise RuntimeError('provider down on request 2')
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+        )
+
+        @agent.tool_plain
+        def lookup() -> str:  # pyright: ignore[reportUnusedFunction]
+            return 'ok'
+
+        with pytest.raises(RuntimeError, match='provider down on request 2'):
+            await agent.run('go')
+
+        rid = await first_run_id(store)
+        assert 'run_failed' in [e.kind for e in await store.list_events(run_id=rid)]
+
+        snap = await store.latest_snapshot(run_id=rid)
+        assert snap is not None
+        assert is_provider_valid(snap.messages) is True
+        # The resolved tool cycle: the tool call has its return, no open calls.
+        assert any(
+            isinstance(part, ToolReturnPart) and part.tool_call_id == 'lookup-1'
+            for msg in snap.messages
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+        )
+
+    async def test_rescues_text_response_when_output_validation_raises(self) -> None:
+        """Text response then a hard output-validation error: the clean tail is rescued.
+
+        The terminal `CallToolsNode` raises inside output validation before its
+        `after_node_run` fires; `on_run_error` captures the provider-valid
+        `[prompt, text-response]` history from the `after_node_run` boundary.
+        """
+        store = InMemoryStepStore()
+        agent: Agent[object, str] = Agent(
+            TestModel(custom_output_text='final answer'),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+        )
+
+        @agent.output_validator
+        def reject(value: str) -> str:  # pyright: ignore[reportUnusedFunction]
+            raise RuntimeError('validator down')
+
+        with pytest.raises(RuntimeError, match='validator down'):
+            await agent.run('answer please')
+
+        rid = await first_run_id(store)
+        assert 'run_failed' in [e.kind for e in await store.list_events(run_id=rid)]
+
+        snap = await store.latest_snapshot(run_id=rid)
+        assert snap is not None
+        assert is_provider_valid(snap.messages) is True
+        assert isinstance(snap.messages[-1], ModelResponse)
+        assert any(isinstance(part, TextPart) for part in snap.messages[-1].parts)
+
+    async def test_skips_snapshot_when_crash_leaves_dangling_tool_call(self) -> None:
+        """A crash mid-tool-call leaves a dangling call that is never a resume point."""
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('boom', {}, tool_call_id='boom-1')])
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+        )
+
+        @agent.tool_plain
+        def boom() -> str:  # pyright: ignore[reportUnusedFunction]
+            raise ValueError('kaboom')
+
+        with pytest.raises(ValueError, match='kaboom'):
+            await agent.run('go')
+
+        rid = await first_run_id(store)
+        assert 'run_failed' in [e.kind for e in await store.list_events(run_id=rid)]
+        # The only history reached is the bare prompt (skipped) and the dangling
+        # `boom` call (provider-invalid, skipped): no false continuation point.
+        assert await store.latest_snapshot(run_id=rid) is None
+
+    async def test_does_not_regress_to_stale_stash_after_model_request_save(self) -> None:
+        """A stale completed-node stash must not supersede a newer resolved-cycle save.
+
+        req1 text -> output-validation `ModelRetry` (run continues; the text
+        history is stashed into `latest_node_history`). req2 tool call resolves
+        cleanly. req3 raises: `on_model_request_error` saves the newer resolved
+        tool cycle, and `on_run_error` must not re-save the older text stash
+        over it (both save sites write to the same store, and `latest_snapshot`
+        returns the last write).
+        """
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            n_resp = len([m for m in messages if isinstance(m, ModelResponse)])
+            if n_resp == 0:
+                return ModelResponse(parts=[TextPart('draft')])
+            if n_resp == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup-1')])
+            raise RuntimeError('provider down on request 3')
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+            output_type=str,
+        )
+
+        @agent.output_validator
+        def gate(value: str) -> str:  # pyright: ignore[reportUnusedFunction]
+            raise ModelRetry('call a tool first')
+
+        @agent.tool_plain
+        def lookup() -> str:  # pyright: ignore[reportUnusedFunction]
+            return 'ok'
+
+        with pytest.raises(RuntimeError, match='provider down on request 3'):
+            await agent.run('go')
+
+        rid = await first_run_id(store)
+        snap = await store.latest_snapshot(run_id=rid)
+        assert snap is not None
+        assert is_provider_valid(snap.messages) is True
+        # The newest safe resume point is the resolved tool cycle, not the older text history.
+        assert any(
+            isinstance(part, ToolReturnPart) and part.tool_call_id == 'lookup-1'
+            for msg in snap.messages
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+        )
+
+    async def test_rescues_newest_text_history_over_earlier_saved_snapshot(self) -> None:
+        """`on_run_error` still saves its stash when it is newer than the store's latest snapshot.
+
+        Two text responses each pass an output-validation `ModelRetry`, then the
+        second validator raises hard. The first cycle already saved a snapshot;
+        the `on_run_error` stash (the newer text history) supersedes it.
+        """
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            n_resp = len([m for m in messages if isinstance(m, ModelResponse)])
+            return ModelResponse(parts=[TextPart('v1' if n_resp == 0 else 'v2')])
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model),
+            capabilities=[StepPersistence(store=store, agent_name='delegate')],
+            output_type=str,
+        )
+        calls = {'n': 0}
+
+        @agent.output_validator
+        def gate(value: str) -> str:  # pyright: ignore[reportUnusedFunction]
+            calls['n'] += 1
+            if calls['n'] == 1:
+                raise ModelRetry('retry once')
+            raise RuntimeError('validator down')
+
+        with pytest.raises(RuntimeError, match='validator down'):
+            await agent.run('go')
+
+        rid = await first_run_id(store)
+        snap = await store.latest_snapshot(run_id=rid)
+        assert snap is not None
+        assert is_provider_valid(snap.messages) is True
+        # The latest resume point is the newer history including `v2`, not the earlier `v1`-only snapshot.
+        assert any(
+            isinstance(part, TextPart) and part.content == 'v2'
+            for msg in snap.messages
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
+        )
+
+    async def test_on_run_error_without_stashed_history_saves_nothing(self) -> None:
+        """Direct-hook: no provider-valid boundary reached -> no snapshot, `run_failed` still emitted.
+
+        Covers the `stashed is None` branch -- `on_run_error` invoked before any
+        boundary refreshed `latest_node_history`.
+        """
+        store = InMemoryStepStore()
+        cap: StepPersistence[object] = StepPersistence(store=store)
+        ctx = build_run_context(run_id='r1', run_step=1)
+
+        with pytest.raises(RuntimeError, match='boom'):
+            await cap.on_run_error(ctx, error=RuntimeError('boom'))
+
+        assert await store.latest_snapshot(run_id='r1') is None
+        assert [e.kind for e in await store.list_events(run_id='r1')] == ['run_failed']
 
 
 # ---------------------------------------------------------------------------
