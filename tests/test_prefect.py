@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
@@ -1458,6 +1459,28 @@ def test_cache_policy_keeps_user_dataclass_fields():
         'run_id': 'user-run',
         'conversation_id': 'user-conversation',
     }
+
+
+def test_cache_policy_excludes_non_serializable_deps():
+    """Non-serializable dependencies are excluded from cache computation instead of failing the task.
+
+    Prefect's `INPUTS.compute_key` raises `ValueError` on inputs it can't hash, and dependencies
+    routinely hold live resources (HTTP clients, DB connections, locks), so the projection drops
+    those — as documented — while serializable dependencies still fork the key.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(deps: object) -> str | None:
+        ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'ctx': ctx}, flow_parameters={})
+
+    lock_key = key_for(threading.Lock())
+    assert lock_key is not None
+    # Excluded deps hash like absent deps: the unhashable object doesn't poison the rest of the key.
+    assert lock_key == key_for(None)
+    # Serializable deps still fork the key.
+    assert key_for('acme') != key_for('globex')
 
 
 async def test_cache_policy_with_tuples():

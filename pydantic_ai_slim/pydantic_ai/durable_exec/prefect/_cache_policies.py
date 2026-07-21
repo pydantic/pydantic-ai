@@ -3,6 +3,7 @@ from typing import Any, TypeGuard
 
 from prefect.cache_policies import INPUTS, RUN_ID, TASK_SOURCE, CachePolicy
 from prefect.context import TaskRunContext
+from prefect.utilities.hashing import hash_objects
 
 from pydantic_ai import ToolsetTool, messages
 from pydantic_ai.tools import RunContext
@@ -28,6 +29,19 @@ def _is_run_context(obj: Any) -> TypeGuard[RunContext[object]]:
     return isinstance(obj, RunContext)
 
 
+def _cacheable_deps(deps: Any) -> Any:
+    """Project `deps` for cache-key hashing, excluding them when non-serializable.
+
+    Dependencies routinely hold live resources (HTTP clients, DB connections, locks) that
+    Prefect can't hash; as documented, those are excluded from cache computation rather
+    than failing the task, so only serializable dependencies fork the key.
+    """
+    projected = _strip_cache_excluded_fields(deps)
+    if hash_objects(projected, raise_on_failure=False) is None:
+        return None
+    return projected
+
+
 def _replace_run_context(
     inputs: dict[str, Any],
 ) -> Any:
@@ -35,7 +49,7 @@ def _replace_run_context(
     for key, value in inputs.items():
         if _is_run_context(value):
             inputs[key] = {
-                'deps': value.deps,
+                'deps': _cacheable_deps(value.deps),
                 'agent': value.agent.name if value.agent is not None else None,
                 'model': value.model.model_id,
                 'retries': value.retries,
