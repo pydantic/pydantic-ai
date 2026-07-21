@@ -722,7 +722,9 @@ class CachePoint:
 
     - Anthropic
     - Amazon Bedrock (Converse API)
-    - OpenRouter (Anthropic and Gemini models)
+    - OpenAI (GPT-5.6 models)
+    - OpenRouter (Anthropic and Gemini models via `OpenRouterModel`, plus OpenAI GPT-5.6 models when
+      using `OpenAIChatModel` or `OpenAIResponsesModel` with `OpenRouterProvider`)
     """
 
     kind: Literal['cache-point'] = 'cache-point'
@@ -735,6 +737,7 @@ class CachePoint:
 
     * Anthropic — see https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information.
     * Amazon Bedrock (Converse API) — see https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    * OpenAI ignores this per-marker value and uses the request-wide `openai_prompt_cache_options['ttl']` setting instead.
     * OpenRouter with Anthropic models (automatically omitted for Gemini models, which do not support explicit TTL).
     """
 
