@@ -226,7 +226,6 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         lifecycle: Lifecycle,
         durable_registrations: list[Any] | None = None,
         durable_config: Mapping[str, Any] | None = None,
-        instructions_local_first: bool = False,
     ):
         super().__init__(
             wrapped,
@@ -240,11 +239,6 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         self._get_instructions_operation = get_instructions_operation
         self._call_tool_operation = call_tool_operation
         self._resolve_tool_config = resolve_tool_config
-        # An optimization only available to engines whose durable units share the process
-        # (DBOS): the wrapped MCP server instance may already hold cached instructions from a
-        # prior in-process operation, saving a durable-unit execution (and its checkpoint).
-        # Out-of-process engines (Temporal) must never touch the server from workflow code.
-        self._instructions_local_first = instructions_local_first
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         if not self._in_durable_context() or self._get_tools_operation is None:
@@ -262,11 +256,9 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
             return None
         if not self._in_durable_context() or self._get_instructions_operation is None:  # pragma: no cover
             return await self._mcp_toolset.get_instructions(ctx)
-        if (
-            self._instructions_local_first
-            and (instructions := await self._mcp_toolset.get_instructions(ctx)) is not None
-        ):
-            return instructions
+        # Always route through the durable unit: deciding based on locally-cached state (e.g.
+        # instructions a warm in-process MCP server already holds) would make the durable
+        # schedule depend on process warmth and diverge on replay/recovery (#5884).
         return await self._get_instructions_operation(ctx)
 
     async def call_tool(
