@@ -10,6 +10,7 @@ Recorded once against the live API with `--record-mode=rewrite`, then replayed o
 
 from __future__ import annotations as _annotations
 
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -48,6 +49,39 @@ pytestmark = [
 # The Gemini Developer API only exposes the native-audio Live model to the recording key, and it only
 # produces audio output — so every scenario below runs audio-out (transcripts drive the assertions).
 _MODEL = 'gemini-2.5-flash-native-audio-preview-09-2025'
+
+
+async def test_audio_in_server_vad_turn(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """A spoken user turn (audio in, automatic VAD) is transcribed into a user turn in history.
+
+    The default microphone workflow — Gemini transcribes input natively — must land the user's turn in
+    history, not just the assistant's reply (the dropped-user-turn guard).
+    """
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_16khz.pcm').read_bytes()  # Gemini wants 16 kHz input
+
+    events: list[Any] = []
+    async with agent.realtime_session(model=model) as session:
+        for start in range(0, len(pcm), 3200):  # ~100 ms chunks at 16 kHz
+            await session.send_audio(pcm[start : start + 3200])
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+                events.append(event)
+                if isinstance(event, TurnCompleteEvent):
+                    break
+
+    messages = session.all_messages()
+    # Automatic VAD may split the clip into several short user turns; the invariant is that the spoken
+    # input is transcribed into user history (not dropped) ahead of the assistant's reply.
+    user_speech = [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
+    assert user_speech and all(isinstance(p, SpeechPart) and p.speaker == 'user' for p in user_speech)
+    assert any(isinstance(p, SpeechPart) and p.transcript for p in user_speech)  # at least one transcribed
+    responses = [message for message in messages if isinstance(message, ModelResponse)]
+    assert responses and isinstance(responses[-1].parts[0], SpeechPart)
 
 
 async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:

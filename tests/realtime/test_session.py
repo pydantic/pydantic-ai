@@ -310,6 +310,24 @@ async def test_user_transcript_final_becomes_request() -> None:
     )
 
 
+async def test_partial_only_user_transcript_finalized_on_turn_complete() -> None:
+    # Gemini streams only partial input transcripts (never `is_final`) and no `InputSpeechEndEvent`, so
+    # the user turn is finalized at the turn boundary. Without that, the transcribed user turn is
+    # dropped from history entirely (only the assistant response would remain).
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='what is ', is_final=False),
+            InputTranscript(text='the weather', is_final=False),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+    _ = await collect_events(session)
+    assert session.new_messages() == snapshot(
+        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='what is the weather')])]
+    )
+
+
 async def test_user_transcript_final_snapshot_reconciles_whitespace_drift() -> None:
     # OpenAI's input-transcription deltas can carry a leading space that the `.completed` full-text
     # snapshot trims. The final snapshot must replace the accumulated deltas, not append a near-

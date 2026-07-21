@@ -638,10 +638,13 @@ class RealtimeSession:
         span.end()
 
     def _handle_turn_complete(self, event: RealtimeEvent) -> list[RealtimeEvent]:
-        # Catch-all boundary for an audio-only user turn on providers that don't emit `InputSpeechEndEvent`
-        # (e.g. Gemini): finalize it before the assistant response so history reads user-then-assistant.
-        # A no-op when `InputSpeechEndEvent`/`commit_audio` already finalized it (nothing left retained).
-        events = self._finalize_audio_only_user()
+        # Turn boundary for a user turn that wasn't finalized earlier, so history reads user-then-assistant.
+        # Gemini emits neither `InputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
+        # only partial transcripts — so its user turn is finalized here: `_finalize_user` for a
+        # transcript-driven turn, `_finalize_audio_only_user` for a retained-audio-only one. Both are no-ops
+        # when the turn was already finalized (e.g. OpenAI's `is_final` transcript or `commit_audio`).
+        events = self._finalize_user()
+        events.extend(self._finalize_audio_only_user())
         events.extend(self._finalize_assistant_part())
         self._finalize_response()
         events.append(event)
