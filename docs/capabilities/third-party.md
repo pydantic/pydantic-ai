@@ -20,7 +20,7 @@ Pydantic AI has [built-in compaction](compaction.md) — provider-native APIs an
 
 Pydantic AI supports [multi-agent patterns](../multi-agent-applications.md) directly, and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/subagents/) ships [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) for delegating self-contained tasks to named child agents. As a community alternative:
 
-* [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai) - `SubAgentCapability` adds tools for multi-agent delegation: `task` (spawn a subagent), `check_task`, `wait_tasks`, `list_active_tasks`, `soft_cancel_task`, `hard_cancel_task`, and `answer_subagent`. Supports sync, async, and auto execution modes, nested subagents, and runtime agent creation. Also available as a lower-level toolset via `create_subagent_toolset`.
+* [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai) - `SubAgentCapability` adds tools for multi-agent delegation: `task` (spawn a subagent), `check_task`, `wait_tasks`, `list_active_tasks`, `soft_cancel_task`, `hard_cancel_task`, and `answer_subagent`. Supports sync, async, and auto-execution modes, nested subagents, and runtime agent creation. Also available as a lower-level toolset via `create_subagent_toolset`.
 
 ## Guardrails & Safety
 
