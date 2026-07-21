@@ -12,7 +12,7 @@ Capabilities can provide any combination of:
 
 This makes them the primary extension point for Pydantic AI. Whether you're building a memory system, a guardrail, a cost tracker, or an approval workflow, a capability is the right abstraction.
 
-Capabilities can be always-on or [loaded by the model on demand](on-demand.md). Pydantic AI ships the built-in capabilities below, [Pydantic AI Harness](#pydantic-ai-harness) and [third-party packages](third-party.md) provide many more, and [Building Custom Capabilities](custom.md) covers writing your own. To run agents durably across failures, restarts, and long waits, see [Durable Execution](../durable_execution/overview.md).
+Capabilities can be always-on or [loaded by the model on demand](on-demand.md). Pydantic AI ships the built-in capabilities below, [Pydantic AI Harness](#pydantic-ai-harness) and [third-party packages](third-party.md) provide many more, and you can define your own — [declaratively](#bundling-behavior-with-capability) or by [subclassing](custom.md). To run agents durably across failures, restarts, and long waits, see [Durable Execution](../durable_execution/overview.md).
 
 ## Built-in capabilities
 
@@ -65,6 +65,32 @@ agent = Agent(
 ```
 
 [Instructions](../agent.md#instructions) and [model settings](../agent.md#model-run-settings) are configured directly via the `instructions` and `model_settings` parameters on `Agent` (or [`AgentSpec`][pydantic_ai.agent.AgentSpec]). Capabilities are for behavior that goes beyond simple configuration — tools, lifecycle hooks, and custom extensions. They compose well, especially when you want to reuse the same configuration across multiple agents or load it from a [spec file](../agent-spec.md).
+
+## Bundling behavior with `Capability`
+
+You don't need a subclass to define a capability of your own: [`Capability`][pydantic_ai.capabilities.Capability] bundles instructions, function tools, and [toolsets](../toolsets.md) declaratively — think of it as defining a skill:
+
+```python {title="capability_shorthand.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
+
+refunds = Capability(
+    id='refunds',
+    description='Use for refund eligibility and refund status.',
+    instructions='Always confirm the order ID before issuing a refund.',
+)
+
+
+@refunds.tool_plain
+def refund_status(order_id: str) -> str:
+    """Look up the refund status for an order."""
+    return f'Order {order_id}: refund issued on 2026-05-01.'
+
+
+agent = Agent('openai:gpt-5.2', capabilities=[refunds])
+```
+
+Add `defer_loading=True` and the bundle becomes an [on-demand capability](on-demand.md) that stays collapsed to a one-line catalog entry until the model loads it — the same shape as [Agent Skills](on-demand.md#loading-skills-from-markdown-files), which you can wrap in a `Capability` directly. See [The `Capability` convenience class](on-demand.md#the-capability-convenience-class) for the full API. For behavior beyond instructions, tools, and toolsets — lifecycle hooks, model settings, native tools — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] as covered in [Building Custom Capabilities](custom.md).
 
 ## Provider-adaptive tools
 
