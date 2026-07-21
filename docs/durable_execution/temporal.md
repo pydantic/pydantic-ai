@@ -309,7 +309,7 @@ async def relay_events(client: Client, prompt: str) -> str:
         await asyncio.sleep(0.2)
     await handle.signal(AssistantWorkflow.release)
     await relay_task
-    return (await handle.result()).output
+    return await handle.result()
 ```
 
 Because Workflow Streams are offset-addressed, a reconnecting consumer can resume from its last seen offset via `stream_agent_events(..., from_offset=...)`, which is more robust than ordinary in-process streaming. `stream_agent_events` targets the specific run behind the handle you pass, so it's unaffected by later executions that reuse the same workflow ID.
