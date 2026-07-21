@@ -2500,12 +2500,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Build the include list for retrieve/create requests."""
         profile = self.profile
         include: list[responses.ResponseIncludable] = []
-        if profile.get('openai_supports_encrypted_reasoning_content', False):
-            # OpenAI rejects `reasoning.encrypted_content` on retrieves of persisted
-            # responses (the default when `openai_store` is not explicitly `False`), so
-            # only request it for non-persisted retrieves; create requests keep it.
-            if not is_retrieve or model_settings.get('openai_store') is False:
-                include.append('reasoning.encrypted_content')
+        if profile.get('openai_supports_encrypted_reasoning_content', False) and not is_retrieve:
+            # OpenAI rejects `reasoning.encrypted_content` on any retrieve of a background
+            # response ('Encrypted content cannot be requested for persisted responses'),
+            # so only request it on create. Nothing is lost: a retrieved background response
+            # never carries encrypted content, and continuation works via `previous_response_id`.
+            include.append('reasoning.encrypted_content')
         if model_settings.get('openai_include_code_execution_outputs'):
             include.append('code_interpreter_call.outputs')
         if model_settings.get('openai_include_web_search_sources'):
