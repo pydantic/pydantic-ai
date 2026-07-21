@@ -45,7 +45,7 @@ See the [DBOS documentation](https://docs.dbos.dev/architecture) for more inform
 
 ## Durable Agent
 
-Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] [capability](../capabilities.md). When the agent runs inside a DBOS workflow, the capability routes [model requests](../models/overview.md) and [MCP communication](../mcp/client.md) through DBOS steps. To make a run durable, call `agent.run()` inside a `@DBOS.workflow`.
+Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] [capability](../capabilities/overview.md). When the agent runs inside a DBOS workflow, the capability routes [model requests](../models/overview.md) and [MCP communication](../mcp/client.md) through DBOS steps. To make a run durable, call `agent.run()` inside a `@DBOS.workflow`.
 
 The agent stays a normal `Agent` everywhere — outside a DBOS workflow the capability is transparent, and the original agent, model, and MCP server can still be used as normal.
 
@@ -104,7 +104,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-Because the same agent works inside and outside a DBOS workflow, [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] composes with all other [capabilities](../capabilities.md) without each needing a DBOS-specific wrapper variant.
+Because the same agent works inside and outside a DBOS workflow, [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] composes with all other [capabilities](../capabilities/overview.md) without each needing a DBOS-specific wrapper variant.
 
 For more information on how to use DBOS in Python applications, see their [Python SDK guide](https://docs.dbos.dev/python/programming-guide).
 
@@ -166,7 +166,7 @@ DBOS checkpoints workflow inputs/outputs and step outputs into a database using 
 
 [`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. A model instance can't be serialized across the step boundary, so it's sent as its `model_id` string and rebuilt inside the step. That faithfully reproduces model-name strings and models with standard providers, but not an instance whose exact behavior depends on a custom provider, client, or settings — pre-register those by passing a `models` dict to [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] and reference them by key (or pass the registered instance). The agent's own model, set at construction, is always available as the default.
 
-To customize how a model string is built — a custom provider, or per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities.md#resolvemodelid) capability before `DBOSDurability`: it gets first crack at every string, and the resolver runs again inside the step with the run's actual `deps`, so it must be deterministic for a given `(model_id, deps)` and must not perform external I/O.
+To customize how a model string is built — a custom provider, or per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `DBOSDurability`: it gets first crack at every string, and the resolver runs again inside the step with the run's actual `deps`, so it must be deterministic for a given `(model_id, deps)` and must not perform external I/O.
 
 ### Streaming
 

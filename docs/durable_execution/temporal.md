@@ -66,7 +66,7 @@ See the [Temporal documentation](https://docs.temporal.io/evaluate/understanding
 
 ## Durable Agent
 
-Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] [capability](../capabilities.md). The agent stays a normal `Agent` everywhere — outside a workflow it behaves transparently, and inside a workflow the capability routes model requests, tool calls, and MCP server communication through Temporal activities.
+Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] [capability](../capabilities/overview.md). The agent stays a normal `Agent` everywhere — outside a workflow it behaves transparently, and inside a workflow the capability routes model requests, tool calls, and MCP server communication through Temporal activities.
 
 !!! warning "A run is durable only inside a workflow"
     Attaching `TemporalDurability` does not by itself make runs durable — durability comes from executing the run inside a Temporal workflow that your application starts (via a Temporal client, as in the example below). Calling `agent.run()` or a streaming method from ordinary code — including indirectly, e.g. through a [UI adapter](../ui/overview.md) in a web endpoint — is a plain, non-durable agent run. To serve a durable agent behind an API, have the endpoint start (or signal) a workflow and bridge its results or events back to the client, rather than running the agent in the endpoint itself.
@@ -156,7 +156,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-Because the same agent works inside and outside a workflow, [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] composes with all other [capabilities](../capabilities.md) (instrumentation, [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata], [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream], etc.) without each needing a Temporal-specific wrapper variant.
+Because the same agent works inside and outside a workflow, [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] composes with all other [capabilities](../capabilities/overview.md) (instrumentation, [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata], [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream], etc.) without each needing a Temporal-specific wrapper variant.
 
 In a real world application, the agent, workflow, and worker are typically defined separately from the code that calls for a workflow to be executed.
 Because Temporal workflows need to be defined at the top level of the file and the agent is needed inside the workflow and when starting the worker (to register the activities), it needs to be defined at the top level of the file as well.
@@ -246,7 +246,7 @@ This has a few operational implications:
 
 To use such model instances inside a workflow, pre-register them by passing a `models` dict to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. You can then reference them by name or by passing the registered instance directly to `agent.run(model=...)`. The agent's own model, set at construction, is always available as the default; the agent must have a model set when it's created.
 
-Model strings work as expected. To customize how a model string is built — a custom provider, API keys injected from configuration, per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities.md#resolvemodelid) capability before `TemporalDurability`: it gets first crack at every string, both at run setup and when the model is rebuilt inside the activity, where the resolver runs again with the run's actual `deps`. Since the resolver re-runs on the worker, it must be deterministic for a given `(model_id, deps)` and must not perform external I/O — carry credentials on `deps` or close over configuration loaded at startup.
+Model strings work as expected. To customize how a model string is built — a custom provider, API keys injected from configuration, per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `TemporalDurability`: it gets first crack at every string, both at run setup and when the model is rebuilt inside the activity, where the resolver runs again with the run's actual `deps`. Since the resolver re-runs on the worker, it must be deterministic for a given `(model_id, deps)` and must not perform external I/O — carry credentials on `deps` or close over configuration loaded at startup.
 
 Here's an example showing how to pre-register and use multiple models:
 
