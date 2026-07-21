@@ -2587,13 +2587,8 @@ async def test_prefect_durability_identical_events_are_dispatched_twice() -> Non
 
 
 async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
-    enqueued = False
-
     async def enqueue(ctx: RunContext[object]) -> str:
-        nonlocal enqueued
-        if not enqueued:
-            ctx.enqueue('later')
-            enqueued = True
+        ctx.enqueue('later')
         return 'done'
 
     durability: PrefectDurability[object] = PrefectDurability()
@@ -2606,7 +2601,7 @@ async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
     with pytest.raises(UserError, match='task-cache replay would drop the enqueued messages'):
         await run_agent()
 
-    enqueued = False
+    # Outside a flow the tool runs inline and enqueueing keeps working.
     await agent.run('run')
 
 
