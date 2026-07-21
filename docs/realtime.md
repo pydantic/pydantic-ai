@@ -825,14 +825,16 @@ model = OpenAIRealtimeModel('gpt-realtime', reconnect=ReconnectPolicy(max_attemp
 
 For OpenAI and Azure Voice Live, reconnecting restores the session configuration but **not** server-side
 conversation state (the audio buffer and prior turns), so treat a
-[`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] as the start of a fresh turn. Without a
+[`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] with `state_restored=False` as the start of a fresh
+turn. Without a
 policy (the default), a dropped connection raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]
 from the session iterator, so the app can open a new session itself.
 
 Gemini and xAI reconnect via native **session resumption**, which restores prior turns. xAI suppresses
 the provider's resumption replay burst from the local event stream and enables resumption automatically
 whenever a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] is set. Its conversation handle is
-managed in memory and cannot be persisted to resume a session in another process.
+managed in memory and cannot be persisted to resume a session in another process. Their
+[`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] has `state_restored=True`.
 
 For Gemini, enable resumption with
 both `google_enable_session_resumption=True` and a

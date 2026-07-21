@@ -1648,7 +1648,7 @@ async def test_reconnects_on_drop_and_resumes() -> None:
         reconnect=rt_openai.ReconnectPolicy(base_delay=0.0),
     )
     events = [e async for e in conn]
-    assert events == [ReconnectedEvent(), Transcript(text='hi', is_final=True)]
+    assert events == [ReconnectedEvent(state_restored=False), Transcript(text='hi', is_final=True)]
 
 
 class _DropAfterHandshake(FakeWebSocket):
@@ -1695,7 +1695,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
 
-    assert events == [ReconnectedEvent(), Transcript(text='hi', is_final=True)]
+    assert events == [ReconnectedEvent(state_restored=False), Transcript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
 
 

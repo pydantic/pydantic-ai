@@ -194,6 +194,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # recover from a dropped WebSocket.
         self._dial = dial
         self._reconnect = reconnect
+        self._restores_state_on_reconnect = False
         self._input_transcription_enabled = input_transcription_enabled
         # The Realtime API rejects `response.create` while a response is already being generated.
         # We track that window and defer requests (e.g. a background tool result that lands while the
@@ -346,7 +347,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     yield SessionErrorEvent(message=f'OpenAI realtime connection closed: {e}', recoverable=False)
                     return
                 if await self._try_reconnect():
-                    yield ReconnectedEvent()
+                    yield ReconnectedEvent(state_restored=self._restores_state_on_reconnect)
                     continue
                 yield SessionErrorEvent(
                     message=f'OpenAI realtime connection closed; reconnect failed: {e}', recoverable=False

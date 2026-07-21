@@ -1263,7 +1263,7 @@ async def test_reconnect_resumes_then_gives_up() -> None:
     conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
     events = [e async for e in conn]
     assert events[:3] == [
-        ReconnectedEvent(),
+        ReconnectedEvent(state_restored=True),
         Transcript(text='back', is_final=True),
         TurnCompleteEvent(interrupted=False),
     ]
@@ -1293,7 +1293,7 @@ async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None
         cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.5, max_attempts=1, jitter=True)
     )
     events = [e async for e in conn]
-    assert events[0] == ReconnectedEvent()
+    assert events[0] == ReconnectedEvent(state_restored=True)
     # Every backoff delay is the jittered 0.35s, never the un-jittered 0.5s base delay.
     assert delays
     assert all(delay == pytest.approx(0.35) for delay in delays)
@@ -1344,7 +1344,7 @@ async def test_connect_reconnect_closes_previous_session() -> None:
     )
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
-    assert events[0] == ReconnectedEvent()
+    assert events[0] == ReconnectedEvent(state_restored=True)
     assert events[1:3] == [Transcript(text='back', is_final=True), TurnCompleteEvent(interrupted=False)]
     assert isinstance(events[-1], SessionErrorEvent)
     # cm0 closed when reconnecting into cm1; cm1 closed when the next reconnect runs out of sessions.

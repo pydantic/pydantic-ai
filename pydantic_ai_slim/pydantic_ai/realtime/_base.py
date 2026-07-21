@@ -440,11 +440,19 @@ class SessionUsageEvent:
 
 @dataclass
 class ReconnectedEvent:
-    """The connection dropped and was automatically re-established.
+    """The connection dropped and was automatically re-established; inspect `state_restored` for continuity.
 
     Session configuration (instructions, tools, voice, ...) is restored on every reconnect. OpenAI
     starts with fresh server-side conversation state; Gemini and xAI restore conversation state when
     their session-resumption support is enabled (xAI enables it automatically when `reconnect` is set).
+    """
+
+    state_restored: bool = False
+    """Whether the provider restored prior conversation state on reconnect.
+
+    `False` (OpenAI/Azure OpenAI/Voice Live — the server starts a fresh conversation) means the consumer should
+    treat the session as having lost prior turns; `True` (xAI Grok Voice and Gemini Live, when their native
+    session resumption is active) means prior turns were restored.
     """
 
     event_kind: Literal['reconnected'] = 'reconnected'

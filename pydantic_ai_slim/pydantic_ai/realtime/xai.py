@@ -154,6 +154,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             input_transcription_enabled=input_transcription_enabled,
             model_name=model_name,
         )
+        self._restores_state_on_reconnect = True
         self._conversation_id = conversation_id
         self._replayed_items = replayed_items if replayed_items is not None else []
 

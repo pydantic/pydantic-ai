@@ -929,7 +929,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     yield SessionErrorEvent(message=f'Gemini realtime connection closed: {e}', recoverable=False)
                     return
                 if await self._try_reconnect():
-                    yield ReconnectedEvent()
+                    yield ReconnectedEvent(state_restored=True)
                     continue
                 yield SessionErrorEvent(
                     message=f'Gemini realtime connection closed; reconnect failed: {e}', recoverable=False

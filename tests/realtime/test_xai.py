@@ -559,7 +559,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
 
-    assert events == [ReconnectedEvent(), Transcript(text='hi', is_final=True)]
+    assert events == [ReconnectedEvent(state_restored=True), Transcript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]  # both the dropped and the current socket are closed
     assert connect.urls == [
         'wss://api.x.ai/v1/realtime?model=grok-voice-latest',
