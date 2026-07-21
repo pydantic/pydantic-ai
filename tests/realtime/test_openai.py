@@ -416,6 +416,32 @@ def test_session_config_truncation_modes() -> None:
     assert 'truncation' not in OpenAIRealtimeModel()._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
 
 
+def test_session_config_thinking_maps_to_reasoning_on_reasoning_models() -> None:
+    # `thinking` maps to reasoning effort on the `gpt-realtime-2*` reasoning models (live-verified
+    # that these accept `reasoning.effort` while the GA `gpt-realtime` rejects it).
+    def reasoning(thinking: object) -> object:
+        model = OpenAIRealtimeModel(
+            'gpt-realtime-2.1', settings=rt_openai.OpenAIRealtimeModelSettings(thinking=thinking)
+        )  # type: ignore[typeddict-item]
+        return model._session_config('hi', None, None).get('reasoning')  # pyright: ignore[reportPrivateUsage]
+
+    assert reasoning('low') == {'effort': 'low'}
+    assert reasoning('high') == {'effort': 'high'}
+    assert reasoning(True) == {'effort': 'medium'}
+    # `thinking=False` maps to effort `'none'`, which the realtime `reasoning.effort` doesn't accept,
+    # so it's omitted (a reasoning model falls back to its default rather than erroring).
+    assert reasoning(False) is None
+
+
+def test_session_config_thinking_on_non_reasoning_model_warns() -> None:
+    # The GA `gpt-realtime` isn't a reasoning model, so `thinking` is dropped with a warning rather
+    # than sent (which the server rejects with "Unsupported option for this model").
+    model = OpenAIRealtimeModel('gpt-realtime', settings=rt_openai.OpenAIRealtimeModelSettings(thinking='high'))
+    with pytest.warns(UserWarning, match='does not support the `thinking` setting'):
+        config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert 'reasoning' not in config
+
+
 def test_session_config_openai_turn_detection_overrides_base() -> None:
     model = OpenAIRealtimeModel(
         settings=rt_openai.OpenAIRealtimeModelSettings(

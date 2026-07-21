@@ -12,6 +12,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import InitVar, dataclass, field
@@ -36,6 +37,7 @@ from .._instrumentation import get_instructions
 from ..exceptions import UserError
 from ..messages import ModelMessage
 from ..models import ModelRequestParameters
+from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -483,6 +485,18 @@ class OpenAIRealtimeModel(RealtimeModel):
         if (truncation := model_settings.get('openai_truncation')) is not None:
             # Already the OpenAI `truncation` wire shape (`'auto'`/`'disabled'`/retention-ratio dict).
             config['truncation'] = truncation
+        if (thinking := model_settings.get('thinking')) is not None:
+            if self.profile.get('supports_thinking', False):
+                # `False` maps to `'none'`, which the realtime `reasoning.effort` doesn't accept — omit
+                # it so a reasoning model falls back to its default rather than erroring.
+                if (effort := OPENAI_REASONING_EFFORT_MAP[thinking]) != 'none':
+                    config['reasoning'] = {'effort': effort}
+            else:
+                warnings.warn(
+                    f'The {self.model!r} realtime model does not support the `thinking` setting '
+                    '(only the `gpt-realtime-2*` reasoning models do); ignoring it.',
+                    UserWarning,
+                )
         return config
 
     @asynccontextmanager
