@@ -172,14 +172,16 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     """Exact direct-model output dimensions as `(width, height)` in pixels.
 
     This is mutually exclusive with `aspect_ratio` and `size`. The legacy native/fallback-model
-    path ignores it with a warning.
+    path ignores it with a warning. Supported shapes are model-specific; see the
+    [Image Generation guide](../image-generation.md#supported-exact-dimensions).
     """
 
     aspect_ratio: ImageGenerationAspectRatio | None
     """Aspect ratio for generated images.
 
     Direct adapters map this to a canonical geometry supported by the selected model. Ratios outside
-    the existing native-tool vocabulary are ignored by the legacy path with a warning.
+    the existing native-tool vocabulary are ignored by the legacy path with a warning. See the
+    [ratio-to-dimensions matrix](../image-generation.md#canonical-dimensions-for-aspect_ratio).
     """
 
     def __init__(

@@ -10,7 +10,15 @@ ImageOutputFormat = Literal['png', 'jpeg', 'webp']
 """Common generated image output formats."""
 
 ImageDimensions: TypeAlias = tuple[int, int]
-"""Exact output image dimensions as `(width, height)` in pixels."""
+"""Exact output image dimensions as `(width, height)` in pixels.
+
+Supported values are model-specific. GPT Image 1.x accepts three fixed shapes;
+GPT Image 2 accepts any shape satisfying its edge, area, multiple-of-16, and 3:1
+limits; Gemini and Grok Imagine accept the documented or verified shapes for
+their aspect-ratio and resolution tiers. See the
+[Image Generation guide](../image-generation.md#supported-exact-dimensions)
+for the complete matrix.
+"""
 
 ImageGenerationAspectRatio: TypeAlias = Literal[
     '1:1',
@@ -34,7 +42,15 @@ ImageGenerationAspectRatio: TypeAlias = Literal[
     '20:9',
     '21:9',
 ]
-"""Portable aspect ratios understood by at least one direct image model adapter."""
+"""Portable aspect ratios understood by at least one direct image model adapter.
+
+Each adapter maps a supported ratio to one canonical exact output shape. Model
+families support different subsets: GPT Image 1.x supports `1:1`, `2:3`, and
+`3:2`; GPT Image 2 supports sixteen ratios; current Gemini families support ten
+or fourteen; Grok Imagine supports thirteen. See the
+[Image Generation guide](../image-generation.md#canonical-dimensions-for-aspect_ratio)
+for the ratio-to-dimensions matrix.
+"""
 
 ImageGenerationSize: TypeAlias = str
 """Provider-dependent image size accepted by direct image model adapters.
@@ -113,14 +129,19 @@ class ImageGenerationSettings(TypedDict, total=False):
     """The exact output dimensions as `(width, height)` in pixels.
 
     This is mutually exclusive with `aspect_ratio` and the compatibility `size`
-    setting. The selected provider and model must support the exact dimensions.
+    setting. The selected provider and model must support the exact dimensions;
+    no rounding or nearest-shape fallback is applied. GPT Image 1.x accepts its
+    three fixed shapes, GPT Image 2 validates a continuous constrained range, and
+    Gemini/Grok Imagine accept their model-specific aspect-ratio and resolution
+    table entries. See the `ImageDimensions` documentation for the full matrix.
     """
 
     aspect_ratio: ImageGenerationAspectRatio
     """The requested aspect ratio.
 
-    Provider adapters map this to a canonical model-specific output geometry.
-    Not every ratio is supported by every model.
+    Provider adapters map this to the canonical model-specific exact dimensions
+    documented by `ImageGenerationAspectRatio`. Not every ratio is supported by
+    every model; an unsupported explicit value is ignored with a `UserWarning`.
     """
 
     extra_headers: dict[str, str]

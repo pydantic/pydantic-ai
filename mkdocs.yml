@@ -93,6 +93,7 @@ nav:
       - Extensibility: extensibility.md
       - Multi-Agent Patterns: multi-agent-applications.md
       - Web Chat UI: web.md
+      - Image Generation: image-generation.md
       - Embeddings: embeddings.md
       - Testing: testing.md
 
@@ -178,6 +179,7 @@ nav:
           - api/direct.md
           - api/durable_exec.md
           - api/embeddings.md
+          - api/images.md
           - api/exceptions.md
           - api/ext.md
           - api/format_prompt.md

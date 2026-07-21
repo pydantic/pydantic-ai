@@ -92,6 +92,25 @@ agent = Agent(model)
 ...
 ```
 
+## Image generation
+
+Use [`ImageGenerator`][pydantic_ai.images.ImageGenerator] with an `xai:` image model for direct generation and
+reference-image editing through the official xAI SDK:
+
+```python {title="xai_image_generation.py" test="skip"}
+from pydantic_ai import ImageGenerator
+from pydantic_ai.images.xai import XaiImageGenerationSettings
+
+generator = ImageGenerator(
+    'xai:grok-imagine-image',
+    settings=XaiImageGenerationSettings(aspect_ratio='16:9', xai_resolution='1k'),
+)
+```
+
+xAI accepts inline or remote reference images and xAI Files API IDs represented as
+[`UploadedFile`][pydantic_ai.messages.UploadedFile]. Mixed reference inputs must not require the SDK to reorder the
+sequence. See the [image-generation guide](../image-generation.md) for the common API and geometry behavior.
+
 ## X Search
 
 xAI models support searching X (formerly Twitter) for real-time posts and content. The recommended way to enable it is with the [`XSearch`][pydantic_ai.capabilities.XSearch] capability — see the [capability documentation](../capabilities/overview.md#provider-adaptive-tools) for more details, including cross-provider usage. For the full list of supported options, see the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search).
