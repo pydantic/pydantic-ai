@@ -69,6 +69,7 @@ vocabulary yielded by a connection:
 [`Transcript`][pydantic_ai.realtime.Transcript],
 [`InputTranscript`][pydantic_ai.realtime.InputTranscript],
 [`ToolCall`][pydantic_ai.realtime.ToolCall],
+[`ToolCallCancelled`][pydantic_ai.realtime.ToolCallCancelled],
 [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent],
 [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent],
 [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent],
