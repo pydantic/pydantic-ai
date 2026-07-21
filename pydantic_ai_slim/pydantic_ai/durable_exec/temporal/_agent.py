@@ -46,7 +46,7 @@ from pydantic_ai.tools import (
 from .._runtime_toolsets import reject_unsupported_runtime_toolsets
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext, deserialize_run_context
-from ._toolset import TemporalWrapperToolset, temporalize_toolset
+from ._toolset import temporalize_toolset, toolset_temporal_activities
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
@@ -230,8 +230,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             if n_positional > 6:
                 args = (*args, self.wrapped)
             toolset = temporalize_toolset_func(*args)
-            if isinstance(toolset, TemporalWrapperToolset):
-                activities.extend(toolset.temporal_activities)
+            activities.extend(toolset_temporal_activities(toolset))
             return toolset
 
         temporal_toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in wrapped.toolsets]

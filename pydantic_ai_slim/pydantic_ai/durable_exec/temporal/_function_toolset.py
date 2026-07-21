@@ -1,106 +1,89 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Literal
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import FunctionToolset, ToolsetTool
+from pydantic_ai.durable_exec._toolset import CallToolResult, DurableFunctionToolset, unwrap_tool_call_result
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._run_context import TemporalRunContext, deserialize_run_context
+from ._toolset import CallToolParams, call_tool_in_activity, resolve_tool_activity_config
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
-from ._toolset import (
-    CallToolParams,
-    CallToolResult,
-    TemporalWrapperToolset,
-    resolve_tool_activity_config,
-)
 
 
-class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
-    def __init__(
-        self,
-        toolset: FunctionToolset[AgentDepsT],
-        *,
-        activity_name_prefix: str,
-        activity_config: ActivityConfig,
-        tool_activity_config: dict[str, ActivityConfig | Literal[False]],
-        deps_type: type[AgentDepsT],
-        run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
-        agent: AbstractAgent[AgentDepsT, Any] | None = None,
-    ):
-        super().__init__(toolset)
-        self._agent = agent
-        self.activity_config = activity_config
-        self.tool_activity_config = tool_activity_config
-        self.run_context_type = run_context_type
+def temporalize_function_toolset(
+    toolset: FunctionToolset[AgentDepsT],
+    *,
+    activity_name_prefix: str,
+    activity_config: ActivityConfig,
+    tool_activity_config: dict[str, ActivityConfig | Literal[False]],
+    deps_type: type[AgentDepsT],
+    run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+    agent: AbstractAgent[AgentDepsT, Any] | None = None,
+) -> DurableFunctionToolset[AgentDepsT]:
+    async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
+        ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+        try:
+            tool = (await toolset.get_tools(ctx))[params.name]
+        except KeyError as exc:  # pragma: no cover
+            raise UserError(
+                f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
+                'Removing or renaming tools during an agent run is not supported with Temporal.'
+            ) from exc
+        return await call_tool_in_activity(toolset, params.name, params.tool_args, ctx, tool)
 
-        async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
-            name = params.name
-            ctx = deserialize_run_context(
-                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
-            )
-            try:
-                tool = (await toolset.get_tools(ctx))[name]
-            except KeyError as e:  # pragma: no cover
-                raise UserError(
-                    f'Tool {name!r} not found in toolset {self.id!r}. '
-                    'Removing or renaming tools during an agent run is not supported with Temporal.'
-                ) from e
+    call_tool_activity.__annotations__['deps'] = deps_type
+    registered_activity = activity.defn(name=f'{activity_name_prefix}__toolset__{toolset.id}__call_tool')(
+        call_tool_activity
+    )
 
-            return await self._call_tool_in_activity(name, params.tool_args, ctx, tool)
-
-        # Set type hint explicitly so that Temporal can take care of serialization and deserialization
-        call_tool_activity.__annotations__['deps'] = deps_type
-
-        self.call_tool_activity = activity.defn(name=f'{activity_name_prefix}__toolset__{self.id}__call_tool')(
-            call_tool_activity
-        )
-
-    @property
-    def temporal_activities(self) -> list[Callable[..., Any]]:
-        return [self.call_tool_activity]
-
-    async def call_tool(
-        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    async def call_tool_segment(
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+        config: Mapping[str, Any],
     ) -> Any:
-        if not workflow.in_workflow():  # pragma: no cover
-            return await super().call_tool(name, tool_args, ctx, tool)
-
-        tool_activity_config = resolve_tool_activity_config(tool, name, self.tool_activity_config)
-        if tool_activity_config is False:
-            assert isinstance(tool, FunctionToolsetTool)
-            if not tool.is_async:
-                raise UserError(
-                    f'Temporal activity config for tool {name!r} has been explicitly set to `False` (activity disabled), '
-                    'but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead.'
-                )
-            return await super().call_tool(name, tool_args, ctx, tool)
-
-        activity_config: ActivityConfig = {
-            'summary': f'call tool: {self.id}:{name}',
-            **self.activity_config,
-            **tool_activity_config,
-        }
-        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        return self._unwrap_call_tool_result(
-            await workflow.execute_activity(
-                activity=self.call_tool_activity,
-                args=[
-                    CallToolParams(
-                        name=name,
-                        tool_args=tool_args,
-                        serialized_run_context=serialized_run_context,
-                        tool_def=None,
-                    ),
-                    ctx.deps,
-                ],
+        merged_config = cast(
+            'ActivityConfig',
+            {
+                'summary': f'call tool: {toolset.id}:{name}',
                 **activity_config,
-            )
+                **config,
+            },
         )
+        result = await workflow.execute_activity(
+            activity=registered_activity,
+            args=[
+                CallToolParams(
+                    name=name,
+                    tool_args=tool_args,
+                    serialized_run_context=run_context_type.serialize_run_context(ctx),
+                    tool_def=None,
+                ),
+                ctx.deps,
+            ],
+            **merged_config,
+        )
+        return unwrap_tool_call_result(result)
+
+    return DurableFunctionToolset(
+        toolset,
+        in_durable_context=workflow.in_workflow,
+        call_tool_segment=call_tool_segment,
+        resolve_tool_config=lambda tool, name: resolve_tool_activity_config(tool, name, tool_activity_config),
+        inline_requires_async=True,
+        lifecycle='enter-outside-durable',
+        durable_registrations=[registered_activity],
+        durable_config=activity_config,
+    )
+
+
+TemporalFunctionToolset = DurableFunctionToolset

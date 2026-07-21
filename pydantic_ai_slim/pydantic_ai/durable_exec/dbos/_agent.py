@@ -129,7 +129,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             try:
                 from pydantic_ai.mcp import MCPToolset
 
-                from ._mcp_toolset import DBOSMCPToolset
+                from ._mcp_toolset import dbosify_mcp_toolset
             except ImportError:
                 pass
             else:
@@ -151,7 +151,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                             'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
                         )
                     seen_mcp_ids.add(toolset.id)
-                    return DBOSMCPToolset(
+                    return dbosify_mcp_toolset(
                         wrapped=toolset,
                         step_name_prefix=dbosagent_name,
                         step_config=self._mcp_step_config,

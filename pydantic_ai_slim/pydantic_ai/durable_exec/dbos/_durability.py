@@ -187,11 +187,11 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         try:
             from pydantic_ai.mcp import MCPToolset
 
-            from ._mcp_toolset import DBOSMCPToolset
-        except ImportError:
+            from ._mcp_toolset import dbosify_mcp_toolset
+        except ImportError:  # pragma: no cover
             return None
         if isinstance(ts, MCPToolset):
-            return DBOSMCPToolset(wrapped=ts, step_name_prefix=self.name, step_config=self._mcp_step_config)
+            return dbosify_mcp_toolset(wrapped=ts, step_name_prefix=self.name, step_config=self._mcp_step_config)
         return None
 
     # --- Capability hooks ---

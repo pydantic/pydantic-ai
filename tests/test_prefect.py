@@ -1833,10 +1833,10 @@ async def test_prefect_durability_allows_fully_opted_out_runtime_function_toolse
 
 
 async def test_prefect_durability_rejects_partially_opted_out_runtime_function_toolset() -> None:
-    async def opted_out() -> str:
+    async def opted_out() -> str:  # pragma: no cover — rejected before any tool runs
         return 'ok'
 
-    async def wrapped() -> str:
+    async def wrapped() -> str:  # pragma: no cover — rejected before any tool runs
         return 'no'
 
     toolset = FunctionToolset(id='runtime')

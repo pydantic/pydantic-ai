@@ -9,6 +9,7 @@ from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ToolsetTool
+from pydantic_ai.durable_exec._toolset import CallToolResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -22,7 +23,6 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 from ._toolset import (
     CallToolParams,
-    CallToolResult,
     GetToolsParams,
     TemporalWrapperToolset,
     resolve_tool_activity_config,

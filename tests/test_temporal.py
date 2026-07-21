@@ -2665,7 +2665,7 @@ async def test_temporal_agent_sync_tool_activity_disabled(allow_model_requests: 
         with workflow_raises(
             UserError,
             snapshot(
-                "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
+                "Durable wrapping is disabled for tool 'get_weather' (config `False`), but non-async tools are run in threads, which are not supported outside a durable wrapper. Make the tool function async instead."
             ),
         ):
             await client.execute_workflow(
@@ -5431,7 +5431,8 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
 
     toolset_wrapper = bound._toolsets_by_id['my_toolset']  # pyright: ignore[reportPrivateUsage]
     assert isinstance(toolset_wrapper, TemporalFunctionToolset)
-    toolset_retry = toolset_wrapper.activity_config.get('retry_policy')
+    assert toolset_wrapper.durable_config is not None
+    toolset_retry = toolset_wrapper.durable_config.get('retry_policy')
     assert toolset_retry is not None
     assert toolset_retry.non_retryable_error_types == [
         'ToolError',
@@ -7544,7 +7545,7 @@ async def _opted_out_runtime_tool() -> str:
     return 'tool-result'
 
 
-async def _not_opted_out_runtime_tool() -> str:
+async def _not_opted_out_runtime_tool() -> str:  # pragma: no cover — rejected before any tool runs
     return 'other-result'
 
 

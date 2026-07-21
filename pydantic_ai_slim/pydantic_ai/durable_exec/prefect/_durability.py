@@ -14,6 +14,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapModelRequestHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
+from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset
 from pydantic_ai.durable_exec._utils import (
     DurableModel,
     StreamedActivityResult,
@@ -26,7 +27,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
 from ._model import _stamp_response_provenance  # pyright: ignore[reportPrivateUsage]
-from ._toolset import PrefectWrapperToolset, prefectify_toolset as _default_prefectify_toolset
+from ._toolset import prefectify_toolset as _default_prefectify_toolset
 from ._types import TaskConfig, default_task_config
 
 
@@ -188,7 +189,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
         wrapped = _default_prefectify_toolset(ts, self._mcp_task_config, self._tool_task_config, {})
-        return wrapped if isinstance(wrapped, PrefectWrapperToolset) else None
+        return wrapped if isinstance(wrapped, (DurableFunctionToolset, DurableMCPToolset)) else None
 
     # --- Capability hooks ---
 

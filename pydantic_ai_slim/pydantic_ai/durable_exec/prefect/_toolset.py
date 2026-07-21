@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from abc import ABC
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any, Literal, cast
 
-from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
 
@@ -43,21 +42,6 @@ def resolve_tool_task_config(
     return {}
 
 
-class PrefectWrapperToolset(WrapperToolset[AgentDepsT], ABC):
-    """Base class for Prefect-wrapped toolsets."""
-
-    @property
-    def id(self) -> str | None:
-        # Prefect toolsets should have IDs for better task naming
-        return self.wrapped.id
-
-    def visit_and_replace(
-        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
-    ) -> AbstractToolset[AgentDepsT]:
-        # Prefect-ified toolsets cannot be swapped out after the fact.
-        return self
-
-
 def prefectify_toolset(
     toolset: AbstractToolset[AgentDepsT],
     mcp_task_config: TaskConfig,
@@ -73,9 +57,9 @@ def prefectify_toolset(
         tool_task_config_by_name: Per-tool task configuration. Keys are tool names, values are TaskConfig or None.
     """
     if isinstance(toolset, FunctionToolset):
-        from ._function_toolset import PrefectFunctionToolset
+        from ._function_toolset import prefectify_function_toolset
 
-        return PrefectFunctionToolset(
+        return prefectify_function_toolset(
             wrapped=toolset,
             task_config=tool_task_config,
             tool_task_config=tool_task_config_by_name,
@@ -84,12 +68,12 @@ def prefectify_toolset(
     try:
         from pydantic_ai.mcp import MCPToolset
 
-        from ._mcp_toolset import PrefectMCPToolset
+        from ._mcp_toolset import prefectify_mcp_toolset
     except ImportError:
         pass
     else:
         if isinstance(toolset, MCPToolset):
-            return PrefectMCPToolset(
+            return prefectify_mcp_toolset(
                 wrapped=toolset,
                 task_config=mcp_task_config,
             )

@@ -29,6 +29,7 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
+from pydantic_ai.durable_exec._toolset import DurableToolsetBase
 from pydantic_ai.durable_exec._utils import (
     DurableModel,
     StreamedActivityResult,
@@ -51,6 +52,7 @@ from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
     temporalize_toolset as _default_temporalize_toolset,
+    toolset_temporal_activities,
 )
 
 
@@ -385,8 +387,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model = await self._resolve_model_for_request(params.model_id, run_context)
-            with set_current_run_context(run_context):
-                await model.cancel_suspended_response(params.response)
+            # The cancel activity shares `_model_activity_config`, whose default `heartbeat_timeout`
+            # would otherwise fail a slow provider-teardown call for missed heartbeats.
+            async with _heartbeating():
+                with set_current_run_context(run_context):
+                    await model.cancel_suspended_response(params.response)
 
         self.cancel_suspended_response_activity = register_activity(
             cancel_suspended_response_activity,
@@ -397,8 +402,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         # --- Toolset wrapping ---
         self._register_toolsets(agent)
         for wrapped in self._toolsets_by_id.values():
-            assert isinstance(wrapped, TemporalWrapperToolset)
-            activities.extend(wrapped.temporal_activities)
+            activities.extend(toolset_temporal_activities(wrapped))
 
         self._temporal_activities = activities
 
@@ -420,7 +424,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self.run_context_type,
             self._agent,
         )
-        return wrapped if isinstance(wrapped, TemporalWrapperToolset) else None
+        return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:

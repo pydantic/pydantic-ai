@@ -838,7 +838,7 @@ def bind_capabilities_tier(
     wraps the agent's toolsets and must see all of them.
     """
     new_caps = [c.for_agent(agent) if is_innermost(c) == innermost else c for c in combined.capabilities]
-    if all(new is old for new, old in zip(new_caps, combined.capabilities)):
+    if all(new is old for new, old in zip(new_caps, combined.capabilities, strict=True)):
         return combined
     return replace(combined, capabilities=new_caps)
 

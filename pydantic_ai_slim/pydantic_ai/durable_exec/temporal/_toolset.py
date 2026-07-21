@@ -3,16 +3,21 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
-from pydantic import ConfigDict, Discriminator, Tag, with_config
+from pydantic import ConfigDict, with_config
 from temporalio import workflow
 from temporalio.workflow import ActivityConfig
-from typing_extensions import Self, assert_never
+from typing_extensions import Self
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.messages import ToolReturn, ToolReturnContent
+from pydantic_ai.durable_exec._toolset import (
+    CallToolResult,
+    DurableToolsetBase,
+    resolve_tool_durable_config,
+    unwrap_tool_call_result,
+    wrap_tool_call_result,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -37,50 +42,6 @@ class CallToolParams:
     tool_def: ToolDefinition | None
 
 
-@dataclass
-class _ApprovalRequired:
-    metadata: dict[str, Any] | None = None
-    kind: Literal['approval_required'] = 'approval_required'
-
-
-@dataclass
-class _CallDeferred:
-    metadata: dict[str, Any] | None = None
-    kind: Literal['call_deferred'] = 'call_deferred'
-
-
-@dataclass
-class _ModelRetry:
-    message: str
-    kind: Literal['model_retry'] = 'model_retry'
-
-
-def _result_discriminator(v: Any) -> str:
-    if isinstance(v, ToolReturn) or (isinstance(v, dict) and v.get('kind') == 'tool-return'):  # pyright: ignore[reportUnknownMemberType]
-        return 'tool-return'
-    return 'content'
-
-
-# Defined at module level so Pydantic resolves the Annotated metadata at runtime,
-# not as a string annotation (which would lose the discriminator under `from __future__ import annotations`).
-_ToolReturnResult = Annotated[
-    Annotated[ToolReturn, Tag('tool-return')] | Annotated[ToolReturnContent, Tag('content')],
-    Discriminator(_result_discriminator),
-]
-
-
-@dataclass
-class _ToolReturn:
-    result: _ToolReturnResult
-    kind: Literal['tool_return'] = 'tool_return'
-
-
-CallToolResult = Annotated[
-    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn,
-    Discriminator('kind'),
-]
-
-
 class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
     @property
     def id(self) -> str:
@@ -96,7 +57,7 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         # Temporal-wrapped toolsets manage their wrapped toolset's lifecycle
         # per-activity (inside activities), not per-run.
-        return self
+        return self  # pragma: no cover
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         # Temporal-wrapped toolsets manage their wrapped toolset's lifecycle
@@ -107,40 +68,23 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
         # Temporalized toolsets cannot be swapped out after the fact.
-        return self
+        return self  # pragma: no cover
 
     async def __aenter__(self) -> Self:
-        if not workflow.in_workflow():
+        if not workflow.in_workflow():  # pragma: no cover
             await self.wrapped.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        if not workflow.in_workflow():
+        if not workflow.in_workflow():  # pragma: no cover
             return await self.wrapped.__aexit__(*args)
         return None
 
     async def _wrap_call_tool_result(self, coro: Awaitable[Any]) -> CallToolResult:
-        try:
-            result = await coro
-            return _ToolReturn(result=result)
-        except ApprovalRequired as e:
-            return _ApprovalRequired(metadata=e.metadata)
-        except CallDeferred as e:
-            return _CallDeferred(metadata=e.metadata)
-        except ModelRetry as e:
-            return _ModelRetry(message=e.message)
+        return await wrap_tool_call_result(coro)
 
     def _unwrap_call_tool_result(self, result: CallToolResult) -> Any:
-        if isinstance(result, _ToolReturn):
-            return result.result
-        elif isinstance(result, _ApprovalRequired):
-            raise ApprovalRequired(metadata=result.metadata)
-        elif isinstance(result, _CallDeferred):
-            raise CallDeferred(metadata=result.metadata)
-        elif isinstance(result, _ModelRetry):
-            raise ModelRetry(result.message)
-        else:
-            assert_never(result)
+        return unwrap_tool_call_result(result)
 
     async def _call_tool_in_activity(
         self,
@@ -179,21 +123,36 @@ def resolve_tool_activity_config(
     `tool_activity_config` dict keyed by tool name. Returns an `ActivityConfig` dict
     (possibly empty), or `False` to skip activity wrapping.
     """
-    # Metadata set on the tool (via @toolset.tool(metadata={'temporal': ...}), with_metadata, or
-    # SetToolMetadata capability) is the primary path.
-    if tool is not None and tool.tool_def.metadata is not None:
-        metadata_config = tool.tool_def.metadata.get('temporal')
-        if metadata_config is False:
-            return False
-        if metadata_config is not None:
-            if not isinstance(metadata_config, dict):
-                raise UserError(
-                    f"Tool {tool_name!r} has invalid 'temporal' metadata: expected a dict "
-                    f'(`ActivityConfig`) or `False`, got {type(metadata_config).__name__}.'
-                )
-            return cast('ActivityConfig', metadata_config)
-    # Fallback: per-tool dict passed to the durability capability / temporal agent.
-    return tool_activity_config.get(tool_name, {})
+    return cast(
+        'ActivityConfig | Literal[False]',
+        resolve_tool_durable_config(
+            tool,
+            tool_name,
+            tool_activity_config,
+            metadata_key='temporal',
+            config_type_label='ActivityConfig',
+        ),
+    )
+
+
+def toolset_temporal_activities(toolset: AbstractToolset[Any]) -> list[Callable[..., Any]]:
+    """The Temporal activities a durable-wrapped toolset needs registered with the worker."""
+    if isinstance(toolset, DurableToolsetBase):
+        return toolset.durable_registrations
+    if isinstance(toolset, TemporalWrapperToolset):
+        return toolset.temporal_activities
+    return []
+
+
+async def call_tool_in_activity(
+    toolset: AbstractToolset[AgentDepsT],
+    name: str,
+    tool_args: dict[str, Any],
+    ctx: RunContext[AgentDepsT],
+    tool: ToolsetTool[AgentDepsT],
+) -> CallToolResult:
+    args = tool.args_validator.validate_python(tool_args)
+    return await wrap_tool_call_result(toolset.call_tool(name, args, ctx, tool))
 
 
 def temporalize_toolset(
@@ -217,9 +176,9 @@ def temporalize_toolset(
         agent: The agent instance to attach to deserialized run contexts in activities.
     """
     if isinstance(toolset, FunctionToolset):
-        from ._function_toolset import TemporalFunctionToolset
+        from ._function_toolset import temporalize_function_toolset
 
-        return TemporalFunctionToolset(
+        return temporalize_function_toolset(
             toolset,
             activity_name_prefix=activity_name_prefix,
             activity_config=activity_config,
@@ -245,12 +204,12 @@ def temporalize_toolset(
     try:
         from pydantic_ai.mcp import MCPToolset
 
-        from ._mcp_toolset import TemporalMCPToolset
+        from ._mcp_toolset import temporalize_mcp_toolset
     except ImportError:
         pass
     else:
         if isinstance(toolset, MCPToolset):
-            return TemporalMCPToolset(
+            return temporalize_mcp_toolset(
                 toolset,
                 activity_name_prefix=activity_name_prefix,
                 activity_config=activity_config,

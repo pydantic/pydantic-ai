@@ -41,7 +41,6 @@ from pydantic_ai import (
     TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
-    ToolsetTool,
     UserPromptPart,
 )
 from pydantic_ai.capabilities import MCP, Capability
@@ -62,8 +61,7 @@ try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
     from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSDurability, DBOSModel, StepConfig
-    from pydantic_ai.durable_exec.dbos._mcp import DBOSMCPToolsetBase
-    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
+    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
@@ -1898,16 +1896,7 @@ def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo)
     return ModelResponse(parts=[TextPart(agent_info.instructions or '')])
 
 
-class _TestDBOSMCPToolset(DBOSMCPToolsetBase[int]):
-    @property
-    def _cache_tools(self) -> bool:
-        return False  # pragma: no cover
-
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[int]:
-        raise AssertionError('tool_for_tool_def should not be invoked in this test')  # pragma: no cover
-
-
-_uninit_instructions_toolset = _TestDBOSMCPToolset(
+_uninit_instructions_toolset = dbosify_mcp_toolset(
     MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), include_instructions=True),
     step_name_prefix='coverage_test',
     step_config={},
@@ -1956,10 +1945,10 @@ def test_dbosify_mcptoolset_dispatches_to_dbosmcptoolset():
 
 async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
     """When the run's tool-defs cache is populated, `DBOSMCPToolset.get_tools` returns from it without invoking the step."""
-    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
+    from pydantic_ai.durable_exec.dbos._mcp_toolset import dbosify_mcp_toolset
 
     inner = MCPToolset('https://example.com/mcp', id='cache_return_test')
-    wrapper = DBOSMCPToolset(inner, step_name_prefix='cache_return_test', step_config={})
+    wrapper = dbosify_mcp_toolset(inner, step_name_prefix='cache_return_test', step_config={})
     run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     run_context._mcp_tool_defs_cache['cache_return_test'] = {  # pyright: ignore[reportPrivateUsage]
         'foo': ToolDefinition(name='foo', parameters_json_schema={'type': 'object'}),
