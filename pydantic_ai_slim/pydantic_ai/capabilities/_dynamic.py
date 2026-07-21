@@ -32,10 +32,13 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
 
     Under durable execution, a stable `id` is required on `DynamicCapability`: it
     names the durable units (activities/steps/tasks) that list and call the
-    contributed tools. In-process engines (DBOS, Prefect) reuse the run's resolved
-    capability inside those units; Temporal re-runs the factory inside its
-    activities (the activity boundary can't carry the resolved instance), so the
-    factory must be deterministic given the run's dependencies.
+    contributed tools. The factory itself runs in workflow/flow code, which durable
+    engines re-execute on replay, recovery, or flow retry, so it must be
+    deterministic given the run's dependencies; leave I/O to the toolset it
+    returns, whose use is checkpointed inside the durable units. In-process
+    engines (DBOS, Prefect) reuse the run's resolved capability inside those
+    units; Temporal re-runs the factory inside its activities (the activity
+    boundary can't carry the resolved instance).
 
     Pass a [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] directly
     to `Agent(capabilities=[...])` or `agent.run(capabilities=[...])` and it

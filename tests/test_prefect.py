@@ -1976,12 +1976,14 @@ def test_prefect_durability_dynamic_capability_requires_id() -> None:
 
 async def test_prefect_durability_dynamic_capability_tool_opts_out_of_task() -> None:
     task_contexts: list[TaskRunContext[Any] | None] = []
+    factory_calls: list[int] = []
 
     def dynamic_tool() -> str:
         task_contexts.append(TaskRunContext.get())
         return 'dynamic result'
 
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
+        factory_calls.append(1)
         toolset = FunctionToolset()
         toolset.add_function(dynamic_tool, metadata={'prefect': False})
         return Capability(toolsets=[toolset])
@@ -1998,6 +2000,9 @@ async def test_prefect_durability_dynamic_capability_tool_opts_out_of_task() -> 
 
     assert await run_agent() == '{"dynamic_tool":"dynamic result"}'
     assert task_contexts == [None]
+    # Tool discovery and the inline call both reuse the capability already resolved
+    # for the run: the factory's once-per-run contract holds through the inline path.
+    assert len(factory_calls) == 1
 
 
 def test_prefect_durability_requires_agent_name() -> None:
