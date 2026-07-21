@@ -24,7 +24,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._ordering import collect_leaves, sort_capabilities
+from ._ordering import collect_leaves, is_innermost, sort_capabilities
 from .abstract import (
     AbstractCapability,
     AgentModel,
@@ -820,6 +820,25 @@ def _make_output_process_wrap(
         )
 
     return wrapped
+
+
+def bind_capabilities_tier(
+    combined: CombinedCapability[AgentDepsT],
+    agent: AbstractAgent[AgentDepsT, Any],
+    *,
+    innermost: bool,
+) -> CombinedCapability[AgentDepsT]:
+    """Bind one ordering tier of the combined capability to the agent via `for_agent`.
+
+    `Agent.__init__` binds capabilities in two phases: everything outside the `innermost`
+    tier first, then — once the toolsets contributed by those capabilities are visible on
+    `agent.toolsets` — the `innermost` tier (durability capabilities), whose `for_agent`
+    wraps the agent's toolsets and must see all of them.
+    """
+    new_caps = [c.for_agent(agent) if is_innermost(c) == innermost else c for c in combined.capabilities]
+    if all(new is old for new, old in zip(new_caps, combined.capabilities, strict=True)):
+        return combined
+    return replace(combined, capabilities=new_caps)
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:

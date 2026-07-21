@@ -580,7 +580,7 @@ class ToolDefinition:
     A `sequential=True` tool acts as a barrier: it runs alone, with tools the model emitted before it
     completing first and tools emitted after it starting only once it finishes. Other tools still run
     in parallel around it. To run an entire run's tools serially, use
-    [`parallel_execution_mode('sequential')`][pydantic_ai.tool_manager.ToolManager.parallel_execution_mode]
+    [`ToolManager.parallel_execution_mode('sequential')`][pydantic_ai.tool_manager.ToolManager.parallel_execution_mode]
     instead.
     """
 
@@ -617,7 +617,7 @@ class ToolDefinition:
        to opt this tool into deferred loading. This is what `prepare_tools` hooks and other
        pre-toolset-wrapping consumers see, and is the value users persist on `ToolDefinition`.
     2. **Current visibility state** — after a toolset like
-       [`ToolSearchToolset`][pydantic_ai.toolsets._tool_search.ToolSearchToolset] processes
+       the internal `ToolSearchToolset` processes
        the corpus, it flips this field to `False` for tools whose discovery shows up in
        message history, so downstream `Model.prepare_request` filtering and adapter wire
        formatting can read "should this be on the wire?" off a single boolean.
@@ -703,6 +703,13 @@ class ToolDefinition:
     When `False`, the `return_schema` will be cleared before sending.
     When `None` (default), defaults to `False` unless the
     [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
+    """
+
+    toolset_id: str | None = None
+    """The ID of the toolset that this tool belongs to.
+
+    Set automatically when tools are collected from toolsets. Can be used by capabilities
+    (e.g. durable execution) to apply per-toolset configuration to tool operations.
     """
 
     capability_id: str | None = None

@@ -35,6 +35,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
@@ -3334,3 +3335,136 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
     assert [message.role for message in second_call_messages] == ['user', 'user']
+
+
+#####################
+## Reasoning effort
+#####################
+
+# Kwarg-level unit tests: the cassette matcher ignores the request body, so a mis-mapped
+# `reasoning_effort` would replay green against a recording. The wire bodies themselves
+# (mapped values, UNSET omission, magistral absence) are pinned in tests/test_thinking_wire_contract.py.
+
+
+@pytest.mark.parametrize(
+    'thinking,expected',
+    [
+        pytest.param(True, 'high', id='true'),
+        pytest.param(False, 'none', id='false'),
+        pytest.param('minimal', 'high', id='minimal'),
+        pytest.param('low', 'high', id='low'),
+        pytest.param('medium', 'high', id='medium'),
+        pytest.param('high', 'high', id='high'),
+        pytest.param('xhigh', 'high', id='xhigh'),
+    ],
+)
+async def test_reasoning_effort_with_unified_thinking(
+    allow_model_requests: None, thinking: ThinkingLevel, expected: str
+) -> None:
+    """Unified `thinking` values map to Mistral's `reasoning_effort` ('high' for any enabled level, 'none' only for `False`)."""
+    c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))
+    assert result.output == 'thought deeply'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == expected
+
+
+async def test_reasoning_effort_not_sent_for_unsupported_model(allow_model_requests: None) -> None:
+    """`thinking` is silently ignored on models without adjustable reasoning, so `reasoning_effort` stays UNSET."""
+    c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking='high'))
+    assert result.output == 'hello'
+    assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
+
+
+@pytest.mark.parametrize('thinking', [True, False, 'minimal', 'low', 'medium', 'high', 'xhigh'])
+async def test_reasoning_effort_not_sent_for_always_on_model(
+    allow_model_requests: None, thinking: ThinkingLevel
+) -> None:
+    """`magistral` always reasons, so `reasoning_effort` is never sent: enabled levels are dropped
+    by `_translate_thinking`'s always-on guard, `False` is stripped upstream in `prepare_request`."""
+    c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel('magistral-medium-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))
+    assert result.output == 'hello'
+    assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
+
+
+async def test_reasoning_effort_not_sent_without_config(allow_model_requests: None) -> None:
+    """Without any thinking config, reasoning_effort should be UNSET."""
+    c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'hello'
+    assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
+
+
+async def test_reasoning_effort_stream_with_unified_thinking(allow_model_requests: None) -> None:
+    """Unified thinking='high' should pass reasoning_effort='high' in streaming mode."""
+    stream = [text_chunk('hello '), text_chunk('world', finish_reason='stop')]
+    mock_client = MockMistralAI(stream=stream)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    async with agent.run_stream('hello', model_settings=MistralModelSettings(thinking='high')) as result:
+        text = await result.get_output()
+    assert text == 'hello world'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'high'
+
+
+async def test_reasoning_effort_stream_not_sent_without_config(allow_model_requests: None) -> None:
+    """Without any thinking config, reasoning_effort should be UNSET in streaming mode."""
+    stream = [text_chunk('hello', finish_reason='stop')]
+    mock_client = MockMistralAI(stream=stream)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        text = await result.get_output()
+    assert text == 'hello'
+    assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
+
+
+async def test_reasoning_effort_stream_with_tools(allow_model_requests: None) -> None:
+    """`thinking=False` sends `reasoning_effort='none'` on every request of a streamed tool-call round trip."""
+    streams = [
+        [
+            func_chunk(
+                [
+                    MistralToolCall(
+                        id='1',
+                        function=MistralFunctionCall(arguments='{"loc_name": "London"}', name='get_location'),
+                        type='function',
+                    )
+                ],
+                finish_reason='tool_calls',
+            )
+        ],
+        [text_chunk('done', finish_reason='stop')],
+    ]
+    mock_client = MockMistralAI(stream=streams)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_location(loc_name: str) -> str:
+        return json.dumps({'lat': 51, 'lng': 0})
+
+    async with agent.run_stream('hello', model_settings=MistralModelSettings(thinking=False)) as result:
+        text = await result.get_output()
+    assert text == 'done'
+    assert len(mock_client.chat_completion_kwargs) == 2
+    assert all(kwargs['reasoning_effort'] == 'none' for kwargs in mock_client.chat_completion_kwargs)

@@ -1,41 +1,66 @@
 from __future__ import annotations
 
-from pydantic_ai import ToolsetTool
-from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from collections.abc import Mapping
+from typing import Any
 
-from ._mcp import DBOSMCPToolsetBase
+from dbos import DBOS
+
+from pydantic_ai import ToolsetTool
+from pydantic_ai.durable_exec._toolset import DurableMCPToolset
+from pydantic_ai.mcp import MCPToolset, ToolResult
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+
 from ._utils import StepConfig
 
 
-class DBOSMCPToolset(DBOSMCPToolsetBase[AgentDepsT]):
-    """A wrapper for `MCPToolset` that integrates with DBOS, turning `call_tool` and `get_tools` into DBOS steps.
+def dbosify_mcp_toolset(
+    wrapped: MCPToolset[AgentDepsT], *, step_name_prefix: str, step_config: StepConfig
+) -> DurableMCPToolset[AgentDepsT]:
+    id_suffix = f'__{wrapped.id}' if wrapped.id else ''
+    name = f'{step_name_prefix}__mcp_server{id_suffix}'
 
-    Tool definitions are cached per run (on the run context) to avoid redundant MCP server round-trips,
-    respecting the wrapped toolset's `cache_tools` setting.
-    """
+    @DBOS.step(name=f'{name}.get_tools', **(step_config or {}))
+    async def get_tools_step(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
+        return {tool_name: tool.tool_def for tool_name, tool in (await wrapped.get_tools(ctx)).items()}
 
-    def __init__(
-        self,
-        wrapped: MCPToolset[AgentDepsT],
-        *,
-        step_name_prefix: str,
-        step_config: StepConfig,
-    ):
-        super().__init__(
-            wrapped,
-            step_name_prefix=step_name_prefix,
-            step_config=step_config,
-        )
+    @DBOS.step(name=f'{name}.get_instructions', **(step_config or {}))
+    async def get_instructions_step(ctx: RunContext[AgentDepsT]):
+        async with wrapped:
+            return await wrapped.get_instructions(ctx)
 
-    @property
-    def _toolset(self) -> MCPToolset[AgentDepsT]:
-        assert isinstance(self.wrapped, MCPToolset)
-        return self.wrapped
+    @DBOS.step(name=f'{name}.call_tool', **(step_config or {}))
+    async def call_tool_step(
+        tool_name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+    ) -> ToolResult:
+        return await wrapped.call_tool(tool_name, tool_args, ctx, tool)
 
-    @property
-    def _cache_tools(self) -> bool:
-        return self._toolset.cache_tools
+    async def call_tool_operation(
+        tool_name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+        config: Mapping[str, Any],
+    ) -> ToolResult:
+        return await call_tool_step(tool_name, tool_args, ctx, tool)
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
-        return self._toolset.tool_for_tool_def(tool_def)
+    return DurableMCPToolset(
+        wrapped,
+        # DBOS steps degrade gracefully to plain calls outside a workflow, so the durable
+        # path is always taken — matching the previous DBOS wrapper, which never gated on
+        # workflow state (outside a workflow, the step fallback still enters the server
+        # around `get_instructions`).
+        in_durable_context=lambda: True,
+        get_tools_operation=get_tools_step,
+        get_instructions_operation=get_instructions_step,
+        call_tool_operation=call_tool_operation,
+        # DBOS takes no per-tool config; tool metadata is ignored, as before.
+        resolve_tool_config=lambda tool, name: {},
+        lifecycle='enter-never',
+        durable_config=step_config,
+    )
+
+
+DBOSMCPToolset = DurableMCPToolset
