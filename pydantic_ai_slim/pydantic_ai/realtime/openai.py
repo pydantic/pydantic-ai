@@ -338,7 +338,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # Emit usage for every response (including intermediate function-call-only ones)
             # so the session accounts for all tokens. Only the active response may replay a pending
             # request; a late completion for a superseded response must not change current state.
-            usage = _map_usage(response)
+            # OpenAI nests usage under `response.usage`; xAI Grok Voice reports the same shape at the
+            # top level of the `response.done` frame (its `response.usage` is empty), so fall back to it.
+            usage = _map_usage(response) or _map_usage(data)
             if usage is not None:
                 events.append(SessionUsageEvent(usage=usage))
             if matches_active_response and self._pending_response:

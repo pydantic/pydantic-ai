@@ -17,7 +17,7 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunUsage
 from pydantic_ai.messages import (
     BinaryContent,
     FunctionToolCallEvent,
@@ -80,6 +80,19 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
     assert isinstance(part.audio, BinaryContent)
     assert part.audio.media_type == 'audio/pcm'
     assert len(part.audio.data) > 0
+
+    # xAI reports usage at the top level of the `response.done` frame (its nested `response.usage` is
+    # empty), so the session accounts for it via the top-level fallback — including the audio/text
+    # token split. Without the fallback every field here is zero.
+    assert session.usage == snapshot(
+        RunUsage(
+            input_tokens=5,
+            output_tokens=43,
+            output_audio_tokens=40,
+            details={'input_text_tokens': 5, 'output_text_tokens': 3},
+            requests=1,
+        )
+    )
 
 
 async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:

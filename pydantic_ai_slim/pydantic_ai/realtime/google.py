@@ -304,12 +304,36 @@ def _map_grounding_parts(content: genai_types.LiveServerContent, provider_name: 
     return parts
 
 
+def _modality_tokens(
+    details: Sequence[genai_types.ModalityTokenCount] | None, modality: genai_types.MediaModality
+) -> int:
+    """Sum the token counts for `modality` in Gemini's per-modality usage breakdown."""
+    return sum(entry.token_count or 0 for entry in details or [] if entry.modality is modality)
+
+
 def _map_usage(usage: genai_types.UsageMetadata) -> RequestUsage:
-    """Map Gemini `usage_metadata` to a [`RequestUsage`][pydantic_ai.usage.RequestUsage]."""
+    """Map Gemini `usage_metadata` to a [`RequestUsage`][pydantic_ai.usage.RequestUsage].
+
+    Realtime audio bills at a much higher rate than text, so the per-modality split (Gemini's
+    `*_tokens_details`) is mapped into the audio/text token fields rather than dropped — otherwise
+    every audio session would be mispriced from the totals alone.
+    """
+    audio, text = genai_types.MediaModality.AUDIO, genai_types.MediaModality.TEXT
+    details: dict[str, int] = {}
+    for key, count in (
+        ('input_text_tokens', _modality_tokens(usage.prompt_tokens_details, text)),
+        ('output_text_tokens', _modality_tokens(usage.response_tokens_details, text)),
+    ):
+        if count:
+            details[key] = count
     return RequestUsage(
         input_tokens=usage.prompt_token_count or 0,
         output_tokens=usage.response_token_count or 0,
         cache_read_tokens=usage.cached_content_token_count or 0,
+        input_audio_tokens=_modality_tokens(usage.prompt_tokens_details, audio),
+        output_audio_tokens=_modality_tokens(usage.response_tokens_details, audio),
+        cache_audio_read_tokens=_modality_tokens(usage.cache_tokens_details, audio),
+        details=details,
     )
 
 

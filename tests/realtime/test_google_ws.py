@@ -16,7 +16,7 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RequestUsage
 from pydantic_ai.messages import (
     BinaryContent,
     FunctionToolCallEvent,
@@ -141,7 +141,16 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     # Gemini packs `turnComplete` and `usageMetadata` into the same message; the codec emits the usage
     # before the turn boundary so the session folds it into this final `ModelResponse` instead of
     # dropping it after the response was already finalized. (Regression test for usage attribution.)
-    assert final.usage.total_tokens > 0
+    # The per-modality split is mapped too — audio bills far higher than text, so `output_audio_tokens`
+    # must not be collapsed into the output total.
+    assert final.usage == snapshot(
+        RequestUsage(
+            input_tokens=1203,
+            output_tokens=80,
+            output_audio_tokens=68,
+            details={'input_text_tokens': 1203, 'output_text_tokens': 12},
+        )
+    )
     assert session.usage.total_tokens == final.usage.total_tokens
 
 
