@@ -132,6 +132,10 @@ class MessageHistoryMutatedWarning(Warning):
     `pydantic_ai.all_messages` attribute is always serialized fresh and does reflect the mutation.
     To transform history mid-run, build new message or part objects instead — e.g. via a history
     processor ([`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory]).
+
+    The warning is best-effort: it's raised when a mutation is detected at the end of the run, which
+    covers messages still present in the final history (see `has_stale_message_json`). Its absence
+    does not guarantee that no stale span was recorded.
     """
 
 
@@ -195,6 +199,13 @@ def has_stale_message_json(
     bytes — an O(history) pass meant to run once per run, at the end. Entries whose `parts` token no
     longer matches are skipped: reassigning `.parts` is the supported mutation style and the next
     serialization would have refreshed them, so they can't have produced a stale span.
+
+    Detection is deliberately best-effort, covering messages still present at the end of the run: a
+    message that was mutated in place and *then* dropped or rebuilt by a history processor may have
+    produced a stale span without a warning. Closing that gap would require either re-checking
+    cached fragments on every request (the O(history-squared) cost this cache exists to remove) or
+    re-serializing entries as they're evicted (which doubles the serialization cost for processors
+    that rebuild history each request — the workload the cache can't help to begin with).
     """
     for message in messages:
         entry = cache.get(id(message))
