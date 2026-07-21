@@ -15,7 +15,7 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.models import DEFAULT_PROFILE, Model, infer_model, infer_model_profile, parse_model_id
+from pydantic_ai.models import DEFAULT_PROFILE, AbstractModel, Model, infer_model, infer_model_profile, parse_model_id
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 
@@ -487,3 +487,9 @@ def test_prepare_messages_system_prompt_wrapping(
 ):
     model = TestModel(profile=ModelProfile(supports_inline_system_prompts=supports_inline))
     assert _request_parts(model.prepare_messages(messages)) == expected
+
+
+@pytest.mark.anyio
+async def test_model_default_async_context_returns_model() -> None:
+    model = TestModel()
+    assert await AbstractModel.__aenter__(model) is model

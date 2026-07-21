@@ -209,6 +209,17 @@ async def test_replay_waits_for_send_and_replays_close() -> None:
 
 
 @pytest.mark.anyio
+async def test_empty_replay_closes_cleanly_and_disconnect_requires_binding() -> None:
+    cassette = RealtimeCassette()
+    with pytest.raises(RuntimeError, match='no active WebSocket'):
+        await cassette.disconnect()
+
+    replay = ReplayWebSocket(cassette)
+    assert [message async for message in replay] == []
+    assert replay._peek() is None  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
 async def test_recording_truncates_inbound_audio() -> None:
     """Unit test: inbound audio is truncated so cassettes stay small — both provider shapes."""
     long_audio = 'A' * 400  # far longer than the retained byte budget

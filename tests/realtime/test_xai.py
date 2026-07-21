@@ -91,6 +91,35 @@ def test_map_input_transcription_completed_delegates_to_openai_codec() -> None:
     assert event == InputTranscript(text='weather?', is_final=True)
 
 
+def test_map_tool_call_preserves_xai_item_id() -> None:
+    assert map_event(
+        {
+            'type': 'response.function_call_arguments.done',
+            'call_id': 'call-1',
+            'name': 'weather',
+            'arguments': '{}',
+            'item_id': 'item-1',
+        }
+    ) == ToolCall(
+        tool_call_id='call-1',
+        tool_name='weather',
+        args='{}',
+        item_id='item-1',
+        response_usage_follows=True,
+    )
+
+    event = map_event(
+        {
+            'type': 'response.function_call_arguments.done',
+            'call_id': 'call-2',
+            'name': 'weather',
+            'arguments': '{}',
+            'item_id': '',
+        }
+    )
+    assert isinstance(event, ToolCall) and event.item_id is None
+
+
 def test_map_input_transcription_completed_respects_status() -> None:
     base = {
         'type': 'conversation.item.input_audio_transcription.completed',
@@ -681,6 +710,16 @@ async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pyt
     monkeypatch.setattr(rt_xai.websockets, 'connect', _FailingConnect())
     with pytest.raises(ConnectionError, match='refused'):
         async with _connect(_model(), 'x'):
+            pass  # pragma: no cover
+
+
+@pytest.mark.anyio
+async def test_connect_rejects_conversation_created_without_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = FakeWebSocket([_created(), json.dumps({'type': 'conversation.created', 'conversation': {}})])
+    monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(ws))
+
+    with pytest.raises(RuntimeError, match=r'did not include `conversation\.id`'):
+        async with _connect(_model(reconnect=rt_xai.ReconnectPolicy()), 'x'):
             pass  # pragma: no cover
 
 

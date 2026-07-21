@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import pytest
 
+from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.realtime import infer_realtime_model
 
@@ -61,6 +62,17 @@ def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
 def test_infer_realtime_model_unknown_provider() -> None:
     with pytest.raises(UserError, match='Supported providers are `openai`, `azure-voicelive`, `xai`, and `google`'):
         infer_realtime_model('anthropic:voice')
+
+    with pytest.raises(UserError):
+        infer_realtime_model('openai')
+
+
+@pytest.mark.anyio
+async def test_agent_realtime_session_infers_string_model() -> None:
+    agent: Agent[None, str] = Agent()
+    with pytest.raises(UserError, match='Unknown realtime model'):
+        async with agent.realtime_session(model='unknown:voice'):
+            pass  # pragma: no cover
 
     # A non-OpenAI gateway route is rejected: xAI isn't a gateway upstream and Gemini Live isn't the
     # OpenAI protocol, so only `gateway/openai` is proxied for realtime.

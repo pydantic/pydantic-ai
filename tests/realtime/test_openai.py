@@ -68,8 +68,8 @@ from pydantic_ai.realtime import (
     TurnCompleteEvent,
     TurnDetection,
 )
-from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
-from pydantic_ai.realtime._openai_protocol import realtime_websocket_url
+from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput, merge_realtime_profile
+from pydantic_ai.realtime._openai_protocol import map_conversation_event, realtime_websocket_url
 from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -95,6 +95,15 @@ def _wav_bytes(pcm: bytes, sample_rate: int = 24000) -> bytes:
         wav.setframerate(sample_rate)
         wav.writeframes(pcm)
     return buffer.getvalue()
+
+
+def test_merge_realtime_profile_skips_empty_layers_and_applies_overrides() -> None:
+    assert merge_realtime_profile(None, None, {}) == {}
+    assert merge_realtime_profile(
+        RealtimeModelProfile(supports_image_input=False),
+        None,
+        RealtimeModelProfile(supports_image_input=True),
+    ) == {'supports_image_input': True}
 
 
 def _connect(
@@ -265,6 +274,22 @@ def test_map_response_done_without_response_object() -> None:
     assert map_event({'type': 'response.done'}) == TurnCompleteEvent(
         interrupted=False, provider_details={'status': None}
     )
+
+
+def test_map_response_done_failed_and_unknown_incomplete_reason() -> None:
+    assert map_event(_response_done({'status': 'failed'})) == TurnCompleteEvent(
+        interrupted=False, finish_reason='error', provider_details={'status': 'failed'}
+    )
+    assert map_event(_response_done({'status': 'incomplete', 'status_details': {'reason': 'network'}})) == (
+        TurnCompleteEvent(
+            interrupted=False,
+            provider_details={'status': 'incomplete', 'finish_reason': 'network'},
+        )
+    )
+
+
+def test_map_conversation_item_without_identifiers_is_ignored() -> None:
+    assert map_conversation_event({'type': 'conversation.item.created', 'item': {}}) is None
 
 
 def test_map_error_event_with_message() -> None:
@@ -1075,6 +1100,7 @@ async def test_connect_seeds_retained_user_audio(monkeypatch: pytest.MonkeyPatch
     [
         (BinaryContent(data=_wav_bytes(b'pcm-audio!', 16000), media_type='audio/wav'), 'recorded at 16000 Hz'),
         (BinaryContent(data=b'pcm-audio', media_type='audio/pcm'), "media type 'audio/pcm'"),
+        (BinaryContent(data=b'not a wav', media_type='audio/wav'), 'not valid WAV audio'),
     ],
 )
 async def test_connect_rejects_retained_audio_incompatible_with_input_format(
@@ -1087,6 +1113,27 @@ async def test_connect_rejects_retained_audio_incompatible_with_input_format(
     history = [ModelRequest(parts=[SpeechPart(speaker='user', audio=audio)])]
 
     with pytest.raises(UserError, match=re.escape(match)):
+        async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
+            pass  # pragma: no cover
+
+
+@pytest.mark.anyio
+async def test_connect_rejects_non_mono_retained_wav(monkeypatch: pytest.MonkeyPatch) -> None:
+    buffer = io.BytesIO()
+    with wave.open(buffer, 'wb') as wav:
+        wav.setnchannels(2)
+        wav.setsampwidth(2)
+        wav.setframerate(24000)
+        wav.writeframes(b'\x00' * 8)
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [
+        ModelRequest(
+            parts=[SpeechPart(speaker='user', audio=BinaryContent(data=buffer.getvalue(), media_type='audio/wav'))]
+        )
+    ]
+
+    with pytest.raises(UserError, match='expected mono 16-bit PCM WAV'):
         async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
             pass  # pragma: no cover
 

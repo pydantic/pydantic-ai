@@ -482,12 +482,16 @@ async def test_send_tool_result_content_falls_back_to_text() -> None:
             tool_call_id='c1',
             output='done',
             content=[
+                'plain context',
                 TextContent('extra context'),
+                CachePoint(),
                 BinaryContent(data=b'png', media_type='image/png', identifier='result.png'),
             ],
         )
     )
-    assert session.tool_responses[0].response == {'output': 'done\n\nextra context\n\n[BinaryContent: result.png]'}
+    assert session.tool_responses[0].response == {
+        'output': 'done\n\nplain context\n\nextra context\n\n[BinaryContent: result.png]'
+    }
 
 
 async def test_parallel_id_less_calls_do_not_collide() -> None:

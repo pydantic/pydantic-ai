@@ -173,6 +173,27 @@ async def _ok_runner(name: str, args: dict[str, Any], call_id: str) -> str:
     return 'sunny'
 
 
+async def test_owner_error_marks_active_chat_and_session_spans() -> None:
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection([Transcript(text='partial')]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    with pytest.raises(RuntimeError, match='application failed'):
+        async with session:
+            stream = session.__aiter__()
+            await anext(stream)
+            raise RuntimeError('application failed')
+
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    assert spans['chat gpt-realtime'].status.is_ok is False
+    assert spans['realtime gpt-realtime'].status.is_ok is False
+    assert all(span.events for span in spans.values())
+
+
 def _weather_agent(*, name: str | None = None, capabilities: list[Instrumentation] | None = None) -> Agent[None, str]:
     """An agent whose one tool mirrors the `_ok_runner` used by the direct-session tests."""
     agent: Agent[None, str] = Agent(name=name, capabilities=capabilities or [])

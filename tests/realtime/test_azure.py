@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime import AudioDelta, RealtimeModelProfile, ToolCall, Transcript, TurnDetection
 from pydantic_ai.tools import ToolDefinition
@@ -189,6 +189,15 @@ def test_voice_live_websocket_url() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ('endpoint', 'expected_scheme'),
+    [('http://localhost:8080', 'ws'), ('ws://localhost:8080', 'ws')],
+)
+def test_voice_live_websocket_url_preserves_transport(endpoint: str, expected_scheme: str) -> None:
+    url = rt_azure.azure_voice_live_websocket_url(endpoint, api_version='v1', model='voice')
+    assert url == f'{expected_scheme}://localhost:8080/voice-live/realtime?api-version=v1&model=voice'
+
+
 class FakeWebSocket:
     def __init__(self, incoming: list[Any]) -> None:
         self._incoming = list(incoming)
@@ -259,6 +268,101 @@ async def test_connect_url_auth_handshake_and_server_model(monkeypatch: pytest.M
     }
 
 
+@pytest.mark.anyio
+async def test_connect_seeds_history_and_reconnects_without_server_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    handshake = [
+        json.dumps({'type': 'session.created', 'session': {'model': ''}}),
+        json.dumps({'type': 'session.updated'}),
+    ]
+    first = FakeWebSocket(handshake.copy())
+    second = FakeWebSocket(handshake.copy())
+
+    class _Reconnect:
+        def __init__(self) -> None:
+            self.websockets = [first, second]
+            self.closed: list[FakeWebSocket] = []
+
+        def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> _Reconnect:
+            del url, additional_headers
+            return self
+
+        async def __aenter__(self) -> FakeWebSocket:
+            return self.websockets.pop(0)
+
+        async def __aexit__(self, *exc: object) -> bool:
+            self.closed.append(first if not self.closed else second)
+            return False
+
+    reconnect = _Reconnect()
+    monkeypatch.setattr(rt_azure.websockets, 'connect', reconnect)
+    history = [ModelRequest(parts=[UserPromptPart(content='Earlier question')])]
+
+    async with _connect(_model(), 'Be concise', messages=history) as connection:
+        assert connection.model_name is None
+        dial = connection._dial  # pyright: ignore[reportPrivateUsage]
+        assert dial is not None
+        await dial()
+
+    assert reconnect.closed == [first, second]
+    assert json.loads(first.sent[1])['item']['content'][0]['text'] == 'Earlier question'
+
+
+@pytest.mark.anyio
+async def test_connect_open_failure_has_no_context_to_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FailingConnect:
+        def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> _FailingConnect:
+            del url, additional_headers
+            return self
+
+        async def __aenter__(self) -> FakeWebSocket:
+            raise OSError('refused')
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover - never entered
+            raise AssertionError
+
+    monkeypatch.setattr(rt_azure.websockets, 'connect', _FailingConnect())
+    with pytest.raises(OSError, match='refused'):
+        async with _connect(_model(), 'x'):
+            pass  # pragma: no cover
+
+
+@pytest.mark.anyio
+async def test_failed_redial_closes_previous_context_and_leaves_no_current_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket = FakeWebSocket([json.dumps({'type': 'session.created'}), json.dumps({'type': 'session.updated'})])
+
+    class _ReconnectThenFail:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.closed = False
+
+        def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> _ReconnectThenFail:
+            del url, additional_headers
+            self.calls += 1
+            return self
+
+        async def __aenter__(self) -> FakeWebSocket:
+            if self.calls == 2:
+                raise OSError('redial refused')
+            return websocket
+
+        async def __aexit__(self, *exc: object) -> bool:
+            self.closed = True
+            return False
+
+    reconnect = _ReconnectThenFail()
+    monkeypatch.setattr(rt_azure.websockets, 'connect', reconnect)
+
+    async with _connect(_model(), 'x') as connection:
+        with pytest.raises(OSError, match='redial refused'):
+            dial = connection._dial  # pyright: ignore[reportPrivateUsage]
+            assert dial is not None
+            await dial()
+
+    assert reconnect.closed
+
+
 def test_provider_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('AZURE_VOICELIVE_ENDPOINT', 'https://env-resource.services.ai.azure.com/')
     monkeypatch.setenv('AZURE_VOICELIVE_API_VERSION', '2026-04-10')
@@ -267,6 +371,7 @@ def test_provider_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert provider.base_url == 'https://env-resource.services.ai.azure.com'
     assert provider.api_version == '2026-04-10'
     assert provider.api_key == 'env-key'
+    assert provider.client is None
 
 
 @pytest.mark.parametrize(

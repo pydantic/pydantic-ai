@@ -146,6 +146,8 @@ async def test_capability_toolset_reaches_session() -> None:
     def greet(name: str) -> str:
         return f'Hello, {name}!'
 
+    assert greet('World') == 'Hello, World!'
+
     class ToolsetCap(AbstractCapability[None]):
         def get_toolset(self) -> FunctionToolset[None]:
             return toolset
