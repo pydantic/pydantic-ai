@@ -1194,10 +1194,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # the original selection token (e.g. an alias only a `resolve_model_id` capability
         # can resolve) across the activity/step/task boundary.
         model_id: str | None = None
+        default_model_id: str | None = None
         default_model: models.Model | None = None
         if has_default_model:
             raw_model = self._pick_raw_model(model)
             model_id = raw_model if isinstance(raw_model, str) else None
+            default_model_id = model_id
             default_model = await self._resolve_model_selection(
                 raw_model,
                 capability=bootstrap_capability,
@@ -1543,6 +1545,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capability_owns_current_model = True
         elif default_model is not None:
             model_used = default_model
+            # The bootstrap contribution was withdrawn in `for_run`, so provenance reverts to the run's default.
+            model_id = default_model_id
             model_selector = None
             model_selected_for_step = None
             capability_owns_current_model = False

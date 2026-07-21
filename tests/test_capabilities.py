@@ -5322,6 +5322,38 @@ class TestModelRequestHooks:
 
         assert [(context.model_id, context.streaming) for context in contexts] == [('test', streaming)]
 
+    async def test_withdrawn_bootstrap_model_id_does_not_leak_to_default(self):
+        """A bootstrap model contribution withdrawn by `for_run` must not leak its selection string as provenance."""
+        model_ids: list[str | None] = []
+
+        @dataclass
+        class BootstrapModel(AbstractCapability[None]):
+            def get_model(self) -> str:
+                return 'bootstrap-alias'
+
+            async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+                return AbstractCapability()
+
+            async def resolve_model_id(
+                self, ctx: ModelResolutionContext[None], *, model_id: KnownModelName | str
+            ) -> Model | None:
+                return TestModel() if model_id == 'bootstrap-alias' else None
+
+        @dataclass
+        class CaptureModelId(AbstractCapability[None]):
+            async def before_model_request(
+                self,
+                ctx: RunContext[None],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                model_ids.append(request_context.model_id)
+                return request_context
+
+        agent = Agent(TestModel(), deps_type=NoneType, capabilities=[BootstrapModel(), CaptureModelId()])
+        await agent.run('hello')
+
+        assert model_ids == [None]
+
     async def test_after_model_request(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])

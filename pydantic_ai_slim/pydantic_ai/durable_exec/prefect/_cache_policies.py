@@ -4,6 +4,7 @@ from typing import Any, TypeGuard
 from prefect.cache_policies import INPUTS, RUN_ID, TASK_SOURCE, CachePolicy
 from prefect.context import TaskRunContext
 from prefect.utilities.hashing import hash_objects
+from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai.tools import RunContext
@@ -36,7 +37,8 @@ def _cacheable_deps(deps: Any) -> Any:
 
     Dependencies routinely hold live resources (HTTP clients, DB connections, locks) that
     Prefect can't hash; those values are replaced with a stable sentinel rather than failing
-    the task, while serializable siblings still fork the key.
+    the task, while serializable siblings still fork the key. Plain non-dataclass and
+    non-`BaseModel` objects are treated as indivisible values.
     """
     projected = _strip_cache_excluded_fields(deps)
 
@@ -49,6 +51,8 @@ def _cacheable_deps(deps: Any) -> Any:
             return [exclude_non_serializable(item) for item in value]
         if _is_tuple(value):
             return tuple(exclude_non_serializable(item) for item in value)
+        if isinstance(value, BaseModel):
+            return {name: exclude_non_serializable(getattr(value, name)) for name in type(value).model_fields}
         return _NON_SERIALIZABLE
 
     return exclude_non_serializable(projected)

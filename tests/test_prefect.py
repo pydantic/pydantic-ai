@@ -12,7 +12,7 @@ from typing import Literal
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from pydantic_ai import (
     Agent,
@@ -1496,6 +1496,12 @@ def test_cache_policy_excludes_non_serializable_deps():
         tenant: str
         lock: threading.Lock = field(default_factory=threading.Lock)
 
+    class CacheModelDeps(BaseModel):
+        model_config = ConfigDict(arbitrary_types_allowed=True)
+
+        tenant: str
+        lock: threading.Lock = Field(default_factory=threading.Lock)
+
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
 
@@ -1505,6 +1511,8 @@ def test_cache_policy_excludes_non_serializable_deps():
 
     assert key_for(CacheDeps(tenant='acme')) != key_for(CacheDeps(tenant='globex'))
     assert key_for(CacheDeps(tenant='acme')) == key_for(CacheDeps(tenant='acme'))
+    assert key_for(CacheModelDeps(tenant='acme')) != key_for(CacheModelDeps(tenant='globex'))
+    assert key_for(CacheModelDeps(tenant='acme')) == key_for(CacheModelDeps(tenant='acme'))
 
     lock_key = key_for(threading.Lock())
     assert lock_key is not None
