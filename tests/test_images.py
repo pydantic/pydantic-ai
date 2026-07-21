@@ -3,14 +3,19 @@ from __future__ import annotations
 import base64
 import json
 import os
+from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast, get_args
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from genai_prices.types import PriceCalculation
 
 import pydantic_ai.images as images_module
+import pydantic_ai.images._google_geometry as google_geometry
+import pydantic_ai.images._openai_geometry as openai_geometry
 from pydantic_ai import (
     BinaryImage,
     GeneratedImage,
@@ -23,11 +28,14 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.images import (
     ImageGenerationSettings,
+    InstrumentedImageGenerationModel,
     KnownImageGenerationModelName,
     TestImageGenerationModel,
+    WrapperImageGenerationModel,
     infer_image_generation_model,
     merge_image_generation_settings,
 )
+from pydantic_ai.images.settings import image_generation_tool_settings
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -51,6 +59,8 @@ with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as google_imports_successful:
+    from google.genai import Client as GoogleClient, errors as google_errors, types as google_types
+
     import pydantic_ai.images.google as google_images
     from pydantic_ai.images.google import (
         GoogleImageGenerationModel,
@@ -64,6 +74,7 @@ with try_import() as xai_imports_successful:
     from xai_sdk.aio.image import ImageResponse as XaiImageResponse
     from xai_sdk.proto import image_pb2 as xai_image_pb2, usage_pb2 as xai_usage_pb2
 
+    import pydantic_ai.images._xai_geometry as xai_geometry
     import pydantic_ai.images.xai as xai_images
     from pydantic_ai.images.xai import XaiImageGenerationModel, XaiImageGenerationSettings
     from pydantic_ai.providers.xai import XaiProvider
@@ -154,8 +165,7 @@ async def test_image_generator_eager_and_deferred_model_inference(monkeypatch: p
     inferred_models: list[object] = []
 
     def infer_model(model: object) -> TestImageGenerationModel:
-        if not isinstance(model, TestImageGenerationModel):
-            inferred_models.append(model)
+        inferred_models.append(model)
         return resolved_model
 
     monkeypatch.setattr(images_module, 'infer_image_generation_model', infer_model)
@@ -173,6 +183,24 @@ async def test_image_generator_eager_and_deferred_model_inference(monkeypatch: p
     assert result.model_name == 'resolved'
     assert deferred_generator.model is resolved_model
     assert inferred_models == ['test:deferred']
+
+
+def test_infer_image_generation_model_requires_provider_prefix():
+    with pytest.raises(ValueError, match='provide a provider prefix'):
+        infer_image_generation_model('gpt-image-1')
+
+
+async def test_wrapper_image_generation_model_delegates_properties():
+    wrapped = TestImageGenerationModel(settings={'n': 2})
+    model = WrapperImageGenerationModel(wrapped)
+
+    result = await model.generate('tiny robot')
+
+    assert result.model_name == 'test'
+    assert model.model_name == wrapped.model_name
+    assert model.system == wrapped.system
+    assert model.settings == {'n': 2}
+    assert model.base_url is None
 
 
 def test_image_generator_sync_forwards_reference_images():
@@ -220,6 +248,20 @@ def test_merge_image_generation_settings():
     )
     assert merge_image_generation_settings(None, overrides) == overrides
     assert merge_image_generation_settings(base, None) == base
+
+
+def test_image_generation_tool_settings_filters_new_geometry():
+    filtered, ignored = image_generation_tool_settings(
+        {'dimensions': (1024, 1024), 'size': '2048x2048', 'aspect_ratio': '1:2'}
+    )
+
+    assert filtered == {}
+    assert ignored == ['dimensions', 'size', 'aspect_ratio']
+
+    supported, ignored = image_generation_tool_settings({'size': '1024x1024', 'aspect_ratio': '1:1'})
+
+    assert supported == {'size': '1024x1024', 'aspect_ratio': '1:1'}
+    assert ignored == []
 
 
 @pytest.mark.parametrize(
@@ -280,6 +322,88 @@ def test_known_xai_image_generation_model_names():
     }
 
 
+def test_google_geometry_profiles_conflicts_and_unknown_models():
+    geometry = google_geometry.resolve_google_geometry(
+        'gemini-3.1-flash-image',
+        {'dimensions': (1024, 1024)},
+        provider_aspect_ratio='1:1',
+        provider_size='2K',
+        provider_size_is_set=True,
+    )
+    assert geometry.aspect_ratio == '1:1'
+    assert geometry.image_size == '2K'
+    assert geometry.conflicts == ['dimensions']
+
+    ignored_ratio = google_geometry.resolve_google_geometry(
+        'gemini-2.5-flash-image',
+        {'aspect_ratio': '1:2'},
+        provider_aspect_ratio=None,
+        provider_size=None,
+        provider_size_is_set=False,
+    )
+    assert ignored_ratio.ignored == ['aspect_ratio']
+
+    assert google_geometry.resolve_google_aspect_ratio('future-image-model', '1:2') == ('1:2', None)
+    assert google_geometry.resolve_google_aspect_ratio('gemini-3-pro-image', '1:2') is None
+    assert google_geometry.resolve_google_dimensions('gemini-3-pro-image', (1024, 1024)) == ('1:1', '1K')
+    with pytest.raises(UserError, match='does not support'):
+        google_geometry.resolve_google_dimensions('future-image-model', (1024, 1024))
+
+
+@pytest.mark.parametrize(
+    ('dimensions', 'error_message'),
+    [
+        ((4096, 2048), 'longest edge'),
+        ((3072, 992), 'aspect ratio'),
+        ((800, 800), 'total pixel count'),
+    ],
+)
+def test_openai_gpt_image_2_rejects_out_of_bounds_dimensions(dimensions: tuple[int, int], error_message: str):
+    with pytest.raises(UserError, match=error_message):
+        openai_geometry.resolve_openai_dimensions('gpt-image-2', dimensions)
+
+
+def test_openai_geometry_conflicts_and_invalid_compatibility_sizes():
+    geometry = openai_geometry.resolve_openai_geometry(
+        'gpt-image-2',
+        {'dimensions': (1024, 1024)},
+        provider_size='1280x720',
+    )
+    assert geometry.size == '1280x720'
+    assert geometry.conflicts == ['dimensions']
+
+    with pytest.raises(UserError, match='Supported exact dimensions'):
+        openai_geometry.resolve_openai_dimensions('gpt-image-1', (2048, 2048))
+    assert openai_geometry.resolve_openai_dimensions('gpt-image-1', (1024, 1024)) == '1024x1024'
+
+    assert openai_geometry.resolve_openai_compatibility_size('gpt-image-2', 'invalid') is None
+    assert not openai_geometry.size_matches_aspect_ratio('invalid', '1:1')
+    assert openai_geometry.parse_dimensions('invalidx10') is None
+    assert openai_geometry.parse_dimensions('0x10') is None
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+def test_xai_geometry_reports_provider_conflicts_with_dimensions():
+    geometry = xai_geometry.resolve_xai_geometry(
+        'grok-imagine-image',
+        {'dimensions': (1024, 1024)},
+        provider_aspect_ratio='16:9',
+        provider_resolution='2k',
+    )
+
+    assert geometry.aspect_ratio == '16:9'
+    assert geometry.resolution == '2k'
+    assert geometry.conflicts == ['dimensions', 'dimensions']
+
+    matching_geometry = xai_geometry.resolve_xai_geometry(
+        'grok-imagine-image',
+        {'dimensions': (1024, 1024)},
+        provider_aspect_ratio='1:1',
+        provider_resolution='1k',
+    )
+    assert matching_geometry.conflicts == []
+
+
 @pytest.mark.skipif(not image_demo_imports_successful(), reason='Image demo dependencies not installed')
 async def test_image_demo_section_selection(monkeypatch: pytest.MonkeyPatch):
     calls: list[str] = []
@@ -336,6 +460,18 @@ async def test_infer_google_image_generation_model():
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+def test_google_image_generation_model_infers_string_provider(monkeypatch: pytest.MonkeyPatch):
+    provider = GoogleProvider(api_key='test-api-key')
+    infer_provider = MagicMock(return_value=provider)
+    monkeypatch.setattr(google_images, 'infer_provider', infer_provider)
+
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image')
+
+    assert model.system == 'google'
+    infer_provider.assert_called_once_with('google')
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_wire_payload_and_response_mapping():
     requests: list[httpx.Request] = []
 
@@ -362,19 +498,25 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
                         },
                         'finishReason': 'STOP',
                         'index': 0,
-                    }
+                    },
+                    {'finishReason': 'OTHER'},
                 ],
                 'modelVersion': 'gemini-2.5-flash-image',
                 'responseId': 'response-123',
                 'usageMetadata': {
                     'candidatesTokenCount': 5,
                     'candidatesTokensDetails': [{'modality': 'IMAGE', 'tokenCount': 5}],
+                    'cacheTokensDetails': [{'modality': 'TEXT', 'tokenCount': 2}],
+                    'cachedContentTokenCount': 2,
                     'promptTokenCount': 3,
                     'promptTokensDetails': [
                         {'modality': 'TEXT', 'tokenCount': 1},
                         {'modality': 'IMAGE', 'tokenCount': 2},
+                        {'modality': 'TEXT'},
                     ],
                     'thoughtsTokenCount': 2,
+                    'toolUsePromptTokenCount': 4,
+                    'toolUsePromptTokensDetails': [{'modality': 'TEXT', 'tokenCount': 4}],
                     'totalTokenCount': 10,
                 },
             },
@@ -484,13 +626,18 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
             provider_name='google',
             timestamp=IsDatetime(),
             usage=RequestUsage(
-                input_tokens=3,
+                input_tokens=7,
+                cache_read_tokens=2,
                 output_tokens=7,
                 details={
                     'thoughts_tokens': 2,
+                    'cached_content_tokens': 2,
+                    'tool_use_prompt_tokens': 4,
                     'text_prompt_tokens': 1,
                     'image_prompt_tokens': 2,
+                    'text_cache_tokens': 2,
                     'image_candidates_tokens': 5,
+                    'text_tool_use_prompt_tokens': 4,
                 },
             ),
             settings=settings,
@@ -636,6 +783,95 @@ async def test_google_image_generation_response_without_image():
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_maps_complete_provider_metadata():
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {
+                            'parts': [{'inlineData': {'data': 'aGVsbG8=', 'mimeType': 'image/png'}}],
+                            'role': 'model',
+                        },
+                        'finishReason': 'STOP',
+                        'safetyRatings': [{'category': 'HARM_CATEGORY_HATE_SPEECH', 'probability': 'NEGLIGIBLE'}],
+                    }
+                ],
+                'createTime': '2025-01-01T00:00:00Z',
+                'promptFeedback': {
+                    'blockReason': 'OTHER',
+                    'blockReasonMessage': 'provider detail',
+                    'safetyRatings': [{'category': 'HARM_CATEGORY_HARASSMENT', 'probability': 'LOW'}],
+                },
+                'usageMetadata': {'trafficType': 'ON_DEMAND'},
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+    try:
+        result = await model.generate('tiny robot')
+    finally:
+        await http_client.aclose()
+
+    assert result.provider_details is not None
+    assert result.provider_details['finish_reason'] == 'STOP'
+    assert result.provider_details['block_reason'] == 'OTHER'
+    assert result.provider_details['block_reason_message'] == 'provider detail'
+    assert result.provider_details['traffic_type'] == 'ON_DEMAND'
+    assert result.provider_details['safety_ratings'] == [
+        {
+            'blocked': None,
+            'category': 'HARM_CATEGORY_HARASSMENT',
+            'overwrittenThreshold': None,
+            'probability': 'LOW',
+            'probabilityScore': None,
+            'severity': None,
+            'severityScore': None,
+        }
+    ]
+
+    response_with_timestamp = google_types.GenerateContentResponse.model_validate(
+        {'createTime': '2025-01-01T00:00:00Z'}
+    )
+    timestamp_details = google_images._response_provider_details(  # pyright: ignore[reportPrivateUsage]
+        response_with_timestamp
+    )
+    assert timestamp_details['timestamp'] == IsDatetime()
+
+    response_without_block_message = google_types.GenerateContentResponse.model_validate(
+        {'promptFeedback': {'blockReason': 'OTHER'}}
+    )
+    block_details = google_images._response_provider_details(  # pyright: ignore[reportPrivateUsage]
+        response_without_block_message
+    )
+    assert block_details == {'block_reason': 'OTHER'}
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_maps_non_http_api_error():
+    client = AsyncMock()
+    client.aio.models.generate_content.side_effect = google_errors.APIError(302, {'error': 'redirect'})
+    provider = GoogleProvider(client=cast(GoogleClient, client))
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+    with pytest.raises(ModelAPIError, match='redirect'):
+        await model.generate('tiny robot')
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+def test_google_image_generation_ignores_non_image_output_format():
+    output_format = google_images._output_format_from_media_type(  # pyright: ignore[reportPrivateUsage]
+        'application/octet-stream'
+    )
+
+    assert output_format is None
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_status_error():
     def handle_request(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -745,6 +981,18 @@ async def test_infer_xai_image_generation_model():
     assert model.model_name == 'grok-imagine-image'
     assert model.system == 'xai'
     assert model.base_url == 'https://api.x.ai/v1'
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+def test_xai_image_generation_model_infers_string_provider(monkeypatch: pytest.MonkeyPatch):
+    provider = XaiProvider(xai_client=XaiAsyncClient(api_key='test-api-key'))
+    infer_provider = MagicMock(return_value=provider)
+    monkeypatch.setattr(xai_images, 'infer_provider', infer_provider)
+
+    model = XaiImageGenerationModel('grok-imagine-image')
+
+    assert model.system == 'xai'
+    infer_provider.assert_called_once_with('xai')
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
@@ -1017,10 +1265,11 @@ async def test_xai_image_generation_rejects_mixed_inputs_that_would_be_reordered
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
-async def test_xai_image_generation_invalid_response():
+@pytest.mark.parametrize('base64_value', ['', 'data:text/plain;base64,aGVsbG8='])
+async def test_xai_image_generation_invalid_response(base64_value: str):
     mock_client = AsyncMock()
     proto = xai_image_pb2.ImageResponse(
-        images=[xai_image_pb2.GeneratedImage(respect_moderation=False)],
+        images=[xai_image_pb2.GeneratedImage(base64=base64_value, respect_moderation=False)],
         model='grok-imagine-image',
     )
     mock_client.image.sample.return_value = XaiImageResponse(proto, 0)
@@ -1033,6 +1282,25 @@ async def test_xai_image_generation_invalid_response():
         await model.generate('tiny robot')
 
     assert exc_info.value.body == "{'respect_moderation': False}"
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_response_without_cost_details():
+    mock_client = AsyncMock()
+    proto = xai_image_pb2.ImageResponse(
+        images=[xai_image_pb2.GeneratedImage(base64='data:image/png;base64,aGVsbG8=')],
+        model='grok-imagine-image',
+        usage=xai_usage_pb2.SamplingUsage(prompt_tokens=1),
+    )
+    mock_client.image.sample.return_value = XaiImageResponse(proto, 0)
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    result = await model.generate('tiny robot')
+
+    assert result.provider_details == {}
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
@@ -1069,6 +1337,26 @@ async def test_xai_image_generation_status_error():
 
     assert exc_info.value.status_code == 429
     assert exc_info.value.body == 'rate limit exceeded'
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_unknown_status_error():
+    class TestRpcError(grpc.RpcError):
+        def code(self) -> grpc.StatusCode:
+            return grpc.StatusCode.CANCELLED
+
+        def details(self) -> str:
+            return 'request cancelled'
+
+    mock_client = AsyncMock()
+    mock_client.image.sample.side_effect = TestRpcError()
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    with pytest.raises(ModelAPIError, match='request cancelled'):
+        await model.generate('tiny robot')
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
@@ -1130,6 +1418,18 @@ async def test_infer_openai_image_generation_model():
     assert model.model_name == 'gpt-image-1'
     assert model.system == 'openai'
     assert model.base_url == 'https://api.openai.com/v1/'
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+def test_openai_image_generation_model_infers_string_provider(monkeypatch: pytest.MonkeyPatch):
+    provider = OpenAIProvider(openai_client=AsyncOpenAI(api_key='test-api-key'))
+    infer_provider = MagicMock(return_value=provider)
+    monkeypatch.setattr(openai_images, 'infer_provider', infer_provider)
+
+    model = OpenAIImageGenerationModel('gpt-image-1')
+
+    assert model.system == 'openai'
+    infer_provider.assert_called_once_with('openai')
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -1220,6 +1520,47 @@ async def test_openai_image_generation_response_mapping():
             'conflicting normalized dimensions',
             settings=OpenAIImageGenerationSettings(size='1024x1024', aspect_ratio='3:2'),
         )
+
+    await model.generate(
+        'provider-only background',
+        settings=OpenAIImageGenerationSettings(openai_background='opaque'),
+    )
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_image_generation_usage_falls_back_to_sdk_totals(monkeypatch: pytest.MonkeyPatch):
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+        data=[Image.model_construct(b64_json='aGVsbG8=')],
+        usage=Usage.model_construct(
+            input_tokens=3,
+            input_tokens_details=UsageInputTokensDetails.model_construct(text_tokens=3, image_tokens=0),
+            output_tokens=5,
+            output_tokens_details=None,
+            total_tokens=8,
+        ),
+    )
+    monkeypatch.setattr(openai_images.RequestUsage, 'extract', MagicMock(return_value=RequestUsage()))
+    model = OpenAIImageGenerationModel(
+        'gpt-image-1',
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+    )
+
+    result = await model.generate('tiny robot')
+
+    assert result.usage == RequestUsage(
+        input_tokens=3,
+        output_tokens=5,
+        details={'input_text_tokens': 3, 'input_image_tokens': 0},
+    )
+
+    extracted_usage = RequestUsage(input_tokens=9, output_tokens=7)
+    monkeypatch.setattr(openai_images.RequestUsage, 'extract', MagicMock(return_value=extracted_usage))
+
+    extracted_result = await model.generate('another tiny robot')
+
+    assert extracted_result.usage == extracted_usage
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -1633,6 +1974,89 @@ async def test_instrumentation(capfire: CaptureLogfire):
         'gen_ai.token.type': 'input',
     }
     assert data_points[0]['sum'] == 2
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumentation_records_complete_response_metrics(
+    capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch
+):
+    wrapped = TestImageGenerationModel()
+    result = ImageGenerationResult(
+        images=[
+            GeneratedImage(
+                content=BinaryImage(data=TINY_PNG, media_type='image/png'),
+                size='1024x1024',
+                quality='high',
+                output_format='png',
+                background='transparent',
+            )
+        ],
+        prompt='tiny robot',
+        model_name='response-model',
+        provider_name='test',
+        usage=RequestUsage(output_tokens=3),
+    )
+    monkeypatch.setattr(wrapped, 'generate', AsyncMock(return_value=result))
+    monkeypatch.setattr(type(wrapped), 'base_url', property(lambda _: 'relative/path'))
+    assert InstrumentedImageGenerationModel.model_attributes(wrapped) == {
+        'gen_ai.provider.name': 'test',
+        'gen_ai.request.model': 'test',
+    }
+    monkeypatch.setattr(type(wrapped), 'base_url', property(lambda _: 'https://example.com/v1'))
+    model = InstrumentedImageGenerationModel(wrapped)
+    price = cast(PriceCalculation, SimpleNamespace(total_price=Decimal('0.25')))
+    monkeypatch.setattr(model, '_price_calculation', MagicMock(return_value=price))
+
+    await model.generate('tiny robot')
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    span = next(span for span in spans if 'image_generation' in span['name'])
+    attributes = span['attributes']
+    assert attributes['server.address'] == 'example.com'
+    assert attributes['gen_ai.usage.output_tokens'] == 3
+    assert attributes['gen_ai.response.model'] == 'response-model'
+    assert attributes['image.0.size'] == '1024x1024'
+    assert attributes['image.0.quality'] == 'high'
+    assert attributes['image.0.output_format'] == 'png'
+    assert attributes['image.0.background'] == 'transparent'
+    assert attributes['operation.cost'] == 0.25
+    assert 'gen_ai.response.id' not in attributes
+
+    metrics = capfire.get_collected_metrics()
+    assert [metric['name'] for metric in metrics] == [
+        'gen_ai.client.token.usage',
+        'operation.cost',
+    ]
+    assert metrics[0]['data']['data_points'][0]['attributes']['gen_ai.token.type'] == 'output'
+    assert metrics[0]['data']['data_points'][0]['sum'] == 3
+    assert metrics[1]['data']['data_points'][0]['sum'] == 0.25
+
+    sparse_result = ImageGenerationResult(
+        images=[GeneratedImage(content=BinaryImage(data=TINY_PNG, media_type='image/png'))],
+        prompt='tiny robot',
+        model_name='response-model',
+        provider_name='test',
+    )
+    sparse_attributes = model._response_attributes(  # pyright: ignore[reportPrivateUsage]
+        sparse_result, 'response-model', None
+    )
+    assert 'image.0.size' not in sparse_attributes
+    assert 'image.0.output_format' not in sparse_attributes
+
+    with model._instrument('unfinished request', [], None):  # pyright: ignore[reportPrivateUsage]
+        pass
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumentation_does_not_record_metrics_when_generation_fails(capfire: CaptureLogfire):
+    wrapped = TestImageGenerationModel()
+    wrapped.generate = AsyncMock(side_effect=RuntimeError('generation failed'))
+    model = InstrumentedImageGenerationModel(wrapped)
+
+    with pytest.raises(RuntimeError, match='generation failed'):
+        await model.generate('tiny robot')
+
+    assert capfire.metrics_reader.get_metrics_data() is None
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')

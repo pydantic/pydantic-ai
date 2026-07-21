@@ -159,7 +159,7 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
-        except APIConnectionError as e:  # pragma: no cover
+        except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
         return self._map_response(prompt, settings, response)

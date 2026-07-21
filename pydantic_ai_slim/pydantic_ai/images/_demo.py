@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 _THIS_DIR = Path(__file__).resolve().parent
-if sys.path and Path(sys.path[0]).resolve() == _THIS_DIR:
+if sys.path and Path(sys.path[0]).resolve() == _THIS_DIR:  # pragma: no cover - script-only import setup
     sys.path.pop(0)
 
 import logfire
@@ -51,7 +51,9 @@ class DemoSelection:
     capability: bool
 
 
-def _save_first_image(result: ImageGenerationResult, filename: str) -> Path:
+def _save_first_image(  # pragma: no cover - manual paid demo
+    result: ImageGenerationResult, filename: str
+) -> Path:
     """Persist the first normalized image and print only its local path."""
     path = _THIS_DIR / filename
     path.write_bytes(result.images[0].content.data)
@@ -59,7 +61,7 @@ def _save_first_image(result: ImageGenerationResult, filename: str) -> Path:
     return path
 
 
-def main() -> None:
+def main() -> None:  # pragma: no cover - manual paid demo
     selection = _parse_selection()
     logfire.configure(send_to_logfire='if-token-present')
 
@@ -68,7 +70,7 @@ def main() -> None:
     logfire.force_flush()
 
 
-async def _run_instrumented_demo(selection: DemoSelection) -> None:
+async def _run_instrumented_demo(selection: DemoSelection) -> None:  # pragma: no cover - manual paid demo
     with logfire.span('pydantic_ai_images_demo'):
         await run_demo(selection)
 
@@ -111,7 +113,7 @@ async def run_demo(selection: DemoSelection | None = None) -> None:
         await _run_image_capability_demo()
 
 
-async def _run_openai_demo() -> None:
+async def _run_openai_demo() -> None:  # pragma: no cover - manual paid demo
     """Demonstrate OpenAI instrumentation, direct generation, and reference-image editing."""
     print('\n=== OpenAI direct image API ===')
 
@@ -160,7 +162,7 @@ async def _run_openai_demo() -> None:
             )
 
 
-async def _run_google_demo() -> None:
+async def _run_google_demo() -> None:  # pragma: no cover - manual paid demo
     """Demonstrate Google generation and Files API editing through one provider client."""
     print('\n=== Google direct image API ===')
     google_api_key = os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
@@ -210,7 +212,7 @@ async def _run_google_demo() -> None:
     )
 
 
-async def _run_xai_demo() -> None:
+async def _run_xai_demo() -> None:  # pragma: no cover - manual paid demo
     """Demonstrate xAI generation and Files API editing."""
     print('\n=== xAI direct image API ===')
     xai_api_key = os.getenv('XAI_API_KEY')
@@ -254,7 +256,7 @@ async def _run_xai_demo() -> None:
     )
 
 
-async def _run_image_capability_demo() -> None:
+async def _run_image_capability_demo() -> None:  # pragma: no cover - manual paid demo
     """Compare the compatibility fallback and the direct image-model fallback."""
     print('\n=== ImageGeneration capability bridge ===')
 
@@ -290,7 +292,9 @@ async def _run_image_capability_demo() -> None:
     )
 
 
-async def _run_capability_path(capability: ImageGeneration[Any], *, label: str, output_filename: str) -> None:
+async def _run_capability_path(  # pragma: no cover - manual paid demo
+    capability: ImageGeneration[Any], *, label: str, output_filename: str
+) -> None:
     """Run one capability path and extract the image returned to the outer agent."""
     capability_agent = Agent(
         'openai:gpt-5.4-nano',
