@@ -11,7 +11,6 @@ from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperTo
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPToolset
@@ -20,11 +19,16 @@ DurableConfig: TypeAlias = Mapping[str, Any]
 ToolConfig: TypeAlias = DurableConfig | Literal[False]
 Lifecycle: TypeAlias = Literal['enter-outside-durable', 'enter-always', 'enter-never']
 Instructions: TypeAlias = str | InstructionPart | Sequence[str | InstructionPart] | None
-CallToolSegment: TypeAlias = Callable[
+CallToolOperation: TypeAlias = Callable[
     [str, dict[str, Any], RunContext[Any], ToolsetTool[Any], DurableConfig], Awaitable[Any]
 ]
+"""Runs one tool call inside the engine's durable unit (activity/step/task)."""
 ResolveToolConfig: TypeAlias = Callable[[ToolsetTool[Any] | None, str], ToolConfig]
-"""Resolve a tool's per-tool durable config: a config mapping to merge, or `False` to skip wrapping."""
+"""Resolve a tool's per-tool durable config: a config mapping to merge, or `False` to run the tool inline.
+
+Engines that restrict inline execution enforce it here, where the engine's own error
+wording is available (e.g. Temporal requires async tools and forbids inline MCP tools).
+"""
 
 
 @dataclass
@@ -182,9 +186,8 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
         wrapped: FunctionToolset[AgentDepsT],
         *,
         in_durable_context: Callable[[], bool],
-        call_tool_segment: CallToolSegment,
+        call_tool_operation: CallToolOperation,
         resolve_tool_config: ResolveToolConfig,
-        inline_requires_async: bool,
         lifecycle: Lifecycle,
         durable_registrations: list[Any] | None = None,
         durable_config: Mapping[str, Any] | None = None,
@@ -196,9 +199,8 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
             durable_registrations=durable_registrations,
             durable_config=durable_config,
         )
-        self._call_tool_segment = call_tool_segment
+        self._call_tool_operation = call_tool_operation
         self._resolve_tool_config = resolve_tool_config
-        self._inline_requires_async = inline_requires_async
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
@@ -207,16 +209,8 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
             return await self.wrapped.call_tool(name, tool_args, ctx, tool)
         config = self._resolve_tool_config(tool, name)
         if config is False:
-            if self._inline_requires_async:
-                assert isinstance(tool, FunctionToolsetTool)
-                if not tool.is_async:
-                    raise UserError(
-                        f'Durable wrapping is disabled for tool {name!r} (config `False`), but non-async tools '
-                        'are run in threads, which are not supported outside a durable wrapper. '
-                        'Make the tool function async instead.'
-                    )
             return await self.wrapped.call_tool(name, tool_args, ctx, tool)
-        return await self._call_tool_segment(name, tool_args, ctx, tool, config)
+        return await self._call_tool_operation(name, tool_args, ctx, tool, config)
 
 
 class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
@@ -225,15 +219,14 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         wrapped: MCPToolset[AgentDepsT],
         *,
         in_durable_context: Callable[[], bool],
-        get_tools_segment: Callable[[RunContext[AgentDepsT]], Awaitable[dict[str, ToolDefinition]]] | None,
-        get_instructions_segment: Callable[[RunContext[AgentDepsT]], Awaitable[Instructions]] | None,
-        call_tool_segment: CallToolSegment,
+        get_tools_operation: Callable[[RunContext[AgentDepsT]], Awaitable[dict[str, ToolDefinition]]] | None,
+        get_instructions_operation: Callable[[RunContext[AgentDepsT]], Awaitable[Instructions]] | None,
+        call_tool_operation: CallToolOperation,
         resolve_tool_config: ResolveToolConfig,
         lifecycle: Lifecycle,
         durable_registrations: list[Any] | None = None,
         durable_config: Mapping[str, Any] | None = None,
         instructions_local_first: bool = False,
-        inline_allowed: bool = True,
     ):
         super().__init__(
             wrapped,
@@ -243,20 +236,23 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
             durable_config=durable_config,
         )
         self._mcp_toolset = wrapped
-        self._get_tools_segment = get_tools_segment
-        self._get_instructions_segment = get_instructions_segment
-        self._call_tool_segment = call_tool_segment
+        self._get_tools_operation = get_tools_operation
+        self._get_instructions_operation = get_instructions_operation
+        self._call_tool_operation = call_tool_operation
         self._resolve_tool_config = resolve_tool_config
+        # An optimization only available to engines whose durable units share the process
+        # (DBOS): the wrapped MCP server instance may already hold cached instructions from a
+        # prior in-process operation, saving a durable-unit execution (and its checkpoint).
+        # Out-of-process engines (Temporal) must never touch the server from workflow code.
         self._instructions_local_first = instructions_local_first
-        self._inline_allowed = inline_allowed
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if not self._in_durable_context() or self._get_tools_segment is None:
+        if not self._in_durable_context() or self._get_tools_operation is None:
             return await self.wrapped.get_tools(ctx)
         cache_key = self.id or ''
         if self._mcp_toolset.cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
             return {name: self._mcp_toolset.tool_for_tool_def(tool_def) for name, tool_def in cached.items()}
-        tool_defs = await self._get_tools_segment(ctx)
+        tool_defs = await self._get_tools_operation(ctx)
         if self._mcp_toolset.cache_tools:
             ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
         return {name: self._mcp_toolset.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
@@ -264,14 +260,14 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> Instructions:
         if not self._mcp_toolset.include_instructions:
             return None
-        if not self._in_durable_context() or self._get_instructions_segment is None:  # pragma: no cover
+        if not self._in_durable_context() or self._get_instructions_operation is None:  # pragma: no cover
             return await self._mcp_toolset.get_instructions(ctx)
         if (
             self._instructions_local_first
             and (instructions := await self._mcp_toolset.get_instructions(ctx)) is not None
         ):
             return instructions
-        return await self._get_instructions_segment(ctx)
+        return await self._get_instructions_operation(ctx)
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
@@ -279,13 +275,6 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         if not self._in_durable_context():  # pragma: no cover
             return await self._mcp_toolset.call_tool(name, tool_args, ctx, tool)
         config = self._resolve_tool_config(tool, name)
-        # Metadata-driven `False` on an MCP tool is guarded defensively; the constructor-dict
-        # path raises earlier in the engine factory (covered by tests).
-        if config is False:  # pragma: no cover
-            if not self._inline_allowed:
-                raise UserError(
-                    f'Durable wrapping is disabled for MCP tool {name!r} (config `False`), but MCP tools '
-                    'require the use of I/O and so cannot run outside a durable wrapper.'
-                )
+        if config is False:  # pragma: no cover — no engine's resolver currently permits inline MCP tools
             return await self._mcp_toolset.call_tool(name, tool_args, ctx, tool)
-        return await self._call_tool_segment(name, tool_args, ctx, tool, config)
+        return await self._call_tool_operation(name, tool_args, ctx, tool, config)

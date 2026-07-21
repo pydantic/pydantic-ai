@@ -7,9 +7,15 @@ from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import FunctionToolset, ToolsetTool
-from pydantic_ai.durable_exec._toolset import CallToolResult, DurableFunctionToolset, unwrap_tool_call_result
+from pydantic_ai.durable_exec._toolset import (
+    CallToolResult,
+    DurableFunctionToolset,
+    ToolConfig,
+    unwrap_tool_call_result,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import CallToolParams, call_tool_in_activity, resolve_tool_activity_config
@@ -44,7 +50,18 @@ def temporalize_function_toolset(
         call_tool_activity
     )
 
-    async def call_tool_segment(
+    def resolve_tool_config(tool: ToolsetTool[Any] | None, name: str) -> ToolConfig:
+        config = resolve_tool_activity_config(tool, name, tool_activity_config)
+        if config is False:
+            assert isinstance(tool, FunctionToolsetTool)
+            if not tool.is_async:
+                raise UserError(
+                    f'Temporal activity config for tool {name!r} has been explicitly set to `False` (activity disabled), '
+                    'but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead.'
+                )
+        return config
+
+    async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
@@ -77,9 +94,8 @@ def temporalize_function_toolset(
     return DurableFunctionToolset(
         toolset,
         in_durable_context=workflow.in_workflow,
-        call_tool_segment=call_tool_segment,
-        resolve_tool_config=lambda tool, name: resolve_tool_activity_config(tool, name, tool_activity_config),
-        inline_requires_async=True,
+        call_tool_operation=call_tool_operation,
+        resolve_tool_config=resolve_tool_config,
         lifecycle='enter-outside-durable',
         durable_registrations=[registered_activity],
         durable_config=activity_config,

@@ -10,6 +10,7 @@ from pydantic_ai import ToolsetTool
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableMCPToolset,
+    ToolConfig,
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
@@ -72,7 +73,18 @@ def temporalize_mcp_toolset(
         call_tool_activity
     )
 
-    async def get_tools_segment(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
+    def resolve_tool_config(tool: ToolsetTool[Any] | None, name: str) -> ToolConfig:
+        config = resolve_tool_activity_config(tool, name, tool_activity_config)
+        if (
+            config is False
+        ):  # pragma: no cover — the constructor-dict path raises above; metadata is the only route here
+            raise UserError(
+                f'Temporal activity config for MCP tool {name!r} has been explicitly set to `False` (activity disabled), '
+                'but MCP tools require the use of IO and so cannot be run outside of an activity.'
+            )
+        return config
+
+    async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
         config: ActivityConfig = {'summary': f'get tools: {toolset.id}', **activity_config}
         return await workflow.execute_activity(
             activity=get_tools_activity_def,
@@ -80,7 +92,7 @@ def temporalize_mcp_toolset(
             **config,
         )
 
-    async def get_instructions_segment(
+    async def get_instructions_operation(
         ctx: RunContext[AgentDepsT],
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         config: ActivityConfig = {'summary': f'get instructions: {toolset.id}', **activity_config}
@@ -90,7 +102,7 @@ def temporalize_mcp_toolset(
             **config,
         )
 
-    async def call_tool_segment(
+    async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
@@ -119,14 +131,13 @@ def temporalize_mcp_toolset(
     return DurableMCPToolset(
         toolset,
         in_durable_context=workflow.in_workflow,
-        get_tools_segment=get_tools_segment,
-        get_instructions_segment=get_instructions_segment,
-        call_tool_segment=call_tool_segment,
-        resolve_tool_config=lambda tool, name: resolve_tool_activity_config(tool, name, tool_activity_config),
+        get_tools_operation=get_tools_operation,
+        get_instructions_operation=get_instructions_operation,
+        call_tool_operation=call_tool_operation,
+        resolve_tool_config=resolve_tool_config,
         lifecycle='enter-outside-durable',
         durable_registrations=[get_instructions_activity_def, get_tools_activity_def, call_tool_activity_def],
         durable_config=activity_config,
-        inline_allowed=False,
     )
 
 

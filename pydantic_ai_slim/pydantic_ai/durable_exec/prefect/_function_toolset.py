@@ -30,7 +30,7 @@ def prefectify_function_toolset(
     ) -> Any:
         return await wrapped.call_tool(tool_name, tool_args, ctx, tool)
 
-    async def call_tool_segment(
+    async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
@@ -45,9 +45,8 @@ def prefectify_function_toolset(
         # Prefect tasks degrade gracefully to plain calls outside a flow, so the durable
         # path is always taken — matching the previous Prefect wrapper.
         in_durable_context=lambda: True,
-        call_tool_segment=call_tool_segment,
+        call_tool_operation=call_tool_operation,
         resolve_tool_config=lambda tool, name: resolve_tool_task_config(tool, name, tool_task_config),
-        inline_requires_async=False,
         lifecycle='enter-always',
         durable_config=base_config,
     )

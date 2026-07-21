@@ -37,7 +37,7 @@ def dbosify_mcp_toolset(
     ) -> ToolResult:
         return await wrapped.call_tool(tool_name, tool_args, ctx, tool)
 
-    async def call_tool_segment(
+    async def call_tool_operation(
         tool_name: str,
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
@@ -53,9 +53,9 @@ def dbosify_mcp_toolset(
         # workflow state (outside a workflow, the step fallback still enters the server
         # around `get_instructions`).
         in_durable_context=lambda: True,
-        get_tools_segment=get_tools_step,
-        get_instructions_segment=get_instructions_step,
-        call_tool_segment=call_tool_segment,
+        get_tools_operation=get_tools_step,
+        get_instructions_operation=get_instructions_step,
+        call_tool_operation=call_tool_operation,
         # DBOS takes no per-tool config; tool metadata is ignored, as before.
         resolve_tool_config=lambda tool, name: {},
         lifecycle='enter-never',
