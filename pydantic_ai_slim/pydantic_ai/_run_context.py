@@ -116,6 +116,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     and during agent construction.
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
+    _enqueue_error: str | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.
 
     Set to the run's live queue during an agent run; `None` in synthetic contexts that aren't
@@ -323,6 +324,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 to deliver the message.
         """
         if self.pending_messages is None:
+            if self._enqueue_error is not None:
+                raise UserError(self._enqueue_error)
             raise UserError(
                 '`enqueue` is only available during an agent run (from tools, capability hooks, or '
                 '`AgentRun.enqueue`). This `RunContext` has no pending-message queue to drain.'

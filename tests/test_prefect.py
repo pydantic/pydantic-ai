@@ -31,6 +31,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RetryPromptPart,
     RunContext,
     TextPart,
     TextPartDelta,
@@ -1494,6 +1495,18 @@ def test_cache_policy_excludes_timestamps_on_parts_outside_messages_module():
     assert key_for(time1) == key_for(time2)
 
 
+def test_cache_policy_normalizes_only_framework_tool_call_ids():
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(tool_call_id: str) -> str | None:
+        part = RetryPromptPart(content='retry', tool_name='tool', tool_call_id=tool_call_id)
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': [part]}, flow_parameters={})
+
+    assert key_for('pyd_ai_first') == key_for('pyd_ai_second')
+    assert key_for('model-first') != key_for('model-second')
+
+
 def test_cache_policy_excludes_non_serializable_deps():
     """Non-serializable dependency values are excluded without dropping serializable siblings.
 
@@ -2541,6 +2554,84 @@ async def test_prefect_durability_event_stream_handler() -> None:
     assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
     assert any(isinstance(event, PartStartEvent) for event in events)
     assert any(isinstance(event, FinalResultEvent) for event in events)
+
+
+async def test_prefect_durability_identical_events_are_dispatched_twice() -> None:
+    calls = 0
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        nonlocal calls
+        async for event in stream:
+            calls += isinstance(event, FunctionToolCallEvent)
+
+    async def same_tool() -> str:
+        return 'same'
+
+    durability: PrefectDurability[object] = PrefectDurability(event_stream_handler=handler)
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='duplicate_event_handler',
+        tools=[same_tool],
+        capabilities=[durability],
+    )
+
+    @flow
+    async def run_twice() -> None:
+        await agent.run('same')
+        await agent.run('same')
+
+    await run_twice()
+    assert calls == 2
+
+
+async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
+    enqueued = False
+
+    async def enqueue(ctx: RunContext[object]) -> str:
+        nonlocal enqueued
+        if not enqueued:
+            ctx.enqueue('later')
+            enqueued = True
+        return 'done'
+
+    durability: PrefectDurability[object] = PrefectDurability()
+    agent = Agent(TestModel(), deps_type=object, name='prefect_enqueue', tools=[enqueue], capabilities=[durability])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='task-cache replay would drop the enqueued messages'):
+        await run_agent()
+
+    enqueued = False
+    await agent.run('run')
+
+
+async def test_prefect_tool_model_retry_is_not_retried_by_task_engine() -> None:
+    calls = 0
+
+    async def retry_once() -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ModelRetry('again')
+        return 'done'
+
+    agent = Agent(
+        TestModel(),
+        name='prefect_model_retry',
+        tools=[retry_once],
+        capabilities=[PrefectDurability(tool_task_config={'retries': 3})],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('run')).output
+
+    await run_agent()
+    assert calls == 2
 
 
 async def test_prefect_durability_event_stream_handler_outside_flow() -> None:

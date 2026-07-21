@@ -182,10 +182,16 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         handler = self._event_stream_handler
 
         @task(name='Handle Stream Event', **self._event_stream_handler_task_config)
-        async def event_stream_handler_task(stream_event: AgentStreamEvent) -> None:
+        async def event_stream_handler_task(stream_event: AgentStreamEvent, sequence: int) -> None:
             await handler(ctx, self._single_event_stream(stream_event))
 
-        await event_stream_handler_task(event)
+        flow_context = FlowRunContext.get()
+        assert flow_context is not None
+        sequence_key = f'pydantic_ai_event_sequence:{self.name}'
+        sequence = flow_context.task_run_dynamic_keys.get(sequence_key, 0)
+        assert isinstance(sequence, int)
+        flow_context.task_run_dynamic_keys[sequence_key] = sequence + 1
+        await event_stream_handler_task(event, sequence)
 
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
         wrapped = _default_prefectify_toolset(ts, self._mcp_task_config, self._tool_task_config, {})

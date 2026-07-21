@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any, cast
 
 from prefect import task
@@ -9,10 +10,15 @@ from typing_extensions import deprecated
 
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.durable_exec._toolset import CallToolOperation, DurableFunctionToolset
+from pydantic_ai.durable_exec._toolset import (
+    CallToolOperation,
+    DurableFunctionToolset,
+    unwrap_tool_call_result,
+    wrap_tool_call_result,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from ._toolset import resolve_tool_task_config
+from ._toolset import resolve_tool_task_config, with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
 
 
@@ -24,7 +30,15 @@ def _call_tool_operation(wrapped: FunctionToolset[AgentDepsT], base_config: Task
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> Any:
-        return await wrapped.call_tool(tool_name, tool_args, ctx, tool)
+        task_ctx = replace(
+            ctx,
+            pending_messages=None,
+            _enqueue_error=(
+                '`ctx.enqueue()` is not supported inside Prefect task-wrapped tools because task-cache replay '
+                'would drop the enqueued messages. Enqueue messages from flow-level code instead.'
+            ),
+        )
+        return await wrap_tool_call_result(wrapped.call_tool(tool_name, tool_args, task_ctx, tool))
 
     async def call_tool_operation(
         name: str,
@@ -33,8 +47,11 @@ def _call_tool_operation(wrapped: FunctionToolset[AgentDepsT], base_config: Task
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
     ) -> Any:
-        merged_config = cast('TaskConfig', base_config | dict(config))
-        return await call_tool_task.with_options(name=f'Call Tool: {name}', **merged_config)(name, tool_args, ctx, tool)
+        merged_config = with_non_retryable_errors(cast('TaskConfig', base_config | dict(config)))
+        result = await call_tool_task.with_options(name=f'Call Tool: {name}', **merged_config)(
+            name, tool_args, ctx, tool
+        )
+        return unwrap_tool_call_result(result)
 
     return call_tool_operation
 

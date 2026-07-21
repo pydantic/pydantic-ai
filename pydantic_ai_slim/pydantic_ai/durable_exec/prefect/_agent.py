@@ -57,7 +57,8 @@ from ._types import TaskConfig, default_task_config
 - `tool_task_config=` → set `tool_task_config=` on `PrefectDurability`.
 - `tool_task_config_by_name=` → use per-tool `metadata={'prefect': ...}` or a `SetToolMetadata` capability.
 - `event_stream_handler_task_config=` → set `event_stream_handler_task_config=` on `PrefectDurability`.
-- `prefectify_toolset_func=` → not supported on the capability path; open an issue if you need it.""",
+- `prefectify_toolset_func=` → not supported on the capability path; open an issue if you need it.
+In-flight flow runs will not resume from cache across the migration and re-execute live on retry; let them finish first if that matters.""",
     category=PydanticAIDeprecationWarning,
 )
 class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
