@@ -40,9 +40,13 @@ from .._instrumentation import get_instructions
 from .._utils import generate_tool_call_id
 from ..exceptions import UserError
 from ..messages import (
+    AudioUrl,
     BinaryContent,
+    CachePoint,
     CompactionPart,
+    DocumentUrl,
     FilePart,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -54,11 +58,14 @@ from ..messages import (
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
+    VideoUrl,
 )
 from ..models import ModelRequestParameters
 
@@ -876,11 +883,26 @@ class GoogleRealtimeConnection(RealtimeConnection):
             )
         elif isinstance(content, ToolResult):
             name, gemini_id = self._tool_calls.pop(content.tool_call_id, ('', None))
+            output = content.output
+            if content.content:
+                text_content: list[str] = []
+                for item in content.content:
+                    if isinstance(item, str):
+                        text_content.append(item)
+                    elif isinstance(item, TextContent):
+                        text_content.append(item.content)
+                    elif isinstance(item, CachePoint):
+                        continue
+                    elif isinstance(item, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)):
+                        text_content.append(f'[{type(item).__name__}: {item.identifier}]')
+                    else:
+                        assert_never(item)
+                output = '\n\n'.join(part for part in (output, *text_content) if part)
             await self._session.send_tool_response(
                 function_responses=genai_types.FunctionResponse(
                     id=gemini_id,
                     name=name,
-                    response={'output': content.output},
+                    response={'output': output},
                 )
             )
         else:

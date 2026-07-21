@@ -335,7 +335,11 @@ async def test_chat_spans_split_on_tool_call_are_session_children() -> None:
         {'type': 'tool_call', 'id': 'c1', 'name': 'get_weather', 'arguments': '{"city": "Paris"}'},
     ]
     assert json.loads(str(second.attributes['gen_ai.output.messages'])) == [
-        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'it is sunny'}]},
+        {
+            'role': 'assistant',
+            'parts': [{'type': 'text', 'content': 'it is sunny'}],
+            'finish_reason': 'stop',
+        },
     ]
 
 
@@ -476,7 +480,11 @@ async def test_session_captures_transcript_messages() -> None:
     assert sess.attributes is not None
     assert json.loads(str(sess.attributes['pydantic_ai.all_messages'])) == [
         {'role': 'user', 'parts': [{'type': 'text', 'content': 'hello there'}]},
-        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'hi, how can I help?'}]},
+        {
+            'role': 'assistant',
+            'parts': [{'type': 'text', 'content': 'hi, how can I help?'}],
+            'finish_reason': 'stop',
+        },
     ]
     assert json.loads(str(sess.attributes['logfire.json_schema']))['properties'] == {
         'pydantic_ai.all_messages': {'type': 'array'},
@@ -646,11 +654,21 @@ async def test_chat_span_matches_instrumented_model_shape() -> None:
         [
             InputTranscript(text='hello there', is_final=True),
             Transcript(text='hi, how can I help?'),
-            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
-            TurnCompleteEvent(),
+            SessionUsageEvent(
+                usage=RequestUsage(input_tokens=10, output_tokens=4),
+                provider_response_id='resp-1',
+                finish_reason='stop',
+            ),
+            TurnCompleteEvent(provider_response_id='resp-1', finish_reason='stop'),
         ]
     )
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        provider_name='openai',
+    )
     _ = await collect_events(session)
 
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
@@ -658,6 +676,10 @@ async def test_chat_span_matches_instrumented_model_shape() -> None:
     assert chat.attributes['gen_ai.operation.name'] == 'chat'
     assert chat.attributes['gen_ai.request.model'] == 'gpt-realtime'
     assert chat.attributes['gen_ai.response.model'] == 'gpt-realtime'
+    assert chat.attributes['gen_ai.provider.name'] == 'openai'
+    assert chat.attributes['gen_ai.system'] == 'openai'
+    assert chat.attributes['gen_ai.response.id'] == 'resp-1'
+    assert chat.attributes['gen_ai.response.finish_reasons'] == ('stop',)
     # Per-response usage under the standard (non-aggregated) namespace, exactly as the classic path.
     assert chat.attributes['gen_ai.usage.input_tokens'] == 10
     assert chat.attributes['gen_ai.usage.output_tokens'] == 4
@@ -666,14 +688,16 @@ async def test_chat_span_matches_instrumented_model_shape() -> None:
         {'role': 'user', 'parts': [{'type': 'text', 'content': 'hello there'}]},
     ]
     assert json.loads(str(chat.attributes['gen_ai.output.messages'])) == [
-        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'hi, how can I help?'}]},
+        {
+            'role': 'assistant',
+            'parts': [{'type': 'text', 'content': 'hi, how can I help?'}],
+            'finish_reason': 'stop',
+        },
     ]
     assert 'gen_ai.input.messages' in json.loads(str(chat.attributes['logfire.json_schema']))['properties']
-    # Honest omissions vs. the classic `chat` span: no provider/system, server address, request
-    # parameters/settings, or cost (the session has only a model name, no provider or base URL).
+    # Honest omissions vs. the classic `chat` span: no server address, request parameters/settings,
+    # or cost (the session has no provider base URL and does not calculate per-response cost).
     for omitted in (
-        'gen_ai.provider.name',
-        'gen_ai.system',
         'server.address',
         'model_request_parameters',
         'gen_ai.request.temperature',
@@ -706,7 +730,7 @@ async def test_include_content_false_redacts_chat_span_messages() -> None:
         {'role': 'user', 'parts': [{'type': 'text'}]},
     ]
     assert json.loads(str(chat.attributes['gen_ai.output.messages'])) == [
-        {'role': 'assistant', 'parts': [{'type': 'text'}]},
+        {'role': 'assistant', 'parts': [{'type': 'text'}], 'finish_reason': 'stop'},
     ]
     assert chat.attributes['gen_ai.response.model'] == 'gpt-realtime'
 

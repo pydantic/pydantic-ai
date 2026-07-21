@@ -37,6 +37,7 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
     TextPart,
@@ -297,6 +298,7 @@ async def test_assistant_transcript_partials_then_final() -> None:
                 parts=[SpeechPart(speaker='assistant', transcript='Hi there')],
                 model_name='m',
                 timestamp=IsDatetime(),
+                finish_reason='stop',
             )
         ]
     )
@@ -334,6 +336,25 @@ async def test_user_transcript_final_becomes_request() -> None:
     assert session.new_messages() == snapshot(
         [ModelRequest(parts=[SpeechPart(speaker='user', transcript='what is the weather')])]
     )
+
+
+async def test_interleaved_user_transcripts_use_item_ids() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='first ', item_id='item-1'),
+            InputTranscript(text='second ', item_id='item-2'),
+            InputTranscript(text='second turn', is_final=True, item_id='item-2'),
+            InputTranscript(text='first turn', is_final=True, item_id='item-1'),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, provider_name='openai')
+    _ = await collect_events(session)
+
+    parts = [message.parts[0] for message in session.new_messages() if isinstance(message, ModelRequest)]
+    assert parts == [
+        SpeechPart(speaker='user', transcript='first turn', id='item-1', provider_name='openai'),
+        SpeechPart(speaker='user', transcript='second turn', id='item-2', provider_name='openai'),
+    ]
 
 
 async def test_partial_only_user_transcript_finalized_on_turn_complete() -> None:
@@ -388,6 +409,7 @@ async def test_audio_delta_streams_and_transcript_pairs() -> None:
                 parts=[SpeechPart(speaker='assistant', transcript='hi')],
                 model_name='m',
                 timestamp=IsDatetime(),
+                finish_reason='stop',
             )
         ]
     )
@@ -423,9 +445,31 @@ async def test_interrupted_turn_keeps_partial_transcript() -> None:
                 parts=[SpeechPart(speaker='assistant', transcript='the answer is ')],
                 model_name='m',
                 timestamp=IsDatetime(),
+                state='interrupted',
             )
         ]
     )
+
+
+async def test_speech_part_provider_item_id_and_gemini_fallback() -> None:
+    openai = RealtimeSession(
+        FakeRealtimeConnection([Transcript(text='hello', is_final=True, item_id='item-a'), TurnCompleteEvent()]),
+        _noop_runner,
+        provider_name='openai',
+    )
+    gemini = RealtimeSession(
+        FakeRealtimeConnection([Transcript(text='hello', is_final=True), TurnCompleteEvent()]),
+        _noop_runner,
+        provider_name='google',
+    )
+    _ = await collect_events(openai)
+    _ = await collect_events(gemini)
+
+    openai_part = openai.new_messages()[0].parts[0]
+    gemini_part = gemini.new_messages()[0].parts[0]
+    assert isinstance(openai_part, SpeechPart) and isinstance(gemini_part, SpeechPart)
+    assert (openai_part.id, openai_part.provider_name) == ('item-a', 'openai')
+    assert (gemini_part.id, gemini_part.provider_name) == (None, None)
 
 
 # --- tool calls: history + events --------------------------------------------------------------
@@ -485,6 +529,7 @@ async def test_tool_call_round_builds_classic_history() -> None:
                 parts=[SpeechPart(speaker='assistant', transcript="It's sunny in Paris")],
                 model_name='m',
                 timestamp=IsDatetime(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -525,10 +570,10 @@ async def test_invalid_json_args_reported_without_calling_tool() -> None:
     session = RealtimeSession(conn, _noop_runner)
     events = await collect_events(session)
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert isinstance(result.part, ToolReturnPart)
+    assert isinstance(result.part, RetryPromptPart)
     assert 'could not parse tool arguments' in str(result.part.content)
     assert isinstance(conn.sent[0], ToolResult)
-    assert 'could not parse tool arguments' in conn.sent[0].output
+    assert conn.sent[0].output == result.part.model_response()
 
 
 async def test_non_object_json_args_reported() -> None:
@@ -536,20 +581,20 @@ async def test_non_object_json_args_reported() -> None:
     session = RealtimeSession(conn, _noop_runner)
     events = await collect_events(session)
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, RetryPromptPart)
     assert 'expected tool arguments to be a JSON object' in str(result.part.content)
 
 
-async def test_tool_runner_exception_becomes_error_result() -> None:
+async def test_tool_runner_exception_ends_session() -> None:
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         raise RuntimeError('kaboom')
 
     session = RealtimeSession(conn, runner)
-    events = await collect_events(session)
-    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert result.part.content == 'Error: kaboom'
-    assert conn.sent == [ToolResult(tool_call_id='tc', output='Error: kaboom')]
+    with pytest.raises(RuntimeError, match='kaboom'):
+        await collect_events(session)
+    assert conn.sent == []
 
 
 @pytest.mark.parametrize(
@@ -582,6 +627,15 @@ async def test_response_model_name_prefers_server_reported() -> None:
     _ = await collect_events(session)
     response = next(m for m in session.all_messages() if isinstance(m, ModelResponse))
     assert response.model_name == 'grok-voice-latest'
+
+
+async def test_agent_realtime_session_threads_provider_name() -> None:
+    agent: Agent[None, str] = Agent()
+    model = FakeRealtimeModel(FakeRealtimeConnection([Transcript(text='hi', is_final=True), TurnCompleteEvent()]))
+    async with agent.realtime_session(model=model) as session:
+        _ = [event async for event in session]
+    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
+    assert response.provider_name == 'fake'
 
 
 async def test_tool_does_not_block_other_events() -> None:
@@ -1348,7 +1402,10 @@ async def test_audio_only_user_turn_finalized_on_speech_stopped() -> None:
         [
             ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))]),
             ModelResponse(
-                parts=[SpeechPart(speaker='assistant', transcript='Hi')], model_name='m', timestamp=IsDatetime()
+                parts=[SpeechPart(speaker='assistant', transcript='Hi')],
+                model_name='m',
+                timestamp=IsDatetime(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1368,7 +1425,10 @@ async def test_audio_only_user_turn_finalized_on_turn_complete() -> None:
         [
             ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))]),
             ModelResponse(
-                parts=[SpeechPart(speaker='assistant', transcript='Hi')], model_name='m', timestamp=IsDatetime()
+                parts=[SpeechPart(speaker='assistant', transcript='Hi')],
+                model_name='m',
+                timestamp=IsDatetime(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1493,6 +1553,7 @@ async def test_all_messages_includes_seed_new_messages_excludes_it() -> None:
                 parts=[SpeechPart(speaker='assistant', transcript='reply')],
                 model_name='m',
                 timestamp=IsDatetime(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1502,6 +1563,7 @@ async def test_all_messages_includes_seed_new_messages_excludes_it() -> None:
                 parts=[SpeechPart(speaker='assistant', transcript='reply')],
                 model_name='m',
                 timestamp=IsDatetime(),
+                finish_reason='stop',
             )
         ]
     )
@@ -1544,6 +1606,7 @@ async def test_handoff_to_standard_agent_run() -> None:
                 parts=[SpeechPart(speaker='assistant', transcript='hi there')],
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1618,6 +1681,7 @@ async def test_grounding_streams_and_folds_native_tool_parts() -> None:
             parts=[*grounding, SpeechPart(speaker='assistant', transcript='It is sunny in Rome')],
             model_name='gemini-live-2.5-flash',
             timestamp=IsDatetime(),
+            finish_reason='stop',
         )
     ]
 
@@ -1668,6 +1732,7 @@ async def test_grounded_history_hands_off_with_native_parts_intact() -> None:
                 ],
                 model_name='gemini-live-2.5-flash',
                 timestamp=IsDatetime(),
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='and now?', timestamp=IsDatetime())],
@@ -1743,6 +1808,7 @@ async def test_code_execution_history_hands_off_with_native_parts_intact() -> No
                 ],
                 model_name='gemini-live-2.5-flash',
                 timestamp=IsDatetime(),
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='and 2 + 2?', timestamp=IsDatetime())],
@@ -1861,9 +1927,9 @@ async def test_agent_realtime_session_tool_exception() -> None:
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='explode', args='{}'), TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
-        events = [e async for e in session]
-    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert 'Error' in str(result.part.content) and 'nope' in str(result.part.content)
+        with pytest.raises(ValueError, match='nope'):
+            _ = [e async for e in session]
+    assert conn.sent == []
 
 
 async def test_agent_realtime_session_validates_and_coerces_args() -> None:
@@ -1903,7 +1969,10 @@ async def test_agent_realtime_session_invalid_args_return_retry_message() -> Non
         events = [e async for e in session]
 
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert 'validation error' in str(result.part.content)
+    assert isinstance(result.part, RetryPromptPart)
+    assert 'validation error' in result.part.model_response()
+    assert isinstance(session.new_messages()[1], ModelRequest)
+    assert isinstance(session.new_messages()[1].parts[0], RetryPromptPart)
 
 
 class _ToolRoundConnection(FakeRealtimeConnection):
@@ -1931,9 +2000,10 @@ async def test_agent_realtime_session_retry_limit_advances_across_tool_rounds() 
             async for event in session:
                 events.append(event)
 
-    results = [e.part.content for e in events if isinstance(e, FunctionToolResultEvent)]
-    assert len(results) == 1 and str(results[0]).startswith('1 is not allowed')
-    assert conn.sent == [ToolResult(tool_call_id='tc1', output=str(results[0]))]
+    results = [e.part for e in events if isinstance(e, FunctionToolResultEvent)]
+    assert len(results) == 1 and isinstance(results[0], RetryPromptPart)
+    assert str(results[0].content).startswith('1 is not allowed')
+    assert conn.sent == [ToolResult(tool_call_id='tc1', output=results[0].model_response())]
 
 
 async def test_agent_realtime_session_runs_args_validator() -> None:
@@ -1962,7 +2032,11 @@ async def test_agent_realtime_session_tool_return_is_unwrapped() -> None:
 
     @agent.tool_plain
     def info() -> ToolReturn:
-        return ToolReturn(return_value='the-value', content=['extra context'])
+        return ToolReturn(
+            return_value={'value': 42},
+            content=['extra context'],
+            metadata={'source': 'tool'},
+        )
 
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='info', args='{}'), TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
@@ -1970,7 +2044,16 @@ async def test_agent_realtime_session_tool_return_is_unwrapped() -> None:
         events = [e async for e in session]
 
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert result.part.content == 'the-value'
+    assert isinstance(result.part, ToolReturnPart)
+    assert result.part.content == {'value': 42}
+    assert result.part.metadata == {'source': 'tool'}
+    assert result.content == ['extra context']
+    assert conn.sent == [ToolResult(tool_call_id='tc', output='{"value":42}', content=['extra context'])]
+    request = next(message for message in session.new_messages() if isinstance(message, ModelRequest))
+    assert request.parts == [
+        result.part,
+        UserPromptPart(content=['extra context'], timestamp=IsDatetime()),
+    ]
 
 
 async def test_agent_realtime_session_denied_tool_returns_denial_message() -> None:
@@ -1989,6 +2072,8 @@ async def test_agent_realtime_session_denied_tool_returns_denial_message() -> No
         events = [e async for e in session]
 
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert result.part.outcome == 'denied'
     assert 'denied' in str(result.part.content).lower()
 
 

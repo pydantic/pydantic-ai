@@ -31,6 +31,7 @@ from ..messages import (
     BinaryContent,
     CompactionPart,
     FilePart,
+    FinishReason,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -44,6 +45,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
 from ..profiles import DEFAULT_THINKING_TAGS
@@ -323,6 +325,16 @@ def _message_item(role: Literal['user', 'assistant'], content: list[dict[str, An
     return {'type': 'message', 'role': role, 'content': content}
 
 
+async def user_message_item(
+    content: str | Sequence[UserContent], *, provider_name: str, supports_images: bool
+) -> dict[str, Any] | None:
+    """Build a live follow-up user item through the same normalization used for seeded history."""
+    normalized = await seed_user_content(
+        UserPromptPart(content=content), provider_name=provider_name, supports_images=supports_images
+    )
+    return _message_item('user', items) if (items := _user_content_items(normalized)) else None
+
+
 def _str_field(data: dict[str, Any], key: str, default: str = '') -> str:
     """Return `data[key]` if it is a string, otherwise `default`."""
     value = data.get(key, default)
@@ -355,6 +367,22 @@ def _is_function_call_only(output: Any) -> bool:
     return bool(entries) and all(obj(entry).get('type') == 'function_call' for entry in entries)
 
 
+def response_finish_reason(response: dict[str, Any]) -> FinishReason | None:
+    """Map an OpenAI-protocol response `status`/output to a shared `FinishReason`.
+
+    A `'cancelled'` response is a barge-in (the user interrupted the model), which isn't an error and
+    has no dedicated `FinishReason`, so it's left unset — the response's `state='interrupted'` carries
+    that meaning, mirroring how a classic cancelled stream leaves `finish_reason` as-is. `'incomplete'`
+    likewise has no clean mapping and is left unset. Only a genuine `'failed'` status is an `'error'`.
+    """
+    status = response.get('status')
+    if status == 'completed':
+        return 'tool_call' if _is_function_call_only(response.get('output')) else 'stop'
+    if status == 'failed':
+        return 'error'
+    return None
+
+
 def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     """Map a `response.done` event, returning `None` for function-call-only responses.
 
@@ -368,7 +396,13 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     output = response.get('output')
     if _is_function_call_only(output):
         return None
-    return TurnCompleteEvent(interrupted=response.get('status') == 'cancelled')
+    status = response.get('status')
+    response_id = response.get('id')
+    return TurnCompleteEvent(
+        interrupted=status == 'cancelled',
+        provider_response_id=response_id if isinstance(response_id, str) else None,
+        finish_reason=response_finish_reason(response),
+    )
 
 
 def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
@@ -382,13 +416,15 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         delta = data.get('delta')
         if not isinstance(delta, str):
             return None
-        return AudioDelta(data=base64.b64decode(delta))
+        return AudioDelta(data=base64.b64decode(delta), item_id=_str_field(data, 'item_id') or None)
 
     if event_type in _AUDIO_TRANSCRIPT_DELTA_TYPES:
-        return Transcript(text=_str_field(data, 'delta'), is_final=False)
+        return Transcript(text=_str_field(data, 'delta'), is_final=False, item_id=_str_field(data, 'item_id') or None)
 
     if event_type in _AUDIO_TRANSCRIPT_DONE_TYPES:
-        return Transcript(text=_str_field(data, 'transcript'), is_final=True)
+        return Transcript(
+            text=_str_field(data, 'transcript'), is_final=True, item_id=_str_field(data, 'item_id') or None
+        )
 
     if event_type == 'response.output_text.delta':
         return Transcript(text=_str_field(data, 'delta'), is_final=False, output_text=True)
@@ -397,10 +433,14 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return Transcript(text=_str_field(data, 'text'), is_final=True, output_text=True)
 
     if event_type == 'conversation.item.input_audio_transcription.delta':
-        return InputTranscript(text=_str_field(data, 'delta'), is_final=False)
+        return InputTranscript(
+            text=_str_field(data, 'delta'), is_final=False, item_id=_str_field(data, 'item_id') or None
+        )
 
     if event_type in _INPUT_TRANSCRIPT_DONE_TYPES:
-        return InputTranscript(text=_str_field(data, 'transcript'), is_final=True)
+        return InputTranscript(
+            text=_str_field(data, 'transcript'), is_final=True, item_id=_str_field(data, 'item_id') or None
+        )
 
     if event_type in _FUNCTION_CALL_DONE_TYPES:
         return ToolCall(

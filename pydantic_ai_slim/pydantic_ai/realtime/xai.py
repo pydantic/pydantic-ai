@@ -112,6 +112,9 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     input-transcription events (see [`map_event`][pydantic_ai.realtime.xai.map_event]).
     """
 
+    _provider_name = 'xai'
+    _supports_tool_result_images = False
+
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return map_event(data)
 

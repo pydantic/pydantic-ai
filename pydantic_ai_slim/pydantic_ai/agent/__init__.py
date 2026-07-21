@@ -3202,6 +3202,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     tool_manager,
                     instrumentation=session_instrumentation_settings,
                     model_name=model.model_name,
+                    provider_name=model.system,
                     agent_name=self.name,
                     usage=run_context.usage,
                     usage_limits=usage_limits,

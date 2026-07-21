@@ -57,6 +57,7 @@ from pydantic_ai.realtime import (
     InputTranscript,
     RealtimeModelProfile,
     RealtimeModelSettings,
+    RealtimeSession,
     ReconnectedEvent,
     SessionUsageEvent,
     ToolCall,
@@ -73,6 +74,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import try_import
+from .test_session import make_tool_manager
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
@@ -112,8 +114,8 @@ def _connect(
 def test_map_audio_delta() -> None:
     payload = base64.b64encode(b'\x01\x02').decode('ascii')
     for event_type in ('response.output_audio.delta', 'response.audio.delta'):
-        event = map_event({'type': event_type, 'delta': payload})
-        assert event == AudioDelta(data=b'\x01\x02')
+        event = map_event({'type': event_type, 'delta': payload, 'item_id': 'item-a'})
+        assert event == AudioDelta(data=b'\x01\x02', item_id='item-a')
 
 
 def test_map_audio_delta_non_string_delta() -> None:
@@ -122,9 +124,13 @@ def test_map_audio_delta_non_string_delta() -> None:
 
 def test_map_transcript_delta_and_done() -> None:
     for event_type in ('response.output_audio_transcript.delta', 'response.audio_transcript.delta'):
-        assert map_event({'type': event_type, 'delta': 'hel'}) == Transcript(text='hel', is_final=False)
+        assert map_event({'type': event_type, 'delta': 'hel', 'item_id': 'item-a'}) == Transcript(
+            text='hel', is_final=False, item_id='item-a'
+        )
     for event_type in ('response.output_audio_transcript.done', 'response.audio_transcript.done'):
-        assert map_event({'type': event_type, 'transcript': 'hello'}) == Transcript(text='hello', is_final=True)
+        assert map_event({'type': event_type, 'transcript': 'hello', 'item_id': 'item-a'}) == Transcript(
+            text='hello', is_final=True, item_id='item-a'
+        )
 
 
 def test_map_text_output_delta_and_done() -> None:
@@ -143,13 +149,21 @@ def test_map_transcript_missing_field_defaults_to_empty() -> None:
 
 
 def test_map_input_transcript() -> None:
-    event = map_event({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'weather?'})
-    assert event == InputTranscript(text='weather?', is_final=True)
+    event = map_event(
+        {
+            'type': 'conversation.item.input_audio_transcription.completed',
+            'transcript': 'weather?',
+            'item_id': 'item-u',
+        }
+    )
+    assert event == InputTranscript(text='weather?', is_final=True, item_id='item-u')
 
 
 def test_map_input_transcript_delta() -> None:
-    event = map_event({'type': 'conversation.item.input_audio_transcription.delta', 'delta': 'wea'})
-    assert event == InputTranscript(text='wea', is_final=False)
+    event = map_event(
+        {'type': 'conversation.item.input_audio_transcription.delta', 'delta': 'wea', 'item_id': 'item-u'}
+    )
+    assert event == InputTranscript(text='wea', is_final=False, item_id='item-u')
 
 
 def test_map_function_call() -> None:
@@ -180,11 +194,17 @@ def _response_done(response: Any) -> dict[str, Any]:
 
 
 def test_map_response_done_normal() -> None:
-    assert map_event(_response_done({'status': 'completed', 'output': []})) == TurnCompleteEvent(interrupted=False)
+    assert map_event(_response_done({'id': 'resp-1', 'status': 'completed', 'output': []})) == TurnCompleteEvent(
+        interrupted=False, provider_response_id='resp-1', finish_reason='stop'
+    )
 
 
 def test_map_response_done_cancelled() -> None:
-    assert map_event(_response_done({'status': 'cancelled'})) == TurnCompleteEvent(interrupted=True)
+    # A cancelled response is a barge-in, not an error: `interrupted=True` (→ `state='interrupted'`)
+    # carries the meaning and `finish_reason` is left unset, matching a classic cancelled stream.
+    assert map_event(_response_done({'id': 'resp-2', 'status': 'cancelled'})) == TurnCompleteEvent(
+        interrupted=True, provider_response_id='resp-2', finish_reason=None
+    )
 
 
 def test_map_response_done_function_call_only_is_skipped() -> None:
@@ -195,7 +215,7 @@ def test_map_response_done_function_call_only_is_skipped() -> None:
 
 def test_map_response_done_mixed_output_is_turn_complete() -> None:
     data = _response_done({'status': 'completed', 'output': [{'type': 'function_call'}, {'type': 'message'}]})
-    assert map_event(data) == TurnCompleteEvent(interrupted=False)
+    assert map_event(data) == TurnCompleteEvent(interrupted=False, finish_reason='stop')
 
 
 def test_map_response_done_without_response_object() -> None:
@@ -1171,6 +1191,42 @@ async def test_connection_send_tool_result_triggers_response() -> None:
 
 
 @pytest.mark.anyio
+async def test_connection_send_tool_result_with_follow_up_user_content() -> None:
+    ws = FakeWebSocket([])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(
+        ToolResult(
+            tool_call_id='call_1',
+            output='See file result.png.',
+            content=[
+                'This is file result.png:',
+                BinaryContent(data=b'png', media_type='image/png'),
+                'extra context',
+            ],
+        )
+    )
+    assert [json.loads(frame) for frame in ws.sent] == [
+        {
+            'type': 'conversation.item.create',
+            'item': {'type': 'function_call_output', 'call_id': 'call_1', 'output': 'See file result.png.'},
+        },
+        {
+            'type': 'conversation.item.create',
+            'item': {
+                'type': 'message',
+                'role': 'user',
+                'content': [
+                    {'type': 'input_text', 'text': 'This is file result.png:'},
+                    {'type': 'input_image', 'image_url': 'data:image/png;base64,cG5n'},
+                    {'type': 'input_text', 'text': 'extra context'},
+                ],
+            },
+        },
+        {'type': 'response.create'},
+    ]
+
+
+@pytest.mark.anyio
 async def test_connection_send_image() -> None:
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
@@ -1236,15 +1292,24 @@ async def test_response_done_emits_usage_then_turn_complete() -> None:
     done = json.dumps(
         {
             'type': 'response.done',
-            'response': {'status': 'completed', 'output': [], 'usage': {'input_tokens': 3, 'output_tokens': 2}},
+            'response': {
+                'id': 'resp-1',
+                'status': 'completed',
+                'output': [],
+                'usage': {'input_tokens': 3, 'output_tokens': 2},
+            },
         }
     )
     ws = FakeWebSocket([done])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     events = [e async for e in conn]
     assert events == [
-        SessionUsageEvent(usage=RequestUsage(input_tokens=3, output_tokens=2)),
-        TurnCompleteEvent(interrupted=False),
+        SessionUsageEvent(
+            usage=RequestUsage(input_tokens=3, output_tokens=2),
+            provider_response_id='resp-1',
+            finish_reason='stop',
+        ),
+        TurnCompleteEvent(interrupted=False, provider_response_id='resp-1', finish_reason='stop'),
     ]
 
 
@@ -1253,14 +1318,65 @@ async def test_response_done_function_call_only_still_emits_usage() -> None:
     done = json.dumps(
         {
             'type': 'response.done',
-            'response': {'status': 'completed', 'output': [{'type': 'function_call'}], 'usage': {'output_tokens': 5}},
+            'response': {
+                'id': 'resp-tool',
+                'status': 'completed',
+                'output': [{'type': 'function_call'}],
+                'usage': {'output_tokens': 5},
+            },
         }
     )
     ws = FakeWebSocket([done])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     events = [e async for e in conn]
     # function-call-only → no TurnCompleteEvent, but usage is still surfaced
-    assert events == [SessionUsageEvent(usage=RequestUsage(output_tokens=5))]
+    assert events == [
+        SessionUsageEvent(
+            usage=RequestUsage(output_tokens=5),
+            provider_response_id='resp-tool',
+            finish_reason='tool_call',
+        )
+    ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ('status', 'finish_reason', 'state'),
+    # A cancelled (barge-in) turn is interrupted, not an error, so `finish_reason` stays unset.
+    [('completed', 'stop', 'complete'), ('cancelled', None, 'interrupted')],
+)
+async def test_session_stamps_openai_response_metadata(status: str, finish_reason: str | None, state: str) -> None:
+    transcript = json.dumps(
+        {
+            'type': 'response.output_audio_transcript.done',
+            'item_id': 'item-1',
+            'transcript': 'hello',
+        }
+    )
+    done = json.dumps(
+        {
+            'type': 'response.done',
+            'response': {'id': 'resp-1', 'status': status, 'output': []},
+        }
+    )
+    connection = OpenAIRealtimeConnection(FakeWebSocket([transcript, done]))  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        make_tool_manager(),
+        model_name='gpt-realtime',
+        provider_name='openai',
+    )
+    async with session:
+        _ = [event async for event in session]
+
+    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
+    assert response.provider_name == 'openai'
+    assert response.provider_response_id == 'resp-1'
+    assert response.finish_reason == finish_reason
+    assert response.state == state
+    speech = response.parts[0]
+    assert isinstance(speech, SpeechPart)
+    assert (speech.id, speech.provider_name) == ('item-1', 'openai')
 
 
 class DroppingWebSocket(FakeWebSocket):
@@ -1611,7 +1727,7 @@ async def test_connection_iter_skips_unmapped_events(monkeypatch: pytest.MonkeyP
     model = OpenAIRealtimeModel('gpt-realtime')
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
-    assert events == [TurnCompleteEvent(interrupted=False)]
+    assert events == [TurnCompleteEvent(interrupted=False, finish_reason='stop')]
 
 
 async def test_agent_realtime_session_rejects_native_tools() -> None:

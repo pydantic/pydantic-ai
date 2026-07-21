@@ -75,10 +75,12 @@ from ._openai_protocol import (
     realtime_websocket_url,
     resolve_base_turn_detection,
     resolve_transcription_model,
+    response_finish_reason,
     seed_items,
     tool_choice_config,
     tool_def_to_openai,
     turn_detection_config,
+    user_message_item,
 )
 
 # `input_transcription_model='auto'` resolves to this — OpenAI's recommended realtime transcription model
@@ -167,6 +169,9 @@ def _map_usage(response: dict[str, Any]) -> RequestUsage | None:
 class OpenAIRealtimeConnection(RealtimeConnection):
     """A live WebSocket connection to the OpenAI Realtime API."""
 
+    _provider_name = 'openai'
+    _supports_tool_result_images = True
+
     def __init__(
         self,
         ws: ClientConnection,
@@ -240,6 +245,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     },
                 }
             )
+            if content.content and (
+                item := await user_message_item(
+                    content.content,
+                    provider_name=self._provider_name,
+                    supports_images=self._supports_tool_result_images,
+                )
+            ):
+                await self._send_event({'type': 'conversation.item.create', 'item': item})
             await self._request_response()
         elif isinstance(content, ImageInput):
             # An image is added as conversation context (like a video frame), not a turn of its own,
@@ -371,7 +384,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # top level of the `response.done` frame (its `response.usage` is empty), so fall back to it.
             usage = _map_usage(response) or _map_usage(data)
             if usage is not None:
-                events.append(SessionUsageEvent(usage=usage))
+                events.append(
+                    SessionUsageEvent(
+                        usage=usage,
+                        provider_response_id=response_id if isinstance(response_id, str) else None,
+                        finish_reason=response_finish_reason(response),
+                    )
+                )
             if matches_active_response and self._pending_response:
                 self._pending_response = False
                 # A cancelled response means the user barged in: a new turn is starting, so

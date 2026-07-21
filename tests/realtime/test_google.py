@@ -465,6 +465,29 @@ async def test_send_tool_result_echoes_name() -> None:
     assert response.response == {'output': 'Sunny'}
 
 
+async def test_send_tool_result_content_falls_back_to_text() -> None:
+    session = _RecordingSession()
+    conn = _conn(session)
+    conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            tool_call=genai_types.LiveServerToolCall(
+                function_calls=[genai_types.FunctionCall(id='c1', name='inspect', args={})]
+            )
+        )
+    )
+    await conn.send(
+        ToolResult(
+            tool_call_id='c1',
+            output='done',
+            content=[
+                TextContent('extra context'),
+                BinaryContent(data=b'png', media_type='image/png', identifier='result.png'),
+            ],
+        )
+    )
+    assert session.tool_responses[0].response == {'output': 'done\n\nextra context\n\n[BinaryContent: result.png]'}
+
+
 async def test_parallel_id_less_calls_do_not_collide() -> None:
     # Gemini may emit multiple function calls without ids; each must get a distinct internal id so
     # results echo the right name back (Gemini gets `id=None`, which is what it sent).

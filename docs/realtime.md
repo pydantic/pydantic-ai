@@ -139,7 +139,7 @@ Spoken content (both the user's and the model's) streams as a
 | [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | A [`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta]: `audio_chunk` for playback and/or `transcript_delta` for incremental text (a [`TextPartDelta`][pydantic_ai.messages.TextPartDelta] in text mode). |
 | [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | The completed part: speech has `transcript` and optional retained `audio`, text has `content`, and tool parts carry their own fields. |
 | [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] | The session began executing a tool the model requested (carries the `ToolCallPart`). |
-| [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | The tool finished and produced a `ToolReturnPart`. Normally the result is sent to the model; a provider-cancelled call records a synthetic cancellation result only in local history. |
+| [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | The tool finished and produced a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]. Normally the result is sent to the model; a provider-cancelled call records a synthetic cancellation result only in local history. |
 
 The remaining realtime control-plane events:
 
@@ -546,15 +546,19 @@ model keeps quiet when nothing changed.
 Tools registered on the agent are offered to the realtime model. When the model calls one, the
 session emits a [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent], runs the tool,
 normally sends the result back, and emits a
-[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Parse failures and tool
-exceptions are returned as string results so the conversation does not stall.
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Parse failures and
+[`ModelRetry`][pydantic_ai.exceptions.ModelRetry] produce a
+[`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], matching a standard agent run. Other tool
+exceptions end the session and propagate to the caller.
 If the provider cancels an in-flight call, Pydantic AI cancels the task and emits a synthetic
 cancellation result for valid local history, but does not send that abandoned result back to the
 provider.
 
-Realtime provider tool-output channels are string-only. If a tool returns
-[`ToolReturn`][pydantic_ai.messages.ToolReturn], only `return_value` is sent and recorded; `content` and
-`metadata` are not preserved.
+Realtime provider tool-output channels are string-only, but session history preserves the structured
+`return_value`, `content`, and `metadata` of a [`ToolReturn`][pydantic_ai.messages.ToolReturn]. The
+return value is rendered as text only when it is sent over the provider's tool-output channel.
+OpenAI and xAI receive `content` as a follow-up user conversation item; Gemini receives its textual
+representation.
 
 ### Concurrent tools
 

@@ -29,6 +29,7 @@ from ..messages import (
     BinaryContent,
     CachePoint,
     DocumentUrl,
+    FinishReason,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
@@ -216,6 +217,8 @@ class ToolResult:
     """Identifier of the `ToolCall` this result answers."""
     output: str
     """The tool's output, rendered as a string."""
+    content: Sequence[UserContent] | None = None
+    """Additional user content to send after the tool output when the provider supports it."""
 
 
 @dataclass
@@ -303,6 +306,8 @@ class AudioDelta:
 
     data: bytes
     """Raw PCM audio bytes. The sample rate is provider-specific."""
+    item_id: str | None = None
+    """Provider item ID for the spoken output this chunk belongs to, when available."""
 
 
 @dataclass
@@ -317,23 +322,24 @@ class Transcript:
     """Whether this is the model's plain text output (`output_modalities=('text',)`) rather than a
     transcription of spoken audio. Text output becomes a [`TextPart`][pydantic_ai.messages.TextPart];
     an audio transcript becomes a [`SpeechPart`][pydantic_ai.messages.SpeechPart]."""
+    item_id: str | None = None
+    """Provider item ID for the spoken output, when available."""
 
 
 @dataclass
 class InputTranscript:
     """A transcription of the user's audio input (partial or final).
 
-    The session attributes these to the current user turn by arrival order; it does not carry the
-    provider's per-item id. OpenAI documents input-transcription ordering as not guaranteed between
-    turns, so a fast back-to-back turn could in principle misattribute a late transcript. This is
-    accepted for now (single-turn-at-a-time voice is the norm); thread an item id through if
-    interleaved-turn attribution becomes necessary.
+    Providers with per-item IDs use `item_id` to associate interleaved transcripts with the correct
+    user turn. Providers without them retain arrival-order association.
     """
 
     text: str
     """Transcript text."""
     is_final: bool = False
     """Whether this is the final transcript for the user's turn."""
+    item_id: str | None = None
+    """Provider item ID for the user's turn, when available."""
 
 
 @dataclass
@@ -373,6 +379,12 @@ class TurnCompleteEvent:
     interrupted: bool = False
     """Whether the turn ended because it was cancelled (e.g. the user barged in)."""
 
+    provider_response_id: str | None = None
+    """Provider-assigned ID for the completed response, when available."""
+
+    finish_reason: FinishReason | None = None
+    """Normalized reason the provider finished the response, when available."""
+
     event_kind: Literal['turn_complete'] = 'turn_complete'
     """Event type identifier, used as a discriminator."""
 
@@ -406,6 +418,12 @@ class SessionUsageEvent:
 
     usage: RequestUsage
     """Normalized token usage for the response, ready to accumulate into a `RunUsage`."""
+
+    provider_response_id: str | None = None
+    """Provider-assigned ID for the response this usage belongs to, when available."""
+
+    finish_reason: FinishReason | None = None
+    """Normalized completion reason for the response this usage belongs to, when available."""
 
     event_kind: Literal['session_usage'] = 'session_usage'
     """Event type identifier, used as a discriminator."""
