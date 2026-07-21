@@ -445,16 +445,25 @@ class InputTranscriptionFailedEvent:
 
 @dataclass
 class SessionUsageEvent:
-    """Token usage reported by the provider for a completed model response."""
+    """Usage reported by the provider for a model response or another run-level operation."""
 
     usage: RequestUsage
-    """Normalized token usage for the response, ready to accumulate into a `RunUsage`."""
+    """Normalized usage ready to accumulate into a `RunUsage`."""
 
     provider_response_id: str | None = None
     """Provider-assigned ID for the response this usage belongs to, when available."""
 
     finish_reason: FinishReason | None = None
     """Normalized completion reason for the response this usage belongs to, when available."""
+
+    response_scoped: bool = True
+    """Whether this usage belongs to a specific model response.
+
+    `True`, the default, accumulates it both into the run total and the response's
+    `ModelResponse.usage`. `False` is run-level only, e.g. input audio transcription usage,
+    which is billed on a separate model/meter and is accumulated into the run's `RunUsage`
+    but attributed to no `ModelResponse`.
+    """
 
     event_kind: Literal['session_usage'] = 'session_usage'
     """Event type identifier, used as a discriminator."""

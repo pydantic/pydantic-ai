@@ -738,6 +738,11 @@ The session accumulates token usage as the model responds. Read it from
 breakdowns) and tool-call counts. Usage updates are accumulated on `session.usage` and are not
 yielded as session events.
 
+Input-transcription (ASR) usage is reported separately in
+[`RunUsage.details`][pydantic_ai.usage.RunUsage.details] under `input_transcription_*` buckets. It is
+not included in the response token totals or attributed to any [`ModelResponse`][pydantic_ai.messages.ModelResponse],
+because transcription of the user's input audio uses a separate model and billing meter.
+
 ```python {test="skip" lint="skip"}
 async with agent.realtime_session(model=model) as session:
     async for event in session:

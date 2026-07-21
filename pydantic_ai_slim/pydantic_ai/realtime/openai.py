@@ -22,12 +22,17 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 try:
     import websockets
     from openai.types.realtime import (
+        ConversationItemInputAudioTranscriptionCompletedEvent,
         RealtimeResponseUsage,
         RealtimeSessionCreateRequest,
         ResponseAudioDeltaEvent,
         ResponseCreatedEvent,
         ResponseDoneEvent,
         SessionCreatedEvent,
+    )
+    from openai.types.realtime.conversation_item_input_audio_transcription_completed_event import (
+        UsageTranscriptTextUsageDuration,
+        UsageTranscriptTextUsageTokens,
     )
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
@@ -58,6 +63,7 @@ from ._base import (
     CommitAudio,
     CreateResponse,
     ImageInput,
+    InputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
@@ -75,6 +81,7 @@ from ._base import (
 )
 from ._openai_protocol import (
     AUDIO_DELTA_TYPES,
+    INPUT_TRANSCRIPT_DONE_TYPES,
     SemanticVAD,
     ServerVAD,
     expect_event,
@@ -171,6 +178,29 @@ def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
         output_audio_tokens=_int(out.audio_tokens if out is not None else None),
         details=details,
     )
+
+
+RealtimeTranscriptionUsage = UsageTranscriptTextUsageTokens | UsageTranscriptTextUsageDuration
+
+
+def _map_transcription_usage(usage: RealtimeTranscriptionUsage | None) -> RequestUsage | None:
+    """Map input-transcription usage into separate [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details]."""
+    if usage is None:
+        return None
+    details: dict[str, int] = {}
+    if usage.type == 'tokens':
+        token_details = usage.input_token_details
+        for key, raw in (
+            ('input_transcription_tokens', usage.total_tokens),
+            ('input_transcription_audio_tokens', token_details.audio_tokens if token_details is not None else None),
+            ('input_transcription_text_tokens', token_details.text_tokens if token_details is not None else None),
+        ):
+            if isinstance(raw, int) and not isinstance(raw, bool):
+                details[key] = raw
+    else:
+        if usage.seconds.is_integer():
+            details['input_transcription_seconds'] = int(usage.seconds)
+    return RequestUsage(details=details) if details else None
 
 
 class OpenAIRealtimeConnection(RealtimeConnection):
@@ -412,6 +442,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     await self._send_event({'type': 'response.create'})
         if (event := self._map_event(data)) is not None:
             events.append(event)
+            if isinstance(event, InputTranscript) and event.is_final and event_type in INPUT_TRANSCRIPT_DONE_TYPES:
+                completed = ConversationItemInputAudioTranscriptionCompletedEvent.construct(**data)
+                if (asr := _map_transcription_usage(completed.usage)) is not None:
+                    events.append(SessionUsageEvent(usage=asr, response_scoped=False))
         return events
 
     async def _try_reconnect(self) -> bool:

@@ -81,6 +81,11 @@ from .test_session import make_tool_manager
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
     from openai.types.realtime import RealtimeResponseUsage
+    from openai.types.realtime.conversation_item_input_audio_transcription_completed_event import (
+        UsageTranscriptTextUsageDuration,
+        UsageTranscriptTextUsageTokens,
+        UsageTranscriptTextUsageTokensInputTokenDetails,
+    )
 
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime import openai as rt_openai
@@ -97,6 +102,34 @@ def _wav_bytes(pcm: bytes, sample_rate: int = 24000) -> bytes:
         wav.setframerate(sample_rate)
         wav.writeframes(pcm)
     return buffer.getvalue()
+
+
+def test_map_transcription_usage() -> None:
+    assert rt_openai._map_transcription_usage(None) is None
+    assert rt_openai._map_transcription_usage(UsageTranscriptTextUsageDuration(type='duration', seconds=0.5)) is None
+    assert rt_openai._map_transcription_usage(
+        UsageTranscriptTextUsageDuration(type='duration', seconds=3)
+    ) == RequestUsage(details={'input_transcription_seconds': 3})
+    assert rt_openai._map_transcription_usage(
+        UsageTranscriptTextUsageTokens(
+            type='tokens',
+            input_tokens=5,
+            output_tokens=2,
+            total_tokens=7,
+            input_token_details=UsageTranscriptTextUsageTokensInputTokenDetails(audio_tokens=4, text_tokens=1),
+        )
+    ) == RequestUsage(
+        details={
+            'input_transcription_tokens': 7,
+            'input_transcription_audio_tokens': 4,
+            'input_transcription_text_tokens': 1,
+        }
+    )
+    assert rt_openai._map_transcription_usage(
+        UsageTranscriptTextUsageTokens(
+            type='tokens', input_tokens=5, output_tokens=2, total_tokens=7, input_token_details=None
+        )
+    ) == RequestUsage(details={'input_transcription_tokens': 7})
 
 
 def test_merge_realtime_profile_skips_empty_layers_and_applies_overrides() -> None:

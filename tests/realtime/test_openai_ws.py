@@ -144,6 +144,8 @@ async def test_audio_in_server_vad_turn(
     reply = messages[1]
     assert isinstance(reply, ModelResponse)
     assert isinstance(reply.parts[0], SpeechPart)
+    assert session.usage.details['input_transcription_seconds'] == 3
+    assert reply.usage.details.get('input_transcription_seconds') is None
 
 
 async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:

@@ -2948,6 +2948,29 @@ async def test_agent_realtime_session_external_usage_accumulates() -> None:
     assert usage.output_tokens == 3
 
 
+async def test_run_level_usage_is_not_attributed_to_or_finalize_response() -> None:
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'done'
+
+    conn = FakeRealtimeConnection(
+        [
+            Transcript(text='first response', is_final=True),
+            ToolCall(tool_call_id='pending', tool_name='noop', args='{}', response_usage_follows=True),
+            SessionUsageEvent(usage=RequestUsage(details={'input_transcription_seconds': 3}), response_scoped=False),
+            Transcript(text='second response', is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn, runner)
+
+    _ = await collect_events(session)
+
+    assert session.usage.details == {'input_transcription_seconds': 3}
+    responses = [message for message in session.new_messages() if isinstance(message, ModelResponse)]
+    assert len(responses) == 1
+    assert responses[0].usage.details == {}
+
+
 async def test_agent_realtime_session_token_limit_raises() -> None:
     conn = FakeRealtimeConnection(
         [SessionUsageEvent(usage=RequestUsage(input_tokens=100, output_tokens=100)), TurnCompleteEvent()]

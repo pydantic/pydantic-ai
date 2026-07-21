@@ -1404,6 +1404,19 @@ class RealtimeSession:
         if request_limit is not None and self.usage.requests > request_limit:
             raise UsageLimitExceeded(f'The next request would exceed the request_limit of {request_limit}')
 
+    def _accumulate_response_usage(self, event: SessionUsageEvent) -> None:
+        self._pending_response_usage = self._pending_response_usage + event.usage
+        self._pending_provider_response_id = event.provider_response_id or self._pending_provider_response_id
+        self._pending_finish_reason = event.finish_reason or self._pending_finish_reason
+        if self._tool_calls_awaiting_usage:
+            self._finalize_response(
+                provider_response_id=event.provider_response_id,
+                finish_reason=event.finish_reason,
+            )
+            # OpenAI emits this usage immediately before `response.done`; the response is complete
+            # already, so that terminal must not append a second, empty `ModelResponse`.
+            self._response_finalized_before_terminal = True
+
     async def _run_tool(self, call: ToolCall, call_part: ToolCallPart, validation_done: asyncio.Event) -> None:
         """Run a tool and feed its completion (or failure) back through the queue."""
         try:
@@ -1482,18 +1495,9 @@ class RealtimeSession:
             return False
         if isinstance(event, SessionUsageEvent):
             self.usage.incr(event.usage)
-            self._pending_response_usage = self._pending_response_usage + event.usage
-            self._pending_provider_response_id = event.provider_response_id or self._pending_provider_response_id
-            self._pending_finish_reason = event.finish_reason or self._pending_finish_reason
             self._check_token_limit()
-            if self._tool_calls_awaiting_usage:
-                self._finalize_response(
-                    provider_response_id=event.provider_response_id,
-                    finish_reason=event.finish_reason,
-                )
-                # OpenAI emits this usage immediately before `response.done`; the response is complete
-                # already, so that terminal must not append a second, empty `ModelResponse`.
-                self._response_finalized_before_terminal = True
+            if event.response_scoped:
+                self._accumulate_response_usage(event)
             if self._asap_drain_ready:
                 self._asap_drain_ready = False
                 await self._drain_pending_messages('asap')
