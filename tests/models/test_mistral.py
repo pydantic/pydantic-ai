@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, cast
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -55,7 +56,6 @@ with try_import() as imports_successful:
         CompletionResponseStreamChoiceFinishReason as MistralCompletionResponseStreamChoiceFinishReason,
         ContentChunk as MistralContentChunk,
         DeltaMessage as MistralDeltaMessage,
-        DocumentURLChunk as MistralDocumentURLChunk,
         FunctionCall as MistralFunctionCall,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
@@ -2822,8 +2822,6 @@ async def test_pdf_as_binary_content_input(allow_model_requests: None):
 
 
 async def test_txt_url_input(allow_model_requests: None):
-    from unittest.mock import AsyncMock, patch
-
     c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
     mock_client = MockMistralAI.create_mock(c)
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
@@ -2843,9 +2841,18 @@ async def test_txt_url_input(allow_model_requests: None):
     assert result.output == 'world'
 
     messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
-    text_chunks = [chunk.text for chunk in messages[0].content if isinstance(chunk, MistralTextChunk)]
-    assert any('-----BEGIN FILE' in text and 'Dummy TXT file' in text for text in text_chunks)
-    assert not any(isinstance(chunk, MistralDocumentURLChunk) for chunk in messages[0].content)
+    assert messages[0].content == snapshot(
+        [
+            MistralTextChunk(text='hello'),
+            MistralTextChunk(
+                text="""\
+-----BEGIN FILE id="bff1f1" type="text/plain"-----
+Dummy TXT file
+-----END FILE id="bff1f1"-----\
+"""
+            ),
+        ]
+    )
 
 
 @pytest.mark.vcr()
@@ -3155,8 +3162,6 @@ By following these steps, you can ensure a safe crossing.\
 
 async def test_image_url_force_download() -> None:
     """Test that force_download=True calls download_item for ImageUrl in MistralModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
@@ -3191,8 +3196,6 @@ async def test_image_url_force_download() -> None:
 
 async def test_image_url_no_force_download() -> None:
     """Test that force_download=False does not call download_item for ImageUrl in MistralModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
@@ -3257,8 +3260,6 @@ async def test_text_document_binary_content_mapping(text_document_content: Binar
 
 async def test_document_url_force_download() -> None:
     """Test that force_download=True calls download_item for DocumentUrl PDF in MistralModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
@@ -3293,8 +3294,6 @@ async def test_document_url_force_download() -> None:
 
 async def test_document_url_no_force_download() -> None:
     """Test that force_download=False does not call download_item for DocumentUrl PDF in MistralModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:

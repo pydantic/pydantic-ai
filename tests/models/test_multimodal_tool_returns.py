@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from itertools import count
 from pathlib import Path
 from typing import Any, Literal, cast
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from typing_extensions import assert_never
@@ -42,6 +43,7 @@ from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.usage import UsageLimits
 from tests.cassette_utils import CassetteContext
 
+from .._inline_snapshot import snapshot
 from ..conftest import iter_message_parts, try_import
 
 with try_import() as openai_available:
@@ -65,8 +67,7 @@ with try_import() as groq_available:
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as mistral_available:
-    from mistralai.client.models import DocumentURLChunk as MistralDocumentURLChunk, TextChunk as MistralTextChunk
-    from mistralai.client.models.usermessage import UserMessage as MistralUserMessage
+    from mistralai.client.models import AssistantMessage, TextChunk, ToolMessage, UserMessage
 
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.providers.mistral import MistralProvider
@@ -797,10 +798,8 @@ async def test_non_pdf_document_url_mistral() -> None:
     """Test that Mistral inlines text/plain DocumentUrl from tool returns as text.
 
     Unit test, not VCR: the cassette matcher keys only on method/path, so this pins the internal
-    tool-return `_map_messages` mapping (the trailing user message + text chunk), which no cassette would catch.
+    tool-return `_map_messages` mapping (the placeholder tool result plus the inlined text chunks), which no cassette would catch.
     """
-    from unittest.mock import AsyncMock, patch
-
     m = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key='test-key'))
     doc_url = DocumentUrl(url='https://example.com/file.txt', media_type='text/plain')
     file_text = 'Dummy TXT file'
@@ -824,16 +823,24 @@ async def test_non_pdf_document_url_mistral() -> None:
     mock_download.assert_called_once()
     assert mock_download.call_args[1]['data_format'] == 'text'
 
-    user_messages = [msg for msg in mapped if isinstance(msg, MistralUserMessage)]
-    assert len(user_messages) == 1
-    trailing_user = user_messages[-1]
-    assert trailing_user.content is not None
-    text_chunks = [chunk for chunk in trailing_user.content if isinstance(chunk, MistralTextChunk)]
-    assert len(text_chunks) == 2
-    assert text_chunks[0].text == f'This is file {doc_url.identifier}:'
-    assert '-----BEGIN FILE' in text_chunks[1].text
-    assert file_text in text_chunks[1].text
-    assert not any(isinstance(chunk, MistralDocumentURLChunk) for chunk in trailing_user.content)
+    assert mapped == snapshot(
+        [
+            ToolMessage(content='See file fb8964.', tool_call_id='call1'),
+            AssistantMessage(content=[TextChunk(text='OK')]),
+            UserMessage(
+                content=[
+                    TextChunk(text='This is file fb8964:'),
+                    TextChunk(
+                        text="""\
+-----BEGIN FILE id="fb8964" type="text/plain"-----
+Dummy TXT file
+-----END FILE id="fb8964"-----\
+"""
+                    ),
+                ]
+            ),
+        ]
+    )
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
