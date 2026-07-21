@@ -110,6 +110,17 @@ async def test_image_generator_with_test_model():
     assert test_model.last_settings == {'n': 2}
 
 
+async def test_image_generator_settings_precedence():
+    test_model = TestImageGenerationModel(settings={'n': 1, 'output_format': 'png', 'quality': 'high'})
+    generator = ImageGenerator(test_model, settings={'n': 2, 'quality': 'low'})
+
+    result = await generator.generate('tiny robot', settings={'n': 3, 'output_format': 'webp'})
+
+    expected_settings: ImageGenerationSettings = {'n': 3, 'output_format': 'webp', 'quality': 'low'}
+    assert result.settings == expected_settings
+    assert test_model.last_settings == expected_settings
+
+
 async def test_image_generator_forwards_reference_images():
     test_model = TestImageGenerationModel()
     generator = ImageGenerator(test_model)
@@ -598,9 +609,13 @@ async def test_google_image_generation_response_without_image():
                 'candidates': [
                     {
                         'content': {'parts': [{'text': 'I cannot create that image.'}], 'role': 'model'},
-                        'finishReason': 'STOP',
+                        'finishReason': 'SAFETY',
                     }
-                ]
+                ],
+                'promptFeedback': {
+                    'blockReason': 'SAFETY',
+                    'blockReasonMessage': 'blocked by safety policy',
+                },
             },
         )
 
@@ -609,10 +624,15 @@ async def test_google_image_generation_response_without_image():
     model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
 
     try:
-        with pytest.raises(UnexpectedModelBehavior, match='did not contain any images'):
+        with pytest.raises(UnexpectedModelBehavior, match='did not contain any images') as exc_info:
             await model.generate('tiny robot')
     finally:
         await http_client.aclose()
+
+    assert exc_info.value.body is not None
+    assert "'finish_reason': 'SAFETY'" in exc_info.value.body
+    assert "'block_reason': 'SAFETY'" in exc_info.value.body
+    assert "'block_reason_message': 'blocked by safety policy'" in exc_info.value.body
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -1009,8 +1029,23 @@ async def test_xai_image_generation_invalid_response():
         provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
     )
 
-    with pytest.raises(UnexpectedModelBehavior, match='did not contain valid base64 image data'):
+    with pytest.raises(UnexpectedModelBehavior, match='did not contain valid base64 image data') as exc_info:
         await model.generate('tiny robot')
+
+    assert exc_info.value.body == "{'respect_moderation': False}"
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_empty_response():
+    mock_client = AsyncMock()
+    mock_client.image.sample_batch.return_value = []
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    with pytest.raises(UnexpectedModelBehavior, match='did not contain any images'):
+        await model.generate('tiny robot', settings={'n': 2})
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
@@ -1251,15 +1286,19 @@ async def test_openai_gpt_image_2_generation_vcr(openai_api_key: str):
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_response_without_base64():
+async def test_openai_response_without_image_data():
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.generate.return_value = ImagesResponse.model_construct(
-        created=123, data=[Image.model_construct(url='https://example.com/a.png')]
-    )
     provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
 
+    mock_client.images.generate.return_value = ImagesResponse.model_construct(created=123, data=[])
+    with pytest.raises(UnexpectedModelBehavior, match='did not contain any images'):
+        await model.generate('tiny robot')
+
+    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+        created=123, data=[Image.model_construct(url='https://example.com/a.png')]
+    )
     with pytest.raises(UnexpectedModelBehavior, match='base64 image data'):
         await model.generate('tiny robot')
 
@@ -1581,6 +1620,19 @@ async def test_instrumentation(capfire: CaptureLogfire):
     assert reference_url not in str(span)
     assert provider_file_id not in str(span)
     assert 'operation.cost' not in span['attributes']
+
+    metrics = capfire.get_collected_metrics()
+    assert [metric['name'] for metric in metrics] == ['gen_ai.client.token.usage']
+    data_points = metrics[0]['data']['data_points']
+    assert len(data_points) == 1
+    assert data_points[0]['attributes'] == {
+        'gen_ai.provider.name': 'test',
+        'gen_ai.operation.name': 'image_generation',
+        'gen_ai.request.model': 'test',
+        'gen_ai.response.model': 'test',
+        'gen_ai.token.type': 'input',
+    }
+    assert data_points[0]['sum'] == 2
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
