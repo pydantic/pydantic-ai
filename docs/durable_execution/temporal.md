@@ -222,7 +222,79 @@ A per-run handler passed to `Agent.run(event_stream_handler=...)` also runs work
 As the streaming model request activity, workflow, and workflow execution call all take place in separate processes, passing data between them requires some care:
 
 - To get data from the workflow call site or workflow to the event stream handler, you can use a [dependencies object](#agent-run-context-and-dependencies).
-- To get data from the event stream handler to the workflow, workflow call site, or a frontend, you need to use an external system that the event stream handler can write to and the event consumer can read from, like a message queue. You can use the dependency object to make sure the same connection string or other unique ID is available in all the places that need it.
+- To get data from the event stream handler to the workflow, workflow call site, or a frontend, you can publish events to a [Workflow Stream](#streaming-events-to-a-frontend-with-workflow-streams) (recommended, no extra infrastructure), or use an external system that the event stream handler can write to and the event consumer can read from, like a message queue. You can use the dependency object to make sure the same connection string or other unique ID is available in all the places that need it.
+
+#### Streaming events to a frontend with Workflow Streams
+
+Rather than standing up a separate message queue, you can use Temporal's built-in [Workflow Streams](https://docs.temporal.io/develop/python/workflows/workflow-streams) as the transport: the parent workflow itself becomes the durable, offset-addressed channel that an external consumer subscribes to.
+
+Set `event_stream_topic` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] and construct a [`WorkflowStream`](https://docs.temporal.io/develop/python/workflows/workflow-streams) in your workflow's `@workflow.init`. Every event is then published to that topic from within the activity. Setting `event_stream_topic` enables streaming on its own, and it's orthogonal to `event_stream_handler`: if you also pass a handler, both run and each sees every event.
+
+```python {test="skip"}
+from temporalio import workflow
+from temporalio.contrib.workflow_streams import WorkflowStream
+
+with workflow.unsafe.imports_passed_through():
+    from pydantic_ai import Agent
+    from pydantic_ai.durable_exec.temporal import TemporalDurability
+
+agent = Agent(
+    'openai:gpt-5.6-sol',
+    name='assistant',
+    capabilities=[TemporalDurability(event_stream_topic='agent-events')],
+)
+
+
+@workflow.defn
+class AssistantWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        # Hosts the stream that the agent's activities publish to. Without this,
+        # published events are silently dropped.
+        self.stream = WorkflowStream()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await agent.run(prompt)
+        return result.output
+```
+
+An external consumer (with just the workflow handle) observes events as they arrive using [`stream_agent_events`][pydantic_ai.durable_exec.temporal.stream_agent_events], which decodes them back into typed [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s — effectively a durable [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] across the workflow boundary:
+
+```python {test="skip"}
+from temporalio.client import Client
+
+from pydantic_ai.durable_exec.temporal import stream_agent_events
+
+
+async def relay_events(client: Client, prompt: str) -> None:
+    handle = await client.start_workflow(
+        AssistantWorkflow.run, prompt, id='assistant-1', task_queue='my-task-queue'
+    )
+    async for event in stream_agent_events(client, handle, 'agent-events'):
+        ...  # e.g. forward `event` to the frontend over SSE
+```
+
+Because Workflow Streams are offset-addressed, a reconnecting consumer can resume from its last seen offset via `stream_agent_events(..., from_offset=...)`, which is more robust than ordinary in-process streaming.
+
+A model stream emits a [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] per token, so to keep the volume down you can publish only a subset of events with the `event_stream_events` predicate:
+
+```python {test="skip"}
+from pydantic_ai.messages import PartDeltaEvent
+
+TemporalDurability(
+    event_stream_topic='agent-events',
+    event_stream_events=lambda event: not isinstance(event, PartDeltaEvent),  # skip per-token deltas
+)
+```
+
+Under the hood, `event_stream_topic` is sugar over [`workflow_stream_event_handler`][pydantic_ai.durable_exec.temporal.workflow_stream_event_handler], which returns a regular `EventStreamHandler` you can also compose or wrap yourself.
+
+!!! note "Caveats"
+    - Workflow Streams add roughly 100ms of latency per roundtrip (tunable via `event_stream_batch_interval`) and their cost scales with the number of durable batches; they're suited to driving a UI, not ultra-low-latency use cases like real-time voice. Use `event_stream_events` to publish fewer events if the volume is a concern.
+    - Delivery is at-least-once: the publishing handler runs inside an activity, so if that activity is retried its events are re-published (at new offsets), and consumers should tolerate duplicates. The workflow's final result remains authoritative.
+    - The stream is durable, so events may be produced and consumed by processes running different Pydantic AI versions. `AgentStreamEvent` shapes are stable within a major version; keep producer and consumer on the same major version.
+    - `stream_agent_events` ends when the workflow reaches a terminal state; use the workflow result for the authoritative output. Live events reach external consumers only — `run_stream_events()` remains unavailable inside workflow code.
 
 Because the model stream is consumed inside the activity, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary. To stop an in-flight model request, cancel the Temporal workflow: the cancellation is delivered to the activity (via its heartbeats), which cancels any server-side job before the activity completes.
 

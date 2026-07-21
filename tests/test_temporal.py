@@ -6,7 +6,7 @@ import os
 import re
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -113,10 +113,11 @@ try:
     import temporalio.api.common.v1
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
-    from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
+    from temporalio.client import Client, WorkflowFailureError, WorkflowHandle, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
+    from temporalio.contrib.workflow_streams import WorkflowStream
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
@@ -137,6 +138,8 @@ try:
         PydanticAIWorkflow,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
+        stream_agent_events,
+        workflow_stream_event_handler,
     )
     from pydantic_ai.durable_exec.temporal._durability import (
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
@@ -6220,6 +6223,219 @@ async def test_temporal_durability_event_stream_handler_outside_workflow() -> No
 def test_temporal_durability_without_handler_does_not_wrap_event_stream() -> None:
     durability = TemporalDurability()
     assert durability.has_wrap_run_event_stream is False
+
+
+def test_temporal_durability_event_stream_topic_implies_handler() -> None:
+    """Setting `event_stream_topic` enables streaming on its own (implies an event stream handler)."""
+    durability = TemporalDurability(event_stream_topic='agent_events')
+    assert durability.has_wrap_run_event_stream is True
+
+
+# --- Streaming to a Workflow Stream (event_stream_topic) ---
+
+_workflow_stream_teed_events: list[AgentStreamEvent] = []
+
+
+async def _workflow_stream_teed_handler(
+    ctx: RunContext[object],
+    stream: AsyncIterable[AgentStreamEvent],
+) -> None:
+    async for event in stream:
+        _workflow_stream_teed_events.append(event)
+
+
+_workflow_stream_durable_agent = Agent(
+    _stream_fn_model,
+    name='durability_workflow_stream_agent',
+    capabilities=[
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            event_stream_topic='agent_events',
+            event_stream_handler=_workflow_stream_teed_handler,
+        )
+    ],
+)
+
+
+@workflow.defn
+class WorkflowStreamAgentWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        # Hosts the stream that the agent's activities publish to.
+        self.stream = WorkflowStream()
+        self._released = False
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _workflow_stream_durable_agent.run(prompt)
+        # Stay alive until the subscriber has drained the stream: subscription is a workflow
+        # update long-poll, which can't reach the workflow once it has completed.
+        await workflow.wait_condition(lambda: self._released)
+        return result.output
+
+    @workflow.signal
+    def release(self) -> None:
+        self._released = True
+
+
+async def _collect_agent_events(
+    client: Client,
+    handle: WorkflowHandle[Any, Any],
+    release: Callable[[], Awaitable[Any]],
+    *,
+    topic: str = 'agent_events',
+) -> list[AgentStreamEvent]:
+    """Consume events via the public `stream_agent_events` helper until the workflow completes.
+
+    Subscription is a workflow update long-poll, so we consume while the workflow is still alive
+    (kept so by its `release` signal). The text part's end event is published after its deltas, so
+    once it arrives the whole model stream has been observed; we then `release()` the workflow and
+    let the iterator drain to its natural end when the workflow reaches a terminal state.
+    """
+    events: list[AgentStreamEvent] = []
+    released = False
+    async for event in stream_agent_events(client, handle, topic, poll_cooldown=timedelta(milliseconds=50)):
+        events.append(event)
+        if isinstance(event, PartEndEvent) and not released:
+            released = True
+            await release()
+    return events
+
+
+async def test_temporal_durability_streaming_to_workflow_stream(client: Client) -> None:
+    """`event_stream_topic` publishes every event to the parent workflow's `WorkflowStream`.
+
+    An external subscriber (with just the workflow handle) observes the streamed events via
+    `stream_agent_events`, and the user-supplied `event_stream_handler` still receives them too
+    (the topic is orthogonal to the handler — both run).
+    """
+    _workflow_stream_teed_events.clear()
+    workflow_id = f'{WorkflowStreamAgentWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowStreamAgentWorkflow],
+        plugins=[AgentPlugin(_workflow_stream_durable_agent)],
+    ):
+        handle = await client.start_workflow(
+            WorkflowStreamAgentWorkflow.run,
+            args=['Hello'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+
+        collected = await asyncio.wait_for(
+            _collect_agent_events(client, handle, lambda: handle.signal(WorkflowStreamAgentWorkflow.release)),
+            timeout=15.0,
+        )
+        output = await handle.result()
+
+    assert output == 'Streamed response'
+    # The external subscriber observed the streamed model events, decoded back into typed events...
+    assert any(isinstance(event, PartStartEvent) for event in collected)
+    assert any(isinstance(event, PartDeltaEvent) for event in collected)
+    # ...and the user-supplied handler saw them too (the topic is orthogonal, it doesn't replace).
+    assert any(isinstance(event, PartStartEvent) for event in _workflow_stream_teed_events)
+
+
+_filtered_stream_durable_agent = Agent(
+    _stream_fn_model,
+    name='durability_filtered_stream_agent',
+    capabilities=[
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            event_stream_topic='agent_events',
+            # Drop the per-token deltas; publish everything else.
+            event_stream_events=lambda event: not isinstance(event, PartDeltaEvent),
+        )
+    ],
+)
+
+
+@workflow.defn
+class FilteredWorkflowStreamAgentWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.stream = WorkflowStream()
+        self._released = False
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _filtered_stream_durable_agent.run(prompt)
+        await workflow.wait_condition(lambda: self._released)
+        return result.output
+
+    @workflow.signal
+    def release(self) -> None:
+        self._released = True
+
+
+async def test_temporal_durability_event_stream_topic_filter(client: Client) -> None:
+    """`event_stream_events` filters which events are published to the topic."""
+    workflow_id = f'{FilteredWorkflowStreamAgentWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FilteredWorkflowStreamAgentWorkflow],
+        plugins=[AgentPlugin(_filtered_stream_durable_agent)],
+    ):
+        handle = await client.start_workflow(
+            FilteredWorkflowStreamAgentWorkflow.run,
+            args=['Hello'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+
+        collected = await asyncio.wait_for(
+            _collect_agent_events(client, handle, lambda: handle.signal(FilteredWorkflowStreamAgentWorkflow.release)),
+            timeout=15.0,
+        )
+        await handle.result()
+
+    # Non-delta events are still published...
+    assert any(isinstance(event, PartStartEvent) for event in collected)
+    assert any(isinstance(event, PartEndEvent) for event in collected)
+    # ...but the filtered-out per-token deltas are not.
+    assert not any(isinstance(event, PartDeltaEvent) for event in collected)
+
+
+async def test_temporal_durability_event_stream_topic_outside_workflow() -> None:
+    """With `event_stream_topic` set but running outside a workflow, publishing is skipped
+    (it needs an activity context) and events are still forwarded to the user handler."""
+    events: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    durability = TemporalDurability(event_stream_topic='agent_events', event_stream_handler=handler)
+    agent = Agent(TestModel(custom_output_text='done'), name='outside_topic', capabilities=[durability])
+    await agent.run('Hello')
+    assert any(isinstance(event, PartStartEvent) for event in events)
+
+
+async def test_temporal_durability_event_stream_topic_without_handler_outside_workflow() -> None:
+    """A topic without a user handler enables streaming; outside a workflow, events are simply
+    drained (nothing to publish to, no handler to forward to)."""
+    durability = TemporalDurability(event_stream_topic='agent_events')
+    agent = Agent(TestModel(custom_output_text='done'), name='outside_topic_no_handler', capabilities=[durability])
+    result = await agent.run('Hello')
+    assert result.output == 'done'
+
+
+async def test_workflow_stream_event_handler_is_composable() -> None:
+    """The public factory returns a normal `EventStreamHandler` usable as an `event_stream_handler`.
+
+    Outside a Temporal activity it can't publish, so it just drains the stream.
+    """
+    handler = workflow_stream_event_handler('agent_events')
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        name='factory_handler',
+        capabilities=[TemporalDurability(event_stream_handler=handler)],
+    )
+    result = await agent.run('Hello')
+    assert result.output == 'done'
 
 
 async def test_durability_streaming_in_workflow(client: Client):
