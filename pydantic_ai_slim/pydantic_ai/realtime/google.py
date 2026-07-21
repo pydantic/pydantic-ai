@@ -916,7 +916,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # reconnect policy that ends the stream; with one, re-dial from the latest resumption handle.
         while True:
             try:
-                async for message in self._session.receive():
+                # Coverage cannot attribute the normal async-generator exhaustion back to this outer
+                # loop; `test_connect_continues_after_empty_server_turn` exercises that continuation.
+                async for message in self._session.receive():  # pragma: no branch
                     for event in self._map_message(message):
                         yield event
             except (ConnectionClosed, genai_errors.APIError) as e:

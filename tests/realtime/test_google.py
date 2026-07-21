@@ -856,6 +856,15 @@ async def test_connect_streams_events() -> None:
     assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
 
 
+async def test_connect_continues_after_empty_server_turn() -> None:
+    session = _RecordingSession([[], [_turn('hi')]])
+
+    events = [event async for event in _conn(session)]
+
+    assert events[:2] == [Transcript(text='hi', is_final=True), TurnCompleteEvent(interrupted=False)]
+    assert isinstance(events[-1], SessionErrorEvent)
+
+
 async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
     async def download_image(*args: Any, **kwargs: Any) -> Any:
         return {'data': b'url-image', 'data_type': 'image/png'}

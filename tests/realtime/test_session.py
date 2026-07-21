@@ -2310,6 +2310,9 @@ class _EnqueueConnection(FakeRealtimeConnection):
         )
         while not any(isinstance(item, ToolResult) for item in self.sent):
             await asyncio.sleep(0)
+        # Let the pending-message task observe that response usage is still outstanding. The queued
+        # prompt must remain deferred until the usage event finalizes the tool-call response.
+        await asyncio.sleep(0)
         yield SessionUsageEvent(usage=RequestUsage(input_tokens=1, output_tokens=1))
         yield TurnCompleteEvent()
 
@@ -2493,6 +2496,8 @@ async def test_empty_finalized_user_does_not_block_later_item() -> None:
 
 async def test_session_close_recovers_finalized_user_orphaned_from_ordered_stream() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]))
+    session._user_item_order.append('empty')  # pyright: ignore[reportPrivateUsage]
+    session._finalized_users_by_id['empty'] = SpeechPart(speaker='user')  # pyright: ignore[reportPrivateUsage]
     session._user_item_order.append('orphan')  # pyright: ignore[reportPrivateUsage]
     session._finalized_users_by_id['orphan'] = SpeechPart(  # pyright: ignore[reportPrivateUsage]
         speaker='user', transcript='recovered'
@@ -2680,14 +2685,26 @@ async def test_agent_realtime_session_runs_args_validator() -> None:
     assert 'not allowed' in str(result.part.content)
 
 
-async def test_agent_realtime_session_tool_return_is_unwrapped() -> None:
+@pytest.mark.parametrize(
+    ('follow_up_content', 'expected_wire_content'),
+    [
+        ('extra context', ['extra context']),
+        (
+            ['extra context', BinaryContent(data=b'image', media_type='image/png')],
+            ['extra context', BinaryContent(data=b'image', media_type='image/png')],
+        ),
+    ],
+)
+async def test_agent_realtime_session_tool_return_is_unwrapped(
+    follow_up_content: str | list[str | BinaryContent], expected_wire_content: list[str | BinaryContent]
+) -> None:
     agent: Agent[None, str] = Agent()
 
     @agent.tool_plain
     def info() -> ToolReturn:
         return ToolReturn(
             return_value={'value': 42},
-            content='extra context',
+            content=follow_up_content,
             metadata={'source': 'tool'},
         )
 
@@ -2700,12 +2717,18 @@ async def test_agent_realtime_session_tool_return_is_unwrapped() -> None:
     assert isinstance(result.part, ToolReturnPart)
     assert result.part.content == {'value': 42}
     assert result.part.metadata == {'source': 'tool'}
-    assert result.content == 'extra context'
-    assert conn.sent == [ToolResult(tool_call_id='tc', output='{"value":42}', content=['extra context'])]
+    assert result.content == follow_up_content
+    assert conn.sent == [
+        ToolResult(
+            tool_call_id='tc',
+            output='{"value":42}',
+            content=expected_wire_content,
+        )
+    ]
     request = next(message for message in session.new_messages() if isinstance(message, ModelRequest))
     assert request.parts == [
         result.part,
-        UserPromptPart(content='extra context', timestamp=IsDatetime()),
+        UserPromptPart(content=follow_up_content, timestamp=IsDatetime()),
     ]
 
 

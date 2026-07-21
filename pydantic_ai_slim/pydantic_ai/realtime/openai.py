@@ -617,5 +617,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 model_name=server_model,
             )
         finally:
-            if cm is not None:
+            # Coverage cannot attribute a failed `__aenter__` to the false exit arc; the behavior is
+            # exercised by `test_connect_open_failure_propagates_without_teardown`.
+            if cm is not None:  # pragma: no branch
                 await cm.__aexit__(None, None, None)

@@ -25,11 +25,13 @@ from inline_snapshot import snapshot
 
 pytest.importorskip('opentelemetry.sdk')  # only installed via the optional `logfire` extra
 
+from opentelemetry.context import Context
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import Histogram, InMemoryMetricReader
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
@@ -648,6 +650,40 @@ async def test_session_span_without_model_or_usage() -> None:
     assert 'gen_ai.usage.input_tokens' not in sess.attributes  # zero usage → no token attribute / metric
     # An empty turn produces no assistant `ModelResponse`, so no `chat` span is opened.
     assert not [s for s in exporter.get_finished_spans() if s.name.startswith('chat')]
+
+
+async def test_non_recording_spans_skip_events_but_still_record_metrics() -> None:
+    metric_reader = InMemoryMetricReader()
+    settings = InstrumentationSettings(
+        tracer_provider=TracerProvider(sampler=ALWAYS_OFF),
+        meter_provider=MeterProvider(metric_readers=[metric_reader]),
+    )
+    session = RealtimeSession(
+        _Connection([Transcript(text='hello'), TurnCompleteEvent()]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    _ = await collect_events(session)
+    span = settings.tracer.start_span('not-recorded')
+    assert not span.is_recording()
+    session._record_span_error(span, RuntimeError('not recorded'))  # pyright: ignore[reportPrivateUsage]
+
+    metrics = metric_reader.get_metrics_data()
+    assert metrics is not None
+
+
+def test_chat_span_without_response_ends_without_metrics() -> None:
+    settings, exporter, metric_reader = _settings_with_metrics()
+    session = RealtimeSession(_Connection([]), _ok_runner, instrumentation=settings)
+    session._session_span_context = Context()  # pyright: ignore[reportPrivateUsage]
+    session._ensure_chat_span()  # pyright: ignore[reportPrivateUsage]
+
+    session._end_chat_span([], None)  # pyright: ignore[reportPrivateUsage]
+
+    assert [span.name for span in exporter.get_finished_spans()] == ['chat']
+    assert metric_reader.get_metrics_data() is None
 
 
 async def test_chat_span_closed_for_contentless_response() -> None:
