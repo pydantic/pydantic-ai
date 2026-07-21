@@ -10,13 +10,16 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import ReinjectSystemPrompt
+from pydantic_ai.capabilities import HandleDeferredToolCalls, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     BinaryImage,
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     DocumentUrl,
+    EnqueuedMessagesEvent,
     FilePart,
     FinalResultEvent,
     ForceDownloadMode,
@@ -57,7 +60,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
-from pydantic_ai.tools import DeferredToolResults, ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 
 from ._inline_snapshot import snapshot
@@ -299,6 +302,134 @@ async def test_event_stream_back_to_back_text():
     )
 
 
+async def test_event_stream_error_closes_open_text():
+    """A mid-stream error while a text part is open emits `text-end` before the error.
+
+    The native stream crashes without a `PartEndEvent`, so the base class must close the
+    open part itself — otherwise a client that aborts at the error chunk (e.g. the AI SDK)
+    leaves the text part stuck in a streaming state. See #6546, mirroring #4963 for tool calls.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
+        raise RuntimeError('boom')
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hello',
+            ' world',
+            '</text followed_by_text=False>',
+            "<error type='RuntimeError'>boom</error>",
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_event_stream_error_closes_open_thinking():
+    """A mid-stream error while a thinking part is open emits `thinking-end` before the error."""
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Thinking'))
+        yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' hard'))
+        raise RuntimeError('boom')
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<thinking follows_thinking=False>Thinking',
+            ' hard',
+            '</thinking followed_by_thinking=False>',
+            "<error type='RuntimeError'>boom</error>",
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_event_stream_error_closes_open_native_tool_call():
+    """A mid-stream error while a native tool call is open closes it before the error.
+
+    Same defect class as #6546 (text/thinking), one part kind over: a `NativeToolCallPart` lands outside
+    `_pending_tool_calls` (which only holds calls already dispatched for execution), so the base class must
+    close the open part itself — otherwise a client that aborts at the error chunk leaves the call stuck
+    streaming its input.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(
+            index=0,
+            part=NativeToolCallPart(
+                provider_name='function', tool_name='web_search', tool_call_id='call_1', args={'query': 'pydantic'}
+            ),
+        )
+        raise RuntimeError('boom')
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            "<builtin-tool-call name='web_search'>{'query': 'pydantic'}",
+            "</builtin-tool-call name='web_search'>",
+            "<error type='RuntimeError'>boom</error>",
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_event_stream_error_closes_open_tool_call():
+    """A mid-stream error while a tool call is streaming its args closes it before the error.
+
+    A `ToolCallPart` — the streamed form of both function and output tool calls — is tracked in neither the
+    open text/thinking slot nor `_pending_tool_calls` (which only holds calls already dispatched for
+    execution), so the base class must close the open call itself — otherwise a client that aborts at the
+    error chunk leaves it stuck streaming its input. See #6546 for the same defect on text/thinking parts.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(
+            index=0, part=ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args={'query': 'pydantic'})
+        )
+        yield PartDeltaEvent(
+            index=0, delta=ToolCallPartDelta(args_delta='{"query": "pydantic"}', tool_call_id='call_1')
+        )
+        raise RuntimeError('boom')
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            "<tool-call name='my_tool'>{'query': 'pydantic'}",
+            '{"query": "pydantic"}',
+            "</tool-call name='my_tool'>",
+            "<error type='RuntimeError'>boom</error>",
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
 async def test_run_stream_builtin_tool_call():
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -460,6 +591,116 @@ async def test_run_stream_external_tools():
             "<function-tool-call name='external_tool'>{}</function-tool-call>",
             '</request>',
             "<run-result>DeferredToolRequests(calls=[ToolCallPart(tool_name='external_tool', args={}, tool_call_id='pyd_ai_tool_call_id__external_tool')], approvals=[], metadata={})</run-result>",
+            '</stream>',
+        ]
+    )
+
+
+async def test_run_stream_deferred_tool_requests_and_results():
+    """`DeferredToolRequestsEvent` and `DeferredToolResultsEvent` emit no protocol events by default.
+
+    The base `UIEventStream` dispatches them to the `handle_deferred_tool_requests` and
+    `handle_deferred_tool_results` no-op hooks, so a run whose deferred calls are resolved inline by a
+    `HandleDeferredToolCalls` handler produces the same protocol stream as one without deferral.
+    """
+
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(approve_all=True)
+
+    agent = Agent(model=TestModel(), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool_plain(requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x + 1
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Call a tool')])
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream()]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            "<tool-call name='my_tool'>{'x': 0}",
+            '<final-result tool_name=None />',
+            "</tool-call name='my_tool'>",
+            '</response>',
+            '<request>',
+            "<function-tool-call name='my_tool'>{'x': 0}</function-tool-call>",
+            "<function-tool-result name='my_tool'>1</function-tool-result>",
+            '</request>',
+            '<response>',
+            '<text follows_text=False>',
+            '<final-result tool_name=None />',
+            '{"my_t',
+            'ool":1}',
+            '</text followed_by_text=False>',
+            '</response>',
+            '<run-result>{"my_tool":1}</run-result>',
+            '</stream>',
+        ]
+    )
+
+
+class DeferredAwareUIEventStream(DummyUIEventStream[AgentDepsT, OutputDataT]):
+    async def handle_deferred_tool_requests(self, event: DeferredToolRequestsEvent) -> AsyncIterator[str]:
+        yield f'<deferred-tool-requests approvals={[part.tool_name for part in event.requests.approvals]!r} />'
+
+    async def handle_deferred_tool_results(self, event: DeferredToolResultsEvent) -> AsyncIterator[str]:
+        yield f'<deferred-tool-results approvals={list(event.results.approvals)!r} />'
+
+
+async def test_event_stream_deferred_tool_hook_overrides():
+    """Subclasses can override `handle_deferred_tool_requests`/`handle_deferred_tool_results` to notify the frontend mid-stream."""
+
+    async def event_generator():
+        yield DeferredToolRequestsEvent(
+            requests=DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='approval_1')]
+            )
+        )
+        yield DeferredToolResultsEvent(results=DeferredToolResults(approvals={'approval_1': True}))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Call a tool')])
+    event_stream = DeferredAwareUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            "<deferred-tool-requests approvals=['my_tool'] />",
+            "<deferred-tool-results approvals=['approval_1'] />",
+            '</stream>',
+        ]
+    )
+
+
+class EnqueuedAwareUIEventStream(DummyUIEventStream[AgentDepsT, OutputDataT]):
+    async def handle_enqueued_messages(self, event: EnqueuedMessagesEvent) -> AsyncIterator[str]:
+        yield f'<enqueued-messages id={event.enqueue_id!r} count={len(event.messages)} />'
+
+
+async def test_event_stream_enqueued_messages_hook():
+    """`EnqueuedMessagesEvent` dispatches to a no-op `handle_enqueued_messages` hook that subclasses can override to surface delivered messages to the frontend."""
+
+    def event_generator():
+        async def generate():
+            yield EnqueuedMessagesEvent(enqueue_id='enqueue_1', messages=(ModelRequest.user_text_prompt('Enqueued!'),))
+
+        return generate()
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Call a tool')])
+
+    base_events = [event async for event in DummyUIEventStream(run_input=request).transform_stream(event_generator())]
+    assert base_events == snapshot(['<stream>', '</stream>'])
+
+    events = [
+        event async for event in EnqueuedAwareUIEventStream(run_input=request).transform_stream(event_generator())
+    ]
+    assert events == snapshot(
+        [
+            '<stream>',
+            "<enqueued-messages id='enqueue_1' count=1 />",
             '</stream>',
         ]
     )

@@ -138,13 +138,12 @@ LatestGoogleModelNames = Literal[
     'gemini-2.5-flash-preview-09-2025',
     'gemini-2.5-flash-image',
     'gemini-2.5-flash-lite',
-    'gemini-2.5-flash-lite-preview-09-2025',
     'gemini-2.5-pro',
     'gemini-3-flash-preview',
     'gemini-3-pro-image-preview',
     'gemini-3-pro-preview',
     'gemini-3.1-flash-image-preview',
-    'gemini-3.1-flash-lite-preview',
+    'gemini-3.1-flash-lite',
     'gemini-3.1-pro-preview',
     'gemini-3.5-flash',
 ]
@@ -1175,8 +1174,16 @@ class GoogleModel(Model[Client]):
             part_dict = {'inline_data': BlobDict(data=resolved[1], mime_type=resolved[2])}
         else:
             part_dict = {'file_data': FileDataDict(file_uri=resolved[1], mime_type=resolved[2])}
-        if isinstance(file, (BinaryContent, VideoUrl, UploadedFile)) and file.vendor_metadata:
-            part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+        if file.vendor_metadata:
+            # `media_resolution` is a per-Part field (not part of `video_metadata`) that applies to
+            # any file type; only per-part resolution supports `MEDIA_RESOLUTION_ULTRA_HIGH`
+            # (Gemini 3), see https://ai.google.dev/gemini-api/docs/media-resolution
+            vendor_metadata = dict(file.vendor_metadata)  # copy to avoid mutating user dict
+            if 'media_resolution' in vendor_metadata:
+                part_dict['media_resolution'] = vendor_metadata.pop('media_resolution')
+            # The remaining keys map to `video_metadata`, which only applies to video parts.
+            if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
+                part_dict['video_metadata'] = VideoMetadataDict(**vendor_metadata)
         return part_dict
 
     async def _map_file_to_function_response_part(

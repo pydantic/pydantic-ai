@@ -1,5 +1,6 @@
-# Image, Audio, Video & Document Input
+# Multimodal Input
 
+Alongside text, agents can accept image, audio, video, and document input, as long as the model supports it.
 
 ## Image Input
 
