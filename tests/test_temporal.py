@@ -6,7 +6,7 @@ import os
 import re
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -64,6 +64,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     MCP,
     Capability,
+    DynamicCapability,
     Instrumentation,
     NativeTool,
     ProcessEventStream,
@@ -102,6 +103,8 @@ from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import UsageLimits
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.join import reduce_list_append
@@ -143,11 +146,16 @@ try:
         _heartbeating,  # pyright: ignore[reportPrivateUsage]
         _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.durable_exec.temporal._dynamic_toolset import temporalize_dynamic_toolset
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
-    from pydantic_ai.durable_exec.temporal._toolset import resolve_tool_activity_config
+    from pydantic_ai.durable_exec.temporal._toolset import (
+        TemporalWrapperToolset,
+        resolve_tool_activity_config,
+        toolset_temporal_activities,
+    )
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
@@ -1794,7 +1802,7 @@ async def test_dynamic_toolset_instructions_in_workflow(allow_model_requests: No
 
 
 def test_dynamic_toolset_temporal_activities():
-    """`TemporalDynamicToolset` collects instructions inside `get_tools`, so it has no separate `get_instructions` activity."""
+    """The temporalized dynamic toolset collects instructions inside `get_tools`, so it has no separate `get_instructions` activity."""
     activity_names = {
         ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
         for activity in dynamic_instructions_temporal_agent.temporal_activities
@@ -1802,6 +1810,63 @@ def test_dynamic_toolset_temporal_activities():
     prefix = 'agent__dynamic_instructions_agent__dynamic_toolset__dynamic_instruction_toolset'
     assert {f'{prefix}__get_tools', f'{prefix}__call_tool'} <= activity_names
     assert f'{prefix}__get_instructions' not in activity_names
+
+
+async def test_temporal_wrapper_toolset_extension_surface():
+    """`TemporalWrapperToolset` stays the base for custom `temporalize_toolset_func` toolsets.
+
+    No in-core toolset subclasses it anymore (the factories build the shared durable toolsets),
+    but it remains public for the deprecated `TemporalAgent`'s `temporalize_toolset_func`
+    extension point, so its surface is pinned here the way a custom subclass would use it.
+    """
+
+    def sentinel_activity() -> None: ...  # pragma: no cover
+
+    class _CustomTemporalToolset(TemporalWrapperToolset[None]):
+        @property
+        def temporal_activities(self) -> list[Callable[..., Any]]:
+            return [sentinel_activity]
+
+    toolset = _CustomTemporalToolset(FunctionToolset[None](id='custom_wrapped'))
+    assert toolset.id == 'custom_wrapped'
+    assert toolset_temporal_activities(toolset) == [sentinel_activity]
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    assert await toolset.for_run_step(ctx) is toolset
+
+    # Outside a workflow the wrapper enters/exits its wrapped toolset; inside one, both are no-ops.
+    async with toolset:
+        pass
+    with patch('pydantic_ai.durable_exec.temporal._toolset.workflow.in_workflow', return_value=True):
+        assert await toolset.__aenter__() is toolset
+        assert await toolset.__aexit__(None, None, None) is None
+
+    async def return_value() -> str:
+        return 'value'
+
+    wrapped_result = await toolset._wrap_call_tool_result(return_value())  # pyright: ignore[reportPrivateUsage]
+    assert toolset._unwrap_call_tool_result(wrapped_result) == 'value'  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_temporal_dynamic_toolset_rejects_activity_opt_out():
+    """`metadata={'temporal': False}` / config `False` is rejected for dynamic-toolset tools.
+
+    Running such a tool inline would resolve the dynamic toolset and call the tool in
+    workflow code, where I/O and thread dispatch are forbidden.
+    """
+    durable = temporalize_dynamic_toolset(
+        DynamicToolset(lambda ctx: None, id='dyn_opt_out'),
+        activity_name_prefix='agent__dyn_opt_out',
+        activity_config={},
+        tool_activity_config={'boom': False},
+        deps_type=type(None),
+    )
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable, tool_def=ToolDefinition(name='boom'), max_retries=1, args_validator=TOOL_SCHEMA_VALIDATOR
+    )
+    with pytest.raises(UserError, match='activity disabled'):
+        await durable.call_tool('boom', {}, ctx, tool)
 
 
 # --- DynamicToolset instructions refresh across run steps (issue #5282 follow-up) ---
@@ -7539,6 +7604,96 @@ async def test_durability_dynamic_toolset_in_workflow(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot('{"get_dynamic_weather":"Weather in a for Alice: sunny."}')
+
+
+@dataclass
+class _TemporalDynamicToolCapability(AbstractCapability[Any]):
+    def get_toolset(self) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any]()
+
+        @toolset.tool_plain
+        def dynamic_capability_tool() -> str:
+            assert activity.in_activity()
+            return 'called in activity'
+
+        return toolset
+
+
+def _temporal_dynamic_capability_factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+    return _TemporalDynamicToolCapability()
+
+
+_temporal_dynamic_capability_agent = Agent(
+    TestModel(),
+    name='temporal_dynamic_capability_agent',
+    capabilities=[
+        DynamicCapability(_temporal_dynamic_capability_factory, id='dyn'),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class TemporalDynamicCapabilityWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _temporal_dynamic_capability_agent.run('Call the tool')).output
+
+
+async def test_durability_dynamic_capability_tool_runs_in_activity(client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalDynamicCapabilityWorkflow],
+        plugins=[AgentPlugin(_temporal_dynamic_capability_agent)],
+    ):
+        output = await client.execute_workflow(
+            TemporalDynamicCapabilityWorkflow.run,
+            id='test_temporal_dynamic_capability',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == '{"dynamic_capability_tool":"called in activity"}'
+
+
+def test_durability_dynamic_capability_requires_id() -> None:
+    with pytest.raises(UserError, match=r"DynamicCapability\(\.\.\., id='user-tools'\)"):
+        Agent(
+            TestModel(),
+            name='idless_dynamic_capability',
+            capabilities=[
+                DynamicCapability(_temporal_dynamic_capability_factory),
+                TemporalDurability(),
+            ],
+        )
+
+
+async def test_durability_dynamic_capability_transparent_outside_workflow():
+    """Outside a workflow, dynamic-capability tools resolve and run inline, not via activities.
+
+    The durable wrapper's `for_run` must hand the run the *resolved* dynamic toolset:
+    delegating to the unresolved construction-time factory would silently contribute no tools.
+    """
+    in_activity_flags: list[bool] = []
+
+    def dynamic_tool() -> str:
+        in_activity_flags.append(activity.in_activity())
+        return 'inline result'
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return Capability(tools=[dynamic_tool])
+
+    agent = Agent(
+        TestModel(),
+        name='temporal_dynamic_capability_outside',
+        capabilities=[
+            DynamicCapability(factory, id='dyn_outside'),
+            TemporalDurability(),
+        ],
+    )
+
+    result = await agent.run('Call the tool')
+    assert result.output == '{"dynamic_tool":"inline result"}'
+    assert in_activity_flags == [False]
 
 
 # --- ToolReturn metadata round-trip ---

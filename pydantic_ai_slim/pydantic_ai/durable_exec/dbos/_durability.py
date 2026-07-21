@@ -24,6 +24,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._agent import DBOSParallelExecutionMode
 from ._utils import StepConfig
@@ -184,6 +185,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         await self._event_stream_handler_step(event, ctx)
 
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
+        if isinstance(ts, DynamicToolset):
+            from ._dynamic_toolset import dbosify_dynamic_toolset
+
+            return dbosify_dynamic_toolset(wrapped=ts, step_name_prefix=self.name, step_config=self._mcp_step_config)
         try:
             from pydantic_ai.mcp import MCPToolset
 

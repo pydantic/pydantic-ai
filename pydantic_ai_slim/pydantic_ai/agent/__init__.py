@@ -1406,6 +1406,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         ) and not has_capability_type([run_capability], DeferredCapabilityLoader):
             run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
             capabilities_dict = _build_run_capabilities(run_capability)
+        # `toolset.for_run(initial_ctx)` below evaluates dynamic-toolset factories, which resolve
+        # against the run's registered capabilities (e.g. a `DynamicCapability`'s contributed
+        # toolset reuses the capability instance `for_run` already resolved).
+        initial_ctx.capabilities = capabilities_dict
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
         if run_capability is not base_capability or override_cap is not None:

@@ -39,7 +39,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import MCP, Capability
+from pydantic_ai.capabilities import MCP, Capability, DynamicCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
@@ -2824,6 +2824,101 @@ async def test_dbos_durability_allows_runtime_function_toolset(dbos: DBOS) -> No
         'Call the runtime tool.', toolsets=[FunctionToolset(tools=[runtime_tool], id='runtime_fn')]
     )
     assert result.output == 'done'
+
+
+async def test_dbos_durability_dynamic_capability_tool_runs_in_step(dbos: DBOS) -> None:
+    """A dynamic capability's tool discovery and calls run in DBOS steps."""
+    calls: list[str] = []
+
+    def dynamic_tool() -> str:
+        calls.append('called')
+        return 'dynamic result'
+
+    def factory(ctx: RunContext[Any]) -> Capability[Any]:
+        return Capability(tools=[dynamic_tool])
+
+    agent = Agent(
+        TestModel(),
+        name='dbos_dynamic_capability',
+        capabilities=[DynamicCapability(factory, id='dyn'), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Call the tool')).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_agent()
+
+    assert output == '{"dynamic_tool":"dynamic result"}'
+    assert calls == ['called']
+    step_names = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+    assert 'dbos_dynamic_capability__dynamic_toolset__dyn.get_tools' in step_names
+    assert 'dbos_dynamic_capability__dynamic_toolset__dyn.call_tool' in step_names
+
+
+def test_dbos_durability_dynamic_capability_requires_id(dbos: DBOS) -> None:
+    def factory(ctx: RunContext[Any]) -> Capability[Any]:
+        return Capability()  # pragma: no cover — construction raises before the factory can run
+
+    with pytest.raises(UserError, match=r"DynamicCapability\(\.\.\., id='user-tools'\)"):
+        Agent(
+            TestModel(),
+            name='dbos_dynamic_capability_no_id',
+            capabilities=[DynamicCapability(factory), DBOSDurability()],
+        )
+
+
+def test_dbos_durability_bare_capability_func_requires_explicit_wrapper(dbos: DBOS) -> None:
+    """A bare `CapabilityFunc` in `capabilities=` is wrapped in an id-less `DynamicCapability`,
+    so under durable execution it raises with a hint to wrap it explicitly."""
+
+    def factory(ctx: RunContext[Any]) -> Capability[Any]:
+        return Capability()  # pragma: no cover — construction raises before the factory can run
+
+    with pytest.raises(UserError, match=r'wrap it explicitly'):
+        Agent(
+            TestModel(),
+            name='dbos_bare_capability_func',
+            capabilities=[factory, DBOSDurability()],
+        )
+
+
+async def test_dbos_durability_dynamic_capability_mcp_runs_in_steps(dbos: DBOS) -> None:
+    def call_then_answer(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('celsius_to_fahrenheit', {'celsius': 0}, tool_call_id='call-1')])
+
+    def factory(ctx: RunContext[Any]) -> Capability[Any]:
+        return Capability(
+            toolsets=[
+                MCPToolset(
+                    StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+                    id='dynamic_mcp',
+                )
+            ]
+        )
+
+    agent = Agent(
+        FunctionModel(call_then_answer),
+        name='dbos_dynamic_mcp',
+        capabilities=[DynamicCapability(factory, id='dyn_mcp'), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Convert zero Celsius to Fahrenheit.')).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_agent()
+
+    assert output == 'done'
+    step_names = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+    assert 'dbos_dynamic_mcp__dynamic_toolset__dyn_mcp.get_tools' in step_names
+    assert 'dbos_dynamic_mcp__dynamic_toolset__dyn_mcp.call_tool' in step_names
 
 
 async def test_dbos_durability_rejects_runtime_mcp_toolset(dbos: DBOS) -> None:
