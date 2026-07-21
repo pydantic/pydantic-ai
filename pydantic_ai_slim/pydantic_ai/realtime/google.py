@@ -343,6 +343,9 @@ def _map_usage(usage: genai_types.UsageMetadata) -> RequestUsage:
     for key, count in (
         ('input_text_tokens', _modality_tokens(usage.prompt_tokens_details, text)),
         ('output_text_tokens', _modality_tokens(usage.response_tokens_details, text)),
+        # Reasoning tokens are billed but Gemini leaves them out of `responseTokenCount`/`totalTokenCount`,
+        # so they'd be invisible if dropped (mirrors the classic `GoogleModel` mapping).
+        ('thoughts_tokens', usage.thoughts_token_count or 0),
     ):
         if count:
             details[key] = count

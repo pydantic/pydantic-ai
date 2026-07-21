@@ -148,6 +148,10 @@ async def test_audio_in_server_vad_turn(
     responses = [message for message in messages if isinstance(message, ModelResponse)]
     assert responses and isinstance(responses[-1].parts[0], SpeechPart)
 
+    # xAI bills Grok Voice by audio second: `billable_audio_seconds` is the authoritative cost and is
+    # captured in usage `details` (it can't be reconstructed from token counts).
+    assert session.usage.details.get('billable_audio_seconds') == snapshot(5)
+
 
 async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:
     """A tool call is executed by the session and its result folded back into a classic-shaped history.

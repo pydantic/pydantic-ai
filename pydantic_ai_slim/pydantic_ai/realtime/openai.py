@@ -142,6 +142,16 @@ def _map_usage(response: dict[str, Any]) -> RequestUsage | None:
     ):
         if isinstance(raw, int) and not isinstance(raw, bool):
             details[key] = raw
+    # xAI-specific usage (absent on OpenAI): the `grok_tokens` buckets, and second-based audio billing —
+    # xAI bills Grok Voice by audio second, so `billable_audio_seconds` is the authoritative cost and is
+    # not reconstructable from token counts. Included only when non-zero, so OpenAI's `details` is unchanged.
+    for key, raw in (
+        ('input_grok_tokens', inp.get('grok_tokens')),
+        ('output_grok_tokens', out.get('grok_tokens')),
+        ('billable_audio_seconds', usage.get('billable_audio_seconds')),
+    ):
+        if isinstance(raw, int) and not isinstance(raw, bool) and raw:
+            details[key] = raw
     return RequestUsage(
         input_tokens=_int(usage.get('input_tokens')),
         output_tokens=_int(usage.get('output_tokens')),

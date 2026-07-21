@@ -130,6 +130,10 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
     assert part.audio.media_type == 'audio/pcm'
     assert len(part.audio.data) > 0
 
+    # Reasoning (`thoughtsTokenCount`) is billed but left out of Gemini's response/total counts, so the
+    # session captures it in `details` rather than dropping it.
+    assert response.usage.details.get('thoughts_tokens') == snapshot(23)
+
 
 async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """A tool call is executed by the session and its result folded back into a classic-shaped history."""
