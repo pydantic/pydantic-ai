@@ -57,6 +57,7 @@ from .conftest import IsDatetime, IsNow, IsStr
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
+    from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
     from pydantic_ai.durable_exec.dbos import (
         DBOSAgent,  # pyright: ignore[reportDeprecated]
         DBOSDurability,
@@ -64,6 +65,7 @@ try:
         StepConfig,
     )
     from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
+    from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
@@ -90,7 +92,7 @@ except ImportError:  # pragma: lax no cover
 from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.capabilities import ProcessEventStream, ResolveModelId, SelectModel, Toolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._inline_snapshot import snapshot
@@ -2153,6 +2155,77 @@ async def test_dbos_durability_accepts_legacy_stream_step_shape(dbos: DBOS) -> N
             return await result.get_output(), chunks
 
     assert await run_agent() == ('legacy stream', ['legacy stream'])
+
+
+def test_dbos_durability_legacy_run_sync_workflow(dbos: DBOS) -> None:
+    """The opt-in legacy `run_sync` workflow executes the agent like `DBOSAgent.run_sync` did."""
+    agent = Agent(
+        _durability_fn_model,
+        name='legacy_workflow_sync_compat',
+        capabilities=[DBOSDurability(register_legacy_workflows=True)],
+    )
+    durability = DBOSDurability.from_agent(agent)
+    assert durability is not None
+    result = durability._legacy_run_sync_workflow('legacy')  # pyright: ignore[reportPrivateUsage]
+    assert result.output == 'Echo: legacy'
+
+
+async def test_unwrap_recorded_tool_call_result_handles_both_generations() -> None:
+    """Recovery may replay step outputs recorded before control-flow wrapping (raw) or after (wrapped).
+
+    A unit test because a real recovery would need to kill and restart the process mid-workflow;
+    the step-recorded value is exactly what this helper receives on replay.
+    """
+
+    async def raise_model_retry() -> str:
+        raise ModelRetry('again')
+
+    wrapped_result = await wrap_tool_call_result(raise_model_retry())
+    with pytest.raises(ModelRetry, match='again'):
+        unwrap_recorded_tool_call_result(wrapped_result)
+
+    assert unwrap_recorded_tool_call_result('raw recorded output') == 'raw recorded output'
+
+
+async def test_dbos_mcp_model_retry_crosses_step_without_engine_retries(
+    dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ModelRetry` from an MCP tool crosses the step as a value; DBOS must not re-execute the call.
+
+    Previously the raw exception failed the step, so `retries_allowed` re-ran the side-effecting
+    MCP call and surfaced `DBOSMaxStepRetriesExceeded` instead of the agent's retry-prompt loop.
+    """
+    calls = 0
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='retry_mcp')
+
+    async def raise_model_retry(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        nonlocal calls
+        calls += 1
+        raise ModelRetry('try again')
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', raise_model_retry)
+    durable = dbosify_mcp_toolset(
+        mcp_toolset,
+        step_name_prefix='retry_mcp_agent',
+        step_config=StepConfig(retries_allowed=True, max_attempts=3),
+    )
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='boom'),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> int:
+        with pytest.raises(ModelRetry, match='try again'):
+            await durable.call_tool('boom', {}, run_context, tool)
+        return calls
+
+    assert await run_workflow() == 1
 
 
 async def test_dbos_durability_parallel_mode_applies_inside_run(dbos: DBOS) -> None:

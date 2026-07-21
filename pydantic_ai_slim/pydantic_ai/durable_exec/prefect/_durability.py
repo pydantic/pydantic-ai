@@ -185,6 +185,12 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         async def event_stream_handler_task(stream_event: AgentStreamEvent, sequence: int) -> None:
             await handler(ctx, self._single_event_stream(stream_event))
 
+        # The sequence number makes content-identical events within one flow run each fire
+        # (distinct task-cache keys) while a flow retry that re-executes the same run
+        # reproduces the same numbers and replays from cache. `task_run_dynamic_keys` is
+        # Prefect's own per-flow-run counter store for task-call disambiguation, so a
+        # namespaced key gets exactly the retry-lineage lifetime Prefect's task naming
+        # relies on.
         flow_context = FlowRunContext.get()
         assert flow_context is not None
         sequence_key = f'pydantic_ai_event_sequence:{self.name}'

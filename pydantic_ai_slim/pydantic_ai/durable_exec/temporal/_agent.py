@@ -73,7 +73,7 @@ class _EventStreamHandlerParams:
 - `tool_activity_config=` → use per-tool `metadata={'temporal': ...}` or a `SetToolMetadata` capability.
 - `run_context_type=` → set `run_context_type=` on `TemporalDurability`.
 - `temporalize_toolset_func=` → not supported on the capability path; open an issue if you need it.
-Workflows started under `TemporalAgent` replay correctly after migrating when agent name, toolset IDs, and model registry keys are kept; no draining is needed.""",
+Workflows started under `TemporalAgent` replay correctly after migrating when agent name, toolset IDs, and model registry keys are kept and `event_stream_handler=` stays on `TemporalDurability`; no draining is needed.""",
     category=PydanticAIDeprecationWarning,
 )
 class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):

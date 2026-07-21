@@ -9,7 +9,7 @@ from pydantic_ai import ToolsetTool
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableMCPToolset,
-    unwrap_tool_call_result,
+    unwrap_recorded_tool_call_result,
     wrap_tool_call_result,
 )
 from pydantic_ai.mcp import MCPToolset, ToolResult
@@ -51,7 +51,9 @@ def dbosify_mcp_toolset(
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
     ) -> ToolResult:
-        return unwrap_tool_call_result(await call_tool_step(tool_name, tool_args, ctx, tool))
+        # A recovering workflow may replay outputs this step recorded before it wrapped
+        # control-flow exceptions as values; those recordings are the raw tool result.
+        return unwrap_recorded_tool_call_result(await call_tool_step(tool_name, tool_args, ctx, tool))
 
     return DurableMCPToolset(
         wrapped,
