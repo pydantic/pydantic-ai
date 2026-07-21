@@ -13,6 +13,7 @@ from typing_extensions import assert_never
 
 from .. import ModelHTTPError, _utils
 from .._run_context import RunContext
+from .._thinking_part import render_foreign_thinking
 from ..capabilities.x_search import XSearch as XSearch  # re-export for backward compat
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
@@ -53,7 +54,7 @@ from ..models import (
 )
 from ..native_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, WebSearchTool, XSearchTool
 from ..output import OutputObjectDefinition
-from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec
+from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile, GrokReasoningEffort
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
@@ -463,7 +464,8 @@ class XaiModel(Model[AsyncClient]):
         """Map a `ThinkingPart` into a single xAI assistant message.
 
         - Native xAI thinking (with optional signature) is sent via `reasoning_content`/`encrypted_content`
-        - Non-xAI (or non-native) thinking is preserved by wrapping in the model profile's thinking tags
+        - Non-native thinking (unsigned or from another provider) is prefixed with an explicit marker instead
+          of the profile's thinking tags, which the model would imitate
         """
         if item.provider_name in _XAI_PROVIDER_NAMES and (item.content or item.signature):
             msg = assistant('')
@@ -473,8 +475,7 @@ class XaiModel(Model[AsyncClient]):
                 msg.encrypted_content = item.signature
             return msg
         elif item.content:
-            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-            return assistant('\n'.join([start_tag, item.content, end_tag]))
+            return assistant(render_foreign_thinking(item.content))
         else:
             return None
 
