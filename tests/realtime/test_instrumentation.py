@@ -453,6 +453,12 @@ async def test_session_captures_transcript_messages() -> None:
     assert json.loads(str(sess.attributes['gen_ai.output.messages'])) == [
         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'hi, how can I help?'}]},
     ]
+    # `logfire.json_schema` marks the message attributes as JSON arrays so the Logfire UI renders
+    # them as a conversation (matching the classic agent-run span and per-turn `chat` spans).
+    assert json.loads(str(sess.attributes['logfire.json_schema']))['properties'] == {
+        'gen_ai.input.messages': {'type': 'array'},
+        'gen_ai.output.messages': {'type': 'array'},
+    }
 
 
 async def test_include_content_false_omits_transcript_messages() -> None:
@@ -463,6 +469,7 @@ async def test_include_content_false_omits_transcript_messages() -> None:
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
     assert sess.attributes is not None
     assert 'gen_ai.input.messages' not in sess.attributes
+    assert 'logfire.json_schema' not in sess.attributes
 
 
 async def test_session_span_sets_conversation_id() -> None:

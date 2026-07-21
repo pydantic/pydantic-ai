@@ -804,20 +804,30 @@ class RealtimeSession:
         # Report cumulative usage under `gen_ai.aggregated_usage.*` (mirroring the classic agent-run
         # span) so backends that sum span attributes don't double-count it against the per-turn `chat`
         # spans, which carry each response's usage under `gen_ai.usage.*`. Shared with the classic span.
-        span.set_attributes(settings.aggregated_usage_attributes(self.usage))
+        attributes: dict[str, Any] = dict(settings.aggregated_usage_attributes(self.usage))
+        message_attributes: dict[str, str] = {}
         if settings.include_content:
             # Reuse the same message → gen_ai serialization the instrumented model uses. User/tool
             # requests land as input messages; assistant responses as output messages.
             requests: list[ModelMessage] = [m for m in self._history if isinstance(m, ModelRequest)]
             responses: list[ModelMessage] = [m for m in self._history if isinstance(m, ModelResponse)]
             if requests:
-                span.set_attribute(
-                    'gen_ai.input.messages', safe_to_json(settings.messages_to_otel_messages(requests)).decode()
-                )
+                message_attributes['gen_ai.input.messages'] = safe_to_json(
+                    settings.messages_to_otel_messages(requests)
+                ).decode()
             if responses:
-                span.set_attribute(
-                    'gen_ai.output.messages', safe_to_json(settings.messages_to_otel_messages(responses)).decode()
-                )
+                message_attributes['gen_ai.output.messages'] = safe_to_json(
+                    settings.messages_to_otel_messages(responses)
+                ).decode()
+        if message_attributes:
+            # `logfire.json_schema` marks the message attributes as JSON arrays so the Logfire UI
+            # deserializes and renders them as a conversation rather than as strings — matching the
+            # classic agent-run span and `InstrumentationSettings.handle_messages` on `chat` spans.
+            attributes.update(message_attributes)
+            attributes['logfire.json_schema'] = pydantic_core.to_json(
+                {'type': 'object', 'properties': {key: {'type': 'array'} for key in message_attributes}}
+            ).decode()
+        span.set_attributes(attributes)
         for token_type, tokens in (('input', self.usage.input_tokens), ('output', self.usage.output_tokens)):
             if tokens:
                 settings.tokens_histogram.record(tokens, {**base_attributes, 'gen_ai.token.type': token_type})
