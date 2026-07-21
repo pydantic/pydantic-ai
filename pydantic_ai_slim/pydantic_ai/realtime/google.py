@@ -16,6 +16,7 @@ Application Default Credentials when `vertexai=True` (useful where org policy di
 from __future__ import annotations as _annotations
 
 import json
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import InitVar, dataclass, field
@@ -59,6 +60,7 @@ from ..models.google import (
 )
 from ..native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from ..providers import Provider, infer_provider
+from ..settings import ThinkingEffort, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._base import (
@@ -212,6 +214,23 @@ def _ws_connect_lock(client: Client) -> Lock:
         lock = Lock()
         _WS_CONNECT_LOCKS[client] = lock
     return lock
+
+
+_GEMINI_THINKING_LEVEL: dict[ThinkingEffort, genai_types.ThinkingLevel] = {
+    'minimal': genai_types.ThinkingLevel.MINIMAL,
+    'low': genai_types.ThinkingLevel.LOW,
+    'medium': genai_types.ThinkingLevel.MEDIUM,
+    'high': genai_types.ThinkingLevel.HIGH,
+    'xhigh': genai_types.ThinkingLevel.HIGH,  # Gemini has no `xhigh`; map it to the highest level.
+}
+
+
+def _thinking_to_config(thinking: ThinkingLevel) -> genai_types.ThinkingConfig:
+    """Map the unified `thinking` setting to a Gemini `ThinkingConfig`."""
+    if thinking is False:
+        return genai_types.ThinkingConfig(thinking_budget=0)  # disable thinking
+    level = genai_types.ThinkingLevel.MEDIUM if thinking is True else _GEMINI_THINKING_LEVEL[thinking]
+    return genai_types.ThinkingConfig(thinking_level=level)
 
 
 def _automatic_vad_from_turn_detection(turn_detection: TurnDetection) -> AutomaticVAD:
@@ -541,8 +560,17 @@ class GoogleRealtimeModel(RealtimeModel):
             config.top_k = top_k
         if (seed := model_settings.get('seed')) is not None:
             config.seed = seed
-        if (thinking := model_settings.get('google_thinking_config')) is not None:
-            config.thinking_config = genai_types.ThinkingConfig(**thinking)
+        if (google_thinking := model_settings.get('google_thinking_config')) is not None:
+            # The Gemini-native config takes precedence over the cross-provider `thinking` setting.
+            config.thinking_config = genai_types.ThinkingConfig(**google_thinking)
+        elif (thinking := model_settings.get('thinking')) is not None:
+            if self.profile.get('supports_thinking', False):
+                config.thinking_config = _thinking_to_config(thinking)
+            else:
+                warnings.warn(
+                    f'The {self.model!r} realtime model does not support the `thinking` setting; ignoring it.',
+                    UserWarning,
+                )
         if (resolution := model_settings.get('google_video_resolution')) is not None:
             config.media_resolution = resolution
 

@@ -336,6 +336,33 @@ def test_config_full() -> None:
     assert config.top_p == 0.9
 
 
+def test_config_thinking_maps_to_thinking_level() -> None:
+    # The default native-audio model supports thinking (verified live); `thinking` maps to a level,
+    # and `False` disables it via a zero budget.
+    def thinking_config(thinking: object) -> genai_types.ThinkingConfig | None:
+        settings = GoogleRealtimeModelSettings(thinking=thinking)  # type: ignore[typeddict-item]
+        return GoogleRealtimeModel()._config('hi', None, settings).thinking_config  # pyright: ignore[reportPrivateUsage]
+
+    assert thinking_config('high') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
+    assert thinking_config('minimal') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.MINIMAL)
+    assert thinking_config(True) == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.MEDIUM)
+    assert thinking_config(False) == genai_types.ThinkingConfig(thinking_budget=0)
+
+
+def test_config_google_thinking_config_wins_over_unified_thinking() -> None:
+    settings = GoogleRealtimeModelSettings(thinking='low', google_thinking_config={'thinking_budget': 512})
+    config = GoogleRealtimeModel()._config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
+    assert config.thinking_config == genai_types.ThinkingConfig(thinking_budget=512)
+
+
+def test_config_thinking_on_non_thinking_model_warns() -> None:
+    # A non-native-audio Gemini Live model doesn't report thinking support → warn and drop.
+    model = GoogleRealtimeModel('gemini-live-2.5-flash-preview', settings=GoogleRealtimeModelSettings(thinking='high'))
+    with pytest.warns(UserWarning, match='does not support the `thinking` setting'):
+        config = model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert config.thinking_config is None
+
+
 def test_config_minimal_text_no_transcription_no_vad() -> None:
     model = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(

@@ -56,6 +56,8 @@ class BaseGoogleProvider(Provider[Client], ABC):
             'supports_image_input': True,
             'supports_session_seeding': True,
             'supported_native_tools': frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
+            # Native-audio Gemini Live models support a thinking config (verified live).
+            'supports_thinking': 'native-audio' in model_name,
         }
 
     def _build_http_options(

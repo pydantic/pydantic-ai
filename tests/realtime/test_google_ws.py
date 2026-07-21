@@ -269,5 +269,6 @@ def test_profile_allow_seeding() -> None:
         supports_interruption=False,
         supports_output_truncation=False,
         supports_session_seeding=True,
+        supports_thinking=True,  # the default native-audio model supports a thinking config
         supported_native_tools=frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
     )

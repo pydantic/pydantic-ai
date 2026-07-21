@@ -274,9 +274,10 @@ the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] on the req
 
 It applies only to realtime models that support reasoning — reported by the model's
 [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] profile flag. Today
-that is OpenAI's `gpt-realtime-2` family (e.g. `gpt-realtime-2.1` and `gpt-realtime-2.1-mini`); the GA
-`gpt-realtime` is a standard speech-to-speech model without reasoning, so a `thinking` setting is
-ignored with a warning rather than sent (the API would otherwise reject it).
+those are OpenAI's `gpt-realtime-2` family (e.g. `gpt-realtime-2.1` and `gpt-realtime-2.1-mini`) and
+Gemini's native-audio Live models. The GA `gpt-realtime` is a standard speech-to-speech model without
+reasoning, so a `thinking` setting is ignored with a warning rather than sent (the API would otherwise
+reject it).
 
 ```python {test="skip" lint="skip"}
 async with agent.realtime_session(
@@ -285,9 +286,10 @@ async with agent.realtime_session(
     ...
 ```
 
-Gemini Live exposes reasoning through its own
-[`google_thinking_config`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_thinking_config]
-instead (its Live models configure thinking as a token budget or a level depending on the model).
+On OpenAI the effort maps to `reasoning.effort`; on Gemini it maps to a thinking level (and `False`
+disables thinking). For finer Gemini control — a token budget, or thought summaries — set
+[`google_thinking_config`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_thinking_config],
+which takes precedence over `thinking`.
 
 ### Gemini configuration
 
@@ -799,7 +801,6 @@ Some capabilities are intentionally out of scope:
 - **Realtime-specific capability hooks.** Capabilities run their [tool-lifecycle hooks](#relationship-to-run-iter) only; there are no before/after-exchange hooks.
 - **Dynamic instructions mid-session.** Instructions are resolved once at connect and not re-evaluated during the session.
 - **Audio replay when seeding history.** Seeding a session with `message_history=` projects text and transcripts only; prior audio is not replayed (see [Message history](#message-history)).
-- **Unified `thinking` on Gemini.** The cross-provider [`thinking`](#reasoning) setting currently maps to OpenAI reasoning models only; Gemini reasoning is configured through its native `google_thinking_config`.
 - **Proactive resume before Gemini's session cap.** Gemini Live signals an upcoming disconnect (`GoAway`) near its session-length limit; the session doesn't yet resume proactively on that signal, only [reconnecting](#reconnecting) after a drop.
 
 ## Implementing a provider
