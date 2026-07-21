@@ -1078,27 +1078,15 @@ def test_realtime_input_full() -> None:
     assert rt.turn_coverage == genai_types.TurnCoverage.TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO
 
 
-@pytest.mark.parametrize(
-    ('sensitivity', 'expected_start', 'expected_end'),
-    [
-        (
-            'low',
-            genai_types.StartSensitivity.START_SENSITIVITY_LOW,
-            genai_types.EndSensitivity.END_SENSITIVITY_LOW,
-        ),
-        ('medium', None, None),
-        (
-            'high',
-            genai_types.StartSensitivity.START_SENSITIVITY_HIGH,
-            genai_types.EndSensitivity.END_SENSITIVITY_HIGH,
-        ),
-    ],
-)
-def test_cross_provider_turn_detection_sensitivity(
-    sensitivity: Literal['low', 'medium', 'high'],
-    expected_start: genai_types.StartSensitivity | None,
-    expected_end: genai_types.EndSensitivity | None,
-) -> None:
+@pytest.mark.parametrize('sensitivity', ['low', 'medium', 'high'])
+def test_cross_provider_turn_detection_sensitivity(sensitivity: Literal['low', 'medium', 'high']) -> None:
+    # Resolve the expected `genai_types` enums inside the test (not in the `parametrize` decorator, which
+    # is evaluated at collection time before the module-level skip can apply when `google-genai` is absent).
+    expected_start, expected_end = {
+        'low': (genai_types.StartSensitivity.START_SENSITIVITY_LOW, genai_types.EndSensitivity.END_SENSITIVITY_LOW),
+        'medium': (None, None),
+        'high': (genai_types.StartSensitivity.START_SENSITIVITY_HIGH, genai_types.EndSensitivity.END_SENSITIVITY_HIGH),
+    }[sensitivity]
     config = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(turn_detection=TurnDetection(sensitivity=sensitivity))
     )._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
