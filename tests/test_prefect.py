@@ -8,11 +8,11 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from pydantic_ai import (
     Agent,
@@ -1497,10 +1497,10 @@ def test_cache_policy_excludes_non_serializable_deps():
         lock: threading.Lock = field(default_factory=threading.Lock)
 
     class CacheModelDeps(BaseModel):
-        model_config = ConfigDict(arbitrary_types_allowed=True)
-
         tenant: str
-        lock: threading.Lock = Field(default_factory=threading.Lock)
+        # `Any` rather than `threading.Lock`: on Python < 3.13 `threading.Lock` is a factory
+        # function, not a class, so pydantic warns (an error under pytest) when it's an annotation.
+        lock: Any = Field(default_factory=threading.Lock)
 
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
