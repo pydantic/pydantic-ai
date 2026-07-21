@@ -5293,6 +5293,7 @@ class TestModelRequestHooks:
         [('run', False), ('run_stream', True), ('event_stream_handler', True)],
     )
     async def test_before_model_request_sees_selection_context(self, mode: str, streaming: bool):
+        """`before_model_request` sees the selected model ID and effective streaming mode."""
         contexts: list[ModelRequestContext] = []
 
         @dataclass

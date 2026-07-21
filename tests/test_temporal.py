@@ -444,6 +444,7 @@ async def test_temporal_agent_history_replays_after_migrating_to_durability(clie
 
 
 async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> None:
+    """Temporal decodes old cancel payloads and resolves registered and inferred models."""
     response = ModelResponse(parts=[TextPart(content='cancel')], model_name='test')
     params = TypeAdapter(_CancelParams).validate_python({'response': response, 'model_id': None})
     assert params == _CancelParams(response=response)
@@ -5430,6 +5431,7 @@ def test_durability_find_model_id_by_identity():
 
 
 def test_durability_find_model_id_prefers_registered_wrapper_identity():
+    """Temporal preserves a registered wrapper's alias before considering its inner model."""
     model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='bare')]))
     wrapped = WrapperModel(model)
     agent = Agent(model, name='test', capabilities=[TemporalDurability(models={'wrapped': wrapped})])
@@ -5889,6 +5891,8 @@ def test_durability_find_model_id_falls_back_to_model_id_string():
 
 
 async def test_durability_validates_only_resolved_runtime_capability_layers():
+    """Temporal accepts resolved and safe per-run layers but rejects per-run dynamic layers."""
+
     @dataclass
     class _BaseOne(AbstractCapability[None]):
         pass
@@ -6281,7 +6285,7 @@ def test_durability_tool_metadata_disables_activity():
 
 
 def test_resolve_tool_activity_config_reads_metadata():
-    """Per-tool Temporal config from `tool_def.metadata['temporal']` takes priority."""
+    """Tool metadata takes priority while defaults and caller-owned retry policies stay intact."""
     configured_retry_policy = RetryPolicy(maximum_attempts=3, non_retryable_error_types=['CustomError'])
     metadata_config = ActivityConfig(
         start_to_close_timeout=timedelta(seconds=120), retry_policy=configured_retry_policy
@@ -6343,6 +6347,8 @@ def test_resolve_tool_activity_config_reads_metadata():
     ],
 )
 async def test_tool_return_content_with_framework_kind_round_trips(content: dict[str, Any]) -> None:
+    """User mappings with framework-like `kind` keys round-trip as ordinary tool content."""
+
     async def return_content() -> dict[str, Any]:
         return content
 
@@ -6354,6 +6360,8 @@ async def test_tool_return_content_with_framework_kind_round_trips(content: dict
 
 
 async def test_structured_tool_return_round_trips() -> None:
+    """Temporal serialization preserves every field of an explicit structured `ToolReturn`."""
+
     async def return_structured() -> ToolReturn:
         return ToolReturn('result', content='extra', metadata={'source': 'test'})
 
@@ -6365,6 +6373,8 @@ async def test_structured_tool_return_round_trips() -> None:
 
 
 async def test_ordinary_tool_return_keeps_legacy_wire_shape() -> None:
+    """Ordinary return values retain the legacy `tool_return` wire discriminator."""
+
     async def return_content() -> str:
         return 'result'
 
@@ -6374,6 +6384,7 @@ async def test_ordinary_tool_return_keeps_legacy_wire_shape() -> None:
 
 
 async def test_legacy_structured_tool_return_payload_decodes() -> None:
+    """Temporal still decodes structured tool returns recorded with the legacy payload shape."""
     payloads = await pydantic_data_converter.encode(
         [{'result': {'return_value': 'legacy', 'kind': 'tool-return'}, 'kind': 'tool_return'}]
     )

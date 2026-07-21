@@ -722,6 +722,7 @@ async def test_toolset_without_id():
 
 
 async def test_prefect_toolset_legacy_constructors() -> None:
+    """Deprecated Prefect toolset constructors retain wrapping, IDs, and retry configuration."""
     calls = 0
 
     async def fail() -> str:
@@ -1444,6 +1445,8 @@ async def test_cache_policy_per_run_ids_excluded_but_dict_keys_kept():
 
 
 def test_cache_policy_keeps_user_dataclass_fields():
+    """Cache projection preserves user dependency fields that share internal context names."""
+
     @dataclass
     class CacheDeps:
         timestamp: str
@@ -1973,6 +1976,7 @@ async def test_prefect_durability_outside_flow() -> None:
 
 
 async def test_prefect_durability_tool_config_is_ignored_outside_flow() -> None:
+    """Prefect tool task retries are inactive when an agent runs outside a Prefect flow."""
     calls = 0
     agent = Agent(
         TestModel(),
@@ -2060,6 +2064,7 @@ class _BehaviorChangingWrapper(WrapperModel):
 
 
 async def test_prefect_durability_runtime_registered_wrapper_model() -> None:
+    """Prefect round-trips a registered wrapper by identity without unwrapping its behavior."""
     wrapped = _BehaviorChangingWrapper(_durability_fn_model)
     agent = Agent(
         _durability_fn_model,

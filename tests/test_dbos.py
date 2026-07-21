@@ -2225,6 +2225,7 @@ async def test_dbos_durability_per_step_model_selector_uses_selected_model(dbos:
 
 
 async def test_dbos_durability_per_step_model_selector_preserves_alias(dbos: DBOS) -> None:
+    """DBOS persists the selected registration alias instead of the resolved model's ID."""
     durability = DBOSDurability(models={'primary': _durability_fn_model, 'alt': _dbos_alt_model})
     agent = Agent(
         'primary',

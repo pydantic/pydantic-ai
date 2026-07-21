@@ -6482,6 +6482,7 @@ def test_completed_streamed_response_deprecated_positional_init(
 async def test_completed_streamed_response_deprecated_replay_events(
     replay_mrp: models.ModelRequestParameters, replay_response: ModelResponse
 ) -> None:
+    """Legacy `replay_events=True` remains accepted and replays events for both init forms."""
     with pytest.warns(PydanticAIDeprecationWarning) as warning_records:
         stream = CompletedStreamedResponse(  # pyright: ignore[reportDeprecated]
             replay_mrp,
