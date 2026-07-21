@@ -129,6 +129,7 @@ try:
         unwrap_tool_call_result,
         wrap_tool_call_result,
     )
+    from pydantic_ai.durable_exec._utils import StreamedActivityResult
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         LogfirePlugin,
@@ -140,6 +141,7 @@ try:
     from pydantic_ai.durable_exec.temporal._durability import (
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
         _heartbeating,  # pyright: ignore[reportPrivateUsage]
+        _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
@@ -439,6 +441,12 @@ async def test_temporal_agent_history_replays_after_migrating_to_durability(clie
         ).replay_workflow(history)
     finally:
         _migration_agent = _legacy_migration_agent
+
+
+def test_temporal_agent_construction_warns_deprecated() -> None:
+    """The `TemporalAgent` deprecation fires at runtime; the module-level filters only suppress it."""
+    with pytest.warns(PydanticAIDeprecationWarning, match='`TemporalAgent` is deprecated'):
+        TemporalAgent(Agent(TestModel(), name='temporal_agent_deprecation_probe'))  # pyright: ignore[reportDeprecated]
 
 
 async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> None:
@@ -6407,6 +6415,27 @@ async def test_legacy_structured_tool_return_payload_decodes() -> None:
     )
     decoded = await pydantic_data_converter.decode(payloads, [CallToolResult])  # pyright: ignore[reportArgumentType]
     assert unwrap_tool_call_result(decoded[0]) == ToolReturn('legacy')
+
+
+async def test_stream_activity_payload_decodes_both_recorded_shapes() -> None:
+    """The stream-activity result union decodes both recorded wire shapes unambiguously.
+
+    A `TemporalDurability` history (v2.14+) records a `StreamedActivityResult`; a legacy
+    `TemporalAgent` history recorded the bare `ModelResponse`. Replay of either kind of
+    in-flight workflow decodes the recorded payload through `_StreamedActivityPayload`.
+    """
+    response = {'parts': [{'content': 'streamed', 'part_kind': 'text'}], 'kind': 'response'}
+    event = {'index': 0, 'part': {'content': 'streamed', 'part_kind': 'text'}, 'event_kind': 'part_start'}
+    payloads = await pydantic_data_converter.encode([{'response': response, 'events': [event]}, response])
+
+    hints = [_StreamedActivityPayload, _StreamedActivityPayload]
+    current_shape, legacy_shape = await pydantic_data_converter.decode(payloads, hints)  # pyright: ignore[reportArgumentType]
+
+    assert isinstance(current_shape, StreamedActivityResult)
+    assert current_shape.response.parts == [TextPart(content='streamed')]
+    assert current_shape.events == [PartStartEvent(index=0, part=TextPart(content='streamed'))]
+    assert isinstance(legacy_shape, ModelResponse)
+    assert legacy_shape.parts == [TextPart(content='streamed')]
 
 
 async def test_durability_process_event_stream_fires_workflow_side(client: Client):

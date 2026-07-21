@@ -165,6 +165,12 @@ simple_agent = Agent(model, name='simple_agent')
 simple_prefect_agent = PrefectAgent(simple_agent)  # pyright: ignore[reportDeprecated]
 
 
+def test_prefect_agent_construction_warns_deprecated() -> None:
+    """The `PrefectAgent` deprecation fires at runtime; the module-level filters only suppress it."""
+    with pytest.warns(PydanticAIDeprecationWarning, match='`PrefectAgent` is deprecated'):
+        PrefectAgent(Agent(TestModel(), name='prefect_agent_deprecation_probe'))  # pyright: ignore[reportDeprecated]
+
+
 async def test_simple_agent_run_in_flow(allow_model_requests: None) -> None:
     """Test that a simple agent can run in a Prefect flow."""
 

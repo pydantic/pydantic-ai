@@ -169,6 +169,12 @@ simple_agent = Agent(model, name='simple_agent')
 simple_dbos_agent = DBOSAgent(simple_agent)  # pyright: ignore[reportDeprecated]
 
 
+def test_dbos_agent_construction_warns_deprecated() -> None:
+    """The `DBOSAgent` deprecation fires at runtime; the module-level filters only suppress it."""
+    with pytest.warns(PydanticAIDeprecationWarning, match='`DBOSAgent` is deprecated'):
+        DBOSAgent(Agent(TestModel(), name='dbos_agent_deprecation_probe'))  # pyright: ignore[reportDeprecated]
+
+
 async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, openai_api_key: str) -> None:
     """Test that a simple agent can run in a DBOS workflow."""
 
@@ -2392,6 +2398,32 @@ async def test_dbos_durability_alias_default_model(dbos: DBOS) -> None:
     async def run_agent() -> str:
         result = await agent.run('hi', deps='acme')
         return result.output
+
+    assert await run_agent() == 'tenant:acme'
+
+
+async def test_dbos_durability_per_step_model_selector_alias_resolved_by_capability(dbos: DBOS) -> None:
+    """A selector alias that only a `ResolveModelId` capability can resolve crosses the step boundary.
+
+    Unlike a `models=`-registered alias, identity lookup can't recover this one: the selector's
+    string itself must be recorded as the request's model ID, or the step would receive the
+    resolved model's own ID (`function:tenant-model`), which neither the resolver nor
+    `infer_model` can rebuild.
+    """
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_selector_capability_alias',
+        deps_type=str,
+        capabilities=[
+            SelectModel(lambda ctx: 'tenant-model'),
+            ResolveModelId(_dbos_tenant_resolver),
+            DBOSDurability(),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hi', deps='acme')).output
 
     assert await run_agent() == 'tenant:acme'
 

@@ -81,6 +81,9 @@ class _EventStreamHandlerParams:
     serialized_run_context: Any
 
 
+# The `ModelResponse` arm decodes histories recorded by the deprecated `TemporalAgent`, whose
+# stream activity returned the bare response. Remove it (and the workflow-side event synthesis
+# in `request_stream_segment`) once those histories have aged out, along with `TemporalAgent`.
 _StreamedActivityPayload: TypeAlias = StreamedActivityResult | ModelResponse
 
 
