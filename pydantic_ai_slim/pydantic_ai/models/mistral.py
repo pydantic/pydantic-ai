@@ -46,7 +46,7 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from . import (
@@ -133,6 +133,22 @@ _FINISH_REASON_MAP: dict[MistralFinishReason, FinishReason] = {
     'error': 'error',
     'tool_calls': 'tool_call',
 }
+
+_MISTRAL_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'high']] = {
+    True: 'high',
+    False: 'none',
+    'minimal': 'high',
+    'low': 'high',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+}
+"""Maps the unified `thinking` setting to Mistral's `reasoning_effort`.
+
+Mistral only exposes `'high'` (full thinking) and `'none'` (thinking suppressed), so every
+enabled level maps to `'high'`; only `thinking=False` maps to `'none'`. See
+https://docs.mistral.ai/capabilities/reasoning/.
+"""
 
 
 class MistralModelSettings(ModelSettings, total=False):
@@ -270,6 +286,7 @@ class MistralModel(Model[Mistral]):
                 presence_penalty=model_settings.get('presence_penalty'),
                 frequency_penalty=model_settings.get('frequency_penalty'),
                 stop=model_settings.get('stop_sequences', None),
+                reasoning_effort=self._translate_thinking(model_request_parameters),
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -285,6 +302,7 @@ class MistralModel(Model[Mistral]):
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
         mistral_messages = await self._map_messages(messages, model_request_parameters)
+        reasoning_effort = self._translate_thinking(model_request_parameters)
 
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
@@ -317,6 +335,7 @@ class MistralModel(Model[Mistral]):
             presence_penalty=model_settings.get('presence_penalty'),
             frequency_penalty=model_settings.get('frequency_penalty'),
             stop=model_settings.get('stop_sequences', None),
+            reasoning_effort=reasoning_effort,
             http_headers={'User-Agent': get_user_agent()},
         )
         assert response, 'An unexpected empty response from Mistral.'
@@ -522,6 +541,20 @@ class MistralModel(Model[Mistral]):
         if isinstance(timeout, (int, float)):
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
+
+    def _translate_thinking(
+        self,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Literal['none', 'high'] | MistralUnset:
+        """Map the unified `thinking` setting to Mistral's `reasoning_effort`.
+
+        Only models with adjustable reasoning accept `reasoning_effort`; always-on models
+        (`magistral`) reason unconditionally and must not receive it.
+        """
+        thinking = model_request_parameters.thinking
+        if thinking is None or self.profile.get('thinking_always_enabled', False):
+            return UNSET
+        return _MISTRAL_REASONING_EFFORT_MAP[thinking]
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
         file_content: list[UserContent] = []

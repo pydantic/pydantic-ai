@@ -1,58 +1,55 @@
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
 
 from prefect import task
 
 from pydantic_ai import FunctionToolset, ToolsetTool
+from pydantic_ai.durable_exec._toolset import DurableFunctionToolset
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from ._toolset import PrefectWrapperToolset
+from ._toolset import resolve_tool_task_config
 from ._types import TaskConfig, default_task_config
 
 
-class PrefectFunctionToolset(PrefectWrapperToolset[AgentDepsT]):
-    """A wrapper for FunctionToolset that integrates with Prefect, turning tool calls into Prefect tasks."""
+def prefectify_function_toolset(
+    wrapped: FunctionToolset[AgentDepsT],
+    *,
+    task_config: TaskConfig,
+    tool_task_config: dict[str, TaskConfig | None],
+) -> DurableFunctionToolset[AgentDepsT]:
+    base_config = default_task_config | (task_config or {})
 
-    def __init__(
-        self,
-        wrapped: FunctionToolset[AgentDepsT],
-        *,
-        task_config: TaskConfig,
-        tool_task_config: dict[str, TaskConfig | None],
-    ):
-        super().__init__(wrapped)
-        self._task_config = default_task_config | (task_config or {})
-        self._tool_task_config = tool_task_config or {}
-
-        @task
-        async def _call_tool_task(
-            tool_name: str,
-            tool_args: dict[str, Any],
-            ctx: RunContext[AgentDepsT],
-            tool: ToolsetTool[AgentDepsT],
-        ) -> Any:
-            return await super(PrefectFunctionToolset, self).call_tool(tool_name, tool_args, ctx, tool)
-
-        self._call_tool_task = _call_tool_task
-
-    async def call_tool(
-        self,
-        name: str,
+    @task
+    async def call_tool_task(
+        tool_name: str,
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> Any:
-        """Call a tool, wrapped as a Prefect task with a descriptive name."""
-        # Check if this specific tool has custom config or is disabled
-        tool_specific_config = self._tool_task_config.get(name, default_task_config)
-        if tool_specific_config is None:
-            # None means this tool should not be wrapped as a task
-            return await super().call_tool(name, tool_args, ctx, tool)
+        return await wrapped.call_tool(tool_name, tool_args, ctx, tool)
 
-        # Merge tool-specific config with default config
-        merged_config = self._task_config | tool_specific_config
+    async def call_tool_operation(
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+        config: Mapping[str, Any],
+    ) -> Any:
+        merged_config = cast('TaskConfig', base_config | dict(config))
+        return await call_tool_task.with_options(name=f'Call Tool: {name}', **merged_config)(name, tool_args, ctx, tool)
 
-        return await self._call_tool_task.with_options(name=f'Call Tool: {name}', **merged_config)(
-            name, tool_args, ctx, tool
-        )
+    return DurableFunctionToolset(
+        wrapped,
+        # Prefect tasks degrade gracefully to plain calls outside a flow, so the durable
+        # path is always taken — matching the previous Prefect wrapper.
+        in_durable_context=lambda: True,
+        call_tool_operation=call_tool_operation,
+        resolve_tool_config=lambda tool, name: resolve_tool_task_config(tool, name, tool_task_config),
+        lifecycle='enter-always',
+        durable_config=base_config,
+    )
+
+
+PrefectFunctionToolset = DurableFunctionToolset

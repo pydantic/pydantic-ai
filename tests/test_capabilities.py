@@ -25,6 +25,7 @@ from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._tool_search import ToolSearchCallPart, ToolSearchReturnPart
+from pydantic_ai._utils import Some
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -122,13 +123,12 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc
 from pydantic_ai.toolsets._capability_owned import resolve_capability_id
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
 )
-from pydantic_ai.toolsets._dynamic import ToolsetFunc
 from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
@@ -866,23 +866,21 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-2.5-flash',
                         'gateway/google-cloud:gemini-2.5-flash-image',
                         'gateway/google-cloud:gemini-2.5-flash-lite',
-                        'gateway/google-cloud:gemini-2.5-flash-lite-preview-09-2025',
                         'gateway/google-cloud:gemini-2.5-pro',
                         'gateway/google-cloud:gemini-3-flash-preview',
                         'gateway/google-cloud:gemini-3-pro-image-preview',
                         'gateway/google-cloud:gemini-3.1-flash-image-preview',
-                        'gateway/google-cloud:gemini-3.1-flash-lite-preview',
+                        'gateway/google-cloud:gemini-3.1-flash-lite',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/google-cloud:gemini-3.5-flash',
                         'gateway/google:gemini-2.5-flash',
                         'gateway/google:gemini-2.5-flash-image',
                         'gateway/google:gemini-2.5-flash-lite',
-                        'gateway/google:gemini-2.5-flash-lite-preview-09-2025',
                         'gateway/google:gemini-2.5-pro',
                         'gateway/google:gemini-3-flash-preview',
                         'gateway/google:gemini-3-pro-image-preview',
                         'gateway/google:gemini-3.1-flash-image-preview',
-                        'gateway/google:gemini-3.1-flash-lite-preview',
+                        'gateway/google:gemini-3.1-flash-lite',
                         'gateway/google:gemini-3.1-pro-preview',
                         'gateway/google:gemini-3.5-flash',
                         'gateway/groq:llama-3.1-8b-instant',
@@ -957,14 +955,13 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-2.5-flash',
                         'google-cloud:gemini-2.5-flash-image',
                         'google-cloud:gemini-2.5-flash-lite',
-                        'google-cloud:gemini-2.5-flash-lite-preview-09-2025',
                         'google-cloud:gemini-2.5-flash-preview-09-2025',
                         'google-cloud:gemini-2.5-pro',
                         'google-cloud:gemini-3-flash-preview',
                         'google-cloud:gemini-3-pro-image-preview',
                         'google-cloud:gemini-3-pro-preview',
                         'google-cloud:gemini-3.1-flash-image-preview',
-                        'google-cloud:gemini-3.1-flash-lite-preview',
+                        'google-cloud:gemini-3.1-flash-lite',
                         'google-cloud:gemini-3.1-pro-preview',
                         'google-cloud:gemini-3.5-flash',
                         'google-cloud:gemini-flash-latest',
@@ -974,14 +971,13 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-2.5-flash',
                         'google:gemini-2.5-flash-image',
                         'google:gemini-2.5-flash-lite',
-                        'google:gemini-2.5-flash-lite-preview-09-2025',
                         'google:gemini-2.5-flash-preview-09-2025',
                         'google:gemini-2.5-pro',
                         'google:gemini-3-flash-preview',
                         'google:gemini-3-pro-image-preview',
                         'google:gemini-3-pro-preview',
                         'google:gemini-3.1-flash-image-preview',
-                        'google:gemini-3.1-flash-lite-preview',
+                        'google:gemini-3.1-flash-lite',
                         'google:gemini-3.1-pro-preview',
                         'google:gemini-3.5-flash',
                         'google:gemini-flash-latest',
@@ -12203,6 +12199,31 @@ async def test_wrapper_capability_delegates_hooks():
     assert 'after_run' in hook_calls
 
 
+def test_wrapper_capability_for_agent_replaces():
+    """WrapperCapability.for_agent replaces wrapped when its for_agent rebinds.
+
+    Some capabilities (e.g. `TemporalDurability`) snapshot agent state in `for_agent`
+    and return a new instance. The wrapper must propagate that.
+    """
+
+    @dataclass
+    class RebindCap(AbstractCapability[None]):
+        bound_to: str = ''
+
+        def for_agent(self, agent: AbstractAgent[None, Any]) -> AbstractCapability[None]:
+            return RebindCap(bound_to=agent.name or '')
+
+    inner = RebindCap()
+    wrapper = WrapperCapability(wrapped=inner)
+
+    agent = Agent(FunctionModel(_resolve_dummy_model_fn), name='wrapper_for_agent_test')
+    bound = wrapper.for_agent(agent)
+    assert isinstance(bound, WrapperCapability)
+    assert bound is not wrapper
+    assert bound.wrapped is not inner
+    assert cast(RebindCap, bound.wrapped).bound_to == 'wrapper_for_agent_test'
+
+
 async def test_wrapper_capability_for_run_replaces():
     """WrapperCapability.for_run replaces wrapped when it changes."""
     toolset_a = FunctionToolset(id='a')
@@ -12278,6 +12299,29 @@ async def test_wrapper_capability_has_wrap_node_run():
             return await handler(node)  # pragma: no cover
 
     assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True
+
+
+async def test_wrapper_capability_delegates_resolve_model_id():
+    """WrapperCapability delegates `resolve_model_id` (and `has_resolve_model_id`) to the wrapped capability."""
+    resolved = TestModel()
+
+    @dataclass
+    class ResolverCap(AbstractCapability[Any]):
+        async def resolve_model_id(self, ctx: ModelResolutionContext[Any], *, model_id: str) -> Any:
+            return resolved if model_id == 'magic' else None
+
+    wrapper = WrapperCapability(wrapped=ResolverCap())
+    assert wrapper.has_resolve_model_id is True
+
+    agent = Agent('test', capabilities=[wrapper])
+    resolution_ctx = ModelResolutionContext[Any](agent=agent, deps=None)
+    assert await wrapper.resolve_model_id(resolution_ctx, model_id='magic') is resolved
+    assert await wrapper.resolve_model_id(resolution_ctx, model_id='other') is None
+
+    # Wrapping a capability without `resolve_model_id` is a no-op.
+    plain_wrapper = WrapperCapability(wrapped=CustomCapability())
+    assert plain_wrapper.has_resolve_model_id is False
+    assert await plain_wrapper.resolve_model_id(resolution_ctx, model_id='any') is None
 
 
 async def test_wrapper_capability_delegates_model_request_hooks():
@@ -14295,6 +14339,59 @@ def test_ordering_wrapped_by():
     assert _cap_names(combined) == ['PlainCapA', 'WrappedByACap']
 
 
+def test_innermost_binds_after_capability_toolsets():
+    """`innermost` capabilities bind after other capabilities' toolsets are extracted.
+
+    Durability capabilities (the `innermost` tier) wrap `agent.toolsets` in their `for_agent`,
+    so `Agent.__init__` binds them in a second phase, after toolsets contributed by other
+    capabilities (e.g. `Capability(tools=...)`) have been extracted and are visible on the
+    agent. Binding everything in one phase would leave those toolsets invisible to durability
+    and running unwrapped (non-deterministically) inside durable workflows.
+    """
+    seen_tool_names: set[str] = set()
+
+    @dataclass
+    class RecordingInnermostCap(AbstractCapability[Any]):
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> RecordingInnermostCap:
+            for toolset in agent.toolsets:
+                toolset.apply(
+                    lambda leaf: seen_tool_names.update(leaf.tools) if isinstance(leaf, FunctionToolset) else None
+                )
+            # Return a bound copy, like durability capabilities do.
+            return replace(self)
+
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='innermost')
+
+    def greet() -> str:
+        return 'hi'  # pragma: no cover
+
+    original = RecordingInnermostCap()
+    agent = Agent('test', capabilities=[Capability(tools=[greet]), original])
+    assert seen_tool_names == {'greet'}
+    # The bound copy replaced the original in the agent's capability chain.
+    assert not any(cap is original for cap in agent.root_capability.capabilities)
+    assert any(isinstance(cap, RecordingInnermostCap) for cap in agent.root_capability.capabilities)
+
+
+def test_combined_capability_for_agent_binds_children():
+    """`CombinedCapability.for_agent` rebinds children that return new bound instances."""
+
+    @dataclass
+    class BindingCap(AbstractCapability[Any]):
+        bound: bool = False
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> BindingCap:
+            return replace(self, bound=True)
+
+    combined = CombinedCapability([BindingCap(), PlainCapA()])
+    agent = Agent('test')
+    bound = combined.for_agent(agent)
+    assert bound is not combined
+    assert isinstance(bound.capabilities[0], BindingCap)
+    assert bound.capabilities[0].bound is True
+
+
 def test_ordering_requires_present():
     """No error when required capability is present."""
     combined = CombinedCapability([RequiresOutermostCap(), OutermostCap()])
@@ -14510,6 +14607,22 @@ def test_ordering_mixed_type_and_instance_refs():
     assert combined.capabilities[0].__class__ is MixedRefs
 
 
+async def test_runtime_capability_with_mixed_position_root():
+    """Per-run capabilities can be added to an agent whose root mixes outermost and innermost.
+
+    `Agent.iter()` builds the effective capability by merging per-run capabilities into the
+    agent's `_root_capability`. If `_root_capability` is a `CombinedCapability` whose leaves
+    span tiers (e.g. an outermost-tier cap and an innermost-tier cap), wrapping it in another
+    `CombinedCapability` used to trigger "Conflicting positions in nested CombinedCapability"
+    because the outer sort tried to compute a single effective ordering for the inner group.
+    The fix splats the root container so each leaf participates as a sibling in the outer
+    ordering pass.
+    """
+    agent = Agent(TestModel(), capabilities=[OutermostCap(), InnermostCap()])
+    result = await agent.run('hi', capabilities=[Hooks()])
+    assert result.output == snapshot('success (no tool calls)')
+
+
 # --- Hook recovery tests (after_node_run End→node, ErrorMarker in next_node) ---
 
 
@@ -14645,6 +14758,260 @@ async def test_after_node_run_node_to_end():
     result = await agent.run('hello')
     assert result.output == 'short-circuited'
     assert model_call_count == 1
+
+
+# --- resolve_model_id hook tests ---
+
+
+def _resolve_dummy_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(content='ok')])
+
+
+@dataclass
+class _StringResolver(AbstractCapability[Any]):
+    """Test capability that maps known strings to a fixed FunctionModel."""
+
+    target: FunctionModel
+
+    async def resolve_model_id(self, ctx: ModelResolutionContext[Any], *, model_id: Any) -> Any:
+        if model_id == 'magic-model':
+            return self.target
+        return None
+
+
+@dataclass
+class _PassThroughResolver(AbstractCapability[Any]):
+    """Test capability that always defers, recording what it saw."""
+
+    seen: list[Any] = field(default_factory=list[Any])
+    seen_deps: list[Any] = field(default_factory=list[Any])
+
+    async def resolve_model_id(self, ctx: ModelResolutionContext[Any], *, model_id: Any) -> Any:
+        self.seen.append(model_id)
+        self.seen_deps.append(ctx.deps)
+        return None
+
+
+async def test_resolve_model_id_maps_string_to_model() -> None:
+    """A capability's resolve_model_id maps a runtime string to a Model instance."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='resolved')
+    agent = Agent(name='resolve_test', capabilities=[_StringResolver(target=target)])
+
+    result = await agent.run('hi', model='magic-model')
+    assert result.output == 'ok'
+
+
+async def test_resolve_model_id_returns_none_falls_back_to_infer_model() -> None:
+    """When all capabilities defer, _get_model uses the default infer_model path."""
+    cap = _PassThroughResolver()
+    agent = Agent(name='resolve_pass', capabilities=[cap], defer_model_check=True)
+
+    # 'test' is the special string that infer_model maps to TestModel.
+    result = await agent.run('hi', model='test')
+    assert result.output is not None
+    assert cap.seen == ['test']
+
+
+async def test_resolve_model_id_returns_none_for_unknown_string() -> None:
+    """A resolver that doesn't recognize the string returns None so the next layer can try."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='resolved')
+    cap = _StringResolver(target=target)
+    resolution_ctx = ModelResolutionContext(agent=cast(Any, None), deps=None)
+    assert await cap.resolve_model_id(resolution_ctx, model_id='different-string') is None
+
+
+async def test_resolve_model_id_first_non_none_wins() -> None:
+    """When two capabilities declare resolve_model_id, the first one in the list wins.
+
+    Composition is first-non-None-wins (not each-layer-wraps): only one capability
+    can claim a given string. Per-request *wrapping* of a resolved Model lives in
+    `before_model_request`, not here.
+    """
+    first_target = FunctionModel(_resolve_dummy_model_fn, model_name='first')
+    second_target = FunctionModel(_resolve_dummy_model_fn, model_name='second')
+
+    first = _StringResolver(target=first_target)
+    second = _StringResolver(target=second_target)
+    combined = CombinedCapability([first, second])
+
+    agent = Agent(name='resolve_layered', capabilities=[first, second], defer_model_check=True)
+    result = await combined.resolve_model_id(ModelResolutionContext(agent=agent, deps=None), model_id='magic-model')
+    assert result is first_target
+
+
+def test_resolve_model_id_skipped_for_model_instance() -> None:
+    """The hook is never called when the user passes a Model instance directly."""
+    cap = _PassThroughResolver()
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='direct')
+    agent = Agent(target, name='resolve_skip_instance', capabilities=[cap])
+
+    # No string ever flows through; cap.seen should stay empty.
+    assert agent.model is target
+    assert cap.seen == []
+
+
+async def test_resolve_model_id_invoked_on_override() -> None:
+    """`agent.override(model=string)` routes the string through resolve_model_id."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='override-resolved')
+    cap = _StringResolver(target=target)
+
+    initial_model = FunctionModel(_resolve_dummy_model_fn, model_name='initial')
+    agent = Agent(initial_model, name='resolve_override', capabilities=[cap])
+
+    with agent.override(model='magic-model'):
+        result = await agent.run('hi')
+    assert result.output == 'ok'
+
+
+async def test_resolve_model_id_invoked_on_agent_default_string() -> None:
+    """`Agent(model='string', capabilities=[cap])` routes the default through resolve_model_id at run setup.
+
+    Capabilities with `resolve_model_id` need a shot at the default model string just
+    like they do for runtime overrides. The hook is deps-aware and only fires at run
+    setup, so the agent keeps the raw string at construction (like `defer_model_check`)
+    and resolution happens per run — under different deps, potentially to different models.
+    """
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='default-resolved')
+    cap = _StringResolver(target=target)
+
+    agent = Agent('magic-model', name='resolve_default_string', capabilities=[cap])
+
+    # The default stays a string at construction; the hook can't run without deps.
+    assert agent.model == 'magic-model'
+
+    result = await agent.run('hi')
+    assert result.output == 'ok'
+
+    # No memoization: the raw string is kept so per-run resolution keeps firing.
+    assert agent.model == 'magic-model'
+
+
+async def test_resolve_model_id_receives_deps() -> None:
+    """The hook receives the run's deps on `ctx.deps`, so resolution can be run-dependent."""
+    cap = _PassThroughResolver()
+    agent = Agent(name='resolve_deps', deps_type=str, capabilities=[cap], defer_model_check=True)
+
+    await agent.run('hi', model='test', deps='user-credential')
+    assert cap.seen == ['test']
+    assert cap.seen_deps == ['user-credential']
+
+
+async def test_override_model_string_deferral_considers_override_capabilities() -> None:
+    """`override(model=str)`'s defer-vs-eager choice consults the effective root capability.
+
+    Neither the spec capability nor the agent chain implements `resolve_model_id` here, so
+    the string resolves eagerly via `infer_model` — checked against the spec-supplied root
+    when set in the same call, and against an already-active root override when nested.
+    """
+    agent = Agent(name='override_deferral_effective_root')
+
+    with agent.override(spec={'capabilities': [{'IncludeToolReturnSchemas': {}}]}, model='test'):
+        result = await agent.run('hi')
+        assert result.output is not None
+
+    with agent.override(spec={'capabilities': [{'IncludeToolReturnSchemas': {}}]}):
+        with agent.override(model='test'):
+            result = await agent.run('hi')
+            assert result.output is not None
+
+
+async def test_resolve_model_id_uses_override_root_capability() -> None:
+    """A root-capability override (as set by `override(spec=...)`) owns model-string resolution.
+
+    Not a public-API test: no built-in spec-constructible capability implements
+    `resolve_model_id` yet, so this drives the `_override_root_capability` contextvar —
+    the exact seam `override(spec=...)` sets when a spec replaces the root — directly.
+    Pins that resolution honors the effective (replaced) root, and that the resolved
+    model doesn't get memoized onto `agent.model` past the override's scope.
+    """
+    chain_target = FunctionModel(_resolve_dummy_model_fn, model_name='agent-chain')
+    override_target = FunctionModel(_resolve_dummy_model_fn, model_name='override-root')
+
+    agent = Agent('magic-model', name='resolve_override_root', capabilities=[_StringResolver(target=chain_target)])
+
+    override_root = CombinedCapability[Any]([_StringResolver(target=override_target)])
+    token = agent._override_root_capability.set(Some(override_root))  # pyright: ignore[reportPrivateUsage]
+    try:
+        resolved = await agent._resolve_model_selection(  # pyright: ignore[reportPrivateUsage]
+            agent._pick_raw_model(None),  # pyright: ignore[reportPrivateUsage]
+            capability=agent._effective_root_capability(),  # pyright: ignore[reportPrivateUsage]
+            deps=None,
+        )
+        assert resolved is override_target
+        # No memoization under an override: the raw string default survives.
+        assert agent.model == 'magic-model'
+    finally:
+        agent._override_root_capability.reset(token)  # pyright: ignore[reportPrivateUsage]
+
+    resolved = await agent._resolve_model_selection(  # pyright: ignore[reportPrivateUsage]
+        agent._pick_raw_model(None),  # pyright: ignore[reportPrivateUsage]
+        capability=agent._effective_root_capability(),  # pyright: ignore[reportPrivateUsage]
+        deps=None,
+    )
+    assert resolved is chain_target
+
+
+async def test_resolve_model_id_alias_unusable_outside_run() -> None:
+    """A capability-owned alias default resolves during runs, and says so clearly outside one.
+
+    Sync entry points like `set_mcp_sampling_model` can't invoke the async, deps-aware
+    hook, so an alias only a capability can resolve raises an explanation asking for a
+    concrete model rather than attempting deps-blind resolution.
+    """
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='aliased')
+
+    def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
+        return target if model_id == 'alias' else None
+
+    agent = Agent('alias', name='alias_outside_run', capabilities=[ResolveModelId(resolver)])
+    with pytest.raises(UserError, match='requires run dependencies and cannot be used for MCP sampling'):
+        agent.set_mcp_sampling_model()
+
+    # Inside a run, the alias resolves through the hook as usual.
+    result = await agent.run('hi')
+    assert result.output == 'ok'
+
+
+# --- ResolveModelId capability tests ---
+
+
+async def test_resolve_model_id_capability_sync_resolver() -> None:
+    """`ResolveModelId` wraps a sync resolver function that maps strings to models using deps."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='sync-resolved')
+    seen_deps: list[Any] = []
+
+    def resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
+        seen_deps.append(ctx.deps)
+        return target if model_id == 'alias' else None
+
+    agent = Agent('alias', name='resolve_cap_sync', deps_type=str, capabilities=[ResolveModelId(resolver)])
+    result = await agent.run('hi', deps='credential')
+    assert result.output == 'ok'
+    assert seen_deps == ['credential']
+
+
+async def test_resolve_model_id_capability_async_resolver() -> None:
+    """`ResolveModelId` also accepts an async resolver function."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='async-resolved')
+
+    async def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
+        return target if model_id == 'alias' else None
+
+    agent = Agent(name='resolve_cap_async', capabilities=[ResolveModelId(resolver)])
+    result = await agent.run('hi', model='alias')
+    assert result.output == 'ok'
+
+
+async def test_resolve_model_id_capability_defers_to_infer_model() -> None:
+    """A `ResolveModelId` resolver returning None falls back to the default `infer_model` flow."""
+
+    def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> None:
+        return None
+
+    agent = Agent(name='resolve_cap_defer', capabilities=[ResolveModelId(resolver)])
+    # 'test' is the special string that infer_model maps to TestModel.
+    result = await agent.run('hi', model='test')
+    assert result.output is not None
 
 
 # ===== Pending Message Queue Tests =====

@@ -13,11 +13,11 @@ from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapH
 
 from pydantic_ai._agent_graph import EndStrategy
 from pydantic_ai._spec import CapabilitySpec, build_registry, build_schema_types
-from pydantic_ai._template import TemplateStr
 from pydantic_ai._utils import get_function_type_hints, is_str_dict
 from pydantic_ai.agent.abstract import AgentRetries
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.template import TemplateStr
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import AbstractCapability

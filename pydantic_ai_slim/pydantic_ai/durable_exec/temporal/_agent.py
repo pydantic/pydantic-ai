@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import inspect
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
@@ -44,7 +45,7 @@ from pydantic_ai.tools import (
 from .._runtime_toolsets import reject_unsupported_runtime_toolsets
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext, deserialize_run_context
-from ._toolset import TemporalWrapperToolset, temporalize_toolset
+from ._toolset import temporalize_toolset, toolset_temporal_activities
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
@@ -133,11 +134,17 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             raise UserError(
                 "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
             )
-        # start_to_close_timeout is required
-        activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
+        # start_to_close_timeout is required. Normalize on copies: mutating the caller's
+        # `ActivityConfig` or a `RetryPolicy` shared with other activities would leak the
+        # non-retryable entries into them.
+        activity_config = (
+            copy.copy(activity_config)
+            if activity_config
+            else ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
+        )
 
         # `pydantic_ai.exceptions.UserError` and `pydantic.errors.PydanticUserError` are not retryable
-        retry_policy = activity_config.get('retry_policy') or RetryPolicy()
+        retry_policy = copy.copy(activity_config.get('retry_policy') or RetryPolicy())
         retry_policy.non_retryable_error_types = [
             *(retry_policy.non_retryable_error_types or []),
             UserError.__name__,
@@ -215,8 +222,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             if n_positional > 6:
                 args = (*args, self.wrapped)
             toolset = temporalize_toolset_func(*args)
-            if isinstance(toolset, TemporalWrapperToolset):
-                activities.extend(toolset.temporal_activities)
+            activities.extend(toolset_temporal_activities(toolset))
             return toolset
 
         temporal_toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in wrapped.toolsets]
@@ -427,7 +433,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -572,7 +578,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -711,7 +717,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -870,7 +876,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1064,7 +1070,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1082,7 +1088,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # Non-executing toolsets like `ExternalToolset` can be added per-run; executing ones need
             # their activities registered with the worker before the workflow runs.
             reject_unsupported_runtime_toolsets(
-                toolsets, unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}), engine='Temporal'
+                toolsets,
+                unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+                engine='Temporal',
+                tool_config_key='temporal',
             )
 
             resolved_model = None
