@@ -15,7 +15,6 @@ from pydantic_core import to_json
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     InstrumentationNames,
-    MessageHistoryMutatedWarning,
     MessageJsonCache,
     get_agent_run_baggage_attributes,
     get_instructions,
@@ -26,7 +25,7 @@ from pydantic_ai._instrumentation import (
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._utils import UNSET, Unset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, MessageHistoryMutatedWarning, ToolRetryError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 

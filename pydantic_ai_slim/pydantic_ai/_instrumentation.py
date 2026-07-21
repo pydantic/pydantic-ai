@@ -122,24 +122,6 @@ class CostCalculationFailedWarning(Warning):
     """Warning raised when cost calculation fails."""
 
 
-class MessageHistoryMutatedWarning(Warning):
-    """Warning raised when in-place mutation of the message history is detected at the end of a run.
-
-    Mutating messages that are already part of the run's history in place (e.g.
-    `ctx.messages[0].parts[0].content = '...'` from a tool) is not supported: the per-request
-    `gen_ai.input.messages` span attribute caches each message's serialized form, so spans recorded
-    after the mutation may not match the messages actually sent to the model. The run-level
-    `pydantic_ai.all_messages` attribute is always serialized fresh and does reflect the mutation.
-    To transform history mid-run, build new message or part objects instead — e.g. via a history
-    processor ([`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory]).
-
-    The warning is best-effort: it's raised when a mutation is detected at the end of a successful
-    run, which covers messages still present in the final history (see `has_stale_message_json`).
-    Errored runs aren't checked — with warnings configured as errors, the warning would displace the
-    run's own exception. Its absence does not guarantee that no stale span was recorded.
-    """
-
-
 def get_agent_run_baggage_attributes() -> dict[str, Any]:
     """Read agent name, run ID, and conversation ID from OTel baggage and return as span attributes."""
     attrs: dict[str, Any] = {}

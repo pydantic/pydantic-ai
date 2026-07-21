@@ -9,8 +9,16 @@ from dirty_equals import IsJson, IsList
 from pydantic import BaseModel
 from typing_extensions import NotRequired, Self, TypedDict
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
-from pydantic_ai._instrumentation import MessageHistoryMutatedWarning
+from pydantic_ai import (
+    Agent,
+    MessageHistoryMutatedWarning,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
@@ -1175,9 +1183,7 @@ async def test_in_place_history_mutation_warns_and_leaves_stale_request_spans(ca
 
     @agent.tool
     async def corrupt_history(ctx: RunContext) -> str:
-        first_message = ctx.messages[0]
-        assert isinstance(first_message, ModelRequest)
-        first_part = first_message.parts[0]
+        first_part = ctx.messages[0].parts[0]
         assert isinstance(first_part, UserPromptPart)
         first_part.content = 'mutated prompt'
         return 'ok'
@@ -1244,9 +1250,7 @@ async def test_history_mutation_in_errored_run_does_not_displace_the_run_error(c
 
     @agent.tool
     async def corrupt_history(ctx: RunContext) -> str:
-        first_message = ctx.messages[0]
-        assert isinstance(first_message, ModelRequest)
-        first_part = first_message.parts[0]
+        first_part = ctx.messages[0].parts[0]
         assert isinstance(first_part, UserPromptPart)
         first_part.content = 'mutated prompt'
         return 'ok'
