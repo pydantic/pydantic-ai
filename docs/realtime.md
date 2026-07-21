@@ -45,6 +45,16 @@ instance for a custom key or base URL. The realtime transport is opened separate
 `websockets`, so a custom `OpenAIProvider` `httpx` client is not used for the WebSocket connection.
 OpenAI-compatible endpoints that expose a realtime API work too; Azure OpenAI is not supported.
 
+To route through the [Pydantic AI Gateway](gateway.md), use a `gateway/openai:` model identifier with
+[`infer_realtime_model`][pydantic_ai.realtime.infer_realtime_model], which reads the gateway
+credentials from the [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider]:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.realtime import infer_realtime_model
+
+model = infer_realtime_model('gateway/openai:gpt-realtime')
+```
+
 The Gemini provider ([`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel]) uses
 the `google-genai` SDK, available via the `google` optional group:
 

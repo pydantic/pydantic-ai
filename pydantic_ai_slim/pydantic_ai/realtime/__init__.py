@@ -82,14 +82,26 @@ KnownRealtimeModelName = TypeAliasType(
 
 
 def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
-    """Infer a realtime model from a `provider:model` identifier."""
+    """Infer a realtime model from a `provider:model` identifier.
+
+    Accepts a bare provider (`openai`, `xai`, `google`) or a
+    [Pydantic AI Gateway](../gateway.md) route (`gateway/openai:gpt-realtime`), which connects
+    through the gateway's built-in provider — the provider string is passed to the realtime model as
+    its `provider`, so authentication and the base URL come from
+    [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider].
+    """
     provider, separator, model_name = model.partition(':')
     if not separator or not model_name:
         provider = ''
-    if provider == 'openai':
+    # `gateway/openai` routes the OpenAI realtime protocol through the Pydantic AI Gateway: the
+    # provider string is passed straight to `OpenAIRealtimeModel`, whose handshake reads the gateway
+    # base URL and bearer key from `gateway_provider` and already carries the same trace context the
+    # gateway's HTTP request hook would add. Other upstreams aren't proxied for realtime today (xAI
+    # isn't a gateway upstream, and Gemini Live doesn't use the OpenAI protocol).
+    if provider in ('openai', 'gateway/openai'):
         from .openai import OpenAIRealtimeModel
 
-        return OpenAIRealtimeModel(model_name)
+        return OpenAIRealtimeModel(model_name, provider=provider)
     if provider == 'xai':
         from .xai import XaiRealtimeModel
 
@@ -99,7 +111,8 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
 
         return GoogleRealtimeModel(model_name)
     raise UserError(
-        f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `xai`, and `google`.'
+        f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `xai`, and '
+        '`google`, or `gateway/openai` to route OpenAI realtime through the Pydantic AI Gateway.'
     )
 
 

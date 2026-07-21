@@ -28,6 +28,27 @@ def test_infer_realtime_models(env: TestEnv) -> None:
     assert google_model.model_name == 'gemini-2.5-flash-native-audio-latest'
 
 
+def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
+    # `gateway/openai:...` routes the OpenAI realtime protocol through the Pydantic AI Gateway: an
+    # `OpenAIRealtimeModel` whose provider derives its base URL and key from `gateway_provider`.
+    env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'test')
+    env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
+
+    model = infer_realtime_model('gateway/openai:gpt-realtime')
+    # Name-check the class (rather than importing it) to keep this dispatch test light, matching the
+    # cases above.
+    assert type(model).__name__ == 'OpenAIRealtimeModel'
+    assert model.model_name == 'gpt-realtime'
+    # The provider carries the gateway base URL, so the realtime WebSocket handshake connects through
+    # the gateway rather than directly to OpenAI.
+    assert getattr(model, '_provider').base_url == 'https://gateway.pydantic.dev/proxy/openai/'
+
+
 def test_infer_realtime_model_unknown_provider() -> None:
     with pytest.raises(UserError, match='Supported providers are `openai`, `xai`, and `google`'):
         infer_realtime_model('anthropic:voice')
+
+    # A non-OpenAI gateway route is rejected: xAI isn't a gateway upstream and Gemini Live isn't the
+    # OpenAI protocol, so only `gateway/openai` is proxied for realtime.
+    with pytest.raises(UserError, match='gateway/openai'):
+        infer_realtime_model('gateway/google:gemini-2.5-flash-native-audio-latest')
