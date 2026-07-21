@@ -85,27 +85,36 @@ public and holds only the *inputs* to `Model.request[_stream]`.
 """
 
 
-MessageJsonCache: TypeAlias = dict[int, tuple[object, bytes]]
-"""Per-run cache of input messages' serialized OTel JSON fragments.
+@dataclass(slots=True)
+class CachedMessageJson:
+    """A `MessageJsonCache` entry: one input message's serialized OTel JSON fragment."""
 
-Maps `id(message)` to `(message.parts, fragment_bytes)`. Created fresh per agent run and discarded
-when the run ends, so it never outlives the run whose messages it caches. The stored `parts` list
-doubles as a validity token and a liveness guard:
+    message: ModelMessage
+    """The cached message itself. Never read — held so the message stays alive while the entry
+    exists, which pins its `id`: a cache hit is therefore guaranteed to be for this very object,
+    never for a new message that recycled a garbage-collected message's address (e.g. a
+    `dataclasses.replace`d sibling sharing the same `parts` list)."""
+    parts: object
+    """The message's `parts` list at serialization time, compared by identity: a message whose
+    `parts` list is reassigned (e.g. dynamic system prompt re-evaluation) is re-serialized rather
+    than served stale."""
+    fragment: bytes
+    """The serialized fragment (see `message_json_fragment`)."""
 
-- An entry is only served while `entry_parts is message.parts`, so a message whose `parts` list is
-  reassigned (e.g. dynamic system prompt re-evaluation) is re-serialized rather than served stale.
-- Holding a strong reference to the list keeps it alive, so a message dropped from history and
-  garbage-collected between two requests (e.g. by a history processor) can't have both its own and
-  its parts list's `id` recycled by new history objects into a false cache hit.
-- Entries for messages no longer in the input history are evicted on each request, so the cache
-  (and the `parts` lists it keeps alive) stays bounded by the current history even when a history
-  processor prunes or rebuilds messages.
 
-This caching is what makes the per-request `gen_ai.input.messages` attribute O(new messages) instead
-of O(history). It relies on an invariant that framework code must uphold: never mutate a history
-message's fields in place after it may have been serialized for a span — build new message/part
-objects or reassign `.parts` instead. User code mutating history in place mid-run is unsupported
-(see `MessageHistoryMutatedWarning`).
+MessageJsonCache: TypeAlias = dict[int, CachedMessageJson]
+"""Per-run cache of input messages' serialized OTel JSON fragments, keyed by `id(message)`.
+
+Created fresh per agent run and discarded when the run ends, so it never outlives the run whose
+messages it caches. Entries for messages no longer in the input history are evicted on each
+request, so the cache (and the messages it keeps alive) stays bounded by the current history even
+when a history processor prunes or rebuilds messages.
+
+This caching is what makes the per-request `gen_ai.input.messages` attribute O(new messages)
+instead of O(history). It relies on an invariant that framework code must uphold: never mutate a
+history message's fields in place after it may have been serialized for a span — build new
+message/part objects or reassign `.parts` instead. User code mutating history in place mid-run is
+unsupported (see `MessageHistoryMutatedWarning`).
 """
 
 
@@ -189,7 +198,11 @@ def has_stale_message_json(
     """
     for message in messages:
         entry = cache.get(id(message))
-        if entry is not None and entry[0] is message.parts and entry[1] != message_json_fragment(settings, message):
+        if (
+            entry is not None
+            and entry.parts is message.parts
+            and entry.fragment != message_json_fragment(settings, message)
+        ):
             return True
     return False
 

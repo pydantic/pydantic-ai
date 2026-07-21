@@ -18,6 +18,7 @@ from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES,
     TOKEN_HISTOGRAM_BOUNDARIES,
+    CachedMessageJson,
     MessageJsonCache,
     get_instructions,
     message_json_fragment,
@@ -223,11 +224,11 @@ class InstrumentationSettings:
         fresh_entries: MessageJsonCache = {}
         for message in input_messages:
             entry = message_json_cache.get(id(message))
-            if entry is None or entry[0] is not message.parts:
-                entry = (message.parts, message_json_fragment(self, message))
+            if entry is None or entry.parts is not message.parts:
+                entry = CachedMessageJson(message, message.parts, message_json_fragment(self, message))
             fresh_entries[id(message)] = entry
-            if entry[1]:
-                fragments.append(entry[1])
+            if entry.fragment:
+                fragments.append(entry.fragment)
         message_json_cache.clear()
         message_json_cache.update(fresh_entries)
         return b'[' + b','.join(fragments) + b']'

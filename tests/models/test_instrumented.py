@@ -343,7 +343,9 @@ def test_input_messages_json_matches_whole_history_with_and_without_cache():
 
 def test_input_messages_json_refreshes_when_message_parts_are_replaced():
     """A cached message whose `parts` list is reassigned (e.g. dynamic system prompt re-evaluation)
-    is re-serialized rather than served stale, keeping a single entry per message."""
+    is re-serialized rather than served stale, keeping a single entry per message. Unit test: the
+    refresh isn't observable through the public API — cached and refreshed paths emit the same span
+    attribute."""
     settings = InstrumentationSettings()
     cache: MessageJsonCache = {}
     message = ModelRequest(parts=[SystemPromptPart('old', dynamic_ref='ref')])
@@ -359,8 +361,10 @@ def test_input_messages_json_refreshes_when_message_parts_are_replaced():
 
 def test_input_messages_json_evicts_entries_for_dropped_messages():
     """Entries for messages no longer in the input history are evicted, so a pruning or rebuilding
-    history processor keeps the cache (and the `parts` lists it holds alive) bounded by the current
-    history instead of accumulating every message ever serialized until run end."""
+    history processor keeps the cache (and the messages it holds alive) bounded by the current
+    history instead of accumulating every message ever serialized until run end. Unit test: cache
+    contents and entry identity aren't observable through the public API or recorded HTTP traffic —
+    the memory bound is invisible in span output."""
     settings = InstrumentationSettings()
     cache: MessageJsonCache = {}
     first = ModelRequest(parts=[UserPromptPart('first')])
