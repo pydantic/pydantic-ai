@@ -163,6 +163,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .azure import AzureProvider
 
         return AzureProvider
+    elif provider == 'azure-voicelive':
+        from .azure_voicelive import AzureVoiceLiveProvider
+
+        return AzureVoiceLiveProvider
     elif provider == 'google':
         from .google import GoogleProvider
 

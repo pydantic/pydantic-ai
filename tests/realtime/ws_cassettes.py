@@ -5,8 +5,8 @@ Realtime providers talk over a persistent WebSocket rather than the request/resp
 replay the actual JSON frames exchanged with the provider, letting cassette-backed tests exercise
 the *real* protocol offline:
 
-- OpenAI Realtime connects with the `websockets` library directly (patched at
-  `pydantic_ai.realtime.openai.websockets.connect`).
+- OpenAI Realtime and Azure AI Voice Live connect with the `websockets` library directly (patched in
+  their respective provider modules).
 - Gemini Live connects through the `google-genai` SDK, which itself uses `websockets` under
   `google.genai.live.ws_connect` (patched there). The SDK calls `.send`, `.recv(decode=False)`, and
   `.close` on the returned object, so the same raw-frame engine serves both providers.
@@ -42,7 +42,7 @@ _MessageKind = Literal['message']
 _CloseKind = Literal['close']
 _Direction = Literal['sent', 'received']
 
-ProviderName = Literal['openai', 'gemini', 'xai']
+ProviderName = Literal['openai', 'azure', 'gemini', 'xai']
 
 # Outbound frame fields that carry random client-generated ids, normalized to stable placeholders so
 # replay can validate frame *structure* without depending on a fresh random value each run.
@@ -349,6 +349,10 @@ def _connect_target(provider: ProviderName) -> tuple[Any, str]:
         from pydantic_ai.realtime import xai as rt_xai
 
         return rt_xai.websockets, 'connect'
+    if provider == 'azure':
+        from pydantic_ai.realtime import azure as rt_azure
+
+        return rt_azure.websockets, 'connect'
     from google.genai import live
 
     return live, 'ws_connect'

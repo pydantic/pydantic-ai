@@ -12,6 +12,9 @@ def test_infer_realtime_models(env: TestEnv) -> None:
     env.set('OPENAI_API_KEY', 'test')
     env.set('XAI_API_KEY', 'test')
     env.set('GOOGLE_API_KEY', 'test')
+    env.set('AZURE_VOICELIVE_ENDPOINT', 'https://resource.services.ai.azure.com')
+    env.set('AZURE_VOICELIVE_API_VERSION', '2026-04-10')
+    env.set('AZURE_VOICELIVE_API_KEY', 'test')
 
     # Each provider prefix must select its own concrete model class, not just carry the suffix through
     # as `model_name` (which a wrong-class result would also satisfy).
@@ -26,6 +29,10 @@ def test_infer_realtime_models(env: TestEnv) -> None:
     google_model = infer_realtime_model('google:gemini-2.5-flash-native-audio-latest')
     assert type(google_model).__name__ == 'GoogleRealtimeModel'
     assert google_model.model_name == 'gemini-2.5-flash-native-audio-latest'
+
+    azure_model = infer_realtime_model('azure-voicelive:gpt-realtime')
+    assert type(azure_model).__name__ == 'AzureRealtimeModel'
+    assert azure_model.model_name == 'gpt-realtime'
 
 
 def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
@@ -45,7 +52,7 @@ def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
 
 
 def test_infer_realtime_model_unknown_provider() -> None:
-    with pytest.raises(UserError, match='Supported providers are `openai`, `xai`, and `google`'):
+    with pytest.raises(UserError, match='Supported providers are `openai`, `azure-voicelive`, `xai`, and `google`'):
         infer_realtime_model('anthropic:voice')
 
     # A non-OpenAI gateway route is rejected: xAI isn't a gateway upstream and Gemini Live isn't the

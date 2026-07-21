@@ -83,7 +83,7 @@ class TurnDetection:
 
     sensitivity: Literal['low', 'medium', 'high'] | None = None
     """How readily the provider detects turn boundaries (speech start/end). Higher is snappier but more
-    prone to false triggers. Maps per provider: **OpenAI / xAI** → server-VAD `threshold`
+    prone to false triggers. Maps per provider: **OpenAI / Azure / xAI** → server-VAD `threshold`
     (`low`≈0.7, `medium`≈0.5, `high`≈0.3); **Gemini** → both start and end sensitivity (`low`→`low`,
     `high`→`high`, `medium` leaves the provider default). `None` uses the provider default."""
 
@@ -118,7 +118,7 @@ class RealtimeModelSettings(TypedDict, total=False):
     Gemini ignores this setting.
 
     See the [Tool Choice guide](../tools-advanced.md#tool-choice) for detailed documentation.
-    Restrictions that realtime providers can't express are dropped: OpenAI and xAI support
+    Restrictions that realtime providers can't express are dropped: OpenAI, Azure Voice Live, and xAI support
     `'auto'`/`'none'`/`'required'` and a single-tool list, but not multi-tool lists or
     [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput].
     """
@@ -285,6 +285,8 @@ KnownRealtimeTranscriptionModelName = TypeAliasType(
         'gpt-4o-mini-transcribe',
         'gpt-realtime-whisper',
         'grok-transcribe',
+        'azure-speech',
+        'mai-transcribe',
     ],
 )
 """Known values for the OpenAI-protocol models' `input_transcription_model`, surfaced for autocomplete.
@@ -739,7 +741,7 @@ class ReconnectPolicy:
 
     On a dropped connection the session is re-dialed and its configuration (instructions, tools,
     voice, ...) re-applied, emitting a [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] event. What
-    server-side state survives depends on the provider: OpenAI Realtime and xAI start a fresh turn
+    server-side state survives depends on the provider: OpenAI Realtime, Azure Voice Live, and xAI start a fresh turn
     (the audio buffer and prior turns are lost), while Gemini Live restores conversation state when
     `google_enable_session_resumption=True` (a prerequisite for reconnecting there).
     """
