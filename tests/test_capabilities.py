@@ -60,6 +60,7 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
     XSearch,
 )
+from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
@@ -14607,6 +14608,30 @@ def test_ordering_mixed_type_and_instance_refs():
 
     combined = CombinedCapability([PlainCapA(), target_instance, MixedRefs()])
     assert combined.capabilities[0].__class__ is MixedRefs
+
+
+async def test_ordering_survives_dynamic_capability_resolution():
+    """A factory-returned capability's ordering constraints survive the per-run wrapper.
+
+    `CombinedCapability.for_run` re-sorts the replaced capabilities, so the
+    `ResolvedDynamicCapability` wrapper must delegate `get_ordering` to the resolved
+    capability for its `outermost`/`innermost`/`wraps` declarations to be honored.
+    """
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return OutermostCap()
+
+    combined = CombinedCapability([PlainCapA(), DynamicCapability(capability_func=factory)])
+    # At construction, the unresolved wrapper has no ordering of its own.
+    assert _cap_names(combined) == ['PlainCapA', 'DynamicCapability']
+
+    ctx = _build_run_context()
+    ctx.agent = Agent(TestModel())
+    run_capability = await combined.for_run(ctx)
+    assert isinstance(run_capability, CombinedCapability)
+    assert _cap_names(run_capability) == ['ResolvedDynamicCapability', 'PlainCapA']
+    assert isinstance(run_capability.capabilities[0], ResolvedDynamicCapability)
+    assert isinstance(run_capability.capabilities[0].wrapped, OutermostCap)
 
 
 async def test_runtime_capability_with_mixed_position_root():

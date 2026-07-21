@@ -10,7 +10,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from .abstract import AbstractCapability
+from .abstract import AbstractCapability, CapabilityOrdering
 from .wrapper import WrapperCapability
 
 CapabilityFunc: TypeAlias = Callable[
@@ -86,6 +86,12 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
         # No resolved instance to reuse: the toolset is being used standalone, or inside a
         # durable unit (activity) whose deserialized context carries no capability registry —
         # re-resolve the factory there, where its I/O is allowed.
+        capability = await self._resolve_capability(ctx)
+        if capability is None:
+            return None
+        return await _evaluate_agent_toolset(capability.get_toolset(), ctx)
+
+    async def _resolve_capability(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
         capability = self.capability_func(ctx)
         if inspect.isawaitable(capability):
             capability = await capability
@@ -93,18 +99,12 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
             return None
         assert ctx.agent is not None, 'CapabilityFunc requires an agent run context'
         capability = capability.for_agent(ctx.agent)
-        capability = await capability.for_run(ctx)
-        return await _evaluate_agent_toolset(capability.get_toolset(), ctx)
+        return await capability.for_run(ctx)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        capability = self.capability_func(ctx)
-        if inspect.isawaitable(capability):
-            capability = await capability
+        capability = await self._resolve_capability(ctx)
         if capability is None:
             return self
-        assert ctx.agent is not None, 'CapabilityFunc requires an agent run context'
-        capability = capability.for_agent(ctx.agent)
-        capability = await capability.for_run(ctx)
         return ResolvedDynamicCapability(wrapped=capability, dynamic_toolset=self.get_toolset())
 
 
@@ -121,6 +121,11 @@ class ResolvedDynamicCapability(WrapperCapability[AgentDepsT]):
 
     def get_toolset(self) -> DynamicToolset[AgentDepsT]:
         return self.dynamic_toolset
+
+    def get_ordering(self) -> CapabilityOrdering | None:
+        # `CombinedCapability.for_run` re-sorts its (replaced) capabilities, so the resolved
+        # capability's ordering constraints must survive the wrapper.
+        return self.wrapped.get_ordering()
 
 
 async def _evaluate_agent_toolset(
