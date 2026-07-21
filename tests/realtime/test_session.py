@@ -66,6 +66,7 @@ from pydantic_ai.realtime import (
     CreateResponse,
     InputSpeechEndEvent,
     InputTranscript,
+    InputTranscriptionFailedEvent,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeError,
@@ -558,6 +559,14 @@ async def test_control_events_and_recoverable_error_pass_through() -> None:
     # A recoverable error is mid-stream: the session keeps running and surfaces the event to the
     # consumer (rather than swallowing it) so a quiet failure is observable.
     assert events == [TurnCompleteEvent(interrupted=True), SessionErrorEvent(message='oops')]
+
+
+async def test_input_transcription_failure_passes_through_and_session_continues() -> None:
+    failure = InputTranscriptionFailedEvent(message='audio unintelligible', item_id='user-1', content_index=0)
+    conn = FakeRealtimeConnection([failure, TurnCompleteEvent()])
+    session = RealtimeSession(conn, _noop_runner)
+
+    assert await collect_events(session) == [failure, TurnCompleteEvent()]
 
 
 async def test_fatal_session_error_raises() -> None:

@@ -226,6 +226,7 @@ The remaining realtime control-plane events:
 | --- | --- |
 | [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] | OpenAI/Azure/xAI detected speech onset, or Gemini reported activity that interrupted model output. |
 | [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | OpenAI/Azure/xAI detected the end of speech; Gemini does not emit this event. |
+| [`InputTranscriptionFailedEvent`][pydantic_ai.realtime.InputTranscriptionFailedEvent] | The provider could not transcribe a user audio turn. The session continues, and `item_id` and `content_index` identify the affected turn when available. |
 | [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn. `interrupted` reflects cancellation or barge-in across all providers. |
 | [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] | The connection dropped and was automatically re-established. Conversation state is restored for Gemini and xAI; see [Reconnecting](#reconnecting). |
 | [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] | The provider reported a **recoverable** error mid-session; the session keeps running. A non-recoverable error instead raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]. |

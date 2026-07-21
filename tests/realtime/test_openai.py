@@ -56,6 +56,7 @@ from pydantic_ai.realtime import (
     InputSpeechEndEvent,
     InputSpeechStartEvent,
     InputTranscript,
+    InputTranscriptionFailedEvent,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
@@ -413,7 +414,22 @@ def test_map_unhandled_event_returns_none() -> None:
         ({'type': 'error', 'error': {'message': 'bad'}}, SessionErrorEvent('bad')),
         (
             {'type': 'conversation.item.input_audio_transcription.failed', 'error': {'message': 'bad'}},
-            None,
+            InputTranscriptionFailedEvent(message='bad'),
+        ),
+        (
+            {
+                'type': 'conversation.item.input_audio_transcription.failed',
+                'error': {'message': 'bad', 'type': 'transcription_error', 'code': 'audio_unintelligible'},
+                'item_id': 'u',
+                'content_index': 2,
+            },
+            InputTranscriptionFailedEvent(
+                message='bad',
+                type='transcription_error',
+                code='audio_unintelligible',
+                item_id='u',
+                content_index=2,
+            ),
         ),
     ],
 )

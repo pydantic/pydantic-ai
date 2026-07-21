@@ -422,6 +422,28 @@ class InputSpeechEndEvent:
 
 
 @dataclass
+class InputTranscriptionFailedEvent:
+    """The provider failed to transcribe a user audio input turn, but the session continues.
+
+    This is recoverable; `item_id` and `content_index` locate the affected user turn.
+    """
+
+    message: str
+    """Human-readable error message."""
+    type: str | None = None
+    """Provider error category, if any."""
+    code: str | None = None
+    """Provider error code, if any."""
+    item_id: str | None = None
+    """Provider conversation-item ID for the affected user turn, when available."""
+    content_index: int | None = None
+    """Content index within the affected user turn, when available."""
+
+    event_kind: Literal['input_transcription_failed'] = 'input_transcription_failed'
+    """Event type identifier, used as a discriminator."""
+
+
+@dataclass
 class SessionUsageEvent:
     """Token usage reported by the provider for a completed model response."""
 
@@ -515,6 +537,7 @@ RealtimeCodecEvent = TypeAliasType(
     | TurnCompleteEvent
     | InputSpeechStartEvent
     | InputSpeechEndEvent
+    | InputTranscriptionFailedEvent
     | SessionUsageEvent
     | ReconnectedEvent
     | ConversationCreated
@@ -553,6 +576,7 @@ RealtimeEvent = TypeAliasType(
     | TurnCompleteEvent
     | InputSpeechStartEvent
     | InputSpeechEndEvent
+    | InputTranscriptionFailedEvent
     | ReconnectedEvent
     | SessionErrorEvent,
 )

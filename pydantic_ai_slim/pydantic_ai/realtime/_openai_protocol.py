@@ -22,7 +22,7 @@ import json
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from openai.types.realtime import (
     ConversationCreatedEvent,
@@ -31,6 +31,7 @@ from openai.types.realtime import (
     ConversationItemCreatedEvent,
     ConversationItemInputAudioTranscriptionCompletedEvent,
     ConversationItemInputAudioTranscriptionDeltaEvent,
+    ConversationItemInputAudioTranscriptionFailedEvent,
     RealtimeConversationItemFunctionCall,
     RealtimeConversationItemFunctionCallOutput,
     RealtimeError,
@@ -79,6 +80,7 @@ from ._base import (
     InputSpeechEndEvent,
     InputSpeechStartEvent,
     InputTranscript,
+    InputTranscriptionFailedEvent,
     RealtimeCodecEvent,
     RealtimeModelProfile,
     SessionErrorEvent,
@@ -132,7 +134,15 @@ AUDIO_DELTA_TYPES = frozenset({'response.output_audio.delta', 'response.audio.de
 _AUDIO_TRANSCRIPT_DELTA_TYPES = frozenset({'response.output_audio_transcript.delta', 'response.audio_transcript.delta'})
 _AUDIO_TRANSCRIPT_DONE_TYPES = frozenset({'response.output_audio_transcript.done', 'response.audio_transcript.done'})
 _INPUT_TRANSCRIPT_DONE_TYPES = frozenset({'conversation.item.input_audio_transcription.completed'})
+_INPUT_TRANSCRIPTION_TYPES = frozenset(
+    {
+        'conversation.item.input_audio_transcription.delta',
+        'conversation.item.input_audio_transcription.completed',
+        'conversation.item.input_audio_transcription.failed',
+    }
+)
 _FUNCTION_CALL_DONE_TYPES = frozenset({'response.function_call_arguments.done'})
+_RealtimeEventData: TypeAlias = dict[str, Any]
 
 
 def tool_def_to_openai(tool: ToolDefinition) -> dict[str, Any]:
@@ -486,7 +496,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     )
 
 
-def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
+def map_event(data: _RealtimeEventData) -> RealtimeCodecEvent | None:
     """Map a raw OpenAI Realtime event to a [`RealtimeCodecEvent`][pydantic_ai.realtime.RealtimeCodecEvent].
 
     Returns `None` for events that carry no session-relevant content (e.g. `session.created`).
@@ -517,18 +527,8 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         event = ResponseTextDoneEvent.construct(**data)
         return Transcript(text=event.text or '', is_final=True, output_text=True)
 
-    if event_type == 'conversation.item.input_audio_transcription.delta':
-        event = ConversationItemInputAudioTranscriptionDeltaEvent.construct(**data)
-        return InputTranscript(text=event.delta or '', is_final=False, item_id=event.item_id or None)
-
-    if event_type in _INPUT_TRANSCRIPT_DONE_TYPES:
-        event = ConversationItemInputAudioTranscriptionCompletedEvent.construct(**data)
-        # OpenAI omits `status`; xAI and Azure may send cumulative `.completed` snapshots whose
-        # interim values must not be surfaced as final transcripts.
-        status = (event.model_extra or {}).get('status')  # Provider extra used by xAI and Azure.
-        if status is not None and status != 'completed':
-            return None
-        return InputTranscript(text=event.transcript or '', is_final=True, item_id=event.item_id or None)
+    if event_type in _INPUT_TRANSCRIPTION_TYPES:
+        return _map_input_transcription_event(data, event_type)
 
     if event_type in _FUNCTION_CALL_DONE_TYPES:
         event = ResponseFunctionCallArgumentsDoneEvent.construct(**data)
@@ -559,6 +559,32 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         )
 
     return None
+
+
+def _map_input_transcription_event(
+    data: _RealtimeEventData, event_type: str
+) -> InputTranscript | InputTranscriptionFailedEvent | None:
+    """Map input transcription progress and failure events."""
+    if event_type == 'conversation.item.input_audio_transcription.delta':
+        event = ConversationItemInputAudioTranscriptionDeltaEvent.construct(**data)
+        return InputTranscript(text=event.delta or '', is_final=False, item_id=event.item_id or None)
+    if event_type in _INPUT_TRANSCRIPT_DONE_TYPES:
+        event = ConversationItemInputAudioTranscriptionCompletedEvent.construct(**data)
+        # OpenAI omits `status`; xAI and Azure may send cumulative `.completed` snapshots whose
+        # interim values must not be surfaced as final transcripts.
+        status = (event.model_extra or {}).get('status')  # Provider extra used by xAI and Azure.
+        if status is not None and status != 'completed':
+            return None
+        return InputTranscript(text=event.transcript or '', is_final=True, item_id=event.item_id or None)
+
+    event = ConversationItemInputAudioTranscriptionFailedEvent.construct(**data)
+    return InputTranscriptionFailedEvent(
+        message=event.error.message or '',
+        type=event.error.type or None,
+        code=event.error.code or None,
+        item_id=event.item_id or None,
+        content_index=event.content_index,
+    )
 
 
 def _error_message(error: RealtimeError | object) -> str:

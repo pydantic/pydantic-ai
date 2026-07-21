@@ -74,6 +74,7 @@ from ._base import (
     InputSpeechEndEvent,
     InputSpeechStartEvent,
     InputTranscript,
+    InputTranscriptionFailedEvent,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeError,
@@ -130,6 +131,7 @@ _TranslatableEvent: TypeAlias = (
     | TurnCompleteEvent
     | InputSpeechStartEvent
     | InputSpeechEndEvent
+    | InputTranscriptionFailedEvent
     | ReconnectedEvent
     | PartStartEvent
     | PartEndEvent
@@ -1198,6 +1200,7 @@ class RealtimeSession:
             event,
             (
                 InputSpeechStartEvent,
+                InputTranscriptionFailedEvent,
                 ReconnectedEvent,
             ),
         ):
