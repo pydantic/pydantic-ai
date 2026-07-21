@@ -37,12 +37,12 @@ from .. import (
 )
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
-from .._template import TemplateStr
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
+from ..template import TemplateStr
 from ..tool_manager import ToolManager
 from ..tools import (
     AgentDepsT,

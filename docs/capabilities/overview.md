@@ -73,6 +73,14 @@ agent = Agent(
 - **Native** — invoked by the model provider when the model supports it. The work happens on the provider's side (e.g. Anthropic's web search runs server-side, returning results inline).
 - **Local** — runs in your Python process. Used when the model doesn't support the native tool; your code does the work (e.g. calling DuckDuckGo directly).
 
+| Capability | Local fallback | Notes |
+|---|---|---|
+| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | `local='duckduckgo'` or `local=True` (DuckDuckGo) | Requires the `duckduckgo` optional group |
+| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | `local=True` (markdownify-based fetch) | Requires the `web-fetch` optional group |
+| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Subagent via `fallback_model=` | Delegates to a model that supports native image generation |
+| [`XSearch`][pydantic_ai.capabilities.XSearch] | Subagent via `fallback_model=` | No default non-xAI fallback; set `fallback_model` to an xAI model that supports [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] |
+| [`MCP`][pydantic_ai.capabilities.MCP] | Direct connection to the MCP server (the default) | Accepts any [`MCPToolset`][pydantic_ai.mcp.MCPToolset] input; transport is auto-detected from a URL |
+
 Because these capabilities contribute model-facing tools, their `id`, `description`, and `defer_loading` fields are meaningful: set them when that tool should stay hidden until the model loads the matching workflow with the `load_capability` tool. This includes [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] when image generation should only be available for an image-specific workflow, whether it resolves to a native image tool or a fallback subagent tool.
 
 Configure each side via the `native=` and `local=` kwargs. `native=` accepts `True` (use the capability's default [native tool](../native-tools.md) instance), `False` (disable native), or an explicit instance like `WebSearchTool(...)` for fine-grained config. `local=` accepts `True` (the bundled local fallback, on capabilities that have one — `WebSearch` and `WebFetch`), `False` (disable local), a named strategy string where supported, or any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset]. Optional installs needed for the local fallback are opt-in — the capability raises a [`UserError`][pydantic_ai.exceptions.UserError] at construction (with an install hint) when you ask for a local strategy whose extra isn't installed.

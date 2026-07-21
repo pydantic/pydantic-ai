@@ -47,7 +47,7 @@ from .._agent_graph import (
 from .._deferred_capabilities import parse_loaded_capabilities
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._template import TemplateStr, validate_from_spec_args
+from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
     AbstractCapability,
@@ -67,6 +67,7 @@ from ..native_tools import AbstractNativeTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
+from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
 from ..tools import (
     AgentDepsT,

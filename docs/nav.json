@@ -512,6 +512,7 @@
           "api/retries",
           "api/run",
           "api/settings",
+          "api/template",
           "api/tools",
           "api/toolsets",
           {

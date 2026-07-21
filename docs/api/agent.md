@@ -21,5 +21,3 @@
             - ModelRequestNode
             - CallToolsNode
             - PydanticAIDeprecationWarning
-
-::: pydantic_ai.TemplateStr

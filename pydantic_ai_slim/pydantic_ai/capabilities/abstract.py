@@ -164,9 +164,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     Lifecycle: capabilities are passed to an [`Agent`][pydantic_ai.Agent] at construction time, where
     most `get_*` methods are called to collect static configuration (instructions, model
-    settings, toolsets, native tools). The exception is
+    settings, toolsets, native tools). When [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]
+    returns a replacement instance, that configuration is re-extracted from the replacement at run
+    setup. The exception is
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
-    which is called per-run during toolset assembly. Then, on each model request during a
+    which is always called per-run during toolset assembly. Then, on each model request during a
     run, the [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request]
     and [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request]
     hooks are called to allow dynamic adjustments.
@@ -521,9 +523,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         the returned next node, call `handler` multiple times (retry), or
         return a different node to redirect graph progression.
 
-        Note: this hook fires when using `agent.run()`,
-        `agent.run_stream()`, and when manually driving
-        an `agent.iter()` run with `agent_run.next()`, but it does **not** fire when
+        Note: this hook fires when using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run],
+        [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and when manually driving
+        an [`agent.iter()`][pydantic_ai.agent.Agent.iter] run with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], but it does **not** fire when
         iterating over the run with bare `async for` (which yields stream events, not
         node results).
 
