@@ -4,7 +4,7 @@ import os
 import threading
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -81,6 +81,7 @@ try:
         _replace_run_context,  # pyright: ignore[reportPrivateUsage]
         _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.durable_exec.prefect._toolset import with_non_retryable_errors
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
 
@@ -2632,6 +2633,41 @@ async def test_prefect_tool_model_retry_is_not_retried_by_task_engine() -> None:
 
     await run_agent()
     assert calls == 2
+
+
+async def test_prefect_with_non_retryable_errors_condition() -> None:
+    """Framework errors are never retried; other failures defer to the user's own condition.
+
+    A unit test on the condition itself: Prefect only invokes `retry_condition_fn` on real
+    task failures inside its engine, so driving every arm end-to-end would need one flow per
+    combination of failure type, result awaitability, and user-configured condition.
+    """
+
+    class _State:
+        def __init__(self, result: Any):
+            self._result = result
+
+        def result(self, raise_on_failure: bool = True) -> Any:
+            return self._result
+
+    def condition_of(config: TaskConfig) -> Callable[[Any, Any, Any], Any]:
+        condition = with_non_retryable_errors(config).get('retry_condition_fn')
+        assert condition is not None
+        return condition
+
+    condition = condition_of(TaskConfig())
+    assert await condition(None, None, _State(UserError('bad config'))) is False
+    assert await condition(None, None, _State(RuntimeError('boom'))) is True
+
+    def deny(task: Any, task_run: Any, state: Any) -> bool:
+        return False
+
+    assert await condition_of(TaskConfig(retry_condition_fn=deny))(None, None, _State(RuntimeError('boom'))) is False
+
+    async def allow(task: Any, task_run: Any, state: Any) -> bool:
+        return True
+
+    assert await condition_of(TaskConfig(retry_condition_fn=allow))(None, None, _State(RuntimeError('boom'))) is True
 
 
 async def test_prefect_durability_event_stream_handler_outside_flow() -> None:
