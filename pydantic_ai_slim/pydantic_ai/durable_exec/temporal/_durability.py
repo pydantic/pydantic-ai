@@ -524,7 +524,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 stream = CompletedStreamedResponse(
                     result,
                     model_request_parameters=request.model_request_parameters,
-                    events=True,
+                    replay_events=True,
                 )
                 return StreamedActivityResult(response=result, events=[event async for event in stream])
             return result

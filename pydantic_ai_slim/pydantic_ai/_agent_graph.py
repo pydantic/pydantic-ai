@@ -1142,7 +1142,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             replay_sr = CompletedStreamedResponse(
                 model_response,
                 model_request_parameters=model_request_parameters,
-                events=True,
+                replay_events=True,
             )
             agent_stream = self._build_agent_stream(ctx, replay_sr, model_request_parameters)
             yield agent_stream
