@@ -7,6 +7,7 @@ from typing import Any
 
 from typing_extensions import Self
 
+from .. import _utils
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
 from ..exceptions import UserError
@@ -20,6 +21,10 @@ class _CombinedToolsetTool(ToolsetTool[AgentDepsT]):
 
     source_toolset: AbstractToolset[AgentDepsT]
     source_tool: ToolsetTool[AgentDepsT]
+
+    @property
+    def _toolset_timeout(self) -> float | None | _utils.Unset:
+        return self.source_tool._toolset_timeout
 
 
 @dataclass

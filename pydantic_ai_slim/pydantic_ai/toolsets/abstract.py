@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
+from .. import _utils
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
 from ..tools import ToolDefinition, ToolsPrepareFunc
@@ -69,6 +70,11 @@ class ToolsetTool(Generic[AgentDepsT]):
     with `RunContext` as the first argument.
     Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on failure, return `None` on success.
     """
+
+    @property
+    def _toolset_timeout(self) -> float | None | _utils.Unset:
+        """The source-owned timeout, `None` for only the agent fallback, or `UNSET` for manager resolution."""
+        return _utils.UNSET
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):

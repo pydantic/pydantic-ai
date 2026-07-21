@@ -1477,7 +1477,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         toolset = await toolset.for_run(initial_ctx)
         tool_manager = ToolManager[AgentDepsT](
-            toolset, root_capability=run_capability, default_max_retries=self._max_tool_retries
+            toolset,
+            root_capability=run_capability,
+            default_max_retries=self._max_tool_retries,
+            timeout=self._tool_timeout,
         )
 
         # Build instructions with per-run capability contributions

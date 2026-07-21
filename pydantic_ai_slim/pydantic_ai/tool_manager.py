@@ -7,9 +7,10 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal
 
+import anyio
 from pydantic import ValidationError
 
-from . import messages as _messages
+from . import _utils, messages as _messages
 from ._output import (
     OutputSchema,
     OutputToolset,
@@ -92,6 +93,8 @@ class ToolManager(Generic[AgentDepsT]):
     """Names of tools that failed in this run step."""
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
+    timeout: float | None = None
+    """Agent-level fallback timeout for tools without a tool or toolset timeout."""
 
     @classmethod
     @contextmanager
@@ -130,6 +133,7 @@ class ToolManager(Generic[AgentDepsT]):
             ctx=ctx,
             tools=await toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
+            timeout=self.timeout,
         )
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
@@ -749,18 +753,44 @@ class ToolManager(Generic[AgentDepsT]):
         assert validated.validated_args is not None
 
         name = validated.call.tool_name
+        tool = validated.tool
+        validated_args = validated.validated_args
+
+        # A source toolset may already enforce its timeout inside `call_tool`, which keeps durable
+        # function-tool deadlines inside their task or activity. Otherwise the final tool definition
+        # takes precedence over the agent-level fallback and `ToolManager` enforces the deadline.
+        toolset_timeout = tool._toolset_timeout  # pyright: ignore[reportPrivateUsage]  # internal hook
+        if _utils.is_set(toolset_timeout):
+            timeout = self.timeout if toolset_timeout is None else None
+        else:
+            timeout = tool.tool_def.timeout
+            if timeout is None:
+                timeout = self.timeout
+
+        async def call_tool() -> Any:
+            return await self.toolset.call_tool(
+                name,
+                validated_args,
+                validated.ctx,
+                tool,
+            )
 
         try:
-            tool_result = await self.toolset.call_tool(
-                name,
-                validated.validated_args,
-                validated.ctx,
-                validated.tool,
-            )
+            if timeout is None:
+                tool_result = await call_tool()
+            else:
+                scope: anyio.CancelScope | None = None
+                try:
+                    with anyio.fail_after(timeout) as scope:
+                        tool_result = await call_tool()
+                except TimeoutError:
+                    if scope is None or not scope.cancel_called:
+                        raise
+                    raise ModelRetry(f'Timed out after {timeout} seconds.') from None
         except ModelRetry as e:
             if not wrap_validation_errors:
                 raise
-            self._check_max_retries(name, validated.tool.max_retries, e)
+            self._check_max_retries(name, tool.max_retries, e)
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, overload
 
 import anyio
@@ -33,12 +33,13 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
 
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
     is_async: bool
+    function_toolset: FunctionToolset[AgentDepsT] = field(repr=False)
     timeout: float | None = None
-    """Timeout in seconds for tool execution.
+    """Per-tool timeout in seconds, if one was set before toolset wrappers were applied."""
 
-    If the tool takes longer than this, a retry prompt is returned to the model.
-    Defaults to None (no timeout).
-    """
+    @property
+    def _toolset_timeout(self) -> float | None:
+        return self.timeout if self.timeout is not None else self.function_toolset.timeout
 
 
 class FunctionToolset(AbstractToolset[AgentDepsT]):
@@ -627,6 +628,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 args_validator_func=tool.args_validator,
                 call_func=tool.function_schema.call,
                 is_async=tool.function_schema.is_async,
+                function_toolset=self,
                 timeout=tool_def.timeout,
             )
         return tools
@@ -636,13 +638,12 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         assert isinstance(tool, FunctionToolsetTool)
 
-        # Per-tool timeout takes precedence over toolset timeout
         timeout = tool.timeout if tool.timeout is not None else self.timeout
-        if timeout is not None:
-            try:
-                with anyio.fail_after(timeout):
-                    return await tool.call_func(tool_args, ctx)
-            except TimeoutError:
-                raise ModelRetry(f'Timed out after {timeout} seconds.') from None
-        else:
+        if timeout is None:
             return await tool.call_func(tool_args, ctx)
+
+        try:
+            with anyio.fail_after(timeout):
+                return await tool.call_func(tool_args, ctx)
+        except TimeoutError:
+            raise ModelRetry(f'Timed out after {timeout} seconds.') from None
