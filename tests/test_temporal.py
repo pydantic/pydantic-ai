@@ -4148,8 +4148,10 @@ class _CodeExecutionOnlyModel(_BuiltinToolModel):
 
 def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractNativeTool:
     # `RunContext.model` is an `AbstractModel`; narrow to a request-response model to read its profile.
-    assert isinstance(ctx.model, _BuiltinToolModel)
-    if WebSearchTool in ctx.model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
+    ctx_model = ctx.model
+    assert isinstance(ctx_model, Model)
+    model = cast('Model[Any]', ctx_model)
+    if WebSearchTool in model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
         return WebSearchTool()
     return CodeExecutionTool()
 
