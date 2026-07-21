@@ -799,6 +799,61 @@ async def test_tool_manager_retry_logic():
         await another_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
 
 
+async def test_tool_manager_timeout_uses_retry_handling():
+    """A deadline follows the same retry bookkeeping as a tool-raised `ModelRetry`.
+
+    This calls `ToolManager` directly because an agent's capability layer would otherwise
+    perform the bookkeeping and hide a regression at the manager boundary.
+    """
+    toolset = FunctionToolset[None](timeout=0.01)
+
+    @toolset.tool_plain
+    async def slow_tool() -> str:
+        await anyio.sleep(1)
+        return 'done'  # pragma: no cover
+
+    tool_manager = await ToolManager(toolset).for_run_step(build_run_context(None, max_retries=1))
+
+    with pytest.raises(ToolRetryError) as exc_info:
+        await tool_manager.handle_call(ToolCallPart(tool_name='slow_tool', args={}))
+
+    assert exc_info.value.tool_retry.content == 'Timed out after 0.01 seconds.'
+    assert tool_manager.failed_tools == {'slow_tool'}
+
+    next_tool_manager = await tool_manager.for_run_step(build_run_context(None, run_step=1, max_retries=1))
+    assert next_tool_manager.ctx is not None
+    assert next_tool_manager.ctx.retries == {'slow_tool': 1}
+
+    with pytest.raises(UnexpectedModelBehavior, match="Tool 'slow_tool' exceeded max retries count of 1"):
+        await next_tool_manager.handle_call(ToolCallPart(tool_name='slow_tool', args={}))
+
+
+async def test_function_toolset_timeout_survives_prepared_toolset():
+    """Toolset composition and outer preparation do not change a `FunctionToolset` timeout.
+
+    This directly exercises toolset composition, which provider recordings cannot observe.
+    """
+    seen_timeouts: list[float | None] = []
+    toolset = FunctionToolset[None](timeout=0.01)
+
+    @toolset.tool_plain
+    async def slow_tool() -> str:
+        await anyio.sleep(1)
+        return 'done'  # pragma: no cover
+
+    def clear_definition_timeout(_ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        seen_timeouts.extend(tool_def.timeout for tool_def in tool_defs)
+        return [replace(tool_def, timeout=None) for tool_def in tool_defs]
+
+    prepared = CombinedToolset([toolset.prefixed('prefix')]).prepared(clear_definition_timeout)
+    tool_manager = await ToolManager(prepared).for_run_step(build_run_context(None, max_retries=1))
+
+    with pytest.raises(ToolRetryError):
+        await tool_manager.handle_call(ToolCallPart(tool_name='prefix_slow_tool', args={}))
+
+    assert seen_timeouts == [None]
+
+
 async def test_handle_call_wrap_validation_errors_false():
     """`handle_call(wrap_validation_errors=False)` propagates raw errors and leaves retry-budget state untouched.
 
@@ -2700,3 +2755,27 @@ async def test_toolset_timeout():
             ),
         ]
     )
+
+
+async def test_toolset_timeout_preserves_call_timeout_error():
+    """A custom toolset's own `TimeoutError` is not mistaken for the agent deadline.
+
+    This uses a local wrapper because it verifies the `ToolManager` cancel-scope boundary,
+    which a provider recording cannot exercise.
+    """
+
+    class TimeoutErrorToolset(WrapperToolset[object]):
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[object], tool: ToolsetTool[object]
+        ) -> Any:
+            raise TimeoutError('inner operation timed out')
+
+    inner = FunctionToolset[object]()
+
+    @inner.tool_plain
+    async def failing_tool() -> str: ...  # pragma: no cover
+
+    agent = Agent(TestModel(), toolsets=[TimeoutErrorToolset(inner)], tool_timeout=1)
+
+    with pytest.raises(TimeoutError, match='inner operation timed out'):
+        await agent.run('call failing_tool')

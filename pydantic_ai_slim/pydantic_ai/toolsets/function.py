@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, overload
 
+import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
 from .._instructions import prepare_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
-from ..exceptions import UserError
+from ..exceptions import ModelRetry, UserError
 from ..messages import InstructionPart
 from ..tools import (
     ArgsValidatorFunc,
@@ -32,6 +33,13 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
 
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
     is_async: bool
+    function_toolset: FunctionToolset[AgentDepsT] = field(repr=False)
+    timeout: float | None = None
+    """Per-tool timeout in seconds, if one was set before toolset wrappers were applied."""
+
+    @property
+    def _toolset_timeout(self) -> float | None:
+        return self.timeout if self.timeout is not None else self.function_toolset.timeout
 
 
 class FunctionToolset(AbstractToolset[AgentDepsT]):
@@ -605,11 +613,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             if not tool_def:
                 continue
 
-            # The toolset-level timeout applies to tools that don't set their own. `ToolManager`
-            # reads the resolved value off the tool def and applies it around the call.
-            if tool_def.timeout is None:
-                tool_def = replace(tool_def, timeout=self.timeout)
-
             new_name = tool_def.name
             if new_name in tools:
                 if new_name != original_name:
@@ -625,6 +628,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 args_validator_func=tool.args_validator,
                 call_func=tool.function_schema.call,
                 is_async=tool.function_schema.is_async,
+                function_toolset=self,
+                timeout=tool_def.timeout,
             )
         return tools
 
@@ -633,4 +638,12 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         assert isinstance(tool, FunctionToolsetTool)
 
-        return await tool.call_func(tool_args, ctx)
+        timeout = tool.timeout if tool.timeout is not None else self.timeout
+        if timeout is None:
+            return await tool.call_func(tool_args, ctx)
+
+        try:
+            with anyio.fail_after(timeout):
+                return await tool.call_func(tool_args, ctx)
+        except TimeoutError:
+            raise ModelRetry(f'Timed out after {timeout} seconds.') from None
