@@ -197,9 +197,9 @@ def _map_transcription_usage(usage: RealtimeTranscriptionUsage | None) -> Reques
         ):
             if isinstance(raw, int) and not isinstance(raw, bool):
                 details[key] = raw
-    else:
-        if usage.seconds.is_integer():
-            details['input_transcription_seconds'] = int(usage.seconds)
+    elif (seconds := round(usage.seconds)) > 0:
+        # `RunUsage.details` values are ints; round the fractional-second duration rather than drop it.
+        details['input_transcription_seconds'] = seconds
     return RequestUsage(details=details) if details else None
 
 
