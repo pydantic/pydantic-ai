@@ -330,7 +330,7 @@ capabilities:
 
 - [Tool use via code](https://www.anthropic.com/engineering/code-execution-with-mcp) (Anthropic)
 - [Code mode in production](https://blog.cloudflare.com/code-mode/) (Cloudflare)
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
+- [Pydantic AI capabilities](/ai/capabilities/overview/)
 
 ## API reference
 

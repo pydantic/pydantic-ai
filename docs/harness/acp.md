@@ -243,4 +243,4 @@ Source: [`pydantic_ai_harness/experimental/acp/`](https://github.com/pydantic/py
 - [Agent Client Protocol](https://agentclientprotocol.com) -- protocol specification
 - [Zed external agents](https://zed.dev/docs/ai/external-agents) -- editor-side configuration
 - [Human-in-the-loop tool approval](/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval) (Pydantic AI)
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
+- [Pydantic AI capabilities](/ai/capabilities/overview/)

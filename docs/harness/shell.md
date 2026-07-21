@@ -19,7 +19,7 @@ Agents frequently need to run a build, a test suite, a linter, or a quick
 killing runaway processes, and cleaning up background jobs at the end of a run --
 is fiddly boilerplate that every agent reinvents.
 
-`Shell` bundles that plumbing into a single [capability](/ai/core-concepts/capabilities/):
+`Shell` bundles that plumbing into a single [capability](/ai/capabilities/overview/):
 configurable allow/deny lists, output truncation tuned to keep the useful tail,
 optional sticky working directory, environment control that can keep host
 secrets out of spawned commands, and automatic cleanup of background processes
@@ -247,7 +247,7 @@ Pass `custom_capability_types` so the spec loader knows how to instantiate
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
+- [Pydantic AI capabilities](/ai/capabilities/overview/)
 - [Toolsets](/ai/tools-toolsets/toolsets/)
 
 ## API reference

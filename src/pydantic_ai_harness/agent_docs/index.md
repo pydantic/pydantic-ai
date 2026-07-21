@@ -36,7 +36,7 @@ Pydantic AI toolsets.
 
 ## Pydantic AI References
 
-- Capabilities: <https://pydantic.dev/docs/ai/core-concepts/capabilities/>
+- Capabilities: <https://pydantic.dev/docs/ai/capabilities/overview/>
 - Hooks: <https://pydantic.dev/docs/ai/core-concepts/hooks/>
 - Toolsets: <https://pydantic.dev/docs/ai/tools-toolsets/toolsets/>
 - Advanced tools: <https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/>

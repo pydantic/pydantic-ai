@@ -105,7 +105,7 @@ RepoContext(
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
+- [Pydantic AI capabilities](/ai/capabilities/overview/)
 - [Pydantic AI hooks](/ai/core-concepts/hooks/)
 
 ## API reference

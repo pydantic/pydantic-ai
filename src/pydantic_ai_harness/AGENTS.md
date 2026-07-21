@@ -34,7 +34,7 @@ Before implementing or reviewing a capability change:
 1. Read `agent_docs/index.md`.
 2. Read the linked `agent_docs/` guide for the task.
 3. Read the public Pydantic AI docs for every integration point you touch:
-   - capabilities: <https://pydantic.dev/docs/ai/core-concepts/capabilities/>
+   - capabilities: <https://pydantic.dev/docs/ai/capabilities/overview/>
    - hooks: <https://pydantic.dev/docs/ai/core-concepts/hooks/>
    - toolsets: <https://pydantic.dev/docs/ai/tools-toolsets/toolsets/>
    - advanced tools: <https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/>
@@ -55,7 +55,7 @@ Before implementing or reviewing a capability change:
 
 When implementing a new capability, reference these docs:
 
-- <https://pydantic.dev/docs/ai/core-concepts/capabilities/> -- main capabilities documentation, usage patterns, built-in capabilities
+- <https://pydantic.dev/docs/ai/capabilities/overview/> -- main capabilities documentation, usage patterns, built-in capabilities
 - <https://pydantic.dev/docs/ai/core-concepts/hooks/> -- lifecycle hooks reference, hook ordering, all hook categories
 - <https://pydantic.dev/docs/ai/guides/extensibility/> -- publishing capabilities as packages, spec serialization
 - <https://pydantic.dev/docs/ai/tools-toolsets/toolsets/> -- toolset abstraction, building tools for capabilities

@@ -215,7 +215,7 @@ SubAgent(
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
+- [Pydantic AI capabilities](/ai/capabilities/overview/)
 - [Multi-agent applications](/ai/guides/multi-agent-applications/)
 
 ## API reference

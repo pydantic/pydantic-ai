@@ -206,7 +206,7 @@ DynamicWorkflow(
 )
 ```
 
-`defer_loading=True` needs a stable `id`. See [on-demand capabilities](/ai/core-concepts/capabilities/#on-demand-capabilities) for the full picture.
+`defer_loading=True` needs a stable `id`. See [on-demand capabilities](/ai/capabilities/on-demand/) for the full picture.
 
 ## What runs in the sandbox
 
@@ -262,4 +262,4 @@ Source: [`pydantic_ai_harness/dynamic_workflow/`](https://github.com/pydantic/py
 - [Code Mode](code-mode.md) -- the same sandbox, calling the agent's own tools instead of sub-agents.
 - [Subagents](subagents.md) -- one-delegation-per-tool-call sub-agents, without the scripted choreography.
 - [Rewriting Bun in Rust](https://bun.com/blog/bun-in-rust) (Bun) -- the same pattern at scale, via Claude Code's dynamic workflows.
-- [Capabilities](/ai/core-concepts/capabilities/) and [on-demand capabilities](/ai/core-concepts/capabilities/#on-demand-capabilities).
+- [Capabilities](/ai/capabilities/overview/) and [on-demand capabilities](/ai/capabilities/on-demand/).

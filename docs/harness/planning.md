@@ -133,7 +133,7 @@ capabilities:
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
+- [Pydantic AI capabilities](/ai/capabilities/overview/)
 - [Hooks](/ai/core-concepts/hooks/) -- `wrap_model_request` is the ephemeral injection point used here
 - [Anthropic prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching)
 - [Code Mode](code-mode.md) -- another prompt-cache-aware harness capability

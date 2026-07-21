@@ -455,7 +455,7 @@ DynamicWorkflow(
 ```
 
 `defer_loading=True` needs a stable `id`. See
-[on-demand capabilities](https://pydantic.dev/docs/ai/core-concepts/capabilities/#on-demand-capabilities)
+[on-demand capabilities](https://pydantic.dev/docs/ai/capabilities/on-demand/)
 for the full picture.
 
 ## What runs in the sandbox
@@ -532,6 +532,6 @@ WorkflowAgent(
   (Anthropic), the orchestration patterns a script can express.
 - [Rewriting Bun in Rust](https://bun.com/blog/bun-in-rust) (Bun), the same pattern at scale: Jarred
   Sumner's port of Bun from Zig to Rust with Claude Code dynamic workflows.
-- [Capabilities](https://pydantic.dev/docs/ai/core-concepts/capabilities/) and
-  [on-demand capabilities](https://pydantic.dev/docs/ai/core-concepts/capabilities/#on-demand-capabilities).
+- [Capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) and
+  [on-demand capabilities](https://pydantic.dev/docs/ai/capabilities/on-demand/).
 - [Monty](https://github.com/pydantic/monty), the sandbox.

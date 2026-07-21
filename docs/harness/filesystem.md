@@ -179,7 +179,7 @@ Pass `custom_capability_types` so the spec loader knows how to instantiate
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
+- [Pydantic AI capabilities](/ai/capabilities/overview/)
 - [Toolsets](/ai/tools-toolsets/toolsets/)
 - [the capabilities overview](index.md)
 

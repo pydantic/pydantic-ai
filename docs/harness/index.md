@@ -7,22 +7,22 @@ description: The official capability library for Pydantic AI -- pick-and-choose 
 
 **The batteries for your [Pydantic AI](/ai/) agent.**
 
-Pydantic AI's [capabilities](/ai/core-concepts/capabilities/) and [hooks](/ai/core-concepts/hooks/) API is how you give an agent its harness -- bundles of tools, lifecycle hooks, instructions, and model settings that extend what the agent can do without any framework changes.
+Pydantic AI's [capabilities](/ai/capabilities/overview/) and [hooks](/ai/core-concepts/hooks/) API is how you give an agent its harness -- bundles of tools, lifecycle hooks, instructions, and model settings that extend what the agent can do without any framework changes.
 
-**Pydantic AI Harness** is the official capability library for Pydantic AI, maintained by the [Pydantic AI](https://github.com/pydantic/pydantic-ai) team. Pydantic AI core ships the capabilities that require model or framework support, plus the ones fundamental to every agent -- [web search](/ai/core-concepts/capabilities/#provider-adaptive-tools), [tool search](/ai/tools-toolsets/deferred-tools/), [thinking](/ai/core-concepts/capabilities/#thinking). Everything else lives here: standalone building blocks you pick and choose to turn your agent into a coding agent, a research assistant, or anything else. This is also where new capabilities start -- as they stabilize and prove themselves broadly essential, they can graduate into core.
+**Pydantic AI Harness** is the official capability library for Pydantic AI, maintained by the [Pydantic AI](https://github.com/pydantic/pydantic-ai) team. Pydantic AI core ships the capabilities that require model or framework support, plus the ones fundamental to every agent -- [web search](/ai/capabilities/web-search/), [tool search](/ai/capabilities/tool-search/), [thinking](/ai/capabilities/thinking/). Everything else lives here: standalone building blocks you pick and choose to turn your agent into a coding agent, a research assistant, or anything else. This is also where new capabilities start -- as they stabilize and prove themselves broadly essential, they can graduate into core.
 
 ## What goes where?
 
 Pydantic AI core ships the agent loop, model providers, the capabilities/hooks abstraction, and two kinds of capabilities:
 
-- **Capabilities that require model or framework support** -- anything backed by provider native tools (like [image generation](/ai/core-concepts/capabilities/#provider-adaptive-tools)), provider-specific APIs (like compaction via the OpenAI or Anthropic APIs), or deep agent graph integration. These go hand-in-hand with model class code and need to ship together.
-- **Capabilities that are fundamental to the agent experience** -- things nearly every agent benefits from, like [web search](/ai/core-concepts/capabilities/#provider-adaptive-tools), [tool search](/ai/tools-toolsets/deferred-tools/), and [thinking](/ai/core-concepts/capabilities/#thinking). These feel like qualities of the agent itself, not accessories.
+- **Capabilities that require model or framework support** -- anything backed by provider native tools (like [image generation](/ai/capabilities/image-generation/)), provider-specific APIs (like [compaction](/ai/capabilities/compaction/) via the OpenAI or Anthropic APIs), or deep agent graph integration (like [tool search](/ai/capabilities/tool-search/) and [on-demand loading](/ai/capabilities/on-demand/)). These go hand-in-hand with model class code and need to ship together.
+- **Capabilities that are fundamental to the agent experience** -- things nearly every agent benefits from, like [web search](/ai/capabilities/web-search/), [web fetch](/ai/capabilities/web-fetch/), [thinking](/ai/capabilities/thinking/), and [MCP](/ai/capabilities/mcp/). These feel like qualities of the agent itself, not accessories. See [built-in capabilities](/ai/capabilities/overview/#built-in-capabilities) for the full list.
 
 **Pydantic AI Harness** is where everything else lives: standalone capabilities that make specific categories of agents powerful, or that are still finding their final shape. Context management, memory, guardrails, file system access, code execution, multi-agent orchestration -- these are the building blocks you pick and choose based on what your agent needs to do.
 
 The harness is also where new capabilities *start*. It ships as a separate package so capabilities can iterate faster without the strict backward-compatibility requirements of core. As a capability stabilizes and proves itself broadly essential, it can graduate into core -- [code mode](code-mode.md) is an early candidate.
 
-Many capabilities benefit from a "fall up" pattern: they typically start as a local implementation that works with every model, then gain provider-native support that uses the provider's built-in API when available -- auto-switching between the two. This is how [web search](/ai/core-concepts/capabilities/#provider-adaptive-tools), [web fetch](/ai/core-concepts/capabilities/#provider-adaptive-tools), and [image generation](/ai/core-concepts/capabilities/#provider-adaptive-tools) already work in core, and the same approach is coming for skills, code mode, and context compaction.
+Many capabilities benefit from a "fall up" pattern: they typically start as a local implementation that works with every model, then gain provider-native support that uses the provider's built-in API when available -- auto-switching between the two. This is how [web search](/ai/capabilities/web-search/), [web fetch](/ai/capabilities/web-fetch/), and [image generation](/ai/capabilities/image-generation/) already work in core, and the same approach is coming for skills, code mode, and context compaction.
 
 ## Installation
 
@@ -107,7 +107,7 @@ practices and warning of a "normalization of deviance" as engineers stop reviewi
 
 ## Capabilities
 
-Each capability is a self-contained battery you drop into an agent's `capabilities=[...]` list. They compose with each other and with Pydantic AI's [built-in capabilities](/ai/core-concepts/capabilities/).
+Each capability is a self-contained battery you drop into an agent's `capabilities=[...]` list. They compose with each other and with Pydantic AI's [built-in capabilities](/ai/capabilities/overview/).
 
 | Capability | What it does | Extra |
 |---|---|---|
@@ -133,7 +133,7 @@ Most capabilities are stable within the [version policy](#version-policy) below.
 
 ## Build your own
 
-[Capabilities](/ai/core-concepts/capabilities/#building-custom-capabilities) are the primary extension point for Pydantic AI. Any of the capabilities in this library can serve as a reference for building your own.
+[Capabilities](/ai/capabilities/custom/) are the primary extension point for Pydantic AI. Any of the capabilities in this library can serve as a reference for building your own.
 
 Publishing as a standalone package? Use the `pydantic-ai-<name>` naming convention -- see [Publishing capability packages](/ai/guides/extensibility/#publishing-capability-packages).
 
@@ -143,7 +143,7 @@ Pydantic AI Harness uses **0.x versioning** to signal that APIs are still stabil
 
 ## Pydantic AI references
 
-- [Capabilities](/ai/core-concepts/capabilities/) -- what capabilities are, built-in capabilities, building your own
+- [Capabilities](/ai/capabilities/overview/) -- what capabilities are, built-in capabilities, building your own
 - [Hooks](/ai/core-concepts/hooks/) -- lifecycle hooks reference, ordering, error handling
 - [Extensibility](/ai/guides/extensibility/) -- publishing packages, third-party ecosystem
 - [Toolsets](/ai/tools-toolsets/toolsets/) -- building tools for capabilities
