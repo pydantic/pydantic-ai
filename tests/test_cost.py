@@ -128,7 +128,7 @@ async def test_cost_is_silent_for_unpriceable_model(allow_model_requests: None):
     with warnings.catch_warnings():
         warnings.simplefilter('error', CostCalculationFailedWarning)
         result = await agent.run('hello')
-    assert result.usage.cost == Decimal(0)
+    assert result.usage.cost is None
 
 
 async def test_cost_invalid_usage_is_silent(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
@@ -146,7 +146,7 @@ async def test_cost_invalid_usage_is_silent(allow_model_requests: None, monkeypa
     with warnings.catch_warnings():
         warnings.simplefilter('error', CostCalculationFailedWarning)
         result = await agent.run('hello')
-    assert result.usage.cost == Decimal(0)
+    assert result.usage.cost is None
 
 
 async def test_cost_unexpected_failure_warns(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
@@ -159,7 +159,7 @@ async def test_cost_unexpected_failure_warns(allow_model_requests: None, monkeyp
     agent = Agent(TestModel())
     with pytest.warns(CostCalculationFailedWarning, match='RuntimeError: boom'):
         result = await agent.run('hello')
-    assert result.usage.cost == Decimal(0)
+    assert result.usage.cost is None
 
 
 def test_run_usage_cost_arithmetic():

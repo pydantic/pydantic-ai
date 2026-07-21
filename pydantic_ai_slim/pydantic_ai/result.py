@@ -5,6 +5,7 @@ from contextlib import AbstractAsyncContextManager, aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from decimal import Decimal
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
@@ -13,6 +14,7 @@ from pydantic import ValidationError
 from typing_extensions import Self
 
 from . import _utils, exceptions, messages as _messages, models
+from ._cost import best_effort_price_calculation
 from ._output import (
     OutputDataT_inv,
     OutputSchema,
@@ -196,9 +198,14 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         !!! note
             This won't return the full usage until the stream is finished.
         """
-        # `_raw_stream_response.usage` is a `RequestUsage` and carries no cost, so add this request's
-        # best-effort cost (computed from the usage consumed so far) on top of the earlier requests' cost.
+        # Mid-stream, `_raw_stream_response.usage` carries no cost yet (it's filled in when the response is
+        # appended to history), so add a live best-effort estimate of this request's cost on top of the
+        # earlier requests' cost. Once the cost has been filled in, `+` already accounts for it.
         usage = self._initial_run_ctx_usage + self._raw_stream_response.usage
+        if self._raw_stream_response.usage.cost is None:
+            price = best_effort_price_calculation(self._raw_stream_response.get())
+            if price is not None:
+                usage.cost = (usage.cost or Decimal(0)) + price.total_price
         return usage
 
     @property

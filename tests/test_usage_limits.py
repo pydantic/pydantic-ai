@@ -1038,9 +1038,11 @@ def test_best_effort_usage_cost_known_model():
     assert cost == snapshot(Decimal('0.0025'))
 
 
-def test_best_effort_usage_cost_unknown_model_returns_zero():
-    """Pricing must never fail a run: an unknown model yields 0 instead of raising `LookupError`."""
-    assert best_effort_usage_cost(RequestUsage(input_tokens=10), model_name='function', provider_name='function') == 0
+def test_best_effort_usage_cost_unknown_model_returns_none():
+    """Pricing must never fail a run: an unknown model yields `None` instead of raising `LookupError`."""
+    assert (
+        best_effort_usage_cost(RequestUsage(input_tokens=10), model_name='function', provider_name='function') is None
+    )
 
 
 def test_best_effort_usage_cost_unexpected_error_warns(monkeypatch: pytest.MonkeyPatch):
@@ -1052,7 +1054,7 @@ def test_best_effort_usage_cost_unexpected_error_warns(monkeypatch: pytest.Monke
     monkeypatch.setattr('pydantic_ai._cost.calc_price', boom)
     with pytest.warns(CostCalculationFailedWarning, match='Failed to get cost from usage: RuntimeError: kaboom'):
         cost = best_effort_usage_cost(RequestUsage(input_tokens=10), model_name='gpt-4o', provider_name='openai')
-    assert cost == 0
+    assert cost is None
 
 
 def test_check_cost_disabled_by_default():

@@ -339,7 +339,7 @@ class UsageLimits:
 
     def check_cost(self, usage: RunUsage) -> None:
         """Raises a `UsageLimitExceeded` exception if the usage exceeds the cost limit."""
-        if self.cost_limit is not None and usage.cost == Decimal(0):
+        if self.cost_limit is not None and usage.cost is None:
             warnings.warn(
                 CostNotFoundWarning(
                     'A `cost_limit` is set but cannot be enforced because no cost was calculated for this run. '

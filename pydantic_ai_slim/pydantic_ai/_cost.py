@@ -45,6 +45,16 @@ def best_effort_price_calculation(response: ModelResponse) -> PriceCalculation |
         return None
 
 
+def fill_response_cost(response: ModelResponse) -> None:
+    """Fill `response.usage.cost` with a best-effort price if it's still unset.
+
+    A producer-supplied cost (e.g. from a provider that reports actual billing) is preserved; if pricing data is
+    unavailable the cost stays `None`, distinguishing "unknown" from a genuine zero cost.
+    """
+    if response.usage.cost is None and (price := best_effort_price_calculation(response)) is not None:
+        response.usage.cost = price.total_price
+
+
 def calculate_price_for_usage(
     usage: RequestUsage | RunUsage,
     *,
@@ -85,11 +95,11 @@ def best_effort_usage_cost(
     model_name: str,
     provider_api_url: str | None = None,
     provider_name: str | None = None,
-) -> Decimal:
+) -> Decimal | None:
     """Best-effort cost of a bare usage object (e.g. from `count_tokens`) in USD; a pricing failure never fails the run.
 
     Mirrors the error handling of `best_effort_price_calculation`: `LookupError`/`ValueError` from `genai-prices`
-    (unknown provider/model, unpriceable usage) return `Decimal(0)`, and any unexpected error is surfaced as a
+    (unknown provider/model, unpriceable usage) return `None`, and any unexpected error is surfaced as a
     `CostCalculationFailedWarning` rather than raised.
     """
     try:
@@ -100,11 +110,11 @@ def best_effort_usage_cost(
             provider_name=provider_name,
         ).total_price
     except (LookupError, ValueError):
-        return Decimal(0)
+        return None
     except Exception as e:
         warnings.warn(
             f'Failed to get cost from usage: {type(e).__name__}: {e}',
             CostCalculationFailedWarning,
             stacklevel=2,
         )
-        return Decimal(0)
+        return None
