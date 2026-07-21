@@ -2579,11 +2579,7 @@ async def test_run_stream_response_error():
             {
                 'type': 'tool-output-error',
                 'toolCallId': IsStr(),
-                'errorText': """\
-Unknown tool name: 'unknown_tool'. No tools available.
-
-Fix the errors and try again.\
-""",
+                'errorText': "Unknown tool name: 'unknown_tool'. No tools available.",
             },
             {'type': 'finish-step'},
             {'type': 'start-step'},
@@ -5429,12 +5425,12 @@ async def test_adapter_dump_messages_with_retry():
                         'raw_input': None,
                         'input': {'arg': 'value'},
                         'provider_executed': False,
-                        'error_text': """\
-Tool failed with error
-
-Fix the errors and try again.\
-""",
-                        'call_provider_metadata': None,
+                        'error_text': 'Tool failed with error',
+                        'call_provider_metadata': {
+                            'pydantic_ai': {
+                                'model_response': 'Tool failed with error\n\nFix the errors and try again.',
+                            }
+                        },
                         'approval': None,
                     }
                 ],
@@ -5442,8 +5438,7 @@ Fix the errors and try again.\
         ]
     )
 
-    # Verify roundtrip — load_messages now produces ToolReturnPart(outcome='failed')
-    # instead of RetryPromptPart for tool errors from the Vercel AI format
+    # Verify roundtrip — load_messages uses model_response from metadata for cache fidelity
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
     tool_error_part = message_part(reloaded_messages, ToolReturnPart, message_index=2)
     assert tool_error_part == snapshot(
@@ -7871,16 +7866,13 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
                         'raw_input': None,
                         'input': {'x': 1},
                         'provider_executed': False,
-                        'error_text': """\
-Tool execution failed
-
-Fix the errors and try again.\
-""",
+                        'error_text': 'Tool execution failed',
                         'call_provider_metadata': {
                             'pydantic_ai': {
                                 'id': 'call_fail_id',
                                 'provider_name': 'google',
                                 'provider_details': {'attempt': 1},
+                                'model_response': 'Tool execution failed\n\nFix the errors and try again.',
                             }
                         },
                         'approval': None,
@@ -7890,7 +7882,7 @@ Fix the errors and try again.\
         ]
     )
 
-    # Verify roundtrip — load_messages now produces ToolReturnPart(outcome='failed')
+    # Verify roundtrip — uses model_response from metadata for cache fidelity
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
     tool_error_part = message_part(reloaded_messages, ToolReturnPart, message_index=2)
     assert tool_error_part.outcome == 'failed'
