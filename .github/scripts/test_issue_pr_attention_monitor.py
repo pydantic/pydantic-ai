@@ -1047,6 +1047,18 @@ def test_sweep_removes_a_foreign_escalation_marker():
     assert any(call[0] == 'DELETE' and monitor._ESCALATED_LABEL in call[1] for call in client.calls)
 
 
+def test_sweep_clears_escalation_marker_from_closed_items():
+    closed = item(7, labels=[monitor._ESCALATED_LABEL])
+    closed['state'] = 'closed'
+    client = FakeClient({7: closed})
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (
+        ['#7: cleared escalation marker after the item was closed'],
+        [],
+    )
+    assert any(call[0] == 'DELETE' and monitor._ESCALATED_LABEL in call[1] for call in client.calls)
+
+
 def test_snapshot_is_inside_harness_workspace_and_writer_has_only_fixed_output():
     workflow = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.md'
     text = workflow.read_text()

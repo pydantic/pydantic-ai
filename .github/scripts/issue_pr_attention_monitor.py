@@ -573,11 +573,14 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
 
 
 def _sweep_escalated_item(client: GitHubClient, repo: str, number: int) -> str | None:
-    """Wake one dormant escalated item once real activity arrives on it."""
+    """Wake or retire one dormant escalated item."""
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     labels = _labels(current)
-    if current.get('state') != 'open' or _ACTION_LABEL in labels or _ESCALATED_LABEL not in labels:
+    if _ACTION_LABEL in labels or _ESCALATED_LABEL not in labels:
         return None
+    if current.get('state') != 'open':
+        _complete(client, repo, number, labels)
+        return f'#{number}: cleared escalation marker after the item was closed'
     events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
     transition = _transition(events, 2)
     if transition is None or _actor(transition[1]) != 'github-actions[bot]':
@@ -633,7 +636,9 @@ def reconcile(
     dormant = cast(
         list[dict[str, Any]],
         client.get(
-            f'/repos/{repo}/issues?state=open&labels={encoded_escalated}'
+            # state=all so a dormant item closed while escalated still sheds
+            # its marker instead of carrying it forever.
+            f'/repos/{repo}/issues?state=all&labels={encoded_escalated}'
             f'&sort=updated&direction=asc&per_page={_RECONCILE_LIMIT}'
         ),
     )
