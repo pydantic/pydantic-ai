@@ -24,6 +24,27 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from openai.types.realtime import (
+    ConversationCreatedEvent,
+    ConversationItem,
+    ConversationItemAdded,
+    ConversationItemCreatedEvent,
+    ConversationItemInputAudioTranscriptionCompletedEvent,
+    ConversationItemInputAudioTranscriptionDeltaEvent,
+    RealtimeConversationItemFunctionCall,
+    RealtimeConversationItemFunctionCallOutput,
+    RealtimeError,
+    RealtimeErrorEvent,
+    RealtimeResponse,
+    RealtimeResponseStatus,
+    ResponseAudioDeltaEvent,
+    ResponseAudioTranscriptDeltaEvent,
+    ResponseAudioTranscriptDoneEvent,
+    ResponseDoneEvent,
+    ResponseFunctionCallArgumentsDoneEvent,
+    ResponseTextDeltaEvent,
+    ResponseTextDoneEvent,
+)
 from typing_extensions import assert_never
 
 from ..exceptions import UserError
@@ -337,12 +358,6 @@ async def user_message_item(
     return _message_item('user', items) if (items := _user_content_items(normalized)) else None
 
 
-def _str_field(data: dict[str, Any], key: str, default: str = '') -> str:
-    """Return `data[key]` if it is a string, otherwise `default`."""
-    value = data.get(key, default)
-    return value if isinstance(value, str) else default
-
-
 def obj(value: Any) -> dict[str, Any]:
     """Return `value` as a `dict[str, Any]` when it is a mapping, otherwise an empty dict."""
     return cast('dict[str, Any]', value) if isinstance(value, dict) else {}
@@ -359,22 +374,37 @@ def map_conversation_event(
     """
     event_type = data.get('type')
     if event_type == 'conversation.created':
-        conversation_id = _str_field(obj(data.get('conversation')), 'id')
+        if not isinstance(data.get('conversation'), dict):
+            return None
+        event = ConversationCreatedEvent.construct(**data)
+        conversation_id = event.conversation.id
         return ConversationCreated(conversation_id) if conversation_id else None
-    if event_type in ('conversation.item.added', 'conversation.item.created'):
-        item = obj(data.get('item'))
-        item_id = _str_field(item, 'id') or _str_field(data, 'item_id') or None
-        tool_call_id = _str_field(item, 'call_id') or _str_field(data, 'call_id') or None
-        if item_id is not None or tool_call_id is not None:
-            # An item is only part of a resumption replay when the reconnect handshake explicitly says
-            # so (`replayed=True`, set by the burst-capture callback bounded by `session.updated`). A
-            # live-stream lifecycle event — including the server's echo of a client-created item — is
-            # never a replay, so it defaults to `replayed=False` and is not suppressed.
-            return ConversationItemCreated(
-                item_id=item_id,
-                tool_call_id=tool_call_id,
-                replayed=bool(replayed),
-            )
+    if event_type == 'conversation.item.added':
+        event = ConversationItemAdded.construct(**data)
+    elif event_type == 'conversation.item.created':
+        event = ConversationItemCreatedEvent.construct(**data)
+    else:
+        return None
+    if not isinstance(data.get('item'), dict):
+        return None
+    item_id = event.item.id or data.get('item_id')
+    tool_call_id = (
+        event.item.call_id
+        if isinstance(event.item, (RealtimeConversationItemFunctionCall, RealtimeConversationItemFunctionCallOutput))
+        else data.get('call_id')
+    )
+    item_id = item_id if isinstance(item_id, str) and item_id else None
+    tool_call_id = tool_call_id if isinstance(tool_call_id, str) and tool_call_id else None
+    if item_id is not None or tool_call_id is not None:
+        # An item is only part of a resumption replay when the reconnect handshake explicitly says
+        # so (`replayed=True`, set by the burst-capture callback bounded by `session.updated`). A
+        # live-stream lifecycle event — including the server's echo of a client-created item — is
+        # never a replay, so it defaults to `replayed=False` and is not suppressed.
+        return ConversationItemCreated(
+            item_id=item_id,
+            tool_call_id=tool_call_id,
+            replayed=bool(replayed),
+        )
     return None
 
 
@@ -391,22 +421,18 @@ def loads_obj(raw: str) -> dict[str, Any]:
     return cast('dict[str, Any]', data)
 
 
-def _is_function_call_only(output: Any) -> bool:
+def _is_function_call_only(output: list[ConversationItem] | None) -> bool:
     """Whether a `response.done` output list contains only function calls."""
-    entries = cast('list[Any]', output)
-    if not isinstance(entries, list):
-        return False
-    return bool(entries) and all(obj(entry).get('type') == 'function_call' for entry in entries)
+    return bool(output) and all(item.type == 'function_call' for item in output)
 
 
-def _response_status_reason(response: dict[str, Any]) -> str | None:
+def _response_status_reason(response: RealtimeResponse) -> str | None:
     """Return the raw terminal `status_details.reason`, when present."""
-    status_details = response.get('status_details')
-    reason = obj(status_details).get('reason') if isinstance(status_details, dict) else None
-    return reason if isinstance(reason, str) else None
+    status_details = response.status_details
+    return status_details.reason if isinstance(status_details, RealtimeResponseStatus) else None
 
 
-def response_finish_reason(response: dict[str, Any]) -> FinishReason | None:
+def response_finish_reason(response: RealtimeResponse) -> FinishReason | None:
     """Map an OpenAI-protocol response `status`/output to a shared `FinishReason`.
 
     A `'cancelled'` response is a barge-in (the user interrupted the model), which isn't an error and
@@ -414,9 +440,9 @@ def response_finish_reason(response: dict[str, Any]) -> FinishReason | None:
     that meaning, mirroring how a classic cancelled stream leaves `finish_reason` as-is. Incomplete
     responses use `status_details.reason`, matching the classic OpenAI adapter.
     """
-    status = response.get('status')
+    status = response.status
     if status == 'completed':
-        return 'tool_call' if _is_function_call_only(response.get('output')) else 'stop'
+        return 'tool_call' if _is_function_call_only(response.output) else 'stop'
     if status == 'incomplete':
         reason = _response_status_reason(response)
         if reason == 'max_output_tokens':
@@ -428,9 +454,9 @@ def response_finish_reason(response: dict[str, Any]) -> FinishReason | None:
     return None
 
 
-def _response_provider_details(response: dict[str, Any]) -> dict[str, Any]:
+def _response_provider_details(response: RealtimeResponse) -> dict[str, Any]:
     """Retain the raw response status and incomplete reason for provider fidelity."""
-    details: dict[str, Any] = {'status': response.get('status')}
+    details: dict[str, Any] = {'status': response.status}
     if (reason := _response_status_reason(response)) is not None:
         details['finish_reason'] = reason
     return details
@@ -445,12 +471,13 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     """
     if not isinstance(data.get('response'), dict):
         return TurnCompleteEvent(interrupted=False, provider_details={'status': None})
-    response = obj(data.get('response'))
-    output = response.get('output')
+    event = ResponseDoneEvent.construct(**data)
+    response = event.response
+    output = response.output
     if _is_function_call_only(output):
         return None
-    status = response.get('status')
-    response_id = response.get('id')
+    status = response.status
+    response_id = response.id
     return TurnCompleteEvent(
         interrupted=status == 'cancelled',
         provider_response_id=response_id if isinstance(response_id, str) else None,
@@ -464,47 +491,51 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
     Returns `None` for events that carry no session-relevant content (e.g. `session.created`).
     """
+    # Dispatching once on the wire discriminator avoids the SDK union parser misclassifying clone/beta events.
     event_type = data.get('type')
 
     if event_type in AUDIO_DELTA_TYPES:
-        delta = data.get('delta')
+        event = ResponseAudioDeltaEvent.construct(**data)
+        delta = event.delta
         if not isinstance(delta, str):
             return None
-        return AudioDelta(data=base64.b64decode(delta), item_id=_str_field(data, 'item_id') or None)
+        return AudioDelta(data=base64.b64decode(delta), item_id=event.item_id or None)
 
     if event_type in _AUDIO_TRANSCRIPT_DELTA_TYPES:
-        return Transcript(text=_str_field(data, 'delta'), is_final=False, item_id=_str_field(data, 'item_id') or None)
+        event = ResponseAudioTranscriptDeltaEvent.construct(**data)
+        return Transcript(text=event.delta or '', is_final=False, item_id=event.item_id or None)
 
     if event_type in _AUDIO_TRANSCRIPT_DONE_TYPES:
-        return Transcript(
-            text=_str_field(data, 'transcript'), is_final=True, item_id=_str_field(data, 'item_id') or None
-        )
+        event = ResponseAudioTranscriptDoneEvent.construct(**data)
+        return Transcript(text=event.transcript or '', is_final=True, item_id=event.item_id or None)
 
     if event_type == 'response.output_text.delta':
-        return Transcript(text=_str_field(data, 'delta'), is_final=False, output_text=True)
+        event = ResponseTextDeltaEvent.construct(**data)
+        return Transcript(text=event.delta or '', is_final=False, output_text=True)
 
     if event_type == 'response.output_text.done':
-        return Transcript(text=_str_field(data, 'text'), is_final=True, output_text=True)
+        event = ResponseTextDoneEvent.construct(**data)
+        return Transcript(text=event.text or '', is_final=True, output_text=True)
 
     if event_type == 'conversation.item.input_audio_transcription.delta':
-        return InputTranscript(
-            text=_str_field(data, 'delta'), is_final=False, item_id=_str_field(data, 'item_id') or None
-        )
+        event = ConversationItemInputAudioTranscriptionDeltaEvent.construct(**data)
+        return InputTranscript(text=event.delta or '', is_final=False, item_id=event.item_id or None)
 
     if event_type in _INPUT_TRANSCRIPT_DONE_TYPES:
+        event = ConversationItemInputAudioTranscriptionCompletedEvent.construct(**data)
         # OpenAI omits `status`; xAI and Azure may send cumulative `.completed` snapshots whose
         # interim values must not be surfaced as final transcripts.
-        if data.get('status') is not None and data.get('status') != 'completed':
+        status = (event.model_extra or {}).get('status')  # Provider extra used by xAI and Azure.
+        if status is not None and status != 'completed':
             return None
-        return InputTranscript(
-            text=_str_field(data, 'transcript'), is_final=True, item_id=_str_field(data, 'item_id') or None
-        )
+        return InputTranscript(text=event.transcript or '', is_final=True, item_id=event.item_id or None)
 
     if event_type in _FUNCTION_CALL_DONE_TYPES:
+        event = ResponseFunctionCallArgumentsDoneEvent.construct(**data)
         return ToolCall(
-            tool_call_id=_str_field(data, 'call_id'),
-            tool_name=_str_field(data, 'name'),
-            args=_str_field(data, 'arguments', '{}'),
+            tool_call_id=event.call_id or '',
+            tool_name=event.name or '',
+            args=event.arguments or '{}',
             response_usage_follows=True,
         )
 
@@ -518,22 +549,22 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return _map_response_done(data)
 
     if event_type == 'error':
-        error = obj(data.get('error'))
+        event = RealtimeErrorEvent.construct(**data)
+        error = event.error
         return SessionErrorEvent(
-            message=_error_message(data.get('error')),
-            type=_str_field(error, 'type') or None,
-            code=_str_field(error, 'code') or None,
+            message=_error_message(error),
+            type=error.type or None if isinstance(error, RealtimeError) else None,
+            code=error.code or None if isinstance(error, RealtimeError) else None,
             recoverable=True,  # a protocol `error` keeps the session open; a dropped connection does not
         )
 
     return None
 
 
-def _error_message(error: Any) -> str:
+def _error_message(error: RealtimeError | object) -> str:
     """Extract a human-readable message from an OpenAI `error` payload."""
-    if isinstance(error, dict):
-        message = obj(error).get('message')
-        return message if isinstance(message, str) and message else json.dumps(obj(error))
+    if isinstance(error, RealtimeError):
+        return error.message or json.dumps(error.model_dump(exclude_none=True))
     return str(error)
 
 

@@ -79,6 +79,7 @@ from .test_session import make_tool_manager
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
+    from openai.types.realtime import RealtimeResponseUsage
 
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime import openai as rt_openai
@@ -290,6 +291,8 @@ def test_map_response_done_failed_and_unknown_incomplete_reason() -> None:
 
 def test_map_conversation_item_without_identifiers_is_ignored() -> None:
     assert map_conversation_event({'type': 'conversation.item.created', 'item': {}}) is None
+    assert map_conversation_event({'type': 'conversation.item.created'}) is None
+    assert map_conversation_event({'type': 'conversation.created'}) is None
 
 
 def test_map_error_event_with_message() -> None:
@@ -312,21 +315,19 @@ def test_map_error_event_with_type_and_code_is_recoverable() -> None:
 
 
 def test_map_usage_full_payload() -> None:
-    response = {
-        'usage': {
-            'input_tokens': 100,
-            'output_tokens': 50,
-            'input_token_details': {
-                'audio_tokens': 80,
-                'cached_tokens': 30,
-                'text_tokens': 20,
-                'image_tokens': 5,
-                'cached_tokens_details': {'audio_tokens': 10},
-            },
-            'output_token_details': {'audio_tokens': 40, 'text_tokens': 10},
-        }
-    }
-    usage = rt_openai._map_usage(response)  # pyright: ignore[reportPrivateUsage]
+    sdk_usage = RealtimeResponseUsage.construct(
+        input_tokens=100,
+        output_tokens=50,
+        input_token_details={
+            'audio_tokens': 80,
+            'cached_tokens': 30,
+            'text_tokens': 20,
+            'image_tokens': 5,
+            'cached_tokens_details': {'audio_tokens': 10},
+        },
+        output_token_details={'audio_tokens': 40, 'text_tokens': 10},
+    )
+    usage = rt_openai._map_usage(sdk_usage)  # pyright: ignore[reportPrivateUsage]
     assert usage == RequestUsage(
         input_tokens=100,
         output_tokens=50,
@@ -339,9 +340,9 @@ def test_map_usage_full_payload() -> None:
 
 
 def test_map_usage_minimal_and_missing() -> None:
-    assert rt_openai._map_usage({'usage': {'input_tokens': 7}}) == RequestUsage(input_tokens=7)  # pyright: ignore[reportPrivateUsage]
-    assert rt_openai._map_usage({}) is None  # pyright: ignore[reportPrivateUsage]
-    assert rt_openai._map_usage({'usage': 'nope'}) is None  # pyright: ignore[reportPrivateUsage]
+    sdk_usage = RealtimeResponseUsage.construct(input_tokens=7)
+    assert rt_openai._map_usage(sdk_usage) == RequestUsage(input_tokens=7)  # pyright: ignore[reportPrivateUsage]
+    assert rt_openai._map_usage(None) is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_speech_started() -> None:
@@ -357,6 +358,68 @@ def test_map_unhandled_event_returns_none() -> None:
     # `rate_limits.updated`, which has no `RealtimeEvent` representation) fall through to `None`.
     assert map_event({'type': 'session.created'}) is None
     assert map_event({'type': 'rate_limits.updated', 'rate_limits': [{'name': 'requests', 'limit': 100}]}) is None
+
+
+@pytest.mark.parametrize(
+    ('frame', 'expected'),
+    [
+        ({'type': 'response.output_audio.delta', 'delta': 'AQI=', 'item_id': 'a'}, AudioDelta(b'\x01\x02', 'a')),
+        ({'type': 'response.audio.delta', 'delta': 'AQI=', 'item_id': 'a'}, AudioDelta(b'\x01\x02', 'a')),
+        (
+            {'type': 'response.output_audio_transcript.delta', 'delta': 'hel', 'item_id': 'a'},
+            Transcript('hel', is_final=False, item_id='a'),
+        ),
+        (
+            {'type': 'response.audio_transcript.delta', 'delta': 'hel', 'item_id': 'a'},
+            Transcript('hel', is_final=False, item_id='a'),
+        ),
+        (
+            {'type': 'response.output_audio_transcript.done', 'transcript': 'hello', 'item_id': 'a'},
+            Transcript('hello', is_final=True, item_id='a'),
+        ),
+        (
+            {'type': 'response.audio_transcript.done', 'transcript': 'hello', 'item_id': 'a'},
+            Transcript('hello', is_final=True, item_id='a'),
+        ),
+        ({'type': 'response.output_text.delta', 'delta': 'hel'}, Transcript('hel', False, output_text=True)),
+        ({'type': 'response.output_text.done', 'text': 'hello'}, Transcript('hello', True, output_text=True)),
+        (
+            {'type': 'conversation.item.input_audio_transcription.delta', 'delta': 'hel', 'item_id': 'u'},
+            InputTranscript('hel', is_final=False, item_id='u'),
+        ),
+        (
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'transcript': 'hello',
+                'item_id': 'u',
+            },
+            InputTranscript('hello', is_final=True, item_id='u'),
+        ),
+        (
+            {
+                'type': 'response.function_call_arguments.done',
+                'call_id': 'call-1',
+                'name': 'weather',
+                'arguments': '{}',
+            },
+            ToolCall('call-1', 'weather', '{}', response_usage_follows=True),
+        ),
+        ({'type': 'input_audio_buffer.speech_started'}, InputSpeechStartEvent()),
+        ({'type': 'input_audio_buffer.speech_stopped'}, InputSpeechEndEvent()),
+        (
+            {'type': 'response.done', 'response': {'id': 'r', 'status': 'completed', 'output': []}},
+            TurnCompleteEvent(False, 'r', 'stop', {'status': 'completed'}),
+        ),
+        ({'type': 'error', 'error': {'message': 'bad'}}, SessionErrorEvent('bad')),
+        (
+            {'type': 'conversation.item.input_audio_transcription.failed', 'error': {'message': 'bad'}},
+            None,
+        ),
+    ],
+)
+def test_sdk_typed_event_mapping_guard(frame: dict[str, Any], expected: object) -> None:
+    """Pin the SDK event classes and attributes used by the shared protocol mapper."""
+    assert map_event(frame) == expected
 
 
 def test_model_repr_hides_api_key() -> None:
@@ -1408,6 +1471,37 @@ async def test_response_done_emits_usage_then_turn_complete() -> None:
             provider_details={'status': 'completed'},
         ),
     ]
+
+
+@pytest.mark.anyio
+async def test_response_done_maps_xai_top_level_usage_extras() -> None:
+    done = json.dumps(
+        {
+            'type': 'response.done',
+            'response': {'id': 'resp-xai', 'status': 'completed', 'output': [], 'usage': None},
+            'usage': {
+                'input_tokens': 8,
+                'output_tokens': 5,
+                'input_token_details': {'audio_tokens': 6, 'grok_tokens': 2},
+                'output_token_details': {'audio_tokens': 4, 'grok_tokens': 1},
+                'billable_audio_seconds': 3,
+                'output_audio_seconds': 2,
+            },
+        }
+    )
+    conn = OpenAIRealtimeConnection(FakeWebSocket([done]))  # type: ignore[arg-type]
+    events = [event async for event in conn]
+    assert events[0] == SessionUsageEvent(
+        usage=RequestUsage(
+            input_tokens=8,
+            output_tokens=5,
+            input_audio_tokens=6,
+            output_audio_tokens=4,
+            details={'input_grok_tokens': 2, 'output_grok_tokens': 1, 'billable_audio_seconds': 3},
+        ),
+        provider_response_id='resp-xai',
+        finish_reason='stop',
+    )
 
 
 @pytest.mark.anyio

@@ -33,6 +33,11 @@ from urllib.parse import quote
 
 try:
     import websockets
+    from openai.types.realtime import (
+        RealtimeSessionCreateRequest,
+        ResponseFunctionCallArgumentsDoneEvent,
+        SessionCreatedEvent,
+    )
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -61,7 +66,6 @@ from ._openai_protocol import (
     expect_event,
     map_conversation_event,
     map_event as _map_openai_event,
-    obj,
     realtime_websocket_url,
     resolve_base_turn_detection,
     resolve_transcription_model,
@@ -115,8 +119,8 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return map_conversation_event(data)
     event = _map_openai_event(data)
     if isinstance(event, ToolCall):
-        item_id = data.get('item_id')
-        if isinstance(item_id, str) and item_id:
+        item_id = ResponseFunctionCallArgumentsDoneEvent.construct(**data).item_id
+        if item_id:
             event = replace(event, item_id=item_id)
     return event
 
@@ -318,7 +322,8 @@ class XaiRealtimeModel(RealtimeModel):
             ws = await opening.__aenter__()
             cm = opening
             created = await expect_event(ws, 'session.created', timeout=handshake_timeout)
-            model = obj(created.get('session')).get('model')
+            session = SessionCreatedEvent.construct(**created).session
+            model = session.model if isinstance(session, RealtimeSessionCreateRequest) else None
             if isinstance(model, str) and model:
                 server_model = model
             if self.reconnect is not None:

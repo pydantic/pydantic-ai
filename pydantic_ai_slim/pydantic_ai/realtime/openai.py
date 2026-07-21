@@ -21,6 +21,14 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 try:
     import websockets
+    from openai.types.realtime import (
+        RealtimeResponseUsage,
+        RealtimeSessionCreateRequest,
+        ResponseAudioDeltaEvent,
+        ResponseCreatedEvent,
+        ResponseDoneEvent,
+        SessionCreatedEvent,
+    )
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -35,6 +43,7 @@ if TYPE_CHECKING:
     from openai.types.realtime.realtime_truncation_param import RealtimeTruncationParam
 
 from .._instrumentation import get_instructions
+from .._utils import is_str_dict
 from ..exceptions import UserError
 from ..messages import ModelMessage
 from ..models import ModelRequestParameters
@@ -71,7 +80,6 @@ from ._openai_protocol import (
     expect_event,
     loads_obj,
     map_event,
-    obj,
     realtime_websocket_url,
     resolve_base_turn_detection,
     resolve_transcription_model,
@@ -129,19 +137,18 @@ def _int(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
-def _map_usage(response: dict[str, Any]) -> RequestUsage | None:
+def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
     """Map a `response.done` `usage` payload to a [`RequestUsage`][pydantic_ai.usage.RequestUsage]."""
-    usage = obj(response.get('usage'))
-    if not usage:
+    if usage is None or not usage.model_fields_set:
         return None
-    inp = obj(usage.get('input_token_details'))
-    out = obj(usage.get('output_token_details'))
-    cached = obj(inp.get('cached_tokens_details'))
+    inp = usage.input_token_details
+    out = usage.output_token_details
+    cached = inp.cached_tokens_details if inp is not None else None
     details: dict[str, int] = {}
     for key, raw in (
-        ('input_text_tokens', inp.get('text_tokens')),
-        ('input_image_tokens', inp.get('image_tokens')),
-        ('output_text_tokens', out.get('text_tokens')),
+        ('input_text_tokens', inp.text_tokens if inp is not None else None),
+        ('input_image_tokens', inp.image_tokens if inp is not None else None),
+        ('output_text_tokens', out.text_tokens if out is not None else None),
     ):
         if isinstance(raw, int) and not isinstance(raw, bool):
             details[key] = raw
@@ -149,19 +156,19 @@ def _map_usage(response: dict[str, Any]) -> RequestUsage | None:
     # xAI bills Grok Voice by audio second, so `billable_audio_seconds` is the authoritative cost and is
     # not reconstructable from token counts. Included only when non-zero, so OpenAI's `details` is unchanged.
     for key, raw in (
-        ('input_grok_tokens', inp.get('grok_tokens')),
-        ('output_grok_tokens', out.get('grok_tokens')),
-        ('billable_audio_seconds', usage.get('billable_audio_seconds')),
+        ('input_grok_tokens', (inp.model_extra or {}).get('grok_tokens') if inp is not None else None),  # xAI extra
+        ('output_grok_tokens', (out.model_extra or {}).get('grok_tokens') if out is not None else None),  # xAI extra
+        ('billable_audio_seconds', (usage.model_extra or {}).get('billable_audio_seconds')),  # xAI extra
     ):
         if isinstance(raw, int) and not isinstance(raw, bool) and raw:
             details[key] = raw
     return RequestUsage(
-        input_tokens=_int(usage.get('input_tokens')),
-        output_tokens=_int(usage.get('output_tokens')),
-        input_audio_tokens=_int(inp.get('audio_tokens')),
-        cache_read_tokens=_int(inp.get('cached_tokens')),
-        cache_audio_read_tokens=_int(cached.get('audio_tokens')),
-        output_audio_tokens=_int(out.get('audio_tokens')),
+        input_tokens=_int(usage.input_tokens),
+        output_tokens=_int(usage.output_tokens),
+        input_audio_tokens=_int(inp.audio_tokens if inp is not None else None),
+        cache_read_tokens=_int(inp.cached_tokens if inp is not None else None),
+        cache_audio_read_tokens=_int(cached.audio_tokens if cached is not None else None),
+        output_audio_tokens=_int(out.audio_tokens if out is not None else None),
         details=details,
     )
 
@@ -355,19 +362,19 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         event_type = data.get('type')
         events: list[RealtimeCodecEvent] = []
         if event_type == 'response.created':
+            created = ResponseCreatedEvent.construct(**data)
             self._response_active = True
-            response_id = obj(data.get('response')).get('id')
-            self._active_response_id = response_id if isinstance(response_id, str) else None
+            self._active_response_id = created.response.id or None if isinstance(data.get('response'), dict) else None
         elif event_type in AUDIO_DELTA_TYPES:
+            audio = ResponseAudioDeltaEvent.construct(**data)
             # Track the speaking item so a later `TruncateOutput` can name it.
-            item_id = data.get('item_id')
-            if isinstance(item_id, str):
-                self._current_item_id = item_id
-                content_index = data.get('content_index')
-                self._current_content_index = content_index if isinstance(content_index, int) else 0
+            if audio.item_id:
+                self._current_item_id = audio.item_id
+                self._current_content_index = audio.content_index or 0
         elif event_type == 'response.done':
-            response = obj(data.get('response'))
-            response_id = response.get('id')
+            done = ResponseDoneEvent.construct(**data)
+            response = done.response
+            response_id = response.id
             # OpenAI response events always carry an ID. Keep the ID-less fallback for compatible
             # protocol implementations and defensive unit inputs that predate response tracking.
             matches_active_response = not isinstance(response_id, str) or (
@@ -382,12 +389,15 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # request; a late completion for a superseded response must not change current state.
             # OpenAI nests usage under `response.usage`; xAI Grok Voice reports the same shape at the
             # top level of the `response.done` frame (its `response.usage` is empty), so fall back to it.
-            usage = _map_usage(response) or _map_usage(data)
+            top_level_usage = (done.model_extra or {}).get('usage')  # xAI frame-level provider extra.
+            usage = _map_usage(response.usage) or _map_usage(
+                RealtimeResponseUsage.construct(**top_level_usage) if is_str_dict(top_level_usage) else None
+            )
             if usage is not None:
                 events.append(
                     SessionUsageEvent(
                         usage=usage,
-                        provider_response_id=response_id if isinstance(response_id, str) else None,
+                        provider_response_id=response_id or None,
                         finish_reason=response_finish_reason(response),
                     )
                 )
@@ -395,7 +405,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 self._pending_response = False
                 # A cancelled response means the user barged in: a new turn is starting, so
                 # don't replay the deferred response over it.
-                if response.get('status') != 'cancelled':
+                if response.status != 'cancelled':
                     self._response_active = True
                     self._active_response_id = None
                     await self._send_event({'type': 'response.create'})
@@ -596,7 +606,8 @@ class OpenAIRealtimeModel(RealtimeModel):
             ws = await opening.__aenter__()
             cm = opening
             created = await expect_event(ws, 'session.created', timeout=handshake_timeout)
-            model = obj(created.get('session')).get('model')
+            session = SessionCreatedEvent.construct(**created).session
+            model = session.model if isinstance(session, RealtimeSessionCreateRequest) else None
             if isinstance(model, str) and model:
                 server_model = model
             await ws.send(json.dumps({'type': 'session.update', 'session': session_config}))
