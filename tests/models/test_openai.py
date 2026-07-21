@@ -21,7 +21,6 @@ from pydantic_ai import (
     Agent,
     AudioUrl,
     BinaryContent,
-    CachePoint,
     DocumentUrl,
     ImageUrl,
     ModelAPIError,
@@ -245,7 +244,12 @@ async def test_request_simple_success(allow_model_requests: None):
 async def test_request_simple_usage(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
-        usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
+        usage=CompletionUsage(
+            completion_tokens=1,
+            prompt_tokens=2,
+            total_tokens=3,
+            prompt_tokens_details=PromptTokensDetails(cached_tokens=1, cache_write_tokens=1),
+        ),
     )
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -257,6 +261,8 @@ async def test_request_simple_usage(allow_model_requests: None):
         RunUsage(
             requests=1,
             input_tokens=2,
+            cache_write_tokens=1,
+            cache_read_tokens=1,
             output_tokens=1,
         )
     )
@@ -4428,38 +4434,6 @@ async def test_openai_model_cerebras_provider_harmony(allow_model_requests: None
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is **Paris**.')
-
-
-async def test_cache_point_filtering(allow_model_requests: None):
-    """Test that CachePoint is filtered out in OpenAI Chat Completions requests."""
-    c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
-    mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-
-    # Test the instance method directly to trigger line 864
-    msg = await m._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
-
-    # CachePoint should be filtered out, only text content should remain
-    assert msg['role'] == 'user'
-    assert len(msg['content']) == 2  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
-
-
-async def test_cache_point_filtering_responses_model():
-    """Test that CachePoint is filtered out in OpenAI Responses API requests."""
-    m = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(api_key='test-key'))
-
-    # Test the instance method directly to ensure CachePoint filtering
-    msg = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
-        UserPromptPart(content=['text before', CachePoint(), 'text after'])
-    )
-
-    # CachePoint should be filtered out, only text content should remain
-    assert msg['role'] == 'user'
-    assert len(msg['content']) == 2
-    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
 
 
 async def test_openai_custom_reasoning_field_sending_back_in_thinking_tags(allow_model_requests: None):

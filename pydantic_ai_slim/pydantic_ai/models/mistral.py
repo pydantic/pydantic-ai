@@ -13,7 +13,13 @@ from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
-from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
+from .._utils import (
+    format_inlined_text_file as _format_inlined_text_file,
+    generate_tool_call_id as _generate_tool_call_id,
+    is_text_like_media_type as _is_text_like_media_type,
+    now_utc as _now_utc,
+    number_to_datetime,
+)
 from ..exceptions import ModelAPIError
 from ..messages import (
     AudioUrl,
@@ -45,7 +51,7 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from . import (
@@ -132,6 +138,22 @@ _FINISH_REASON_MAP: dict[MistralFinishReason, FinishReason] = {
     'error': 'error',
     'tool_calls': 'tool_call',
 }
+
+_MISTRAL_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'high']] = {
+    True: 'high',
+    False: 'none',
+    'minimal': 'high',
+    'low': 'high',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+}
+"""Maps the unified `thinking` setting to Mistral's `reasoning_effort`.
+
+Mistral only exposes `'high'` (full thinking) and `'none'` (thinking suppressed), so every
+enabled level maps to `'high'`; only `thinking=False` maps to `'none'`. See
+https://docs.mistral.ai/capabilities/reasoning/.
+"""
 
 
 class MistralModelSettings(ModelSettings, total=False):
@@ -269,6 +291,7 @@ class MistralModel(Model[Mistral]):
                 presence_penalty=model_settings.get('presence_penalty'),
                 frequency_penalty=model_settings.get('frequency_penalty'),
                 stop=model_settings.get('stop_sequences', None),
+                reasoning_effort=self._translate_thinking(model_request_parameters),
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -284,6 +307,7 @@ class MistralModel(Model[Mistral]):
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
         mistral_messages = await self._map_messages(messages, model_request_parameters)
+        reasoning_effort = self._translate_thinking(model_request_parameters)
 
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
@@ -316,6 +340,7 @@ class MistralModel(Model[Mistral]):
             presence_penalty=model_settings.get('presence_penalty'),
             frequency_penalty=model_settings.get('frequency_penalty'),
             stop=model_settings.get('stop_sequences', None),
+            reasoning_effort=reasoning_effort,
             http_headers={'User-Agent': get_user_agent()},
         )
         assert response, 'An unexpected empty response from Mistral.'
@@ -522,6 +547,20 @@ class MistralModel(Model[Mistral]):
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
+    def _translate_thinking(
+        self,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Literal['none', 'high'] | MistralUnset:
+        """Map the unified `thinking` setting to Mistral's `reasoning_effort`.
+
+        Only models with adjustable reasoning accept `reasoning_effort`; always-on models
+        (`magistral`) reason unconditionally and must not receive it.
+        """
+        thinking = model_request_parameters.thinking
+        if thinking is None or self.profile.get('thinking_always_enabled', False):
+            return UNSET
+        return _MISTRAL_REASONING_EFFORT_MAP[thinking]
+
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
         file_content: list[UserContent] = []
         for part in message.parts:
@@ -634,7 +673,17 @@ class MistralModel(Model[Mistral]):
                         image_url.detail = metadata.get('detail', 'auto')
                     content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
-                    if item.is_image:
+                    if _is_text_like_media_type(item.media_type):
+                        content.append(
+                            MistralTextChunk(
+                                text=_format_inlined_text_file(
+                                    item.data.decode('utf-8'),
+                                    media_type=item.media_type,
+                                    identifier=item.identifier,
+                                )
+                            )
+                        )
+                    elif item.is_image:
                         image_url = MistralImageURL(url=item.data_uri)
                         if metadata := item.vendor_metadata:
                             image_url.detail = metadata.get('detail', 'auto')
@@ -643,10 +692,21 @@ class MistralModel(Model[Mistral]):
                         content.append(MistralDocumentURLChunk(document_url=item.data_uri, type='document_url'))
                     else:
                         raise NotImplementedError(
-                            'BinaryContent other than image or PDF is not supported in Mistral user prompts'
+                            'BinaryContent other than text-like, image, or PDF is not supported in Mistral user prompts'
                         )
                 elif isinstance(item, DocumentUrl):
-                    if item.media_type == 'application/pdf':
+                    if _is_text_like_media_type(item.media_type):
+                        downloaded_text = await download_item(item, data_format='text')
+                        content.append(
+                            MistralTextChunk(
+                                text=_format_inlined_text_file(
+                                    downloaded_text['data'],
+                                    media_type=item.media_type,
+                                    identifier=item.identifier,
+                                )
+                            )
+                        )
+                    elif item.media_type == 'application/pdf':
                         if item.force_download:
                             downloaded = await download_item(item, data_format='base64_uri')
                             content.append(
@@ -655,7 +715,9 @@ class MistralModel(Model[Mistral]):
                         else:
                             content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
                     else:
-                        raise NotImplementedError('DocumentUrl other than PDF is not supported in Mistral user prompts')
+                        raise NotImplementedError(
+                            'DocumentUrl other than text-like or PDF is not supported in Mistral user prompts'
+                        )
                 elif isinstance(item, AudioUrl):
                     raise NotImplementedError('AudioUrl is not supported in Mistral user prompts')
                 elif isinstance(item, VideoUrl):

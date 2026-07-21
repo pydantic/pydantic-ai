@@ -58,7 +58,7 @@ Useful `RunContext` fields include:
 
 ## Use MCP Servers
 
-For URL-based MCP servers, use the `MCP` capability — it runs the MCP server locally by default and lets you opt into the model provider's native MCP support with `native=True`. See the [MCP capability docs](https://ai.pydantic.dev/capabilities/#mcp).
+For URL-based MCP servers, use the `MCP` capability — it runs the MCP server locally by default and lets you opt into the model provider's native MCP support with `native=True`. See the [MCP capability docs](https://ai.pydantic.dev/capabilities/mcp/).
 
 ```python
 from pydantic_ai import Agent
