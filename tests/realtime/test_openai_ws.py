@@ -48,7 +48,7 @@ pytestmark = [
 
 async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """A text-in turn yields streamed audio+transcript parts and a classic-shaped history."""
-    provider, _ = openai_ws_cassette
+    provider, cassette = openai_ws_cassette
     model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
     agent = Agent(instructions='Answer in two or three words.')
 
@@ -60,6 +60,31 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
+
+    assert sent_frames_containing(cassette, 'Answer in two or three words.') == snapshot(
+        [
+            {
+                'type': 'session.update',
+                'session': {
+                    'type': 'realtime',
+                    'instructions': 'Answer in two or three words.',
+                    'output_modalities': ['audio'],
+                    'audio': {
+                        'input': {
+                            'format': {'type': 'audio/pcm', 'rate': 24000},
+                            'turn_detection': {
+                                'type': 'server_vad',
+                                'create_response': True,
+                                'interrupt_response': True,
+                            },
+                            'transcription': {'model': 'gpt-realtime-whisper'},
+                        },
+                        'output': {'format': {'type': 'audio/pcm', 'rate': 24000}},
+                    },
+                },
+            }
+        ]
+    )
 
     messages = session.all_messages()
     assert collapse_event_types(events) == snapshot(
@@ -123,7 +148,7 @@ async def test_audio_in_server_vad_turn(
 
 async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """A tool call is executed by the session and its result folded back into a classic-shaped history."""
-    provider, _ = openai_ws_cassette
+    provider, cassette = openai_ws_cassette
     model = OpenAIRealtimeModel(
         'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
     )
@@ -142,6 +167,44 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
+
+    assert sent_frames_containing(cassette, 'Look up the weather for a city.') == snapshot(
+        [
+            {
+                'type': 'session.update',
+                'session': {
+                    'type': 'realtime',
+                    'instructions': 'Use the get_weather tool for any weather question, then answer in one short sentence.',
+                    'output_modalities': ['text'],
+                    'audio': {
+                        'input': {
+                            'format': {'type': 'audio/pcm', 'rate': 24000},
+                            'turn_detection': {
+                                'type': 'server_vad',
+                                'create_response': True,
+                                'interrupt_response': True,
+                            },
+                            'transcription': {'model': 'gpt-realtime-whisper'},
+                        },
+                        'output': {'format': {'type': 'audio/pcm', 'rate': 24000}},
+                    },
+                    'tools': [
+                        {
+                            'type': 'function',
+                            'name': 'get_weather',
+                            'parameters': {
+                                'additionalProperties': False,
+                                'properties': {'city': {'type': 'string'}},
+                                'required': ['city'],
+                                'type': 'object',
+                            },
+                            'description': 'Look up the weather for a city.',
+                        }
+                    ],
+                },
+            }
+        ]
+    )
 
     call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]

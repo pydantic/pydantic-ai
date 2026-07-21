@@ -130,6 +130,13 @@ Each case carries its own snapshot (not the central test body), so a reviewer ca
 Record cassettes with `--record-mode=rewrite`, verify playback without the flag, and review diffs.
 For detailed workflows see `.claude/skills/testing-skill/SKILL.md`.
 
+### Realtime WebSocket cassettes
+
+Realtime cassettes live in `tests/realtime/cassettes/<module>/<test>.yaml`. Record them with
+`uv run --env-file .env pytest --record-mode=rewrite <test>`; normal test runs replay them offline.
+Unlike HTTP VCR cassettes, they contain raw WebSocket frames, with secrets scrubbed and audio payloads
+truncated. The testing skill's `parse_cassette.py` is HTTP-only and does not apply to these cassettes.
+
 ## Key Fixtures
 
 ### From `conftest.py`

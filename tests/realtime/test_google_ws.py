@@ -52,7 +52,7 @@ _MODEL = 'gemini-2.5-flash-native-audio-preview-09-2025'
 
 async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """A text-in turn yields streamed audio+transcript parts and a classic-shaped history."""
-    provider, _ = gemini_ws_cassette
+    provider, cassette = gemini_ws_cassette
     model = GoogleRealtimeModel(_MODEL, provider=provider)
     agent = Agent(instructions='Answer in two or three words.')
 
@@ -64,6 +64,20 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
+
+    assert sent_frames_containing(cassette, 'Answer in two or three words.') == snapshot(
+        [
+            {
+                'setup': {
+                    'model': 'models/gemini-2.5-flash-native-audio-preview-09-2025',
+                    'generationConfig': {'responseModalities': ['AUDIO']},
+                    'systemInstruction': {'parts': [{'text': 'Answer in two or three words.'}], 'role': 'user'},
+                    'inputAudioTranscription': {},
+                    'outputAudioTranscription': {},
+                }
+            }
+        ]
+    )
 
     messages = session.all_messages()
     assert collapse_event_types(events) == snapshot(
@@ -85,7 +99,7 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
 
 async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """A tool call is executed by the session and its result folded back into a classic-shaped history."""
-    provider, _ = gemini_ws_cassette
+    provider, cassette = gemini_ws_cassette
     model = GoogleRealtimeModel(_MODEL, provider=provider)
     agent = Agent(instructions='Use the get_weather tool for any weather question, then answer in one short sentence.')
 
@@ -102,6 +116,43 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
+
+    assert sent_frames_containing(cassette, 'Look up the weather for a city.') == snapshot(
+        [
+            {
+                'setup': {
+                    'model': 'models/gemini-2.5-flash-native-audio-preview-09-2025',
+                    'generationConfig': {'responseModalities': ['AUDIO']},
+                    'systemInstruction': {
+                        'parts': [
+                            {
+                                'text': 'Use the get_weather tool for any weather question, then answer in one short sentence.'
+                            }
+                        ],
+                        'role': 'user',
+                    },
+                    'tools': [
+                        {
+                            'functionDeclarations': [
+                                {
+                                    'description': 'Look up the weather for a city.',
+                                    'name': 'get_weather',
+                                    'parameters_json_schema': {
+                                        'additionalProperties': False,
+                                        'properties': {'city': {'type': 'string'}},
+                                        'required': ['city'],
+                                        'type': 'object',
+                                    },
+                                }
+                            ]
+                        }
+                    ],
+                    'inputAudioTranscription': {},
+                    'outputAudioTranscription': {},
+                }
+            }
+        ]
+    )
 
     call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]
