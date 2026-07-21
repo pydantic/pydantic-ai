@@ -1964,7 +1964,7 @@ async def test_prefect_durability_dynamic_capability_tool_runs_as_task() -> None
 
 def test_prefect_durability_dynamic_capability_requires_id() -> None:
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
-        return Capability()
+        return Capability()  # pragma: no cover — construction raises before the factory can run
 
     with pytest.raises(UserError, match=r"DynamicCapability\(\.\.\., id='user-tools'\)"):
         Agent(
