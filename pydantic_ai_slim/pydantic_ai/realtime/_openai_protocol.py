@@ -399,20 +399,41 @@ def _is_function_call_only(output: Any) -> bool:
     return bool(entries) and all(obj(entry).get('type') == 'function_call' for entry in entries)
 
 
+def _response_status_reason(response: dict[str, Any]) -> str | None:
+    """Return the raw terminal `status_details.reason`, when present."""
+    status_details = response.get('status_details')
+    reason = obj(status_details).get('reason') if isinstance(status_details, dict) else None
+    return reason if isinstance(reason, str) else None
+
+
 def response_finish_reason(response: dict[str, Any]) -> FinishReason | None:
     """Map an OpenAI-protocol response `status`/output to a shared `FinishReason`.
 
     A `'cancelled'` response is a barge-in (the user interrupted the model), which isn't an error and
     has no dedicated `FinishReason`, so it's left unset — the response's `state='interrupted'` carries
-    that meaning, mirroring how a classic cancelled stream leaves `finish_reason` as-is. `'incomplete'`
-    likewise has no clean mapping and is left unset. Only a genuine `'failed'` status is an `'error'`.
+    that meaning, mirroring how a classic cancelled stream leaves `finish_reason` as-is. Incomplete
+    responses use `status_details.reason`, matching the classic OpenAI adapter.
     """
     status = response.get('status')
     if status == 'completed':
         return 'tool_call' if _is_function_call_only(response.get('output')) else 'stop'
+    if status == 'incomplete':
+        reason = _response_status_reason(response)
+        if reason == 'max_output_tokens':
+            return 'length'
+        if reason == 'content_filter':
+            return 'content_filter'
     if status == 'failed':
         return 'error'
     return None
+
+
+def _response_provider_details(response: dict[str, Any]) -> dict[str, Any]:
+    """Retain the raw response status and incomplete reason for provider fidelity."""
+    details: dict[str, Any] = {'status': response.get('status')}
+    if (reason := _response_status_reason(response)) is not None:
+        details['finish_reason'] = reason
+    return details
 
 
 def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
@@ -423,7 +444,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     `TurnCompleteEvent` here would prematurely signal the end of the turn.
     """
     if not isinstance(data.get('response'), dict):
-        return TurnCompleteEvent(interrupted=False)
+        return TurnCompleteEvent(interrupted=False, provider_details={'status': None})
     response = obj(data.get('response'))
     output = response.get('output')
     if _is_function_call_only(output):
@@ -434,6 +455,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         interrupted=status == 'cancelled',
         provider_response_id=response_id if isinstance(response_id, str) else None,
         finish_reason=response_finish_reason(response),
+        provider_details=_response_provider_details(response),
     )
 
 
@@ -470,6 +492,10 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         )
 
     if event_type in _INPUT_TRANSCRIPT_DONE_TYPES:
+        # OpenAI omits `status`; xAI and Azure may send cumulative `.completed` snapshots whose
+        # interim values must not be surfaced as final transcripts.
+        if data.get('status') is not None and data.get('status') != 'completed':
+            return None
         return InputTranscript(
             text=_str_field(data, 'transcript'), is_final=True, item_id=_str_field(data, 'item_id') or None
         )

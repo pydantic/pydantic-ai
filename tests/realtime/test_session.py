@@ -7,6 +7,7 @@ import io
 import wave
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from threading import Event as ThreadEvent
 from typing import Any, Literal
 
 import pytest
@@ -357,6 +358,26 @@ async def test_interleaved_user_transcripts_use_item_ids() -> None:
     assert parts == [
         SpeechPart(speaker='user', transcript='first turn', id='item-1', provider_name='openai'),
         SpeechPart(speaker='user', transcript='second turn', id='item-2', provider_name='openai'),
+    ]
+
+
+async def test_session_close_flushes_user_transcripts_blocked_by_missing_final() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='first partial', item_id='item-1'),
+            InputTranscript(text='second final', is_final=True, item_id='item-2'),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, provider_name='openai')
+    _ = await collect_events(session)
+
+    assert session.new_messages() == [
+        ModelRequest(
+            parts=[SpeechPart(speaker='user', transcript='first partial', id='item-1', provider_name='openai')]
+        ),
+        ModelRequest(
+            parts=[SpeechPart(speaker='user', transcript='second final', id='item-2', provider_name='openai')]
+        ),
     ]
 
 
@@ -1160,7 +1181,7 @@ async def test_session_accumulates_usage_and_requests() -> None:
     _ = await collect_events(session)
     assert session.usage.input_tokens == 13
     assert session.usage.output_tokens == 7
-    assert session.usage.requests == 2
+    assert session.usage.requests == 1
     # The turn's combined usage lands on the finalized assistant response.
     response = session.new_messages()[0]
     assert isinstance(response, ModelResponse)
@@ -1279,6 +1300,14 @@ async def test_early_break_cancels_pump() -> None:
     # needed before the connection observes cancellation and the receive task is done.
     assert cancelled.is_set()
     assert conn.iteration_task is not None and conn.iteration_task.done()
+
+
+def test_asap_notification_is_ignored_after_loop_closes() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([]), _noop_runner)
+    closed_loop = asyncio.new_event_loop()
+    closed_loop.close()
+    session._loop = closed_loop  # pyright: ignore[reportPrivateUsage]
+    session._notify_asap_pending_messages()  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_concurrent_iteration_raises() -> None:
@@ -2046,22 +2075,23 @@ class _EnqueueConnection(FakeRealtimeConnection):
     """Hold the turn boundary until the tool result has been sent."""
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-        yield ToolCall(tool_call_id='tc', tool_name='queue_followup', args='{}')
+        yield ToolCall(
+            tool_call_id='tc',
+            tool_name='queue_followup',
+            args='{}',
+            response_usage_follows=True,
+        )
         while not any(isinstance(item, ToolResult) for item in self.sent):
             await asyncio.sleep(0)
+        yield SessionUsageEvent(usage=RequestUsage(input_tokens=1, output_tokens=1))
         yield TurnCompleteEvent()
 
 
 @pytest.mark.parametrize(
-    ('priority', 'sent_types'),
-    [
-        ('asap', ['TextInput', 'ToolResult']),
-        ('when_idle', ['ToolResult', 'TextInput']),
-    ],
+    'priority',
+    ['asap', 'when_idle'],
 )
-async def test_agent_realtime_session_delivers_enqueued_text(
-    priority: Literal['asap', 'when_idle'], sent_types: list[str]
-) -> None:
+async def test_agent_realtime_session_delivers_enqueued_text(priority: Literal['asap', 'when_idle']) -> None:
     agent: Agent[None, str] = Agent()
 
     @agent.tool
@@ -2073,10 +2103,63 @@ async def test_agent_realtime_session_delivers_enqueued_text(
     async with agent.realtime_session(model=FakeRealtimeModel(conn)) as session:
         _ = [event async for event in session]
 
-    assert [type(item).__name__ for item in conn.sent] == sent_types
-    assert session.new_messages()[-1] == ModelRequest(
-        parts=[UserPromptPart(content='follow-up context', timestamp=IsDatetime())]
-    )
+    assert [type(item).__name__ for item in conn.sent] == ['ToolResult', 'TextInput']
+    call_response, tool_return, followup = session.new_messages()
+    assert isinstance(call_response, ModelResponse) and isinstance(call_response.parts[0], ToolCallPart)
+    assert isinstance(tool_return, ModelRequest) and isinstance(tool_return.parts[0], ToolReturnPart)
+    assert followup == ModelRequest(parts=[UserPromptPart(content='follow-up context', timestamp=IsDatetime())])
+
+
+class _ConcurrentEnqueueConnection(FakeRealtimeConnection):
+    """Block the first pending-message send while a second sync tool appends to the queue."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.first_send_started = ThreadEvent()
+        self.second_enqueued = ThreadEvent()
+
+    async def send(self, content: RealtimeInput) -> None:
+        self.sent.append(content)
+        if isinstance(content, TextInput) and content.text == 'first':
+            self.first_send_started.set()
+            while not self.second_enqueued.is_set():
+                await asyncio.sleep(0)
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield ToolCall(tool_call_id='tc-1', tool_name='queue_concurrently', args='{"text": "first"}')
+        yield ToolCall(tool_call_id='tc-2', tool_name='queue_concurrently', args='{"text": "second"}')
+        while sum(isinstance(item, ToolResult) for item in self.sent) < 2:
+            await asyncio.sleep(0)
+        while sum(isinstance(item, TextInput) for item in self.sent) < 2:
+            await asyncio.sleep(0)
+        yield TurnCompleteEvent()
+
+
+async def test_sync_tool_enqueue_during_drain_is_not_lost() -> None:
+    agent: Agent[None, str] = Agent()
+    conn = _ConcurrentEnqueueConnection()
+
+    @agent.tool
+    def queue_concurrently(ctx: RunContext[object], text: str) -> str:
+        if text == 'second':
+            assert conn.first_send_started.wait(timeout=5)
+        assert ctx.enqueue(text) is not None
+        if text == 'second':
+            conn.second_enqueued.set()
+        return text
+
+    async with agent.realtime_session(model=FakeRealtimeModel(conn)) as session:
+        _ = [event async for event in session]
+
+    assert [item.text for item in conn.sent if isinstance(item, TextInput)] == ['first', 'second']
+    prompts = [
+        part.content
+        for message in session.new_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+    assert prompts == ['first', 'second']
 
 
 async def test_agent_realtime_session_rejects_non_text_enqueue() -> None:
@@ -2384,13 +2467,33 @@ async def test_agent_realtime_session_token_limit_raises() -> None:
 
 async def test_agent_realtime_session_request_limit_raises() -> None:
     conn = FakeRealtimeConnection(
-        [SessionUsageEvent(usage=RequestUsage(input_tokens=1, output_tokens=1)), TurnCompleteEvent()]
+        [
+            SessionUsageEvent(usage=RequestUsage(input_tokens=1, output_tokens=1)),
+            Transcript(text='first', is_final=True),
+            TurnCompleteEvent(),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=1, output_tokens=1)),
+            Transcript(text='second', is_final=True),
+            TurnCompleteEvent(),
+        ]
     )
     model = FakeRealtimeModel(conn)
     agent: Agent[None, str] = Agent()
     async with agent.realtime_session(model=model, usage_limits=UsageLimits(request_limit=1)) as session:
+        events: list[RealtimeEvent] = []
         with pytest.raises(UsageLimitExceeded, match='next request would exceed the request_limit of 1'):
-            _ = [e async for e in session]
+            async for event in session:
+                events.append(event)
+    assert sum(isinstance(event, TurnCompleteEvent) for event in events) == 1
+    assert session.usage.requests == 2
+
+
+async def test_agent_realtime_session_response_without_usage_counts_toward_request_limit() -> None:
+    conn = FakeRealtimeConnection([Transcript(text='response', is_final=True), TurnCompleteEvent()])
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime_session(
+        model=FakeRealtimeModel(conn), usage_limits=UsageLimits(request_limit=1)
+    ) as session:
+        _ = [event async for event in session]
     assert session.usage.requests == 1
 
 

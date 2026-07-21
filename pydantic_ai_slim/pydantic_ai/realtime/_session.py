@@ -9,6 +9,7 @@ import wave
 from collections import deque
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import replace
+from threading import Lock as ThreadLock
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
@@ -30,7 +31,7 @@ from .._instrumentation import (
 )
 from .._tool_execution import build_tool_return_part
 from .._utils import cancel_and_drain
-from ..exceptions import ApprovalRequired, CallDeferred, ToolRetryError, UserError
+from ..exceptions import ApprovalRequired, CallDeferred, ToolRetryError, UsageLimitExceeded, UserError
 from ..messages import (
     BinaryContent,
     DeferredToolRequestsEvent,
@@ -222,15 +223,24 @@ class _RealtimePendingMessages(list[PendingMessage]):
     def __init__(self) -> None:
         super().__init__()
         self._on_asap: Callable[[], None] | None = None
+        self._lock = ThreadLock()
 
     def bind(self, on_asap: Callable[[], None]) -> None:
         self._on_asap = on_asap
 
     def append(self, pending: PendingMessage) -> None:
         _pending_message_text(pending)
-        super().append(pending)
+        with self._lock:
+            super().append(pending)
         if pending.priority == 'asap' and self._on_asap is not None:
             self._on_asap()
+
+    def pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
+        """Atomically remove and return all messages with `priority`."""
+        with self._lock:
+            selected = [pending for pending in self if pending.priority == priority]
+            self[:] = [pending for pending in self if pending.priority != priority]
+        return selected
 
 
 class RealtimeSession:
@@ -407,6 +417,8 @@ class RealtimeSession:
         # finalizes the calling response. Hold their history requests until the call is present.
         self._pending_tool_returns: list[tuple[ToolCallPart, ModelRequest]] = []
         self._tool_calls_awaiting_usage: set[str] = set()
+        self._asap_drain_deferred = False
+        self._asap_drain_ready = False
         self._pump_task: asyncio.Task[None] | None = None
         self._pump_error: Exception | None = None
         self._pump_finished = False
@@ -478,6 +490,8 @@ class RealtimeSession:
             tasks.append(self._pump_task)
         if tasks:
             await cancel_and_drain(*tasks, msg='Realtime session exited')
+
+        self._flush_pending_users()
 
         error = exc_value or self._pump_error
         if self._chat_span is not None:
@@ -737,10 +751,12 @@ class RealtimeSession:
         *,
         provider_response_id: str | None = None,
         finish_reason: FinishReason | None = None,
+        provider_details: dict[str, Any] | None = None,
         interrupted: bool = False,
     ) -> None:
         """Finalize the current assistant response's parts into a `ModelResponse` in history."""
         response: ModelResponse | None = None
+        response_recorded = False
         # The chat span's input is the history the response replied to, captured before we append it.
         input_messages = self.all_messages()
         # Native tool parts (web grounding / code execution) lead the response (call+return, then
@@ -756,12 +772,15 @@ class RealtimeSession:
                 model_name=self._connection.model_name or self._model_name,
                 provider_name=self._provider_name,
                 provider_url=self._provider_url,
+                provider_details=provider_details,
                 provider_response_id=provider_response_id or self._pending_provider_response_id,
                 finish_reason=finish_reason or self._pending_finish_reason,
                 conversation_id=self._conversation_id,
                 state='interrupted' if interrupted else 'complete',
             )
             self._history.append(response)
+            self.usage.requests += 1
+            response_recorded = True
             self._tool_run_step += 1
             for part in parts:
                 if isinstance(part, ToolCallPart):
@@ -770,12 +789,16 @@ class RealtimeSession:
                 pending, self._pending_tool_returns = self._pending_tool_returns, []
                 for call_part, request in pending:
                     self._insert_tool_return(call_part, request)
+                if self._asap_drain_deferred:
+                    self._asap_drain_ready = True
         self._end_chat_span(input_messages, response)
         self._response_parts = []
         self._native_tool_parts = []
         self._pending_response_usage = RequestUsage()
         self._pending_provider_response_id = None
         self._pending_finish_reason = None
+        if response_recorded:
+            self._check_request_limit()
 
     def _ensure_chat_span(self) -> None:
         """Open a `chat {model}` span for the assistant response now being assembled, if not already open.
@@ -857,7 +880,9 @@ class RealtimeSession:
             # An interrupted turn (barge-in) isn't an error and has no dedicated `FinishReason`; leave
             # it as the provider reported (usually unset) and let `state='interrupted'` carry the
             # meaning, matching a classic cancelled stream. A clean turn with no reported reason stops.
-            finish_reason=event.finish_reason or (None if event.interrupted else 'stop'),
+            finish_reason=event.finish_reason
+            or (None if event.interrupted or event.provider_details is not None else 'stop'),
+            provider_details=event.provider_details,
             interrupted=event.interrupted,
         )
         events.append(event)
@@ -996,6 +1021,22 @@ class RealtimeSession:
                 if finalized.has_content():
                     self._history.append(ModelRequest(parts=[finalized], conversation_id=self._conversation_id))
         return [PartEndEvent(index=0, part=part)]
+
+    def _flush_pending_users(self) -> None:
+        """Preserve transcript-bearing user items that never received an explicit final event."""
+        if self._active_user is not None:
+            self._finalize_user()
+        for item_id in list(self._user_item_order):
+            if item_id in self._active_users_by_id:
+                self._finalize_user(item_id=item_id)
+        while self._user_item_order:
+            item_id = self._user_item_order.popleft()
+            part = self._finalized_users_by_id.pop(item_id, None)
+            if part is not None and part.has_content():
+                self._history.append(ModelRequest(parts=[part], conversation_id=self._conversation_id))
+        self._active_users_by_id.clear()
+        self._user_transcripts_by_id.clear()
+        self._finalized_users_by_id.clear()
 
     def _finalize_audio_only_user(self) -> list[RealtimeEvent]:
         """Finalize a user turn from retained input audio when no transcript will arrive.
@@ -1227,7 +1268,8 @@ class RealtimeSession:
             wire_content.append(user_content)
         elif user_content:
             wire_content.extend(user_content)
-        await self._drain_pending_messages('asap')
+        if call.tool_call_id not in self._tool_calls_awaiting_usage:
+            await self._drain_pending_messages('asap')
         await self._connection.send(
             ToolResult(
                 tool_call_id=call.tool_call_id,
@@ -1241,8 +1283,12 @@ class RealtimeSession:
 
     def _notify_asap_pending_messages(self) -> None:
         """Wake an `asap` drain from either an async tool or a sync-tool worker thread."""
-        if self._loop is not None and not self._closed:
-            self._loop.call_soon_threadsafe(self._start_asap_pending_message_drain)
+        loop = self._loop
+        if loop is not None and not self._closed:
+            try:
+                loop.call_soon_threadsafe(self._start_asap_pending_message_drain)
+            except RuntimeError:
+                pass
 
     def _start_asap_pending_message_drain(self) -> None:
         if self._closed:
@@ -1260,10 +1306,14 @@ class RealtimeSession:
     async def _drain_pending_messages(self, priority: PendingMessagePriority) -> None:
         """Deliver queued text prompts of `priority` and record them as normal user turns."""
         async with self._pending_messages_lock:
-            selected = [pending for pending in self._pending_messages if pending.priority == priority]
-            self._pending_messages[:] = [pending for pending in self._pending_messages if pending.priority != priority]
+            if priority == 'asap' and self._tool_calls_awaiting_usage:
+                self._asap_drain_deferred = True
+                return
+            selected = self._pending_messages.pop_priority(priority)
             for pending in selected:
                 await self.send(_pending_message_text(pending))
+            if priority == 'asap':
+                self._asap_drain_deferred = False
 
     def _check_tool_call_limit(self) -> None:
         # Let `UsageLimitExceeded` propagate (caught by the pump and re-raised to the consumer), matching
@@ -1281,7 +1331,9 @@ class RealtimeSession:
     def _check_request_limit(self) -> None:
         if self._usage_limits is None:
             return
-        self._usage_limits.check_before_request(self.usage)
+        request_limit = self._usage_limits.request_limit
+        if request_limit is not None and self.usage.requests > request_limit:
+            raise UsageLimitExceeded(f'The next request would exceed the request_limit of {request_limit}')
 
     async def _run_tool(self, call: ToolCall, call_part: ToolCallPart, validation_done: asyncio.Event) -> None:
         """Run a tool and feed its completion (or failure) back through the queue."""
@@ -1299,6 +1351,8 @@ class RealtimeSession:
             self._pending_tool_calls.pop(call_part.tool_call_id, None)
         for event in self._complete_tool_call(call_part, result_part, content):
             await self._queue.put(event)
+        if self._asap_drain_deferred and not self._tool_calls_awaiting_usage:
+            await self._drain_pending_messages('asap')
 
     def _tool_task_done(self, task: asyncio.Task[None]) -> None:
         self._background_tasks.discard(task)
@@ -1359,17 +1413,18 @@ class RealtimeSession:
             return False
         if isinstance(event, SessionUsageEvent):
             self.usage.incr(event.usage)
-            self.usage.requests += 1
             self._pending_response_usage = self._pending_response_usage + event.usage
             self._pending_provider_response_id = event.provider_response_id or self._pending_provider_response_id
             self._pending_finish_reason = event.finish_reason or self._pending_finish_reason
             self._check_token_limit()
-            self._check_request_limit()
             if self._tool_calls_awaiting_usage:
                 self._finalize_response(
                     provider_response_id=event.provider_response_id,
                     finish_reason=event.finish_reason,
                 )
+            if self._asap_drain_ready:
+                self._asap_drain_ready = False
+                await self._drain_pending_messages('asap')
             return False
         for out in self._translate_event(event):
             await self._queue.put(out)

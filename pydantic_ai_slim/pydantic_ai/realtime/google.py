@@ -854,6 +854,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._dial = dial
         self._reconnect = reconnect
         self._resumption_handle: str | None = None
+        self._turn_interrupted = False
 
     @property
     def input_transcription_enabled(self) -> bool:
@@ -996,6 +997,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 Transcript(text=content.output_transcription.text, is_final=bool(content.output_transcription.finished))
             )
         if content.interrupted:
+            self._turn_interrupted = True
             events.append(InputSpeechStartEvent())
         native_tool_parts += _map_grounding_parts(content, self._provider_name)
         for index, part in enumerate(native_tool_parts):
@@ -1028,7 +1030,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # Emit the turn boundary last — after this message's usage — so the session folds the turn's
         # tokens into the finalized `ModelResponse` / `chat` span before `TurnCompleteEvent` closes it.
         if message.server_content is not None and message.server_content.turn_complete:
-            events.append(TurnCompleteEvent(interrupted=False))
+            interrupted = self._turn_interrupted
+            events.append(TurnCompleteEvent(interrupted=interrupted))
+            self._turn_interrupted = False
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.
         update = message.session_resumption_update
         if update is not None and update.new_handle:

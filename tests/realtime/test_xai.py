@@ -91,6 +91,18 @@ def test_map_input_transcription_completed_delegates_to_openai_codec() -> None:
     assert event == InputTranscript(text='weather?', is_final=True)
 
 
+def test_map_input_transcription_completed_respects_status() -> None:
+    base = {
+        'type': 'conversation.item.input_audio_transcription.completed',
+        'item_id': 'item-1',
+        'transcript': 'weather?',
+    }
+    assert map_event({**base, 'status': 'in_progress'}) is None
+    assert map_event({**base, 'status': 'completed'}) == InputTranscript(
+        text='weather?', is_final=True, item_id='item-1'
+    )
+
+
 def test_map_delegates_audio_and_transcript_and_tool_calls() -> None:
     payload = base64.b64encode(b'\x01\x02').decode('ascii')
     assert map_event({'type': 'response.output_audio.delta', 'delta': payload}) == AudioDelta(data=b'\x01\x02')

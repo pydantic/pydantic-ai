@@ -101,17 +101,17 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     xAI clones the OpenAI Realtime protocol, so most events map identically via the OpenAI codec.
     The first exception is input audio transcription: xAI emits cumulative
     `conversation.item.input_audio_transcription.updated` snapshots (which may retroactively *correct*
-    earlier text) plus a final `.completed`, rather than OpenAI's incremental `.delta`. Only the final
-    `.completed` is surfaced — its event name is identical to OpenAI's, so it maps through the shared
-    codec — because the session's transcript accumulator reconciles incremental and prefix-extending
-    updates but can't undo a retroactive correction from a cumulative snapshot; dropping the `.updated`
-    partials keeps the finalized user transcript correct at the cost of live partial input transcripts.
+    earlier text) plus cumulative `.completed` snapshots, rather than OpenAI's incremental `.delta`.
+    This mapper drops `.updated` partials because the session's transcript accumulator can't undo a
+    retroactive correction, while the shared codec drops interim `.completed` snapshots. This keeps the
+    finalized user transcript correct at the cost of live partial input transcripts.
     The other exception is xAI's conversation lifecycle events, which are surfaced as codec control
     events so the connection can capture `conversation.id` and the session can suppress resume replay.
     """
-    if data.get('type') == 'conversation.item.input_audio_transcription.updated':
+    event_type = data.get('type')
+    if event_type == 'conversation.item.input_audio_transcription.updated':
         return None
-    if data.get('type') in ('conversation.created', 'conversation.item.added', 'conversation.item.created'):
+    if event_type in ('conversation.created', 'conversation.item.added', 'conversation.item.created'):
         return map_conversation_event(data)
     event = _map_openai_event(data)
     if isinstance(event, ToolCall):
@@ -192,8 +192,9 @@ class XaiRealtimeModel(RealtimeModel):
         provider: The provider to use for authentication and the base URL. Defaults to `'xai'`.
         reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
             recover from a dropped connection. Setting a policy enables xAI's native session resumption;
-            prior turns are restored when reconnecting within xAI's 30-minute inactivity window. With no
-            policy, the low-level connection reports a non-recoverable session error; `RealtimeSession` raises
+            prior turns are restored when reconnecting within xAI's resumption window (reportedly ~30
+            minutes). With no policy, the low-level connection reports a non-recoverable session error;
+            `RealtimeSession` raises
             [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from iteration.
     """
 

@@ -1,7 +1,8 @@
 # `pydantic_ai.realtime`
 
-Support for **realtime, bidirectional speech-to-speech models** (OpenAI Realtime, Gemini Live, xAI
-Grok Voice, and any other provider that streams audio in and out over a persistent connection).
+Support for **realtime, bidirectional speech-to-speech models** (OpenAI Realtime, Azure AI Voice
+Live, Gemini Live, xAI Grok Voice, and any other provider that streams audio in and out over a
+persistent connection).
 
 Unlike [`Model`][pydantic_ai.models.Model], which is request-response, a realtime model opens a
 long-lived connection: you stream audio (or text/images) in, and consume audio, transcripts, and
@@ -142,3 +143,13 @@ transcription at the end of each user turn. Authentication comes from an
 [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider], mirroring [`XaiModel`][pydantic_ai.models.xai.XaiModel].
 
 ::: pydantic_ai.realtime.xai
+
+## Azure AI Voice Live provider
+
+The Azure AI Voice Live realtime provider reuses the OpenAI Realtime codec and connection like xAI,
+exposes `azure_turn_detection` through
+[`AzureRealtimeModelSettings`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings], authenticates
+with [`AzureVoiceLiveProvider`][pydantic_ai.providers.azure_voicelive.AzureVoiceLiveProvider], and
+requires the `realtime` optional group (`pip install "pydantic-ai-slim[realtime]"`).
+
+::: pydantic_ai.realtime.azure

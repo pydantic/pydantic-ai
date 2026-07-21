@@ -48,6 +48,7 @@ from pydantic_ai.realtime import (
     AudioInput,
     InputSpeechStartEvent,
     InputTranscript,
+    RealtimeSession,
     ReconnectedEvent,
     SessionUsageEvent,
     ToolCall,
@@ -62,6 +63,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
+from .test_session import make_tool_manager
 
 with try_import() as imports_successful:
     from google.genai import Client, errors as genai_errors, types as genai_types
@@ -576,8 +578,47 @@ def test_map_transcriptions_interrupt_and_turn_complete() -> None:
         InputTranscript(text='weather?', is_final=True),
         Transcript(text='Sunny', is_final=False),
         InputSpeechStartEvent(),
-        TurnCompleteEvent(interrupted=False),
+        TurnCompleteEvent(interrupted=True),
     ]
+
+
+def test_map_interruption_latches_until_turn_complete() -> None:
+    conn = _conn(_RecordingSession())
+    interrupted = genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(interrupted=True))
+    completed = genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(turn_complete=True))
+    assert conn._map_message(interrupted) == [InputSpeechStartEvent()]  # pyright: ignore[reportPrivateUsage]
+    assert conn._map_message(completed) == [TurnCompleteEvent(interrupted=True)]  # pyright: ignore[reportPrivateUsage]
+    assert conn._map_message(completed) == [TurnCompleteEvent(interrupted=False)]  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_interruption_finalizes_session_response_as_interrupted() -> None:
+    provider_session = _RecordingSession(
+        [
+            [
+                genai_types.LiveServerMessage(
+                    server_content=genai_types.LiveServerContent(
+                        output_transcription=genai_types.Transcription(text='Cut off', finished=False),
+                        interrupted=True,
+                    )
+                ),
+                genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(turn_complete=True)),
+            ]
+        ]
+    )
+    session = RealtimeSession(
+        _conn(provider_session),
+        make_tool_manager(),
+        model_name='gemini-live',
+        provider_name='google',
+    )
+    async with session:
+        async for event in session:
+            if isinstance(event, TurnCompleteEvent):
+                break
+
+    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
+    assert response.state == 'interrupted'
+    assert response.finish_reason is None
 
 
 def test_map_tool_call_and_usage() -> None:

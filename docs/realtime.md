@@ -203,8 +203,8 @@ The remaining realtime control-plane events:
 | --- | --- |
 | [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] | OpenAI/Azure/xAI detected speech onset, or Gemini reported activity that interrupted model output. |
 | [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | OpenAI/Azure/xAI detected the end of speech; Gemini does not emit this event. |
-| [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn. `interrupted` reflects cancellation on OpenAI/Azure/xAI; Gemini reports `False` even after barge-in. |
-| [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] | The connection dropped and was automatically re-established (see [Reconnecting](#reconnecting)). |
+| [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn. `interrupted` reflects cancellation or barge-in across all providers. |
+| [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] | The connection dropped and was automatically re-established. Conversation state is restored for Gemini and xAI; see [Reconnecting](#reconnecting). |
 | [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] | The provider reported a **recoverable** error mid-session; the session keeps running. A non-recoverable error instead raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]. |
 
 ## Message history
@@ -800,13 +800,18 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 model = OpenAIRealtimeModel('gpt-realtime', reconnect=ReconnectPolicy(max_attempts=5))
 ```
 
-For OpenAI, Azure Voice Live, and xAI, reconnecting restores the session configuration but **not** server-side
+For OpenAI and Azure Voice Live, reconnecting restores the session configuration but **not** server-side
 conversation state (the audio buffer and prior turns), so treat a
 [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] as the start of a fresh turn. Without a
 policy (the default), a dropped connection raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]
 from the session iterator, so the app can open a new session itself.
 
-Gemini reconnects via **session resumption**, which *does* restore conversation state. Enable it with
+Gemini and xAI reconnect via native **session resumption**, which restores prior turns. xAI suppresses
+the provider's resumption replay burst from the local event stream and enables resumption automatically
+whenever a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] is set. Its conversation handle is
+managed in memory and cannot be persisted to resume a session in another process.
+
+For Gemini, enable resumption with
 both `google_enable_session_resumption=True` and a
 [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] — the session re-dials from the
 latest resumption handle the server issued:
@@ -839,7 +844,7 @@ ones that are specific to the request-response graph (faking them would be misle
 | `metadata`, `conversation_id` | ✅ set on the `RunContext` and telemetry span; `conversation_id` is also stamped on session-built history |
 | `message_history` | ✅ seeds replayable text, transcripts, thinking, tool rounds, images, and supported retained user audio; included in `all_messages()` |
 | `output_type` | ❌ no structured output → [delegate](#delegating-to-a-text-agent) |
-| Provider-side session handle/resumption | ❌ no persistent handle API; for Gemini's in-process recovery see [session resumption](#reconnecting) |
+| Provider-side session handle/resumption | ⚠️ no persistent handle API; Gemini and xAI support in-process [session resumption](#reconnecting) |
 | `user_prompt` | ❌ stream input with `send_audio()` or `send()` instead |
 | `retries` | ❌ no per-session argument or output-validation retries; agent-level tool retries still apply |
 | `deferred_tool_results`, `event_stream_handler` | ❌ graph-only (the session *is* the event stream) |

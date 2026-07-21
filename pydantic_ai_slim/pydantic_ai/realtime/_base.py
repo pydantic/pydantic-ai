@@ -19,7 +19,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import TypeAliasType, TypedDict, assert_never
 
@@ -390,6 +390,9 @@ class TurnCompleteEvent:
 
     finish_reason: FinishReason | None = None
     """Normalized reason the provider finished the response, when available."""
+
+    provider_details: dict[str, Any] | None = None
+    """Raw provider terminal status details retained on the finalized response, when available."""
 
     event_kind: Literal['turn_complete'] = 'turn_complete'
     """Event type identifier, used as a discriminator."""

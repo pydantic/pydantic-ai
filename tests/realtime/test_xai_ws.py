@@ -140,11 +140,11 @@ async def test_audio_in_server_vad_turn(
                     break
 
     messages = session.all_messages()
-    # Server VAD may split the clip into several short user turns; the invariant is that the spoken
-    # input is transcribed into user history (not dropped) ahead of the assistant's reply.
     user_speech = [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
-    assert user_speech and all(isinstance(p, SpeechPart) and p.speaker == 'user' for p in user_speech)
-    assert any(isinstance(p, SpeechPart) and p.transcript for p in user_speech)  # at least one transcribed
+    assert len(user_speech) == 1
+    user_part = user_speech[0]
+    assert isinstance(user_part, SpeechPart) and user_part.speaker == 'user'
+    assert user_part.transcript == snapshot('Hello, my name is Marcelo.')
     responses = [message for message in messages if isinstance(message, ModelResponse)]
     assert responses and isinstance(responses[-1].parts[0], SpeechPart)
 

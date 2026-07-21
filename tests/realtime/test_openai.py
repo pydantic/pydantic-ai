@@ -25,6 +25,7 @@ from pydantic_ai.messages import (
     CompactionPart,
     DocumentUrl,
     FilePart,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -148,15 +149,30 @@ def test_map_transcript_missing_field_defaults_to_empty() -> None:
     assert map_event({'type': 'response.output_audio_transcript.delta'}) == Transcript(text='', is_final=False)
 
 
-def test_map_input_transcript() -> None:
-    event = map_event(
-        {
-            'type': 'conversation.item.input_audio_transcription.completed',
-            'transcript': 'weather?',
-            'item_id': 'item-u',
-        }
+@pytest.mark.parametrize('status', ['completed', None])
+def test_map_input_transcript_completed(status: str | None) -> None:
+    data = {
+        'type': 'conversation.item.input_audio_transcription.completed',
+        'transcript': 'weather?',
+        'item_id': 'item-u',
+    }
+    if status is not None:
+        data['status'] = status
+    assert map_event(data) == InputTranscript(text='weather?', is_final=True, item_id='item-u')
+
+
+def test_map_input_transcript_completed_drops_interim_status() -> None:
+    assert (
+        map_event(
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'status': 'in_progress',
+                'transcript': 'wea',
+                'item_id': 'item-u',
+            }
+        )
+        is None
     )
-    assert event == InputTranscript(text='weather?', is_final=True, item_id='item-u')
 
 
 def test_map_input_transcript_delta() -> None:
@@ -195,7 +211,10 @@ def _response_done(response: Any) -> dict[str, Any]:
 
 def test_map_response_done_normal() -> None:
     assert map_event(_response_done({'id': 'resp-1', 'status': 'completed', 'output': []})) == TurnCompleteEvent(
-        interrupted=False, provider_response_id='resp-1', finish_reason='stop'
+        interrupted=False,
+        provider_response_id='resp-1',
+        finish_reason='stop',
+        provider_details={'status': 'completed'},
     )
 
 
@@ -203,7 +222,29 @@ def test_map_response_done_cancelled() -> None:
     # A cancelled response is a barge-in, not an error: `interrupted=True` (→ `state='interrupted'`)
     # carries the meaning and `finish_reason` is left unset, matching a classic cancelled stream.
     assert map_event(_response_done({'id': 'resp-2', 'status': 'cancelled'})) == TurnCompleteEvent(
-        interrupted=True, provider_response_id='resp-2', finish_reason=None
+        interrupted=True,
+        provider_response_id='resp-2',
+        finish_reason=None,
+        provider_details={'status': 'cancelled'},
+    )
+
+
+@pytest.mark.parametrize(
+    ('reason', 'finish_reason'),
+    [('max_output_tokens', 'length'), ('content_filter', 'content_filter')],
+)
+def test_map_response_done_incomplete_reason(reason: str, finish_reason: FinishReason) -> None:
+    response: dict[str, Any] = {
+        'id': 'resp-incomplete',
+        'status': 'incomplete',
+        'status_details': {'reason': reason},
+        'output': [],
+    }
+    assert map_event(_response_done(response)) == TurnCompleteEvent(
+        interrupted=False,
+        provider_response_id='resp-incomplete',
+        finish_reason=finish_reason,
+        provider_details={'status': 'incomplete', 'finish_reason': reason},
     )
 
 
@@ -215,11 +256,15 @@ def test_map_response_done_function_call_only_is_skipped() -> None:
 
 def test_map_response_done_mixed_output_is_turn_complete() -> None:
     data = _response_done({'status': 'completed', 'output': [{'type': 'function_call'}, {'type': 'message'}]})
-    assert map_event(data) == TurnCompleteEvent(interrupted=False, finish_reason='stop')
+    assert map_event(data) == TurnCompleteEvent(
+        interrupted=False, finish_reason='stop', provider_details={'status': 'completed'}
+    )
 
 
 def test_map_response_done_without_response_object() -> None:
-    assert map_event({'type': 'response.done'}) == TurnCompleteEvent(interrupted=False)
+    assert map_event({'type': 'response.done'}) == TurnCompleteEvent(
+        interrupted=False, provider_details={'status': None}
+    )
 
 
 def test_map_error_event_with_message() -> None:
@@ -1309,7 +1354,12 @@ async def test_response_done_emits_usage_then_turn_complete() -> None:
             provider_response_id='resp-1',
             finish_reason='stop',
         ),
-        TurnCompleteEvent(interrupted=False, provider_response_id='resp-1', finish_reason='stop'),
+        TurnCompleteEvent(
+            interrupted=False,
+            provider_response_id='resp-1',
+            finish_reason='stop',
+            provider_details={'status': 'completed'},
+        ),
     ]
 
 
@@ -1341,11 +1391,18 @@ async def test_response_done_function_call_only_still_emits_usage() -> None:
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    ('status', 'finish_reason', 'state'),
+    ('status', 'raw_reason', 'finish_reason', 'state'),
     # A cancelled (barge-in) turn is interrupted, not an error, so `finish_reason` stays unset.
-    [('completed', 'stop', 'complete'), ('cancelled', None, 'interrupted')],
+    [
+        ('completed', None, 'stop', 'complete'),
+        ('cancelled', None, None, 'interrupted'),
+        ('incomplete', 'max_output_tokens', 'length', 'complete'),
+        ('incomplete', 'content_filter', 'content_filter', 'complete'),
+    ],
 )
-async def test_session_stamps_openai_response_metadata(status: str, finish_reason: str | None, state: str) -> None:
+async def test_session_stamps_openai_response_metadata(
+    status: str, raw_reason: str | None, finish_reason: FinishReason | None, state: str
+) -> None:
     transcript = json.dumps(
         {
             'type': 'response.output_audio_transcript.done',
@@ -1353,12 +1410,10 @@ async def test_session_stamps_openai_response_metadata(status: str, finish_reaso
             'transcript': 'hello',
         }
     )
-    done = json.dumps(
-        {
-            'type': 'response.done',
-            'response': {'id': 'resp-1', 'status': status, 'output': []},
-        }
-    )
+    response_data: dict[str, Any] = {'id': 'resp-1', 'status': status, 'output': []}
+    if raw_reason is not None:
+        response_data['status_details'] = {'reason': raw_reason}
+    done = json.dumps({'type': 'response.done', 'response': response_data})
     connection = OpenAIRealtimeConnection(FakeWebSocket([transcript, done]))  # type: ignore[arg-type]
     session = RealtimeSession(
         connection,
@@ -1374,6 +1429,10 @@ async def test_session_stamps_openai_response_metadata(status: str, finish_reaso
     assert response.provider_response_id == 'resp-1'
     assert response.finish_reason == finish_reason
     assert response.state == state
+    expected_details: dict[str, Any] = {'status': status}
+    if raw_reason is not None:
+        expected_details['finish_reason'] = raw_reason
+    assert response.provider_details == expected_details
     speech = response.parts[0]
     assert isinstance(speech, SpeechPart)
     assert (speech.id, speech.provider_name) == ('item-1', 'openai')
@@ -1727,7 +1786,13 @@ async def test_connection_iter_skips_unmapped_events(monkeypatch: pytest.MonkeyP
     model = OpenAIRealtimeModel('gpt-realtime')
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
-    assert events == [TurnCompleteEvent(interrupted=False, finish_reason='stop')]
+    assert events == [
+        TurnCompleteEvent(
+            interrupted=False,
+            finish_reason='stop',
+            provider_details={'status': 'completed'},
+        )
+    ]
 
 
 async def test_agent_realtime_session_rejects_native_tools() -> None:

@@ -8,7 +8,7 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunUsage
 from pydantic_ai.messages import BinaryContent, ModelRequest, ModelResponse, SpeechPart, UserPromptPart
 from pydantic_ai.realtime import TurnCompleteEvent
 
@@ -77,3 +77,12 @@ async def test_text_in_audio_out_turn(
     assert isinstance(part.audio, BinaryContent)
     assert part.audio.media_type == 'audio/wav'
     assert len(part.audio.data) > 0
+    assert session.usage == snapshot(
+        RunUsage(
+            input_tokens=16,
+            output_tokens=61,
+            output_audio_tokens=43,
+            details={'input_text_tokens': 16, 'input_image_tokens': 0, 'output_text_tokens': 18},
+            requests=1,
+        )
+    )
