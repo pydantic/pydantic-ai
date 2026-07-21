@@ -722,6 +722,53 @@ results
     assert specialist_calls == 2
 
 
+def test_dynamic_workflow_gate_env_toggles_run_workflow_tool(monkeypatch: pytest.MonkeyPatch):
+    """The attention crew is wired only when PYDANTIC_AI_DYNAMIC_WORKFLOW matches
+    the exact `attention-triage` literal. Both attention tests bypass this gate by
+    calling `attention_dynamic_workflow` directly, so a typo in the literal (here
+    or in the workflow .md) would silently drop the crew while CI stayed green.
+    Drive the real `run()` seam offline and assert the `run_workflow` tool appears
+    only when the env value matches, and pin the workflow .md's env line.
+    """
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
+
+    def _tools_seen_during_run() -> set[str]:
+        seen: set[str] = set()
+
+        def _respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.update(tool.name for tool in info.function_tools)
+            return ModelResponse(parts=[TextPart('done')])
+
+        async def _stream(messages: list[ModelMessage], info: AgentInfo):
+            seen.update(tool.name for tool in info.function_tools)
+            yield 'done'
+
+        asyncio.run(
+            shim.run(
+                prompt='classify the candidates',
+                model=FunctionModel(_respond, stream_function=_stream),
+                label='test-model',
+                claude_code_toolset=shim.select_claude_code_toolset(None, None, task=None),
+                mcp_servers=[],
+                session_id='sess',
+            )
+        )
+        return seen
+
+    monkeypatch.setenv('PYDANTIC_AI_DYNAMIC_WORKFLOW', 'attention-triage')
+    assert 'run_workflow' in _tools_seen_during_run()
+
+    monkeypatch.delenv('PYDANTIC_AI_DYNAMIC_WORKFLOW', raising=False)
+    assert 'run_workflow' not in _tools_seen_during_run()
+
+    workflow = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.md'
+    assert 'PYDANTIC_AI_DYNAMIC_WORKFLOW: attention-triage' in workflow.read_text(encoding='utf-8')
+
+
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pytest.MonkeyPatch):
     # The Task tool spawns a sub-Agent on ctx.model with the read-only tool
     # set, runs the given prompt, and returns the sub-agent's output.

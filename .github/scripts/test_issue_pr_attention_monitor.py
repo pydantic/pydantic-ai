@@ -52,7 +52,7 @@ class FakeClient:
         self.calls.append(('GET', path, None))
         if '/labels/' in path:
             return {'name': path.rsplit('/', 1)[-1]}
-        if '/issues?state=open&labels=' in path:
+        if '/issues?state=' in path and 'labels=' in path:
             requested = urllib.parse.unquote(path.split('labels=')[1].split('&')[0])
             return [
                 value for value in self.items.values() if requested in {str(label['name']) for label in value['labels']}
@@ -332,7 +332,9 @@ def test_apply_pings_all_assigned_maintainers_without_reassigning(tmp_path: Path
     write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}])
     write_output(output, ['7'])
     client = FakeClient({7: item(7, assignees=['alice', 'bob', 'reader'])})
-    client.permissions = {'alice': 'maintain', 'bob': 'write', 'reader': 'read'}
+    # `admin`/`write`/`read`/`none` are the only values the legacy permission
+    # field returns; `maintain` appears only in role_name, never here.
+    client.permissions = {'alice': 'admin', 'bob': 'write', 'reader': 'read'}
 
     assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
         '#7: requested maintainer attention from @alice @bob'
@@ -588,12 +590,10 @@ def test_reconcile_rechecks_acknowledgement_before_queueing_slack():
     assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
 
 
-def test_finalize_clears_active_state_only_after_slack_delivery(tmp_path: Path):
-    path = tmp_path / 'escalations.json'
-    path.write_text('{"items": [7]}', encoding='utf-8')
+def test_finalize_clears_active_state_only_after_slack_delivery():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL])})
 
-    assert monitor.finalize_escalations(client, 'r', monitor._escalation_numbers(json.loads(path.read_text()))) == [
+    assert monitor.finalize_escalations(client, 'r', monitor._escalation_numbers({'items': [7]})) == [
         '#7: delivered private Slack escalation'
     ]
     assert any(call[0] == 'DELETE' and monitor._ACTION_LABEL in call[1] for call in client.calls)
@@ -660,12 +660,10 @@ def test_snapshot_and_decision_batch_limits_are_enforced(tmp_path: Path):
 
 def test_escalation_output_is_fixed_and_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     output = tmp_path / 'github-output'
-    path = tmp_path / 'escalations.json'
     monkeypatch.setenv('GITHUB_OUTPUT', str(output))
 
-    monitor._write_escalations('pydantic/pydantic-ai', [8, 7, 7], str(path))
+    monitor._write_escalations('pydantic/pydantic-ai', [8, 7, 7])
 
-    assert json.loads(path.read_text(encoding='utf-8')) == {'items': [7, 8]}
     values = dict(line.split('=', 1) for line in output.read_text(encoding='utf-8').splitlines())
     assert values['has_escalations'] == 'true'
     assert values['escalation_items'] == '[7,8]'
@@ -736,10 +734,58 @@ def test_member_acknowledgement_in_the_same_second_completes_the_request():
             'label': {'name': monitor._ACTION_LABEL},
         },
         {
+            # The real timeline API puts a review's author under `user`, not
+            # `actor` — exercising the `or event.get('user')` fallback in `_actor`.
             'event': 'reviewed',
             'submitted_at': OLD,
-            'actor': {'login': 'another-maintainer'},
+            'user': {'login': 'another-maintainer'},
             'author_association': 'MEMBER',
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
+
+
+def test_recipient_non_comment_event_completes_the_request():
+    # A recipient who labels, milestones, self-assigns, or closes while being
+    # reminded is engaging: any non-denylisted event by a recipient acknowledges.
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=['alice'])})
+    client.permissions = {'alice': 'admin'}
+    client.timelines[7] = [
+        {
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+        {
+            'event': 'labeled',
+            'created_at': '2026-07-17T00:00:00Z',
+            'actor': {'login': 'alice'},
+            'label': {'name': 'question'},
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
+
+
+def test_collaborator_comment_by_non_recipient_completes_the_request():
+    # An outside collaborator with repo access can acknowledge via a comment even
+    # when they are not one of the assigned recipients (COLLABORATOR association).
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    client.timelines[7] = [
+        {
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+        {
+            'event': 'commented',
+            'created_at': '2026-07-17T00:00:00Z',
+            'actor': {'login': 'outside-collaborator'},
+            'author_association': 'COLLABORATOR',
+            'body': 'I can take this.',
         },
     ]
 
@@ -807,12 +853,27 @@ def test_reassignment_restarts_the_reminder_sla():
     assert any(call[0] == 'POST' and call[2] == {'labels': [monitor._PINGED_LABEL]} for call in client.calls)
 
 
-def test_reconcile_ignores_closed_or_opted_out_items():
-    active = item(1, labels=[monitor._ACTION_LABEL])
-    active['state'] = 'closed'
-    opted_out = item(2)
-    client = FakeClient({1: active, 2: opted_out})
-    assert monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW) == ([], [])
+def test_closed_item_completes_and_strips_lifecycle_labels():
+    # Closing an item is the ultimate resolution: the action and stage labels
+    # are removed so a later reopen can't wake an ancient SLA clock.
+    closed = item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL])
+    closed['state'] = 'closed'
+    client = FakeClient({7: closed})
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: completed after the item was closed'], [])
+    assert any(call[0] == 'DELETE' and monitor._ACTION_LABEL in call[1] for call in client.calls)
+    assert any(call[0] == 'DELETE' and monitor._PINGED_LABEL in call[1] for call in client.calls)
+    # No public reminder or private escalation is produced for a closed item.
+    assert not any(call[1].endswith('/comments') for call in client.calls)
+
+
+def test_reopened_item_without_action_label_fires_no_reminder():
+    # After the closed-item completion strips the labels, a reopen leaves no
+    # action label, so no stage transition can fire an instant reminder.
+    reopened = item(2)
+    client = FakeClient({2: reopened})
+    assert monitor.reconcile(client, 'r', now=NOW) == ([], [])
+    assert not any(call[1].endswith('/comments') for call in client.calls)
 
 
 def test_full_page_processes_a_bounded_batch_instead_of_aborting():
@@ -997,6 +1058,19 @@ def test_snapshot_is_inside_harness_workspace_and_writer_has_only_fixed_output()
     assert 'Slack' not in text
     assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' not in text
     assert 'github: false' in text
+
+
+def test_compiled_lock_pins_failure_report_and_stable_artifact_name():
+    # Actions runs the compiled .lock.yml, not the .md; nothing else pins the
+    # two together, so guard the load-bearing strings against a bad recompile.
+    lock = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.lock.yml'
+    text = lock.read_text()
+
+    assert 'GH_AW_FAILURE_REPORT_AS_ISSUE: "true"' in text
+    assert 'name: attention-candidates-${{ github.run_id }}' in text
+    # The run_attempt suffix must stay gone: "Re-run failed jobs" bumps the
+    # attempt number, but only the original run_id upload exists.
+    assert 'name: attention-candidates-${{ github.run_id }}-' not in text
 
 
 def test_operations_workflow_routes_only_terminal_escalation_to_slack():

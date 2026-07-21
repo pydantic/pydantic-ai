@@ -50,13 +50,6 @@ class Decision(TypedDict):
     confidence: Literal['high', 'medium', 'low']
 
 
-class Candidate(TypedDict):
-    """Trusted snapshot fields needed to revalidate a model decision."""
-
-    number: int
-    updated_at: str
-
-
 class GitHubClient:
     """Small GitHub REST client with bounded response parsing."""
 
@@ -115,9 +108,6 @@ class GitHubClient:
             pages.extend(cast(list[dict[str, Any]], self.get(page_path)))
         return pages
 
-    def last_page(self, path: str) -> list[dict[str, Any]]:
-        return self.last_pages(path)
-
 
 def _parse_time(value: str) -> dt.datetime:
     return dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
@@ -172,7 +162,7 @@ def _candidate_context(
             ),
         )
         entries.extend(('review_comment', comment) for comment in review_comments)
-        reviews = client.last_page(f'/repos/{repo}/pulls/{number}/reviews')
+        reviews = client.last_pages(f'/repos/{repo}/pulls/{number}/reviews')
         entries.extend(('review', review) for review in reviews if review.get('submitted_at'))
         head = cast(Mapping[str, object], pull['head'])
         sha = str(head['sha'])
@@ -275,7 +265,8 @@ def write_snapshot(client: GitHubClient, repo: str, path: str, *, now: dt.dateti
     return [f'wrote {len(candidates)} attention candidate(s)']
 
 
-def _snapshot_candidates(path: str) -> dict[int, Candidate]:
+def _snapshot_candidates(path: str) -> dict[int, str]:
+    """Return the trusted candidate map (number -> snapshot updated_at)."""
     loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
     if not isinstance(loaded, Mapping):
         raise ValueError('Snapshot must contain a candidates list')
@@ -283,7 +274,7 @@ def _snapshot_candidates(path: str) -> dict[int, Candidate]:
     raw_candidates = data.get('candidates')
     if not isinstance(raw_candidates, list):
         raise ValueError('Snapshot must contain a candidates list')
-    candidates: dict[int, Candidate] = {}
+    candidates: dict[int, str] = {}
     for value in cast(list[object], raw_candidates):
         if not isinstance(value, Mapping):
             raise ValueError('Snapshot candidate must be an object')
@@ -292,7 +283,7 @@ def _snapshot_candidates(path: str) -> dict[int, Candidate]:
         updated_at = candidate.get('updated_at')
         if not isinstance(number, int) or number < 1 or number in candidates or not isinstance(updated_at, str):
             raise ValueError('Snapshot candidates must have unique positive numbers and timestamps')
-        candidates[number] = Candidate(number=number, updated_at=updated_at)
+        candidates[number] = updated_at
     if len(candidates) > _CANDIDATE_LIMIT:
         raise ValueError('Snapshot exceeds the candidate limit')
     return candidates
@@ -412,7 +403,7 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
             labels = _labels(current)
             if (
                 current.get('state') != 'open'
-                or str(current.get('updated_at')) != candidates[number]['updated_at']
+                or str(current.get('updated_at')) != candidates[number]
                 or _ACTION_LABEL in labels
             ):
                 lines.append(f'#{number}: skipped because the item changed after classification')
@@ -484,13 +475,24 @@ def _actor(event: Mapping[str, Any]) -> str:
     return str(cast(Mapping[str, object], value).get('login') or '') if isinstance(value, Mapping) else ''
 
 
+# `mentioned` and `subscribed` fire as a side effect of the bot's own reminder
+# comment mentioning the recipient, so they must never count as acknowledgement.
+_NON_ACK_EVENTS = frozenset({'mentioned', 'subscribed'})
+_ACK_ASSOCIATIONS = frozenset({'MEMBER', 'OWNER', 'COLLABORATOR'})
+
+
 def _acknowledged(timeline: Sequence[dict[str, Any]], since: dt.datetime, recipients: Sequence[str]) -> bool:
     recipient_logins = {login.casefold() for login in recipients}
     return any(
-        (_actor(event).casefold() in recipient_logins or event.get('author_association') in {'MEMBER', 'OWNER'})
-        and event.get('event') in {'commented', 'reviewed'}
-        and (event_time := _event_time(event)) is not None
+        (event_time := _event_time(event)) is not None
         and event_time >= since
+        and event.get('event') not in _NON_ACK_EVENTS
+        and (
+            _actor(event).casefold() in recipient_logins
+            or (
+                event.get('event') in {'commented', 'reviewed'} and event.get('author_association') in _ACK_ASSOCIATIONS
+            )
+        )
         for event in timeline
     )
 
@@ -515,7 +517,14 @@ def _complete(client: GitHubClient, repo: str, number: int, labels: set[str]) ->
 def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.datetime) -> tuple[str, bool] | None:
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     labels = _labels(current)
-    if current.get('state') != 'open' or _ACTION_LABEL not in labels:
+    if current.get('state') != 'open':
+        # Closing an item is the ultimate resolution: tear down the lifecycle
+        # labels so a later reopen can't wake an ancient SLA clock.
+        if _ACTION_LABEL in labels:
+            _complete(client, repo, number, labels)
+            return f'#{number}: completed after the item was closed', False
+        return None
+    if _ACTION_LABEL not in labels:
         return None
     current_stage = _stage(labels)
     events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
@@ -599,7 +608,9 @@ def reconcile(
     items = cast(
         list[dict[str, Any]],
         client.get(
-            f'/repos/{repo}/issues?state=open&labels={encoded}&sort=updated&direction=asc&per_page={_RECONCILE_LIMIT}'
+            # state=all so a closed item still completes its lifecycle (labels
+            # removed) instead of leaving a dormant clock that a reopen wakes.
+            f'/repos/{repo}/issues?state=all&labels={encoded}&sort=updated&direction=asc&per_page={_RECONCILE_LIMIT}'
         ),
     )
     lines: list[str] = []
@@ -640,9 +651,8 @@ def reconcile(
     return lines, failures
 
 
-def _write_escalations(repo: str, numbers: Sequence[int], path: str) -> None:
+def _write_escalations(repo: str, numbers: Sequence[int]) -> None:
     unique_numbers = sorted(set(numbers))
-    Path(path).write_text(json.dumps({'items': unique_numbers}), encoding='utf-8')
     if output_path := os.environ.get('GITHUB_OUTPUT'):
         links = ', '.join(f'<https://github.com/{repo}/issues/{number}|#{number}>' for number in unique_numbers)
         payload = {'text': f':warning: Maintainer attention needs your view: {links}'}
@@ -701,7 +711,6 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('mode', choices=['snapshot', 'apply', 'reconcile', 'finalize'])
     parser.add_argument('--snapshot-path', default='attention-candidates.json')
-    parser.add_argument('--escalation-path', default='attention-escalations.json')
     parser.add_argument('--agent-output', default=os.environ.get('GH_AW_AGENT_OUTPUT'))
     args = parser.parse_args()
     token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
@@ -721,15 +730,12 @@ def main() -> int:
     elif args.mode == 'reconcile':
         escalations: list[int] = []
         lines, failures = reconcile(client, repo, now=now, escalations=escalations)
-        _write_escalations(repo, escalations, args.escalation_path)
+        _write_escalations(repo, escalations)
     else:
         source = os.environ.get('ATTENTION_ESCALATIONS')
-        loaded: object = (
-            json.loads(source)
-            if source is not None
-            else json.loads(Path(args.escalation_path).read_text(encoding='utf-8'))
-        )
-        lines = finalize_escalations(client, repo, _escalation_numbers(loaded))
+        if source is None:
+            parser.error('ATTENTION_ESCALATIONS is required')
+        lines = finalize_escalations(client, repo, _escalation_numbers(json.loads(source)))
     _write_summary(lines + [f'failed: {failure}' for failure in failures])
     for line in lines:
         print(line)
