@@ -2114,6 +2114,47 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     assert output == 'Echo: Hello DBOS'
 
 
+async def test_dbos_durability_registers_legacy_workflows_opt_in(dbos: DBOS) -> None:
+    agent = Agent(
+        _durability_fn_model,
+        name='legacy_workflow_compat',
+        capabilities=[DBOSDurability(register_legacy_workflows=True)],
+    )
+    durability = DBOSDurability.from_agent(agent)
+    assert durability is not None
+    assert durability._legacy_run_workflow is not None  # pyright: ignore[reportPrivateUsage]
+    assert durability._legacy_run_sync_workflow is not None  # pyright: ignore[reportPrivateUsage]
+
+    result = await durability._legacy_run_workflow('legacy')  # pyright: ignore[reportPrivateUsage]
+    assert result.output == 'Echo: legacy'
+
+    without_flag = Agent(_durability_fn_model, name='no_legacy_workflows', capabilities=[DBOSDurability()])
+    without_flag_durability = DBOSDurability.from_agent(without_flag)
+    assert without_flag_durability is not None
+    assert without_flag_durability._legacy_run_workflow is None  # pyright: ignore[reportPrivateUsage]
+    assert without_flag_durability._legacy_run_sync_workflow is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_dbos_durability_accepts_legacy_stream_step_shape(dbos: DBOS) -> None:
+    response = ModelResponse(parts=[TextPart(content='legacy stream')], model_name='legacy')
+    agent = Agent(TestModel(), name='legacy_stream_shape', capabilities=[DBOSDurability()])
+    durability = DBOSDurability.from_agent(agent)
+    assert durability is not None
+
+    async def legacy_stream_step(*args: Any) -> ModelResponse:
+        return response
+
+    durability._request_stream_step = legacy_stream_step  # pyright: ignore[reportPrivateUsage]
+
+    @DBOS.workflow()
+    async def run_agent() -> tuple[str, list[str]]:
+        async with agent.run_stream('stream') as result:
+            chunks = [chunk async for chunk in result.stream_text(debounce_by=None)]
+            return await result.get_output(), chunks
+
+    assert await run_agent() == ('legacy stream', ['legacy stream'])
+
+
 async def test_dbos_durability_parallel_mode_applies_inside_run(dbos: DBOS) -> None:
     """The configured parallel-execution mode is active for the duration of the run."""
     from pydantic_ai import tool_manager as _tm

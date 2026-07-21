@@ -6,7 +6,12 @@ from typing import Any
 from dbos import DBOS
 
 from pydantic_ai import ToolsetTool
-from pydantic_ai.durable_exec._toolset import DurableMCPToolset
+from pydantic_ai.durable_exec._toolset import (
+    CallToolResult,
+    DurableMCPToolset,
+    unwrap_tool_call_result,
+    wrap_tool_call_result,
+)
 from pydantic_ai.mcp import MCPToolset, ToolResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
@@ -34,8 +39,10 @@ def dbosify_mcp_toolset(
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-    ) -> ToolResult:
-        return await wrapped.call_tool(tool_name, tool_args, ctx, tool)
+    ) -> CallToolResult:
+        # DBOS has no selective non-retryable-exception support, so control-flow
+        # exceptions must cross the step boundary as successful values.
+        return await wrap_tool_call_result(wrapped.call_tool(tool_name, tool_args, ctx, tool))
 
     async def call_tool_operation(
         tool_name: str,
@@ -44,7 +51,7 @@ def dbosify_mcp_toolset(
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
     ) -> ToolResult:
-        return await call_tool_step(tool_name, tool_args, ctx, tool)
+        return unwrap_tool_call_result(await call_tool_step(tool_name, tool_args, ctx, tool))
 
     return DurableMCPToolset(
         wrapped,

@@ -61,7 +61,8 @@ DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 - `event_stream_handler=` → pass `event_stream_handler=` to `DBOSDurability`; it runs inside steps, exactly like before.
 - `mcp_step_config=` → set `mcp_step_config=` on `DBOSDurability`.
 - `model_step_config=` → set `model_step_config=` on `DBOSDurability`.
-- `parallel_execution_mode=` → set `parallel_execution_mode=` on `DBOSDurability`.""",
+- `parallel_execution_mode=` → set `parallel_execution_mode=` on `DBOSDurability`.
+Pass `register_legacy_workflows=True` to `DBOSDurability` and pin the DBOS application version so in-flight `DBOSAgent` workflows recover across the migration.""",
     category=PydanticAIDeprecationWarning,
 )
 @DBOS.dbos_class()
