@@ -5,9 +5,16 @@ import pytest
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.realtime import infer_realtime_model
 
-from ..conftest import TestEnv
+from ..conftest import TestEnv, try_import
+
+with try_import() as imports_successful:
+    # Inferring the xAI and Google realtime models eagerly constructs their providers, which import
+    # the `xai-sdk` and `google-genai` SDKs, so this dispatch test only runs when both are installed.
+    import google.genai  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    import xai_sdk  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 
+@pytest.mark.skipif(not imports_successful(), reason='xai-sdk / google-genai not installed')
 def test_infer_realtime_models(env: TestEnv) -> None:
     env.set('OPENAI_API_KEY', 'test')
     env.set('XAI_API_KEY', 'test')

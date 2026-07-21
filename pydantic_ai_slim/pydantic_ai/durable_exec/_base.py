@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from abc import abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Mapping
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from typing_extensions import Self
 
@@ -301,7 +301,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         so it falls back to `_find_model_id`.
         """
         provenance = request_context.model_id
-        if provenance is not None and unwrap_model(request_context.model) is unwrap_model(ctx.model):
+        # A durable run always targets a regular `Model`, never a realtime model, so `ctx.model`
+        # (typed as the wider `AbstractModel`) is a `Model` here; the guard narrows it for `unwrap_model`.
+        run_model = ctx.model
+        if (
+            provenance is not None
+            and isinstance(run_model, Model)
+            and unwrap_model(request_context.model) is unwrap_model(cast('Model[Any]', run_model))
+        ):
             return provenance
         return self._find_model_id(request_context.model)
 
