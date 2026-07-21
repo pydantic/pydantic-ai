@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -53,6 +53,7 @@ from pydantic_ai.realtime import (
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeError,
+    RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
@@ -135,6 +136,12 @@ def RealtimeSession(connection: RealtimeConnection, runner: Any = _noop_runner, 
     return _RealtimeSession(connection, make_tool_manager(runner), **kwargs)
 
 
+async def collect_events(session: _RealtimeSession) -> list[RealtimeEvent]:
+    """Enter a directly constructed session and drain its public event iterator."""
+    async with session:
+        return [event async for event in session]
+
+
 def _profile(
     *,
     supports_image_input: bool = True,
@@ -191,7 +198,7 @@ class FakeRealtimeModel(RealtimeModel):
 
     def __init__(
         self,
-        connection: FakeRealtimeConnection,
+        connection: RealtimeConnection,
         *,
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfile | None = None,
@@ -224,7 +231,7 @@ class FakeRealtimeModel(RealtimeModel):
         messages: Sequence[ModelMessage],
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncGenerator[FakeRealtimeConnection]:
+    ) -> AsyncGenerator[RealtimeConnection]:
         self.last_instructions = get_instructions(messages) or ''
         self.last_tools = model_request_parameters.function_tools
         self.last_native_tools = model_request_parameters.native_tools
@@ -247,7 +254,7 @@ async def test_assistant_transcript_partials_then_final() -> None:
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
-    events = [e async for e in session]
+    events = await collect_events(session)
     assert events == snapshot(
         [
             PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
@@ -272,7 +279,7 @@ async def test_assistant_transcript_final_only() -> None:
     # A provider that only sends a single final transcript still yields a delta then the completed part.
     conn = FakeRealtimeConnection([Transcript(text='Hello world', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
-    events = [e async for e in session]
+    events = await collect_events(session)
     assert events == snapshot(
         [
             PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
@@ -288,7 +295,7 @@ async def test_user_transcript_final_becomes_request() -> None:
         [InputTranscript(text='what is ', is_final=False), InputTranscript(text='the weather', is_final=True)]
     )
     session = RealtimeSession(conn, _noop_runner)
-    events = [e async for e in session]
+    events = await collect_events(session)
     assert events == snapshot(
         [
             PartStartEvent(index=0, part=SpeechPart(speaker='user', transcript='')),
@@ -307,7 +314,7 @@ async def test_audio_delta_streams_and_transcript_pairs() -> None:
         [AudioDelta(data=b'\x00\x01'), Transcript(text='hi', is_final=True), TurnCompleteEvent()]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
-    events = [e async for e in session]
+    events = await collect_events(session)
     assert [type(e).__name__ for e in events] == snapshot(
         ['PartStartEvent', 'PartDeltaEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnCompleteEvent']
     )
@@ -326,7 +333,7 @@ async def test_audio_delta_streams_and_transcript_pairs() -> None:
 async def test_control_events_and_recoverable_error_pass_through() -> None:
     conn = FakeRealtimeConnection([TurnCompleteEvent(interrupted=True), SessionErrorEvent(message='oops')])
     session = RealtimeSession(conn, _noop_runner)
-    events = [e async for e in session]
+    events = await collect_events(session)
     # A recoverable error is mid-stream: the session keeps running and surfaces the event to the
     # consumer (rather than swallowing it) so a quiet failure is observable.
     assert events == [TurnCompleteEvent(interrupted=True), SessionErrorEvent(message='oops')]
@@ -336,7 +343,7 @@ async def test_fatal_session_error_raises() -> None:
     conn = FakeRealtimeConnection([SessionErrorEvent(message='provider failed', recoverable=False)])
     session = RealtimeSession(conn, _noop_runner)
     with pytest.raises(RealtimeError, match='provider failed'):
-        _ = [e async for e in session]
+        _ = await collect_events(session)
 
 
 async def test_interrupted_turn_keeps_partial_transcript() -> None:
@@ -345,7 +352,7 @@ async def test_interrupted_turn_keeps_partial_transcript() -> None:
         [Transcript(text='the answer is ', is_final=False), TurnCompleteEvent(interrupted=True)]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
-    events = [e async for e in session]
+    events = await collect_events(session)
     assert events[-1] == TurnCompleteEvent(interrupted=True)
     assert session.new_messages() == snapshot(
         [
@@ -377,7 +384,7 @@ async def test_tool_call_round_builds_classic_history() -> None:
         return 'Sunny, 22C'
 
     session = RealtimeSession(conn, runner, model_name='m')
-    events = [e async for e in session]
+    events = await collect_events(session)
 
     assert [type(e).__name__ for e in events] == snapshot(
         [
@@ -427,7 +434,7 @@ async def test_tool_call_events_carry_real_parts() -> None:
         return '42'
 
     session = RealtimeSession(conn, runner)
-    events = [e async for e in session]
+    events = await collect_events(session)
     call_event = next(e for e in events if isinstance(e, FunctionToolCallEvent))
     result_event = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert call_event.part == ToolCallPart(tool_name='f', args='{"x": 1}', tool_call_id='tc')
@@ -446,14 +453,14 @@ async def test_empty_args_call_runner_with_empty_dict() -> None:
         return 'ok'
 
     session = RealtimeSession(conn, runner)
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     assert seen == {}
 
 
 async def test_invalid_json_args_reported_without_calling_tool() -> None:
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc_4', tool_name='noop', args='not json')])
     session = RealtimeSession(conn, _noop_runner)
-    events = [e async for e in session]
+    events = await collect_events(session)
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert isinstance(result.part, ToolReturnPart)
     assert 'could not parse tool arguments' in str(result.part.content)
@@ -464,7 +471,7 @@ async def test_invalid_json_args_reported_without_calling_tool() -> None:
 async def test_non_object_json_args_reported() -> None:
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='noop', args='[1, 2]')])
     session = RealtimeSession(conn, _noop_runner)
-    events = [e async for e in session]
+    events = await collect_events(session)
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert 'expected tool arguments to be a JSON object' in str(result.part.content)
 
@@ -476,7 +483,7 @@ async def test_tool_runner_exception_becomes_error_result() -> None:
         raise RuntimeError('kaboom')
 
     session = RealtimeSession(conn, runner)
-    events = [e async for e in session]
+    events = await collect_events(session)
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert result.part.content == 'Error: kaboom'
     assert conn.sent == [ToolResult(tool_call_id='tc', output='Error: kaboom')]
@@ -498,7 +505,7 @@ async def test_tool_does_not_block_other_events() -> None:
         return 'done in background'
 
     session = RealtimeSession(conn, runner)
-    events = [e async for e in session]
+    events = await collect_events(session)
 
     # The tool call fires immediately, the model keeps talking, and the result lands only after the turn.
     assert [type(e).__name__ for e in events] == snapshot(
@@ -541,7 +548,7 @@ async def test_tool_result_adjacent_to_call_in_history() -> None:
         return 'late result'
 
     session = RealtimeSession(conn, runner)
-    events = [e async for e in session]
+    events = await collect_events(session)
 
     # The result event streams in completion order: after the intervening assistant turn.
     assert isinstance(events[-1], FunctionToolResultEvent)
@@ -584,7 +591,7 @@ async def test_tool_completion_drained_between_events() -> None:
         return 'quick'
 
     session = RealtimeSession(conn, runner)
-    events = [e async for e in session]
+    events = await collect_events(session)
 
     assert [type(e).__name__ for e in events] == snapshot(
         [
@@ -607,11 +614,13 @@ class IdleAfterToolConnection(RealtimeConnection):
     def __init__(self, call: ToolCall) -> None:
         self._call = call
         self.sent: list[RealtimeInput] = []
+        self.iteration_task: asyncio.Task[Any] | None = None
 
     async def send(self, content: RealtimeInput) -> None:
         self.sent.append(content)
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        self.iteration_task = asyncio.current_task()
         yield self._call
         await asyncio.Event().wait()
 
@@ -625,16 +634,16 @@ async def test_tool_completion_delivered_while_upstream_idle() -> None:
         return 'ready'
 
     session = RealtimeSession(conn, runner)
-    agen = cast(AsyncGenerator[Any], session.__aiter__())
-    # Drain the tool-call part events + FunctionToolCallEvent.
-    assert isinstance(await agen.__anext__(), PartStartEvent)
-    assert isinstance(await agen.__anext__(), PartEndEvent)
-    assert isinstance(await agen.__anext__(), FunctionToolCallEvent)
-    # Without multiplexing this would hang forever waiting on the idle connection.
-    completed = await asyncio.wait_for(agen.__anext__(), timeout=1.0)
-    assert isinstance(completed, FunctionToolResultEvent)
-    assert completed.part.content == 'ready'
-    await agen.aclose()
+    async with session:
+        events = session.__aiter__()
+        # Drain the tool-call part events + FunctionToolCallEvent.
+        assert isinstance(await anext(events), PartStartEvent)
+        assert isinstance(await anext(events), PartEndEvent)
+        assert isinstance(await anext(events), FunctionToolCallEvent)
+        # Without multiplexing this would hang forever waiting on the idle connection.
+        completed = await asyncio.wait_for(anext(events), timeout=1.0)
+        assert isinstance(completed, FunctionToolResultEvent)
+        assert completed.part.content == 'ready'
 
 
 class ExplodingConnection(RealtimeConnection):
@@ -654,7 +663,42 @@ class ExplodingConnection(RealtimeConnection):
 async def test_upstream_error_propagates_to_consumer() -> None:
     session = RealtimeSession(ExplodingConnection(), _noop_runner)
     with pytest.raises(RuntimeError, match='connection dropped'):
-        _ = [e async for e in session]
+        _ = await collect_events(session)
+
+
+async def test_upstream_error_does_not_wait_for_running_tool() -> None:
+    class _ExplodingAfterTool(RealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover - tool is cancelled first
+            raise AssertionError
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='bg', tool_name='hang', args='{}')
+            await asyncio.sleep(0)  # let the tool start before the pump fails
+            raise RuntimeError('connection dropped')
+
+    blocked = asyncio.Event()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    tool_task: asyncio.Task[Any] | None = None
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        nonlocal tool_task
+        tool_task = asyncio.current_task()
+        started.set()
+        try:
+            await blocked.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return 'never'  # pragma: no cover
+
+    session = RealtimeSession(_ExplodingAfterTool(), runner)
+    with pytest.raises(RuntimeError, match='connection dropped'):
+        await asyncio.wait_for(collect_events(session), timeout=1)
+
+    assert started.is_set()
+    assert tool_task is not None and tool_task.done() and tool_task.cancelled()
+    assert cancelled.is_set()
 
 
 class SendFailsConnection(RealtimeConnection):
@@ -694,7 +738,7 @@ async def test_tool_failure_propagates_while_idle() -> None:
     # consumer would hang waiting for a completion that never arrives.
     session = RealtimeSession(conn, runner)
     with pytest.raises(RuntimeError, match='connection lost'):
-        _ = [e async for e in session]
+        _ = await collect_events(session)
 
 
 async def test_tool_failure_propagates_after_close() -> None:
@@ -707,28 +751,38 @@ async def test_tool_failure_propagates_after_close() -> None:
 
     session = RealtimeSession(conn, runner)
     with pytest.raises(RuntimeError, match='connection lost'):
-        _ = [e async for e in session]
+        _ = await collect_events(session)
 
 
 async def test_early_break_with_running_tool_cancels_task() -> None:
     blocked = asyncio.Event()
     started = asyncio.Event()
-    # AwaitBetweenConnection yields control between events, so the tool task actually starts.
-    conn = AwaitBetweenConnection([ToolCall(tool_call_id='bg', tool_name='hang', args='{}'), AudioDelta(data=b'\x01')])
+    cancelled = asyncio.Event()
+    tool_task: asyncio.Task[Any] | None = None
+    conn = IdleAfterToolConnection(ToolCall(tool_call_id='bg', tool_name='hang', args='{}'))
+    agent: Agent[None, str] = Agent()
 
-    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+    @agent.tool_plain
+    async def hang() -> str:
+        nonlocal tool_task
+        tool_task = asyncio.current_task()
         started.set()
-        await blocked.wait()
+        try:
+            await blocked.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
         return 'never'  # pragma: no cover
 
-    session = RealtimeSession(conn, runner)
-    agen = cast(AsyncGenerator[Any], session.__aiter__())
-    assert isinstance(await agen.__anext__(), PartStartEvent)  # tool call part
-    assert isinstance(await agen.__anext__(), PartEndEvent)
-    assert isinstance(await agen.__anext__(), FunctionToolCallEvent)
-    assert isinstance(await agen.__anext__(), PartStartEvent)  # the audio delta's part
-    assert started.is_set()  # the tool is running by now
-    await agen.aclose()  # cancels the still-running tool task
+    async with agent.realtime_session(model=FakeRealtimeModel(conn)) as session:
+        async for event in session:
+            if isinstance(event, FunctionToolCallEvent):
+                await started.wait()
+                break
+
+    assert tool_task is not None and tool_task.done() and tool_task.cancelled()
+    assert conn.iteration_task is not None and conn.iteration_task.done()
+    assert cancelled.is_set()
 
 
 # --- send helpers + history ---------------------------------------------------------------------
@@ -867,7 +921,7 @@ async def test_session_accumulates_usage_and_requests() -> None:
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     assert session.usage.input_tokens == 13
     assert session.usage.output_tokens == 7
     assert session.usage.requests == 2
@@ -884,7 +938,7 @@ async def test_session_counts_tool_calls() -> None:
         return 'ok'
 
     session = RealtimeSession(conn, runner)
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     assert session.usage.tool_calls == 1
 
 
@@ -960,10 +1014,14 @@ async def test_early_break_cancels_pump() -> None:
     cancelled = asyncio.Event()
 
     class _BlockAfterFirst(RealtimeConnection):
+        def __init__(self) -> None:
+            self.iteration_task: asyncio.Task[Any] | None = None
+
         async def send(self, content: RealtimeInput) -> None:  # pragma: no cover - never sent to
             raise AssertionError
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            self.iteration_task = asyncio.current_task()
             yield AudioDelta(data=b'\x00')
             parked.set()
             try:
@@ -973,14 +1031,58 @@ async def test_early_break_cancels_pump() -> None:
                 raise
             yield AudioDelta(data=b'\x01')  # pragma: no cover - unreachable while parked
 
-    session = RealtimeSession(_BlockAfterFirst(), _noop_runner)
-    agen = cast(AsyncGenerator[Any], session.__aiter__())
-    assert isinstance(await agen.__anext__(), PartStartEvent)
-    await parked.wait()  # the pump has consumed the first event and is parked on the next
-    await agen.aclose()
-    # Teardown cancels the pump; the connection observes the cancellation. If the pump leaked instead,
-    # `cancelled` would never be set and this would time out.
-    await asyncio.wait_for(cancelled.wait(), timeout=5)
+    conn = _BlockAfterFirst()
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime_session(model=FakeRealtimeModel(conn)) as session:
+        async for event in session:
+            assert isinstance(event, PartStartEvent)
+            await parked.wait()  # the pump has consumed the first event and is parked on the next
+            break
+
+    # The owner's exit drains cancellation synchronously; no async-generator close or GC pumping is
+    # needed before the connection observes cancellation and the receive task is done.
+    assert cancelled.is_set()
+    assert conn.iteration_task is not None and conn.iteration_task.done()
+
+
+async def test_concurrent_iteration_raises() -> None:
+    class _IdleConnection(RealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover - never sent to
+            raise AssertionError
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield AudioDelta(data=b'\x00')
+            await asyncio.Event().wait()
+
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime_session(model=FakeRealtimeModel(_IdleConnection())) as session:
+        first = session.__aiter__()
+        assert isinstance(await anext(first), PartStartEvent)
+
+        second = session.__aiter__()
+        with pytest.raises(RuntimeError, match='already being iterated'):
+            await anext(second)
+
+    late = session.__aiter__()
+    with pytest.raises(RuntimeError, match='closed'):
+        await anext(late)
+
+
+async def test_direct_session_must_be_entered_and_streams_once() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([]), _noop_runner)
+
+    unentered = session.__aiter__()
+    with pytest.raises(RuntimeError, match='async with'):
+        await anext(unentered)
+
+    async with session:
+        assert [event async for event in session] == []
+        exhausted = session.__aiter__()
+        with pytest.raises(RuntimeError, match='already ended'):
+            await anext(exhausted)
+
+    with pytest.raises(RuntimeError, match='cannot be entered more than once'):
+        await session.__aenter__()
 
 
 # --- audio retention ----------------------------------------------------------------------------
@@ -996,7 +1098,7 @@ async def test_audio_retention_output_keeps_assistant_audio() -> None:
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='output')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     assert session.new_messages() == snapshot(
         [
             ModelResponse(
@@ -1020,7 +1122,7 @@ async def test_audio_retention_input_keeps_user_audio() -> None:
     # send_audio before the transcript finalizes buffers into the user part.
     await session.send_audio(b'\xaa\xbb')
     await session.send_audio(b'\xcc')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     assert session.new_messages() == snapshot(
         [
             ModelRequest(
@@ -1044,7 +1146,7 @@ async def test_clear_audio_discards_retained_input() -> None:
     await session.send_audio(b'\xaa\xbb')
     await session.clear_audio()  # discards the buffered chunk
     await session.send_audio(b'\xcc')  # only this survives into the finalized user turn
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     assert session.new_messages() == snapshot(
         [
             ModelRequest(
@@ -1070,7 +1172,7 @@ async def test_audio_only_user_turn_finalized_on_speech_stopped() -> None:
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input')
     await session.send_audio(b'\xaa\xbb')
-    events = [e async for e in session]
+    events = await collect_events(session)
     user_part = SpeechPart(speaker='user', audio=BinaryContent(data=b'\xaa\xbb', media_type='audio/pcm'))
     assert events[:3] == [
         PartStartEvent(index=0, part=user_part),
@@ -1098,7 +1200,7 @@ async def test_audio_only_user_turn_finalized_on_turn_complete() -> None:
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input')
     await session.send_audio(b'\xaa\xbb')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     assert session.new_messages() == snapshot(
         [
             ModelRequest(
@@ -1121,7 +1223,7 @@ async def test_audio_retained_with_transcription_enabled_waits_for_transcript() 
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input')
     await session.send_audio(b'\xaa\xbb')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     assert session.new_messages() == snapshot(
         [
             ModelRequest(
@@ -1162,7 +1264,7 @@ async def test_text_output_modality_produces_text_part() -> None:
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
-    events = [e async for e in session]
+    events = await collect_events(session)
     starts = [e for e in events if isinstance(e, PartStartEvent)]
     assert len(starts) == 1 and isinstance(starts[0].part, TextPart)
     assert any(isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta) for e in events)
@@ -1180,7 +1282,7 @@ async def test_empty_assistant_turn_produces_no_response() -> None:
     # finalizes without appending a `ModelResponse`.
     conn = FakeRealtimeConnection([AudioDelta(data=b'\x00\x01'), TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
-    events = [e async for e in session]
+    events = await collect_events(session)
     assert [type(e).__name__ for e in events] == [
         'PartStartEvent',
         'PartDeltaEvent',
@@ -1198,7 +1300,7 @@ async def test_empty_input_transcript_produces_no_request() -> None:
     # appended to history.
     conn = FakeRealtimeConnection([InputTranscript(text='', is_final=True)])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
-    events = [e async for e in session]
+    events = await collect_events(session)
     assert [type(e).__name__ for e in events] == ['PartStartEvent', 'PartEndEvent']
     end = next(e for e in events if isinstance(e, PartEndEvent))
     assert isinstance(end.part, SpeechPart) and end.part.transcript is None
@@ -1208,7 +1310,7 @@ async def test_empty_input_transcript_produces_no_request() -> None:
 async def test_transcript_only_default_drops_audio() -> None:
     conn = FakeRealtimeConnection([AudioDelta(data=b'\x00'), Transcript(text='hi', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     response = session.new_messages()[0]
     assert isinstance(response, ModelResponse)
     assert isinstance(response.parts[0], SpeechPart)
@@ -1222,7 +1324,7 @@ async def test_all_messages_includes_seed_new_messages_excludes_it() -> None:
     seed = [ModelRequest(parts=[UserPromptPart(content='earlier')])]
     conn = FakeRealtimeConnection([Transcript(text='reply', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m', message_history=seed)
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     assert session.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='earlier', timestamp=IsDatetime())]),
@@ -1247,7 +1349,7 @@ async def test_all_messages_includes_seed_new_messages_excludes_it() -> None:
 async def test_snapshot_is_a_copy() -> None:
     conn = FakeRealtimeConnection([Transcript(text='one', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     snapshot = session.new_messages()
     assert len(snapshot) == 1
     # `new_messages()` returns an independent copy: mutating the returned list must not leak back into
@@ -1266,7 +1368,7 @@ async def test_handoff_to_standard_agent_run() -> None:
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='gpt-realtime')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content=f'seen {len(messages)} messages')])
@@ -1323,7 +1425,7 @@ async def test_grounding_streams_and_folds_native_tool_parts() -> None:
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
-    events = [e async for e in session]
+    events = await collect_events(session)
 
     assert events == [
         PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
@@ -1355,7 +1457,7 @@ async def test_grounded_history_hands_off_with_native_parts_intact() -> None:
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
 
     received: list[ModelMessage] = []
 
@@ -1430,7 +1532,7 @@ async def test_code_execution_history_hands_off_with_native_parts_intact() -> No
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
 
     received: list[ModelMessage] = []
 

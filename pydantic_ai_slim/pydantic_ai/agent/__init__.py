@@ -3172,7 +3172,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 model_settings=effective_model_settings,
                 model_request_parameters=model_request_parameters,
             ) as connection:
-                yield RealtimeSession(
+                session = RealtimeSession(
                     connection,
                     tool_manager,
                     instrumentation=session_instrumentation_settings,
@@ -3185,6 +3185,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     profile=model_profile,
                     conversation_id=conversation_id,
                 )
+                async with session:
+                    yield session
 
     async def __aenter__(self) -> Self:
         """Enter the agent context.

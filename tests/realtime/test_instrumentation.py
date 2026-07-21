@@ -13,12 +13,20 @@ Two span sources meet here:
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import json
+import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 import pytest
+
+pytest.importorskip('opentelemetry.sdk')  # only installed via the optional `logfire` extra
+
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
@@ -31,6 +39,7 @@ from pydantic_ai.realtime import (
     InputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
+    RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
@@ -45,14 +54,16 @@ from pydantic_ai.usage import RequestUsage
 
 from .test_session import make_tool_manager
 
-if TYPE_CHECKING:
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-
 pytestmark = pytest.mark.anyio
 
 
 def RealtimeSession(connection: RealtimeConnection, runner: Any, **kwargs: Any) -> _RealtimeSession:
     return _RealtimeSession(connection, make_tool_manager(runner), **kwargs)
+
+
+async def collect_events(session: _RealtimeSession) -> list[RealtimeEvent]:
+    async with session:
+        return [event async for event in session]
 
 
 class _Connection(RealtimeConnection):
@@ -108,11 +119,6 @@ class _Model(RealtimeModel):
 def _settings(
     *, include_content: bool = True, use_aggregated_usage_attribute_names: bool = True
 ) -> tuple[InstrumentationSettings, InMemorySpanExporter]:
-    pytest.importorskip('opentelemetry.sdk')  # only installed via the optional `logfire` extra
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -372,7 +378,7 @@ async def test_session_captures_transcript_messages() -> None:
         ]
     )
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
 
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
     assert sess.attributes is not None
@@ -388,7 +394,7 @@ async def test_include_content_false_omits_transcript_messages() -> None:
     settings, exporter = _settings(include_content=False)
     conn = _Connection([InputTranscript(text='secret', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
     assert sess.attributes is not None
     assert 'gen_ai.input.messages' not in sess.attributes
@@ -402,7 +408,7 @@ async def test_session_span_sets_conversation_id() -> None:
     agent.instrument = settings
     conn = _Connection([TurnCompleteEvent()])
     async with agent.realtime_session(model=_Model(conn), conversation_id='conv-123') as session:
-        _ = [e async for e in session]
+        _ = [event async for event in session]
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
     assert sess.attributes is not None
     assert sess.attributes['gen_ai.conversation.id'] == 'conv-123'
@@ -412,7 +418,7 @@ async def test_session_span_omits_conversation_id_when_unset() -> None:
     settings, exporter = _settings()
     conn = _Connection([TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
     assert sess.attributes is not None
     assert 'gen_ai.conversation.id' not in sess.attributes
@@ -422,7 +428,7 @@ async def test_session_span_without_model_or_usage() -> None:
     settings, exporter = _settings()
     conn = _Connection([TurnCompleteEvent()])  # no model/agent name, no Usage event
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings)
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime')
     assert sess.attributes is not None
     assert sess.attributes['gen_ai.operation.name'] == 'realtime'
@@ -439,7 +445,7 @@ async def test_chat_span_closed_for_contentless_response() -> None:
     settings, exporter = _settings()
     conn = _Connection([AudioDelta(data=b'\x00\x01'), TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
     assert chat.attributes is not None
     assert 'gen_ai.output.messages' not in chat.attributes
@@ -458,7 +464,7 @@ async def test_session_usage_without_aggregated_attribute_names() -> None:
         ]
     )
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
     assert sess.attributes is not None
     assert sess.attributes['gen_ai.usage.input_tokens'] == 10
@@ -483,7 +489,7 @@ async def test_chat_span_matches_instrumented_model_shape() -> None:
         ]
     )
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
 
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
     assert chat.attributes is not None
@@ -530,7 +536,7 @@ async def test_include_content_false_redacts_chat_span_messages() -> None:
         ]
     )
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
     assert chat.attributes is not None
     # Envelope present, content redacted (no `content` key on the text parts).
@@ -560,7 +566,7 @@ async def test_direct_session_runs_tool_via_runner() -> None:
         ]
     )
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
-    _ = [e async for e in session]
+    _ = await collect_events(session)
 
     # The runner actually ran and its result was inserted into history as a `ToolReturnPart` — the
     # point of the direct-session tool-runner path, independent of the span assertions below.
@@ -594,23 +600,85 @@ async def test_chat_span_without_model_name() -> None:
     settings, exporter = _settings()
     conn = _Connection([Transcript(text='hello'), TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings)  # no model_name
-    _ = [e async for e in session]
+    _ = await collect_events(session)
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat')
     assert chat.attributes is not None
     assert 'gen_ai.request.model' not in chat.attributes
 
 
-async def test_early_break_finishes_chat_span() -> None:
-    """Breaking mid-turn still finishes the in-flight `chat` span, so it doesn't outlive the session span.
-
-    A response opens a `chat` span on its first content but only finishes it on `TurnCompleteEvent` /
-    a tool-call boundary. If the consumer breaks or cancels mid-turn, the span used to leak unfinished.
-    """
+async def test_early_break_finishes_chat_span(caplog: pytest.LogCaptureFixture) -> None:
+    """The documented early-break shape synchronously finishes spans in the owner's OTel context."""
     settings, exporter = _settings()
-    conn = _Connection([AudioDelta(data=b'\x00'), AudioDelta(data=b'\x01')])  # no TurnCompleteEvent
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
-    agen = cast(AsyncGenerator[Any], session.__aiter__())
-    await agen.__anext__()  # first audio delta opens the assistant `chat` span (still in-flight)
-    await agen.aclose()  # break before the turn completes
-    # Every started span must be finished — including the `chat` child, which used to be left open.
-    assert {s.name for s in exporter.get_finished_spans()} == {'realtime gpt-realtime', 'chat gpt-realtime'}
+    agent = _weather_agent(capabilities=[Instrumentation(settings=settings)])
+    conn = _Connection(
+        [AudioDelta(data=b'\x00'), AudioDelta(data=b'\x01'), AudioDelta(data=b'\x02')]
+    )  # no TurnCompleteEvent
+
+    with caplog.at_level(logging.ERROR, logger='opentelemetry'):
+        async with agent.realtime_session(model=_Model(conn)) as session:
+            async for _ in session:
+                break
+
+    # These are all spans this path starts. They must be exported before the owner block returns,
+    # without GC or extra event-loop turns, and the session remains the explicit parent of `chat`.
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    assert set(spans) == {'realtime gpt-realtime', 'chat gpt-realtime'}
+    session_span = spans['realtime gpt-realtime']
+    chat_span = spans['chat gpt-realtime']
+    assert session_span.context is not None
+    assert chat_span.parent is not None and chat_span.parent.span_id == session_span.context.span_id
+    assert not any(
+        'Failed to detach context' in record.getMessage() or 'different Context' in record.getMessage()
+        for record in caplog.records
+    )
+
+
+async def test_early_break_finishes_running_tool_span(caplog: pytest.LogCaptureFixture) -> None:
+    """Owner exit cancels a running tool and finishes every span before returning."""
+
+    class _IdleAfterTool(RealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover - tool is cancelled first
+            raise AssertionError
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}')
+            await asyncio.Event().wait()
+
+    settings, exporter = _settings()
+    agent: Agent[None, str] = Agent(capabilities=[Instrumentation(settings=settings)])
+    blocked = asyncio.Event()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    tool_task: asyncio.Task[Any] | None = None
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        nonlocal tool_task
+        tool_task = asyncio.current_task()
+        started.set()
+        try:
+            await blocked.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return f'sunny in {city}'  # pragma: no cover
+
+    with caplog.at_level(logging.ERROR, logger='opentelemetry'):
+        async with agent.realtime_session(model=_Model(_IdleAfterTool())) as session:
+            async for _ in session:
+                await started.wait()
+                break
+
+    assert tool_task is not None and tool_task.done() and tool_task.cancelled()
+    assert cancelled.is_set()
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    assert set(spans) == {'realtime gpt-realtime', 'chat gpt-realtime', 'execute_tool get_weather'}
+    session_span = spans['realtime gpt-realtime']
+    assert session_span.context is not None
+    for child_name in ('chat gpt-realtime', 'execute_tool get_weather'):
+        parent = spans[child_name].parent
+        assert parent is not None and parent.span_id == session_span.context.span_id
+    assert not any(
+        'Failed to detach context' in record.getMessage() or 'different Context' in record.getMessage()
+        for record in caplog.records
+    )

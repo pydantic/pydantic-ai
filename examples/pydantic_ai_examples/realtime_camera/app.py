@@ -57,7 +57,7 @@ import base64
 import json
 import os
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -428,11 +428,8 @@ async def ws(socket: WebSocket) -> None:
         async with anyio.create_task_group() as tg:
 
             async def pump_events() -> None:
-                events = cast(
-                    'AsyncGenerator[RealtimeEvent, None]', session.__aiter__()
-                )
                 try:
-                    async for event in events:
+                    async for event in session:
                         if (
                             isinstance(event, PartDeltaEvent)
                             and isinstance(event.delta, SpeechPartDelta)
@@ -448,9 +445,6 @@ async def ws(socket: WebSocket) -> None:
                     # the session) is diagnosable instead of a silent disconnect.
                     logfire.exception('Realtime event pump failed')
                     tg.cancel_scope.cancel()
-                finally:
-                    with anyio.CancelScope(shield=True):
-                        await events.aclose()
 
             async def pump_inbound() -> None:
                 try:

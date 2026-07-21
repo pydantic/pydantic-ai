@@ -6,14 +6,18 @@ import asyncio
 import dataclasses
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import pydantic_core
 from anyio import Lock
-from opentelemetry.trace import Span, SpanKind
+from opentelemetry import context as otel_context
+from opentelemetry.context import Context
+from opentelemetry.trace import Span, SpanKind, StatusCode, set_span_in_context
 from typing_extensions import assert_never
 
 from .._instrumentation import response_attributes, safe_to_json
+from .._utils import cancel_and_drain
 from ..exceptions import ToolRetryError, UserError
 from ..messages import (
     BinaryContent,
@@ -187,6 +191,11 @@ class RealtimeSession:
     its [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] is placed directly after the response
     carrying its call — request-response APIs require that adjacency, so the history stays valid for a
     handoff to a standard [`Agent.run`][pydantic_ai.agent.AbstractAgent.run].
+
+    When constructing a session directly, use it as an async context manager. The context owns the
+    receive pump, background tool tasks, and instrumentation spans; iteration only reads its event
+    queue. [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] enters the session
+    before yielding it, so the usual agent API remains a single `async with` block.
     """
 
     def __init__(
@@ -262,6 +271,98 @@ class RealtimeSession:
         self._active_user: SpeechPart | None = None
         self._user_transcript = ''
         self._input_audio = bytearray()
+
+        # The session context is the single owner of the receive pump and background tool tasks.
+        # Iteration starts the pump lazily, but never tears it down: an early `break` can abandon the
+        # reader generator without affecting resource lifetime, and `__aexit__` still drains everything
+        # before the connection and toolset close.
+        self._queue: asyncio.Queue[RealtimeEvent | object] = asyncio.Queue()
+        self._queue_changed = object()
+        self._background_tasks: set[asyncio.Task[None]] = set()
+        self._pump_task: asyncio.Task[None] | None = None
+        self._pump_error: Exception | None = None
+        self._pump_finished = False
+        self._iterator_active = False
+        self._stream_exhausted = False
+        self._entered = False
+        self._closed = False
+
+        # The session span is deliberately not made current in the owner's task. Child spans receive
+        # this explicit context directly, or through the pump task's same-task attach/detach pair.
+        self._session_span: Span | None = None
+        self._session_span_context: Context | None = None
+        self._session_span_attributes: dict[str, Any] | None = None
+
+    async def __aenter__(self) -> RealtimeSession:
+        if self._entered or self._closed:
+            raise RuntimeError('This realtime session cannot be entered more than once.')
+        self._entered = True
+
+        settings = self._instrumentation
+        if settings is not None:
+            attributes: dict[str, Any] = {'gen_ai.operation.name': 'realtime'}
+            if self._model_name:
+                attributes['gen_ai.request.model'] = self._model_name
+            if self._agent_name:
+                attributes['gen_ai.agent.name'] = self._agent_name
+            if self._conversation_id:
+                # Match the classic agent-run span's key (see `capabilities/instrumentation.py`) so a
+                # realtime session can be correlated with other runs sharing the conversation id.
+                attributes['gen_ai.conversation.id'] = self._conversation_id
+            span_name = f'realtime {self._model_name}' if self._model_name else 'realtime'
+            parent_context = otel_context.get_current()
+            span = settings.tracer.start_span(
+                span_name,
+                context=parent_context,
+                attributes=attributes,
+                kind=SpanKind.CLIENT,
+            )
+            self._session_span = span
+            self._session_span_context = set_span_in_context(span, parent_context)
+            self._session_span_attributes = attributes
+
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        if not self._entered or self._closed:
+            return
+        self._closed = True
+
+        tasks = [*self._background_tasks]
+        if self._pump_task is not None:
+            tasks.append(self._pump_task)
+        if tasks:
+            await cancel_and_drain(*tasks, msg='Realtime session exited')
+
+        error = exc_value or self._pump_error
+        if self._chat_span is not None:
+            if error is not None:
+                self._record_span_error(self._chat_span, error)
+            self._chat_span.end()
+            self._chat_span = None
+
+        settings = self._instrumentation
+        span = self._session_span
+        attributes = self._session_span_attributes
+        if settings is not None and span is not None and attributes is not None:
+            if error is not None:
+                self._record_span_error(span, error)
+            self._finalize_span(settings, span, attributes)
+            span.end()
+        self._session_span = None
+        self._session_span_context = None
+        self._session_span_attributes = None
+
+    @staticmethod
+    def _record_span_error(span: Span, error: BaseException) -> None:
+        if span.is_recording():
+            span.record_exception(error, escaped=True)
+            span.set_status(StatusCode.ERROR)
 
     def all_messages(self) -> list[ModelMessage]:
         """A snapshot of the full conversation: the seeded history plus everything from this session.
@@ -498,7 +599,14 @@ class RealtimeSession:
         if self._model_name:
             attributes['gen_ai.request.model'] = self._model_name
         name = f'chat {self._model_name}' if self._model_name else 'chat'
-        self._chat_span = settings.tracer.start_span(name, attributes=attributes, kind=SpanKind.CLIENT)
+        context = self._session_span_context
+        assert context is not None
+        self._chat_span = settings.tracer.start_span(
+            name,
+            context=context,
+            attributes=attributes,
+            kind=SpanKind.CLIENT,
+        )
 
     def _end_chat_span(self, input_messages: list[ModelMessage], response: ModelResponse | None) -> None:
         """Close the current `chat` span, attaching per-turn messages and usage from `response`."""
@@ -673,37 +781,6 @@ class RealtimeSession:
 
     # --- instrumentation --------------------------------------------------------------------------
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
-        settings = self._instrumentation
-        if settings is None:
-            async for event in self._stream():
-                yield event
-            return
-        # Open a session-level span; tool spans created in the pump task inherit it through the
-        # OpenTelemetry context that `asyncio.create_task` copies.
-        attributes: dict[str, Any] = {'gen_ai.operation.name': 'realtime'}
-        if self._model_name:
-            attributes['gen_ai.request.model'] = self._model_name
-        if self._agent_name:
-            attributes['gen_ai.agent.name'] = self._agent_name
-        if self._conversation_id:
-            # Match the classic agent-run span's key (see `capabilities/instrumentation.py`) so a
-            # realtime session can be correlated with other runs sharing the conversation id.
-            attributes['gen_ai.conversation.id'] = self._conversation_id
-        span_name = f'realtime {self._model_name}' if self._model_name else 'realtime'
-        with settings.tracer.start_as_current_span(span_name, attributes=attributes, kind=SpanKind.CLIENT) as span:
-            try:
-                async for event in self._stream():
-                    yield event
-            finally:
-                # If the consumer broke/cancelled mid-turn, an assistant response was started but never
-                # finalized, leaving its `chat` span open. End it here so it doesn't outlive the session
-                # span as an unfinished child (no `ModelResponse` to attach — it was cut off).
-                if self._chat_span is not None:
-                    self._chat_span.end()
-                    self._chat_span = None
-                self._finalize_span(settings, span, attributes)
-
     def _finalize_span(self, settings: InstrumentationSettings, span: Span, base_attributes: dict[str, Any]) -> None:
         """Attach cumulative usage and the conversation transcript (as gen_ai messages) to the session span."""
         # Report cumulative usage under `gen_ai.aggregated_usage.*` (mirroring the classic agent-run
@@ -782,26 +859,27 @@ class RealtimeSession:
             return
         self._usage_limits.check_tokens(self.usage)
 
-    async def _run_tool(
-        self, call: ToolCall, call_part: ToolCallPart, queue: asyncio.Queue[RealtimeEvent | object]
-    ) -> None:
+    async def _run_tool(self, call: ToolCall, call_part: ToolCallPart) -> None:
         """Run a tool and feed its completion (or failure) back through the queue."""
         try:
             result = await self._execute_tool(call)
         except Exception as e:
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
-            # vanish into the final `gather(..., return_exceptions=True)` and hang the session on a
-            # completion that never arrives.
-            await queue.put(e)
+            # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
+            # never arrives.
+            await self._queue.put(e)
             return
         for event in self._complete_tool_call(call_part, result):
-            await queue.put(event)
+            await self._queue.put(event)
+
+    def _tool_task_done(self, task: asyncio.Task[None]) -> None:
+        self._background_tasks.discard(task)
+        # Wake the queue reader so it can finish once both the pump and the last tool are done.
+        self._queue.put_nowait(self._queue_changed)
 
     async def _handle_pump_event(
         self,
         event: RealtimeCodecEvent,
-        queue: asyncio.Queue[RealtimeEvent | object],
-        background: set[asyncio.Task[None]],
     ) -> bool:
         """Process one upstream event onto the queue; return `True` to stop the pump (a limit tripped)."""
         if isinstance(event, ToolCall):
@@ -809,11 +887,11 @@ class RealtimeSession:
             self.usage.tool_calls += 1
             call_part = ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id)
             for out in self._handle_tool_call_part(call_part):
-                await queue.put(out)
-            await queue.put(FunctionToolCallEvent(part=call_part))
-            task = asyncio.create_task(self._run_tool(event, call_part, queue))
-            background.add(task)
-            task.add_done_callback(background.discard)
+                await self._queue.put(out)
+            await self._queue.put(FunctionToolCallEvent(part=call_part))
+            task = asyncio.create_task(self._run_tool(event, call_part))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._tool_task_done)
             return False
         if isinstance(event, SessionUsageEvent):
             self.usage.incr(event.usage)
@@ -824,45 +902,51 @@ class RealtimeSession:
         if isinstance(event, TurnCompleteEvent):
             self._tool_run_step += 1
         for out in self._translate_event(event):
-            await queue.put(out)
+            await self._queue.put(out)
         return False
 
-    async def _stream(self) -> AsyncIterator[RealtimeEvent]:
-        # Both the upstream connection and finished tools feed a single queue, so a tool completion
-        # wakes the consumer immediately instead of waiting for the next
-        # provider event (which may never come while the model is idle).
-        queue: asyncio.Queue[RealtimeEvent | object] = asyncio.Queue()
-        closed = object()  # sentinel: the upstream connection has been fully drained
-        background: set[asyncio.Task[None]] = set()
-        pump_error: Exception | None = None
+    async def _pump(self, context: Context | None) -> None:
+        """Drain the connection into the session queue under the explicit session-span context."""
+        token = otel_context.attach(context) if context is not None else None
+        try:
+            async for event in self._connection:
+                if await self._handle_pump_event(event):
+                    return  # a usage limit tripped: stop reading the upstream
+        except Exception as e:
+            self._pump_error = e
+        finally:
+            self._pump_finished = True
+            await self._queue.put(self._queue_changed)
+            if token is not None:
+                otel_context.detach(token)
 
-        async def pump() -> None:
-            nonlocal pump_error
-            try:
-                async for event in self._connection:
-                    if await self._handle_pump_event(event, queue, background):
-                        return  # a usage limit tripped: stop reading the upstream
-            except Exception as e:
-                pump_error = e
-            finally:
-                await queue.put(closed)
+    async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
+        """Read translated events from the session queue without owning session resources."""
+        if not self._entered:
+            raise RuntimeError('Enter the realtime session with `async with` before iterating it.')
+        if self._closed:
+            raise RuntimeError('This realtime session is closed and cannot be iterated.')
+        if self._iterator_active:
+            raise RuntimeError('This realtime session is already being iterated.')
+        if self._stream_exhausted:
+            raise RuntimeError('This realtime session event stream has already ended.')
 
-        pump_task = asyncio.create_task(pump())
+        self._iterator_active = True
+        if self._pump_task is None:
+            self._pump_task = asyncio.create_task(self._pump(self._session_span_context))
         try:
             while True:
-                item = await queue.get()
-                if item is closed:
-                    break
+                item = await self._queue.get()
+                if item is self._queue_changed:
+                    # A pump error takes priority over stuck background tools. Their cancellation and
+                    # drain belong to `__aexit__`, which runs as this exception leaves the owner block.
+                    if self._pump_error is not None:
+                        self._stream_exhausted = True
+                        raise self._pump_error
+                    if self._pump_finished and not self._background_tasks:
+                        self._stream_exhausted = True
+                        return
+                    continue
                 yield _as_event(item)  # re-raises if a tool failed
-            # Upstream is done: wait for any in-flight tools, then flush their completions.
-            if background:
-                await asyncio.gather(*background, return_exceptions=True)
-            while not queue.empty():
-                yield _as_event(queue.get_nowait())
-            if pump_error is not None:
-                raise pump_error
         finally:
-            pump_task.cancel()
-            for task in list(background):
-                task.cancel()
-            await asyncio.gather(pump_task, *background, return_exceptions=True)
+            self._iterator_active = False
