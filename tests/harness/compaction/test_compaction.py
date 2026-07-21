@@ -16,10 +16,13 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolSearchReturnContent,
+    ToolSearchReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import RunUsage
 
 from pydantic_ai_harness.compaction import (
@@ -1581,6 +1584,36 @@ class TestClearToolResults:
         assert _return_contents(twice) == ['[tool result cleared]']
         assert _call_args(twice) == ['{}']
 
+    @pytest.mark.anyio
+    async def test_preserves_typed_tool_search_return(self):
+        # `ToolSearchReturnPart` subclasses `ToolReturnPart` but carries structured content that
+        # core's `parse_discovered_tools` re-reads on the next request. Blanking it to a string
+        # crashed that reader; clearing must skip typed subclasses and touch only plain results.
+        cap = ClearToolResults(max_messages=1, keep_pairs=0)
+        search_content: ToolSearchReturnContent = {'discovered_tools': [{'name': 'alpha'}, {'name': 'beta'}]}
+        messages: list[ModelMessage] = [
+            _tool_call('fn', 'u1'),
+            _tool_return('fn', 'u1', 'plain result'),
+            ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args='{}', tool_call_id='ts1')]),
+            ModelRequest(parts=[ToolSearchReturnPart(content=search_content, tool_call_id='ts1')]),
+        ]
+        result = await cap.before_model_request(_make_ctx(), _make_request_context(messages))
+
+        returns = {
+            p.tool_call_id: p
+            for m in result.messages
+            if isinstance(m, ModelRequest)
+            for p in m.parts
+            if isinstance(p, ToolReturnPart)
+        }
+        # Plain result blanked, typed search return kept intact (concrete type + structured content).
+        assert type(returns['u1']) is ToolReturnPart
+        assert returns['u1'].content == cap.placeholder
+        assert type(returns['ts1']) is ToolSearchReturnPart
+        assert returns['ts1'].content == search_content
+        # The real next-request regression: core still recovers the discovered names.
+        assert parse_discovered_tools(result.messages) == {'alpha', 'beta'}
+
 
 # ---------------------------------------------------------------------------
 # DeduplicateFileReads
@@ -2011,6 +2044,47 @@ class TestPublicPath:
         )
         result = await agent.run('hello')
         assert result.output is not None
+
+    @pytest.mark.anyio
+    async def test_clear_does_not_break_tool_search_on_next_request(self):
+        # Regression for #380 through the real agent graph. Core re-reads a
+        # `ToolSearchReturnPart`'s structured content on every request via
+        # `parse_discovered_tools`; blanking it to a string used to crash the *next*
+        # request. Drive a multi-request run (search -> clear fires -> another request)
+        # and assert it completes with discovery intact.
+        from pydantic_ai import Agent, Tool
+        from pydantic_ai.capabilities import ToolSearch
+        from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+        def hidden_gem(x: int) -> int:
+            return x + 1
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            step = sum(isinstance(m, ModelResponse) for m in messages)
+            if step == 0:  # discover the deferred tool
+                args = {'queries': ['hidden']}
+                return ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args=args, tool_call_id='ts0')])
+            if step == 1:  # call it, forcing the request that re-reads the (cleared) search result
+                return ModelResponse(parts=[ToolCallPart(tool_name='hidden_gem', args={'x': 1}, tool_call_id='hg1')])
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool(hidden_gem, defer_loading=True)],
+            capabilities=[ToolSearch(), ClearToolResults(max_messages=1, keep_pairs=0)],
+        )
+        result = await agent.run('go')
+
+        assert result.output == 'done'
+        messages = result.all_messages()
+        search_returns = [
+            p for m in messages if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolSearchReturnPart)
+        ]
+        # The typed search return kept its concrete type and structured (dict) content.
+        assert search_returns
+        assert all(isinstance(p.content, dict) for p in search_returns)
+        # Core still recovers the discovered tool -- the read that crashed in #380.
+        assert parse_discovered_tools(messages) == {'hidden_gem'}
 
 
 # ---------------------------------------------------------------------------

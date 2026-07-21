@@ -104,7 +104,9 @@ turn even when it falls outside the window, so the agent does not lose the origi
 
 `ClearToolResults` keeps the last `keep_pairs` intact. Set `clear_tool_inputs=True` to also blank the
 arguments of the cleared calls, and `exclude_tools` to a set of tool names whose results are never
-cleared.
+cleared. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
+left intact (a small token floor), because their structured content is re-parsed on later requests and
+rewriting it via `dataclasses.replace` would bypass validation and corrupt the part.
 
 ## `LimitWarner` thresholds
 
