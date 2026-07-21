@@ -421,7 +421,7 @@ async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]
     assert isinstance(model, Model)
     try:
         r = await asyncio.wait_for(
-            Agent(model, instructions=COMPACTION_SUMMARY_INSTRUCTIONS).run(
+            Agent(cast('Model[Any]', model), instructions=COMPACTION_SUMMARY_INSTRUCTIONS).run(
                 f'Transcript to summarise:\n\n{transcript[:COMPACTION_TRANSCRIPT_MAX_CHARS]}',
                 usage_limits=UsageLimits(request_limit=2),
                 usage=sub_usage,
@@ -832,7 +832,7 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     model = ctx.model
     assert isinstance(model, Model)
     sub = Agent(
-        model,
+        cast('Model[Any]', model),
         instructions=[INSTRUCTIONS, SUBAGENT_INSTRUCTIONS, prompt],
         toolsets=[sub_toolset],
         capabilities=[
