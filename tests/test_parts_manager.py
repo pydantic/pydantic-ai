@@ -20,6 +20,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._deferred_capabilities import LoadCapabilityCallPart
 from pydantic_ai._parts_manager import ModelResponsePartsManager
+from pydantic_ai.messages import ModelResponseStreamEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 
@@ -140,7 +141,9 @@ def test_string_deltas_materialize_on_reads_and_replacement():
     ]
 
 
-def _emit_string_part_delta(manager: ModelResponsePartsManager, part_kind: str, content: str, **kwargs: Any) -> Any:
+def _emit_string_part_delta(
+    manager: ModelResponsePartsManager, part_kind: str, content: str, **kwargs: Any
+) -> ModelResponseStreamEvent:
     if part_kind == 'text':
         return next(manager.handle_text_delta(vendor_part_id='part', content=content, **kwargs))
     if part_kind == 'thinking':
@@ -301,7 +304,11 @@ def test_incomplete_tool_call_buffered_updates_preserve_state():
 
 
 def test_tool_call_promotes_after_buffered_arguments_are_materialized():
-    """Cover typed promotion after arguments become complete across fragments."""
+    """Cover typed promotion once buffered arguments become complete across fragments.
+
+    The promotion happens during read-time materialization of the internal string buffer, which
+    provider cassettes cannot isolate.
+    """
     manager = ModelResponsePartsManager(
         model_request_parameters=ModelRequestParameters(
             function_tools=[ToolDefinition(name='load_capability', tool_kind='capability-load')]

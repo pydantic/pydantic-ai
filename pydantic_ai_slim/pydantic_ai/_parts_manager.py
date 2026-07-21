@@ -238,16 +238,14 @@ class ModelResponsePartsManager:
                 provider_name=self._resolve_provider_name(existing_text_part, provider_name),
                 provider_details=provider_details,
             )
-            updated_part = existing_text_part
-            if (
+            apply_metadata = (
                 part_delta.provider_name is not None
                 or part_delta.provider_details is not None
                 or existing_text_part.provider_details == {}
-            ):
-                metadata_delta = replace(part_delta, content_delta='')
-                updated_part = metadata_delta.apply(existing_text_part)
-            elif existing_text_part.provider_details:
-                updated_part = replace(existing_text_part, provider_details=existing_text_part.provider_details.copy())
+            )
+            updated_part = self._apply_metadata_or_copy_provider_details(
+                existing_text_part, part_delta, apply_metadata=apply_metadata
+            )
             if content:
                 self._buffer_string_delta(part_index, existing_text_part.content, content)
             self._parts[part_index] = updated_part
@@ -334,30 +332,26 @@ class ModelResponsePartsManager:
                 provider_name=self._resolve_provider_name(existing_thinking_part, provider_name),
                 provider_details=provider_details,
             )
-            updated_part = existing_thinking_part
-            if (
+            apply_metadata = (
                 signature is not None
                 or part_delta.provider_name is not None
                 or provider_details is not None
                 or existing_thinking_part.provider_details == {}
-            ):
-                metadata_delta = replace(part_delta, content_delta=None)
-                if callable(provider_details):
-                    buffer = self._string_buffers.get(part_index)
-                    buffer_length = len(buffer) if buffer is not None else 0
-                    resolved_details = provider_details(existing_thinking_part.provider_details)
-                    metadata_delta = replace(metadata_delta, provider_details=resolved_details)
-                    updated_part = metadata_delta.apply(existing_thinking_part)
-                    if buffer is None:
-                        self._string_buffers.pop(part_index, None)
-                    else:
-                        del buffer[buffer_length:]
-                        self._string_buffers[part_index] = buffer
+            )
+            if apply_metadata and callable(provider_details):
+                buffer = self._string_buffers.get(part_index)
+                buffer_length = len(buffer) if buffer is not None else 0
+                resolved_details = provider_details(existing_thinking_part.provider_details)
+                metadata_delta = replace(part_delta, content_delta=None, provider_details=resolved_details)
+                updated_part = metadata_delta.apply(existing_thinking_part)
+                if buffer is None:
+                    self._string_buffers.pop(part_index, None)
                 else:
-                    updated_part = metadata_delta.apply(existing_thinking_part)
-            elif existing_thinking_part.provider_details:
-                updated_part = replace(
-                    existing_thinking_part, provider_details=existing_thinking_part.provider_details.copy()
+                    del buffer[buffer_length:]
+                    self._string_buffers[part_index] = buffer
+            else:
+                updated_part = self._apply_metadata_or_copy_provider_details(
+                    existing_thinking_part, part_delta, apply_metadata=apply_metadata
                 )
             if content:
                 self._buffer_string_delta(part_index, updated_part.content, content)
@@ -645,6 +639,27 @@ class ModelResponsePartsManager:
         self._buffer_string_delta(part_index, current_args, args)
         return updated_part
 
+    def _apply_metadata_or_copy_provider_details(
+        self,
+        existing_part: TextPart | ThinkingPart,
+        part_delta: TextPartDelta | ThinkingPartDelta,
+        *,
+        apply_metadata: bool,
+    ) -> TextPart | ThinkingPart:
+        """Apply a metadata-only delta to `existing_part`, else defensively copy its `provider_details`.
+
+        The content delta is reset so only provider metadata is applied; the string content is carried
+        separately by the buffer. When there is no metadata to apply, `provider_details` is copied so a
+        previously-emitted snapshot of the part cannot alias the manager's mutable state.
+        """
+        if apply_metadata:
+            content_reset = '' if isinstance(part_delta, TextPartDelta) else None
+            metadata_delta = replace(part_delta, content_delta=content_reset)
+            return metadata_delta.apply(existing_part)
+        if existing_part.provider_details:
+            return replace(existing_part, provider_details=existing_part.provider_details.copy())
+        return existing_part
+
     def _buffer_string_delta(self, part_index: int, current_value: str | None, delta: str) -> None:
         """Buffer a string append while preserving a `None`-to-empty transition."""
         if not delta:
@@ -722,16 +737,14 @@ class ModelResponsePartsManager:
             provider_name=self._resolve_provider_name(existing_part, provider_name),
             provider_details=provider_details,
         )
-        updated_part = existing_part
-        if (
+        apply_metadata = (
             part_delta.provider_name is not None
             or part_delta.provider_details is not None
             or existing_part.provider_details == {}
-        ):
-            metadata_delta = replace(part_delta, content_delta=None)
-            updated_part = metadata_delta.apply(existing_part)
-        elif existing_part.provider_details:
-            updated_part = replace(existing_part, provider_details=existing_part.provider_details.copy())
+        )
+        updated_part = self._apply_metadata_or_copy_provider_details(
+            existing_part, part_delta, apply_metadata=apply_metadata
+        )
         if content:
             self._buffer_string_delta(part_index, existing_part.content, content)
         self._parts[part_index] = updated_part
