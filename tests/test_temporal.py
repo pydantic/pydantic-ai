@@ -1,14 +1,9 @@
-# pyright: reportDeprecated=false
-# `TemporalAgent` (the wrapper-agent path) is deprecated in favor of the
-# `TemporalDurability` capability, but this file still exercises both paths in
-# parallel for parity. Silenced at file level rather than annotating every
-# individual usage.
 from __future__ import annotations
 
 import asyncio
 import os
 import re
-import warnings
+import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -61,6 +56,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     MCP,
     Capability,
@@ -186,18 +182,10 @@ with workflow.unsafe.imports_passed_through():
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from .conftest import IsDatetime, IsInt, IsStr, message
 
-# `TemporalAgent` is deprecated in favor of `capabilities=[TemporalDurability(...)]`.
-# These tests exercise the wrapper-agent path on purpose; suppress the warning here
-# rather than globally in `pyproject.toml`. The `pytestmark` entry below covers warnings
-# emitted *inside* test functions; the `filterwarnings` call below covers warnings emitted
-# at module import time (e.g. module-level construction of `TemporalAgent`).
-warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', category=DeprecationWarning)
-
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='temporal'),
-    pytest.mark.filterwarnings('ignore:`TemporalAgent` is deprecated:DeprecationWarning'),
 ]
 
 
@@ -354,6 +342,88 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, client: 
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def _migration_event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+_migration_agent_name = 'temporal_agent_migration'
+_legacy_migration_agent = TemporalAgent(
+    Agent(TestModel(custom_output_text='migrated'), name=_migration_agent_name, deps_type=type(None)),
+    activity_config=BASE_ACTIVITY_CONFIG,
+    event_stream_handler=_migration_event_stream_handler,
+)
+_capability_migration_agent = Agent(
+    TestModel(custom_output_text='migrated'),
+    name=_migration_agent_name,
+    deps_type=type(None),
+    capabilities=[
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            event_stream_handler=_migration_event_stream_handler,
+        )
+    ],
+)
+_migration_agent: AbstractAgent[None, str] = _legacy_migration_agent
+
+
+@workflow.defn
+class TemporalAgentMigrationWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _migration_agent.run(prompt)).output
+
+
+@pytest.mark.xfail(
+    reason='TODO #6625: make histories recorded with TemporalAgent replay under TemporalDurability',
+    raises=RuntimeError,
+    strict=True,
+)
+async def test_temporal_agent_history_replays_after_migrating_to_durability(client: Client) -> None:
+    """A recorded wrapper-agent workflow must replay with the capability implementation.
+
+    This is an engine-level replay test rather than a provider VCR test: the compatibility
+    contract is the Temporal activity payload and result schema, independent of the provider.
+    """
+    global _migration_agent
+
+    _migration_agent = _legacy_migration_agent
+    workflow_id = f'{TemporalAgentMigrationWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalAgentMigrationWorkflow],
+        activities=_legacy_migration_agent.temporal_activities,
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        output = await client.execute_workflow(
+            TemporalAgentMigrationWorkflow.run,
+            args=['hello'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        history = await client.get_workflow_handle(workflow_id).fetch_history()
+
+    assert output == 'migrated'
+
+    _migration_agent = _capability_migration_agent
+    try:
+        await Replayer(
+            workflows=[TemporalAgentMigrationWorkflow],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+            data_converter=pydantic_data_converter,
+        ).replay_workflow(history)
+    except RuntimeError as exc:
+        failure = str(exc)
+        assert 'Failed decoding arguments' in failure
+        assert '2 validation errors for StreamedActivityResult' in failure
+        assert 'response\\n  Field required' in failure
+        assert 'events\\n  Field required' in failure
+        raise
+    finally:
+        _migration_agent = _legacy_migration_agent
 
 
 class Deps(BaseModel):

@@ -22,7 +22,7 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
-from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
+from ._agent import TemporalAgent
 from ._durability import TemporalDurability
 from ._logfire import LogfirePlugin
 from ._run_context import TemporalRunContext
@@ -162,10 +162,7 @@ class PydanticAIPlugin(SimplePlugin):
                     f'__pydantic_ai_agents__ must be a Sequence of TemporalAgent instances, got {type(agents)}'
                 )
             for agent in agents:  # type: ignore[reportUnknownVariableType]
-                if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
-                    # Deprecated path: `TemporalAgent` is being phased out in favor of
-                    # `capabilities=[TemporalDurability(...)]` on a regular `Agent`. Kept
-                    # working so existing workers keep loading without changes.
+                if isinstance(agent, TemporalAgent):
                     activities.extend(agent.temporal_activities)  # type: ignore[reportUnknownMemberType]
                 elif isinstance(agent, AbstractAgent):
                     durability = TemporalDurability.from_agent(agent)  # type: ignore[reportUnknownArgumentType]
@@ -191,12 +188,12 @@ class AgentPlugin(SimplePlugin):
     Accepts either a regular `Agent` carrying a
     [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]
     capability (whose chain is walked to find the bound capability), or the
-    deprecated [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent]
+    [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent]
     wrapper, and registers the agent's activities on the worker.
     """
 
     def __init__(self, agent: AbstractAgent[Any, Any]):
-        if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
+        if isinstance(agent, TemporalAgent):
             activities = agent.temporal_activities
         else:
             durability = TemporalDurability.from_agent(agent)

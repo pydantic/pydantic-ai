@@ -163,12 +163,10 @@ Because Temporal workflows need to be defined at the top level of the file and t
 
 For more information on how to use Temporal in Python applications, see their [Python SDK guide](https://docs.temporal.io/develop/python).
 
-### Wrapper-agent path (deprecated)
+### Wrapper-agent path
 
-!!! warning "Deprecated"
-    [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] is the original wrapper-agent path for Temporal integration and will be removed in v3. New code should use the [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability shown above.
-
-    Migrating preserves activity names and payloads (as long as the agent's `name` and toolset `id`s stay the same), so workflows started under `TemporalAgent` will replay correctly after switching to `TemporalDurability` — there's no need to drain or version your workflows first.
+!!! warning "Migration compatibility"
+    Some workflow histories recorded with [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent], including streamed model activity results, do not currently replay under [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. Continue using `TemporalAgent` for existing workflows until migration compatibility is restored.
 
 Any agent can be wrapped in a [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] to get a durable agent variant that can be used inside a Temporal workflow. At the time of wrapping, the agent's model and toolsets are frozen, activities are dynamically created for each, and the original model and toolsets are wrapped to call on the worker to execute the corresponding activities instead of directly performing the actions inside the workflow. The original agent can still be used as normal outside the Temporal workflow, but any changes to its model or toolsets after wrapping will not be reflected in the durable agent.
 

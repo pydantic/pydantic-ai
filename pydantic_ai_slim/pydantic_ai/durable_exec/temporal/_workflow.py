@@ -9,7 +9,7 @@ class PydanticAIWorkflow:
 
     Accepts any `AbstractAgent` — either a regular `Agent` carrying a
     [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]
-    capability, or the deprecated
+    capability, or the
     [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] wrapper.
     [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin]
     walks the sequence and registers each agent's activities with the worker.
