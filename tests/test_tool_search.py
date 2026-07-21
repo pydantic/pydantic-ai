@@ -3643,7 +3643,9 @@ async def test_openai_hosted_tool_search_stateless_continuation_without_item_ids
 
     With ids stripped, the replayed `tool_search_call` and `tool_search_output` carry
     `call_id: null` and no `id`; the API accepts the pair and the loaded tool remains
-    callable without a fresh search.
+    callable without a fresh search. The recording is what proves API acceptance (the
+    cassette assertions below guard it against drifting on re-record); the current
+    code's payload is pinned by `test_openai_replays_hosted_tool_search_call_and_output`.
     """
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
@@ -3675,6 +3677,24 @@ async def test_openai_hosted_tool_search_stateless_continuation_without_item_ids
     ]
     assert len(rate_returns) == 1
     assert rate_returns[0].content == 'USD/EUR: 0.92'
+
+    cassette_path = (
+        Path(__file__).parent
+        / 'cassettes'
+        / 'test_tool_search'
+        / 'test_openai_hosted_tool_search_stateless_continuation_without_item_ids.yaml'
+    )
+    cassette = cast(dict[str, Any], yaml.safe_load(cassette_path.read_text(encoding='utf-8')))
+    interactions = cast(list[dict[str, Any]], cassette['interactions'])
+    replayed = [
+        item
+        for item in interactions[1]['request']['parsed_body']['input']
+        if item.get('type') in ('tool_search_call', 'tool_search_output')
+    ]
+    assert [(item['type'], 'id' in item, item.get('call_id')) for item in replayed] == [
+        ('tool_search_call', False, None),
+        ('tool_search_output', False, None),
+    ]
 
 
 @pytest.mark.vcr

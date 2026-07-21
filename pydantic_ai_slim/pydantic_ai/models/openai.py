@@ -2994,12 +2994,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     from_same_provider = item.provider_name == self.system or (
                         item.provider_name is None and message.provider_name == self.system
                     )
-                    # Two distinct gates. `should_send_item_id` controls echoing server item IDs
-                    # (`rs_...`, `ts_...`) back to OpenAI; for most native tool items the ID *is*
-                    # the replay payload (their state lives server-side), so it also decides
-                    # whether those items are sent at all. Hosted tool-search items carry their
-                    # state inline, so they replay on `from_same_provider` alone and this flag
-                    # only strips their IDs (see the `openai_send_reasoning_ids` docstring).
+                    # Two distinct gates. For native tool items whose state lives server-side
+                    # (web search, code interpreter, image generation, MCP), the item ID *is*
+                    # the replay payload, so `should_send_item_id` decides whether those items
+                    # are sent at all. Hosted tool-search items carry their state inline, so
+                    # they replay on `from_same_provider` alone and this flag only strips their
+                    # IDs (see the `openai_send_reasoning_ids` docstring).
                     should_send_item_id = send_item_ids and from_same_provider
 
                     if isinstance(item, TextPart):
