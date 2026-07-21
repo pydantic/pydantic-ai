@@ -43,7 +43,60 @@ Authentication and the base URL come from the `provider` argument, mirroring
 default, reads `OPENAI_API_KEY`) or an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]
 instance for a custom key or base URL. The realtime transport is opened separately with
 `websockets`, so a custom `OpenAIProvider` `httpx` client is not used for the WebSocket connection.
-OpenAI-compatible endpoints that expose a realtime API work too; Azure OpenAI is not supported.
+OpenAI-compatible endpoints that expose a realtime API work too. Azure OpenAI's separate realtime
+endpoint is not supported through `OpenAIRealtimeModel`; use Azure AI Voice Live below.
+
+### Azure AI Voice Live
+
+[Azure AI Voice Live](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/voice-live)
+uses WebSockets and is available through the `realtime` optional group:
+
+```bash
+pip install "pydantic-ai-slim[realtime]"
+```
+
+Set `AZURE_VOICELIVE_ENDPOINT`, `AZURE_VOICELIVE_API_VERSION`, and
+`AZURE_VOICELIVE_API_KEY`, then use the `azure-voicelive:` model prefix:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+agent = Agent(instructions='You are a helpful voice assistant.')
+
+
+async def main():
+    async with agent.realtime_session(model='azure-voicelive:gpt-realtime') as session:
+        await session.send('Say hello.')
+        async for event in session:
+            ...
+```
+
+Or initialise the model and provider directly:
+
+```python {test="skip"}
+from pydantic_ai.providers.azure_voicelive import AzureVoiceLiveProvider
+from pydantic_ai.realtime.azure import AzureRealtimeModel
+
+model = AzureRealtimeModel(
+    'gpt-realtime',
+    provider=AzureVoiceLiveProvider(
+        endpoint='https://your-resource.services.ai.azure.com',
+        api_version='2026-04-10',
+        api_key='your-api-key',
+    ),
+)
+```
+
+Voice Live offers managed models rather than requiring an Azure OpenAI deployment. See the official
+[model and region matrix](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/regions?tabs=voice-live)
+for currently available model identifiers. [`AzureVoiceLiveProvider`][pydantic_ai.providers.azure_voicelive.AzureVoiceLiveProvider]
+uses the documented Azure `api-key` WebSocket header; Microsoft Entra ID authentication is not yet
+exposed by this provider.
+
+[`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel] supports the shared realtime
+settings and maps a string `voice` to an OpenAI voice on Voice Live. Azure-specific standard/custom
+voices, noise suppression, echo cancellation, avatars, and animation are not yet exposed as model
+settings.
 
 The Gemini provider ([`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel]) uses
 the `google-genai` SDK, available via the `google` optional group:
@@ -65,11 +118,12 @@ which reads `XAI_API_KEY`) or an [`XaiProvider`][pydantic_ai.providers.xai.XaiPr
 with `api_key=`. Realtime does not support a custom `api_host`, and a provider constructed only with
 `xai_client=` cannot be used because the WebSocket connection needs access to the API key.
 
-All three implement the same [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] interface, so the
+All four implement the same [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] interface, so the
 rest of this guide applies to any of them — swap `OpenAIRealtimeModel('gpt-realtime')` for
-`GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')` or `XaiRealtimeModel('grok-voice-latest')`. A few
-provider differences are worth knowing: send mono PCM16 input at **16 kHz** for Gemini and **24 kHz**
-for OpenAI and xAI; all three produce mono PCM16 output at **24 kHz**. Gemini produces a single
+`AzureRealtimeModel('gpt-realtime')`, `GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')`,
+or `XaiRealtimeModel('grok-voice-latest')`. A few provider differences are worth knowing: send mono
+PCM16 input at **16 kHz** for Gemini and **24 kHz** for OpenAI, Azure Voice Live, and xAI; all four
+produce mono PCM16 output at **24 kHz**. Gemini produces a single
 response modality per session and natively accepts **live video frames**
 sent as [`ImageInput`][pydantic_ai.realtime.ImageInput] (stream camera/screen frames with
 [`send`][pydantic_ai.realtime.RealtimeSession.send] for "show me this" interactions). xAI
@@ -135,9 +189,9 @@ The remaining realtime control-plane events:
 
 | Event | Meaning |
 | --- | --- |
-| [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] | OpenAI/xAI detected speech onset, or Gemini reported activity that interrupted model output. |
-| [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | OpenAI/xAI detected the end of speech; Gemini does not emit this event. |
-| [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn. `interrupted` reflects cancellation on OpenAI/xAI; Gemini reports `False` even after barge-in. |
+| [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] | OpenAI/Azure/xAI detected speech onset, or Gemini reported activity that interrupted model output. |
+| [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | OpenAI/Azure/xAI detected the end of speech; Gemini does not emit this event. |
+| [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn. `interrupted` reflects cancellation on OpenAI/Azure/xAI; Gemini reports `False` even after barge-in. |
 | [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] | The connection dropped and was automatically re-established (see [Reconnecting](#reconnecting)). |
 | [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] | The provider reported a **recoverable** error mid-session; the session keeps running. A non-recoverable error instead raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]. |
 
@@ -186,7 +240,7 @@ async def main(prior_history):
 
 Seeding projects every replayable part of the prior conversation into the provider's initial
 conversation items: text, speech transcripts, tag-wrapped thinking, function-tool calls and results,
-and images. OpenAI and xAI replay function tools as native call/result items; Gemini Live cannot put
+and images. OpenAI, Azure Voice Live, and xAI replay function tools as native call/result items; Gemini Live cannot put
 function parts in seeded turns, so it uses readable `[Tool call: ...]` and
 `[Tool "..." returned: ...]` / `[Tool "..." error: ...]` text instead. Thinking signatures and
 provider details are not replayed because they belong to the provider session that produced them.
@@ -196,8 +250,8 @@ history, and the execution itself cannot be replayed in a new session.
 Content that cannot be represented is rejected with a [`UserError`][pydantic_ai.exceptions.UserError]
 instead of being dropped silently. In particular, video, documents, uploaded-file references, and
 model-generated files cannot be seeded. Speech transcripts are preferred over retained audio. When a
-user [`SpeechPart`][pydantic_ai.messages.SpeechPart] has no transcript, OpenAI can replay retained
-input audio; Gemini and xAI cannot. Enable `input_transcription_model` or `audio_retention` when
+user [`SpeechPart`][pydantic_ai.messages.SpeechPart] has no transcript, OpenAI and Azure Voice Live can
+replay retained input audio; Gemini and xAI cannot. Enable `input_transcription_model` or `audio_retention` when
 capturing the original session, or filter unseedable parts from `message_history` before connecting.
 Assistant speech always requires a transcript. See the [model profile](#model-profile) for provider
 support.
@@ -254,6 +308,7 @@ can instead set defaults on a model and override individual values for one sessi
 `tool_choice`, `parallel_tool_calls`, `input_transcription_model`, and `handshake_timeout`; use its
 Google-prefixed transcription fields instead. xAI ignores `output_modality` and `thinking` and
 always produces audio output. Provider-specific setting docstrings document other exceptions.
+Azure Voice Live ignores `parallel_tool_calls` and `thinking`.
 
 ```python {test="skip" lint="skip"}
 async with agent.realtime_session(
@@ -283,7 +338,8 @@ than re-encoding it), OpenAI also accepts
 `'auto'`, `'disabled'`, or a `{'type': 'retention_ratio', 'retention_ratio': 0.8}` dict.
 
 The agent's regular `model_settings` and capability `get_model_settings()` contributions do not apply
-to realtime sessions. OpenAI and xAI realtime sessions do not accept `temperature`.
+to realtime sessions. OpenAI, Azure Voice Live, and xAI realtime sessions do not expose
+`temperature` through Pydantic AI.
 
 ### Reasoning
 
@@ -458,8 +514,8 @@ Voice lacks — call `interrupt()` without `audio_end_ms` there.
 ### Push-to-talk (manual turn-taking)
 
 Automatic detection is **on by default**; disable it with `turn_detection=False` for push-to-talk.
-This is only supported on providers that expose manual turn control through Pydantic AI (OpenAI and
-xAI — see [`supports_manual_turn_control`](#model-profile)); Gemini Live has no manual turn verbs, so
+This is only supported on providers that expose manual turn control through Pydantic AI (OpenAI,
+Azure Voice Live, and xAI — see [`supports_manual_turn_control`](#model-profile)); Gemini Live has no manual turn verbs, so
 `turn_detection=False` raises a `UserError` there. Drive the turn yourself: stream audio,
 [`commit_audio`][pydantic_ai.realtime.RealtimeSession.commit_audio] to end the user's turn, then
 [`create_response`][pydantic_ai.realtime.RealtimeSession.create_response] to ask the model to reply.
@@ -483,19 +539,19 @@ aren't universal. Each model reports its support through
 [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] — the realtime counterpart to the
 [`ModelProfile`][pydantic_ai.profiles.ModelProfile] of a standard [`Model`][pydantic_ai.models.Model]:
 
-The profile also exposes `audio_input_sample_rate` and `audio_output_sample_rate`, in Hz. OpenAI and
-xAI use 24 kHz in both directions; Gemini uses 16 kHz input and 24 kHz output.
+The profile also exposes `audio_input_sample_rate` and `audio_output_sample_rate`, in Hz. OpenAI,
+Azure Voice Live, and xAI use 24 kHz in both directions; Gemini uses 16 kHz input and 24 kHz output.
 
-| [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] flag | Gates | OpenAI | Gemini | xAI |
-| --- | --- | :---: | :---: | :---: |
-| [`supports_image_input`][pydantic_ai.realtime.RealtimeModelProfile.supports_image_input] | [`send`](#images) | ✅ | ✅ | ❌ |
-| [`supports_manual_turn_control`][pydantic_ai.realtime.RealtimeModelProfile.supports_manual_turn_control] | [`commit_audio`/`clear_audio`/`create_response`](#push-to-talk-manual-turn-taking) | ✅ | ❌ | ✅ |
-| [`supports_interruption`][pydantic_ai.realtime.RealtimeModelProfile.supports_interruption] | [`interrupt`](#turn-taking-and-barge-in) | ✅ | ❌ | ✅ |
-| [`supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation] | [`interrupt(audio_end_ms=…)`](#turn-taking-and-barge-in) | ✅ | ❌ | ❌ |
-| [`supports_session_seeding`][pydantic_ai.realtime.RealtimeModelProfile.supports_session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ | ✅ |
-| [`supports_seeding_images`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_images] | Images in `message_history` | ✅ | ✅ | ❌ |
-| [`supports_seeding_audio`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_audio] | Transcript-less retained user audio in `message_history` | ✅ | ❌ | ❌ |
-| [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] | [`thinking`](#reasoning) | `gpt-realtime-2*` | Native-audio models | ❌ |
+| [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] flag | Gates | OpenAI | Azure Voice Live | Gemini | xAI |
+| --- | --- | :---: | :---: | :---: | :---: |
+| [`supports_image_input`][pydantic_ai.realtime.RealtimeModelProfile.supports_image_input] | [`send`](#images) | ✅ | ✅ | ✅ | ❌ |
+| [`supports_manual_turn_control`][pydantic_ai.realtime.RealtimeModelProfile.supports_manual_turn_control] | [`commit_audio`/`clear_audio`/`create_response`](#push-to-talk-manual-turn-taking) | ✅ | ✅ | ❌ | ✅ |
+| [`supports_interruption`][pydantic_ai.realtime.RealtimeModelProfile.supports_interruption] | [`interrupt`](#turn-taking-and-barge-in) | ✅ | ✅ | ❌ | ✅ |
+| [`supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation] | [`interrupt(audio_end_ms=…)`](#turn-taking-and-barge-in) | ✅ | ✅ | ❌ | ❌ |
+| [`supports_session_seeding`][pydantic_ai.realtime.RealtimeModelProfile.supports_session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ | ✅ | ✅ |
+| [`supports_seeding_images`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_images] | Images in `message_history` | ✅ | ✅ | ✅ | ❌ |
+| [`supports_seeding_audio`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_audio] | Transcript-less retained user audio in `message_history` | ✅ | ✅ | ❌ | ❌ |
+| [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] | [`thinking`](#reasoning) | `gpt-realtime-2*` | ❌ | Native-audio models | ❌ |
 
 Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
 exposes neither the manual turn verbs nor an explicit `interrupt()`. xAI Grok Voice supports
@@ -666,7 +722,7 @@ Nested under it, each assistant response gets a `chat {model}` span with
 `execute_tool` span (including any delegated text-agent run). See
 [Debugging and monitoring](logfire.md).
 
-OpenAI and xAI `chat` spans carry the response's own usage, including function-call-only responses.
+OpenAI, Azure Voice Live, and xAI `chat` spans carry the response's own usage, including function-call-only responses.
 Gemini finalizes a function-call response before the provider reports usage; that response has zero
 usage, while Gemini's later completed turn carries the reported turn usage. The cumulative
 `session.usage` and session span remain authoritative totals.
@@ -717,7 +773,7 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 model = OpenAIRealtimeModel('gpt-realtime', reconnect=ReconnectPolicy(max_attempts=5))
 ```
 
-For OpenAI and xAI, reconnecting restores the session configuration but **not** server-side
+For OpenAI, Azure Voice Live, and xAI, reconnecting restores the session configuration but **not** server-side
 conversation state (the audio buffer and prior turns), so treat a
 [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] as the start of a fresh turn. Without a
 policy (the default), a dropped connection raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]
@@ -879,7 +935,7 @@ Some capabilities are intentionally out of scope:
 - **Bounded structured-output runs.** A session has no `output_type` or `session.run()` with an output schema — [delegate to a text agent](#delegating-to-a-text-agent) for structured results.
 - **Realtime-specific capability hooks.** Capabilities run once for setup and apply their instructions, toolsets, and native tools; tool-lifecycle hooks also run, but there are no before/after-exchange hooks.
 - **Dynamic instructions mid-session.** Instructions are resolved once at connect and not re-evaluated during the session.
-- **Provider-limited audio replay when seeding history.** OpenAI can replay retained user audio when a [`SpeechPart`][pydantic_ai.messages.SpeechPart] has no transcript. Gemini and xAI cannot seed retained audio, and no provider can seed assistant audio; use transcripts or filter those parts before connecting (see [Message history](#message-history)).
+- **Provider-limited audio replay when seeding history.** OpenAI and Azure Voice Live can replay retained user audio when a [`SpeechPart`][pydantic_ai.messages.SpeechPart] has no transcript. Gemini and xAI cannot seed retained audio, and no provider can seed assistant audio; use transcripts or filter those parts before connecting (see [Message history](#message-history)).
 - **Proactive resume before Gemini's session cap.** Gemini Live signals an upcoming disconnect (`GoAway`) near its session-length limit, but the session only [reconnects](#reconnecting) after a drop.
 
 ## Implementing a provider
@@ -890,5 +946,5 @@ A provider implements two ABCs: [`RealtimeModel`][pydantic_ai.realtime.RealtimeM
 [`RealtimeCodecEvent`][pydantic_ai.realtime.RealtimeCodecEvent] vocabulary, which the session
 translates into user-facing [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent]s). The OpenAI
 provider in [`pydantic_ai.realtime.openai`][pydantic_ai.realtime.openai] is a reference
-implementation; the same shape applies to Gemini Live, xAI Grok Voice, and others. Inputs a provider
+implementation; the same shape applies to Azure Voice Live, Gemini Live, xAI Grok Voice, and others. Inputs a provider
 doesn't support (e.g. `ImageInput`, or the manual turn-taking verbs) should raise `NotImplementedError`.

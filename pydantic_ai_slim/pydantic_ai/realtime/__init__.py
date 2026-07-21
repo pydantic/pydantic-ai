@@ -1,8 +1,8 @@
 """Realtime multimodal session support for bidirectional streaming models.
 
-This package adds support for native speech-to-speech models (OpenAI Realtime, Gemini Live, and
-xAI Grok Voice) which use a persistent bidirectional connection rather than the request-response
-pattern of the standard [`Model`][pydantic_ai.models.Model] interface.
+This package adds support for native speech-to-speech models (OpenAI Realtime, Azure AI Voice Live,
+Gemini Live, and xAI Grok Voice) which use a persistent bidirectional connection rather than the
+request-response pattern of the standard [`Model`][pydantic_ai.models.Model] interface.
 
 The provider-agnostic ABCs and event types live here; concrete providers live in submodules
 (e.g. `pydantic_ai.realtime.openai`). The high-level entry point is
@@ -14,7 +14,7 @@ into the shared message/part event vocabulary from [`pydantic_ai.messages`][pyda
 ...), re-exported here for convenience, plus the realtime control-plane events defined below.
 """
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import TypeAliasType
 
@@ -67,12 +67,18 @@ from ._base import (
 )
 from ._session import RealtimeSession
 
+if TYPE_CHECKING:
+    from .azure import AzureRealtimeModel
+
 KnownRealtimeModelName = TypeAliasType(
     'KnownRealtimeModelName',
     Literal[
         'openai:gpt-realtime',
         'openai:gpt-realtime-2.1',
         'openai:gpt-realtime-2.1-mini',
+        'azure-voicelive:gpt-realtime',
+        'azure-voicelive:gpt-realtime-1.5',
+        'azure-voicelive:gpt-realtime-mini',
         'xai:grok-voice-latest',
         'google:gemini-2.5-flash-native-audio-latest',
         'google:gemini-3.1-flash-live-preview',
@@ -90,6 +96,10 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
         from .openai import OpenAIRealtimeModel
 
         return OpenAIRealtimeModel(model_name)
+    if provider == 'azure-voicelive':
+        from .azure import AzureRealtimeModel
+
+        return AzureRealtimeModel(model_name)
     if provider == 'xai':
         from .xai import XaiRealtimeModel
 
@@ -99,8 +109,17 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
 
         return GoogleRealtimeModel(model_name)
     raise UserError(
-        f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `xai`, and `google`.'
+        f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, '
+        '`azure-voicelive`, `xai`, and `google`.'
     )
+
+
+def __getattr__(name: str) -> object:
+    if name == 'AzureRealtimeModel':
+        from .azure import AzureRealtimeModel
+
+        return AzureRealtimeModel
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 
 __all__ = (
@@ -116,6 +135,7 @@ __all__ = (
     'AudioDelta',
     'AudioInput',
     'AudioRetention',
+    'AzureRealtimeModel',
     'CancelResponse',
     'ClearAudio',
     'CommitAudio',
