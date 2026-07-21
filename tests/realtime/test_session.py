@@ -14,7 +14,7 @@ from pydantic_core import SchemaValidator, core_schema
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, WebFetch
-from pydantic_ai.exceptions import UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     BinaryImage,
@@ -524,6 +524,25 @@ async def test_tool_runner_exception_becomes_error_result() -> None:
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert result.part.content == 'Error: kaboom'
     assert conn.sent == [ToolResult(tool_call_id='tc', output='Error: kaboom')]
+
+
+@pytest.mark.parametrize(
+    ('exception', 'reason'),
+    [(ApprovalRequired, 'requires approval'), (CallDeferred, 'runs externally')],
+)
+async def test_deferred_tool_becomes_deliberate_error_result(exception: type[Exception], reason: str) -> None:
+    # Deferred-tool flows are graph-only: a live session can't pause for out-of-band approval or an
+    # external result, so the model gets a deliberate explanation (not a leaked exception repr) and
+    # the conversation keeps flowing.
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise exception
+
+    session = RealtimeSession(conn, runner)
+    events = await collect_events(session)
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert result.part.content == f"Error: The 'boom' tool {reason} and cannot be completed during a realtime session."
 
 
 async def test_tool_does_not_block_other_events() -> None:

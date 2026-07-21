@@ -18,7 +18,7 @@ from typing_extensions import assert_never
 
 from .._instrumentation import response_attributes, safe_to_json
 from .._utils import cancel_and_drain
-from ..exceptions import ToolRetryError, UserError
+from ..exceptions import ApprovalRequired, CallDeferred, ToolRetryError, UserError
 from ..messages import (
     BinaryContent,
     FunctionToolCallEvent,
@@ -864,6 +864,17 @@ class RealtimeSession:
                 tool_result = await self._tool_manager.handle_call(tool_call)
             except ToolRetryError as e:
                 result = e.tool_retry.model_response()
+            except (ApprovalRequired, CallDeferred) as e:
+                # Deferred-tool flows are graph-only (see the support matrix in the realtime docs): a
+                # live session can't pause for out-of-band approval or an external result, and the
+                # provider expects an answer on the string-only tool channel. Answer with a deliberate
+                # explanation — rather than a leaked exception repr — so the model can voice why the
+                # action didn't happen and the conversation keeps flowing.
+                reason = 'requires approval' if isinstance(e, ApprovalRequired) else 'runs externally'
+                result = (
+                    f'Error: The {call.tool_name!r} tool {reason} and cannot be completed during a '
+                    'realtime session.'
+                )
             except Exception as e:
                 result = f'Error: {e}'
             else:
