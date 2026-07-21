@@ -47,7 +47,7 @@ Already-loaded capabilities stay loaded for the rest of the run — the model ne
 Loading activates the whole bundle, not just instructions: the capability's function tools, model settings, and lifecycle hooks come live together (see [What you can defer](#what-you-can-defer)). It's a one-line change to a capability you already register, it works on [every provider](#cross-provider-behavior), and it [survives history replay](#resumable-across-runs).
 
 !!! note
-    The `load_capability` tool name is reserved whenever any on-demand capability is present. Capability `id` values must be stable and explicit — see [Resumable across runs](#resumable-across-runs).
+    The `load_capability` tool name is reserved whenever any on-demand capability is present. Capability `id` values must be stable — set one explicitly unless the capability derives a stable `id` itself, as [`MCP`][pydantic_ai.capabilities.MCP] does from its server URL. See [Resumable across runs](#resumable-across-runs).
 
 !!! note "Deferred instructions reach client-facing message history"
     A deferred capability's instructions come back as the `load_capability` tool *result*, so they land in the run's message history — including the copy a [UI adapter](../ui/overview.md) serializes to the client. Instructions on an always-on capability stay in the server-side system prompt instead. If a capability's instructions shouldn't be exposed to the client, keep it always-on rather than deferred.
@@ -326,7 +326,7 @@ class AccountSecurity(AbstractCapability[Store]):
         return ModelSettings(extra_body={'reasoning_effort': 'high'})
 
     async def before_tool_execute(self, ctx, *, call, tool_def, args):
-        # Approval gate for destructive actions, active once the model has loaded `account-security`.
+        # Approval gate: inspect the call and raise to block, active once the model has loaded `account-security`.
         return args
 
 
