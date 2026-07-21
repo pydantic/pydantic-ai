@@ -108,11 +108,3 @@ def best_effort_usage_cost(
             stacklevel=2,
         )
         return Decimal(0)
-
-
-def best_effort_cost(response: ModelResponse) -> Decimal:
-    """Best-effort cost of a response in USD; a pricing failure never fails the run."""
-    price_calculation = best_effort_price_calculation(response)
-    if price_calculation is None:
-        return Decimal(0)
-    return price_calculation.total_price

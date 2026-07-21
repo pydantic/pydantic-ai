@@ -791,7 +791,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                     ctx.state.usage.incr(partial_response.usage)
                     # ^ Above should handle it for us ideally
-                    # ctx.state.usage.cost += best_effort_cost(partial_response)
                     ctx.state.message_history.append(partial_response)
             else:
                 try:
@@ -1104,7 +1103,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.usage.incr(response.usage)
         # Above should handle it for us ^
-        # ctx.state.usage.cost += best_effort_cost(response)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
             ctx.deps.usage_limits.check_cost(ctx.state.usage)
