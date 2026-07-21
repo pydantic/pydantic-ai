@@ -146,7 +146,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
             self._base_url = str(openai_client.base_url)
             self._client = openai_client
             self._azure_endpoint = self._base_url.partition('/openai/')[0].rstrip('/')
-            self._api_key = openai_client.api_key if isinstance(openai_client.api_key, str) else None
+            self._api_key = openai_client.api_key or None
         else:
             azure_endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT')
             if not azure_endpoint:
