@@ -1,31 +1,45 @@
 from __future__ import annotations
 
-from abc import ABC
-from collections.abc import Callable
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
+from typing import Any, Literal, cast
 
-from pydantic_ai import AbstractToolset, FunctionToolset, WrapperToolset
+from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
 
 from ._types import TaskConfig
 
-if TYPE_CHECKING:
-    pass
 
+def resolve_tool_task_config(
+    tool: ToolsetTool[Any] | None,
+    tool_name: str,
+    tool_task_config: Mapping[str, TaskConfig | None],
+) -> TaskConfig | Literal[False]:
+    """Resolve per-tool Prefect task config.
 
-class PrefectWrapperToolset(WrapperToolset[AgentDepsT], ABC):
-    """Base class for Prefect-wrapped toolsets."""
-
-    @property
-    def id(self) -> str | None:
-        # Prefect toolsets should have IDs for better task naming
-        return self.wrapped.id
-
-    def visit_and_replace(
-        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
-    ) -> AbstractToolset[AgentDepsT]:
-        # Prefect-ified toolsets cannot be swapped out after the fact.
-        return self
+    Reads `tool.tool_def.metadata['prefect']` first, then falls back to the explicit
+    `tool_task_config` dict keyed by tool name. Returns a `TaskConfig` dict (possibly
+    empty), or `False` to skip task wrapping.
+    """
+    # Metadata set on the tool (via @toolset.tool(metadata={'prefect': ...}), with_metadata, or
+    # the `SetToolMetadata` capability) is the primary path.
+    if tool is not None and tool.tool_def.metadata is not None:
+        metadata_config = tool.tool_def.metadata.get('prefect')
+        if metadata_config is False:
+            return False
+        if metadata_config is not None:
+            if not isinstance(metadata_config, dict):
+                raise UserError(
+                    f"Tool {tool_name!r} has invalid 'prefect' metadata: expected a dict "
+                    f'(`TaskConfig`) or `False`, got {type(metadata_config).__name__}.'
+                )
+            return cast('TaskConfig', metadata_config)
+    # Fallback: per-tool dict passed to the deprecated `PrefectAgent`. An explicit `None`
+    # disables wrapping; a missing key means "use the base config".
+    if tool_name in tool_task_config:
+        fallback = tool_task_config[tool_name]
+        return False if fallback is None else fallback
+    return {}
 
 
 def prefectify_toolset(
@@ -43,9 +57,9 @@ def prefectify_toolset(
         tool_task_config_by_name: Per-tool task configuration. Keys are tool names, values are TaskConfig or None.
     """
     if isinstance(toolset, FunctionToolset):
-        from ._function_toolset import PrefectFunctionToolset
+        from ._function_toolset import prefectify_function_toolset
 
-        return PrefectFunctionToolset(
+        return prefectify_function_toolset(
             wrapped=toolset,
             task_config=tool_task_config,
             tool_task_config=tool_task_config_by_name,
@@ -54,12 +68,12 @@ def prefectify_toolset(
     try:
         from pydantic_ai.mcp import MCPToolset
 
-        from ._mcp_toolset import PrefectMCPToolset
+        from ._mcp_toolset import prefectify_mcp_toolset
     except ImportError:
         pass
     else:
         if isinstance(toolset, MCPToolset):
-            return PrefectMCPToolset(
+            return prefectify_mcp_toolset(
                 wrapped=toolset,
                 task_config=mcp_task_config,
             )

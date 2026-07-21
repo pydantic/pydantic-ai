@@ -1,0 +1,591 @@
+from __future__ import annotations
+
+import asyncio
+import copy
+from collections.abc import AsyncGenerator, Callable, Mapping
+from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any, ClassVar, cast
+
+from pydantic import ConfigDict, with_config
+from pydantic.errors import PydanticUserError
+from pydantic_core import PydanticSerializationError
+from temporalio import activity, workflow
+from temporalio.common import RetryPolicy
+from temporalio.workflow import ActivityConfig
+
+from pydantic_ai import messages as _messages
+from pydantic_ai._agent_graph import set_agent_graph_sleep
+from pydantic_ai._run_context import set_current_run_context
+from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.capabilities import DynamicCapability
+from pydantic_ai.capabilities.abstract import (
+    AbstractCapability,
+    WrapModelRequestHandler,
+    WrapRunHandler,
+    leaf_capabilities,
+)
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
+from pydantic_ai.durable_exec._toolset import DurableToolsetBase
+from pydantic_ai.durable_exec._utils import (
+    DurableModel,
+    StreamedActivityResult,
+    capture_event_stream,
+    disable_threads,
+)
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse
+from pydantic_ai.models import (
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+)
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
+
+from ._run_context import TemporalRunContext, deserialize_run_context
+from ._toolset import (
+    TemporalWrapperToolset,
+    temporalize_toolset as _default_temporalize_toolset,
+    toolset_temporal_activities,
+)
+
+
+@dataclass
+@with_config(ConfigDict(arbitrary_types_allowed=True))
+class _RequestParams:
+    """Serializable arguments for the model-request Temporal activity."""
+
+    messages: list[_messages.ModelMessage]
+    # `model_settings` can't be a `ModelSettings` because Temporal would end up dropping fields only defined on its subclasses.
+    model_settings: dict[str, Any] | None
+    model_request_parameters: ModelRequestParameters
+    serialized_run_context: Any
+    model_id: str | None = None
+
+
+@dataclass
+class _CancelParams:
+    response: ModelResponse
+    serialized_run_context: Any
+    model_id: str | None = None
+
+
+@dataclass
+@with_config(ConfigDict(arbitrary_types_allowed=True))
+class _EventStreamHandlerParams:
+    event: AgentStreamEvent
+    serialized_run_context: Any
+
+
+_DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
+"""Default `heartbeat_timeout` for the model-request activities.
+
+A model request activity can legitimately run for a long time while waiting for one
+provider round trip. Heartbeating lets Temporal distinguish that long-but-healthy
+activity from a crashed worker, and makes workflow cancellation deliverable
+mid-request (cancellation reaches an activity as a response to a heartbeat).
+"""
+
+
+@asynccontextmanager
+async def _heartbeating() -> AsyncGenerator[None]:
+    """Emit periodic activity heartbeats in the background while the wrapped request runs.
+
+    The beat interval is derived from the activity's configured `heartbeat_timeout` so a
+    custom (shorter or longer) timeout keeps working; the SDK additionally throttles
+    outgoing heartbeats on its own. Without a configured timeout, heartbeats are inert but
+    harmless, so a plain 5-second cadence is fine.
+
+    The heartbeat task is supervised: if `beat()` itself crashes, the failure surfaces
+    once the wrapped request completes, so the activity fails loudly instead of having
+    silently run without heartbeats (the server would have failed the attempt via
+    `heartbeat_timeout` anyway had the crash come early). An exception from the wrapped
+    request always wins — a heartbeat failure never replaces it.
+    """
+
+    async def beat() -> None:
+        timeout = activity.info().heartbeat_timeout
+        interval = timeout.total_seconds() / 2 if timeout else 5.0
+        while True:
+            activity.heartbeat()
+            await asyncio.sleep(interval)
+
+    task = asyncio.create_task(beat())
+    try:
+        yield
+    except BaseException:
+        # The request's exception is already propagating; a heartbeat failure must not
+        # replace it.
+        task.cancel()
+        with suppress(BaseException):
+            await task
+        raise
+    else:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            # Anything but our own cancellation is a `beat()` crash — propagate it.
+            await task
+
+
+def _with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
+    """Return a copy of `retry_policy` with the framework's non-retryable errors ensured.
+
+    `UserError` and `PydanticUserError` won't be fixed by re-running the activity, and an
+    `UnexpectedModelBehavior` (e.g. a model staying suspended past the continuation ceiling)
+    would only re-incur the request's cost. A user-supplied `retry_policy` in any activity
+    config would otherwise replace the base policy wholesale and silently drop these, so the
+    guarantee is re-applied after every merge that may override the policy.
+    """
+    retry_policy = copy.copy(retry_policy) if retry_policy else RetryPolicy()
+    existing = retry_policy.non_retryable_error_types or []
+    additional = [UserError.__name__, PydanticUserError.__name__, UnexpectedModelBehavior.__name__]
+    retry_policy.non_retryable_error_types = [*existing, *(name for name in additional if name not in existing)]
+    return retry_policy
+
+
+@dataclass(init=False)
+class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
+    """Capability that makes an agent durable by routing I/O through Temporal activities.
+
+    When added to an agent, this capability intercepts model requests and
+    wraps toolsets to route their I/O through Temporal activities.
+    Outside of workflows, the capability is transparent.
+
+    The capability discovers the agent's model, name, and toolsets
+    automatically via `for_agent()`. Only Temporal-specific configuration
+    needs to be passed to the constructor.
+
+    Example:
+        ```python {test="skip"}
+        from pydantic_ai import Agent
+        from pydantic_ai.durable_exec.temporal import TemporalDurability
+
+        durability = TemporalDurability()
+        agent = Agent('openai:gpt-5.6-sol', name='my_agent', capabilities=[durability])
+        ```
+    """
+
+    engine_name = 'Temporal'
+    _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset(
+        {'function', 'mcp', 'dynamic'}
+    )
+
+    _durable_unit_noun = 'activity'
+    _durable_container_noun = 'workflow'
+    _tool_config_key = 'temporal'
+
+    run_context_type: type[TemporalRunContext[AgentDepsT]]
+    """The `TemporalRunContext` subclass used to serialize/deserialize the run context."""
+
+    activity_config: ActivityConfig
+    """Base Temporal activity config used for all activities."""
+
+    def __init__(
+        self,
+        *,
+        models: Mapping[str, Model] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        name: str | None = None,
+        deps_type: type[AgentDepsT] | None = None,
+        activity_config: ActivityConfig | None = None,
+        model_activity_config: ActivityConfig | None = None,
+        event_stream_handler_activity_config: ActivityConfig | None = None,
+        toolset_activity_config: dict[str, ActivityConfig] | None = None,
+        run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+    ):
+        """Create a TemporalDurability capability.
+
+        The agent's model, name, and toolsets are discovered automatically
+        when the capability is attached to an agent (via `for_agent()`).
+
+        Args:
+            models: Optional additional models keyed by ID for runtime model
+                switching. The agent's primary model is always registered as
+                `'default'`. A `Model` instance can't be serialized across the
+                activity boundary, so a run-time model (via `agent.run(model=...)`
+                / `agent.override(model=...)`, or swapped in by an outer capability)
+                is sent as its `model_id` string and rebuilt on the worker by
+                registry lookup, then the agent's `resolve_model_id` capability
+                chain / `infer_model`. Register an instance here (and reference it
+                by key or pass the registered instance) whenever its `model_id`
+                alone wouldn't rebuild it faithfully — e.g. a custom provider,
+                client, or settings. Model-name strings never need registering;
+                to customize how they're built (e.g. a custom provider), use the
+                [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
+            event_stream_handler: Optional event stream handler. Model events are handled
+                live inside model-request activities, and tool events are handled in
+                per-event activities.
+            name: Unique agent name used in the Temporal activity names. Defaults to the agent's
+                `name` when the capability is bound.
+            deps_type: The type of the agent's dependencies, needed for Temporal
+                serialization of activity parameters. Defaults to the agent's own
+                `deps_type`, discovered when the capability binds via `for_agent()`.
+            activity_config: Base Temporal activity config for all activities.
+                Defaults to a 60-second `start_to_close_timeout`.
+            model_activity_config: Activity config merged on top of the base for
+                model request activities.
+            event_stream_handler_activity_config: Activity config merged on top of the base for
+                event stream handler activities.
+            toolset_activity_config: Per-toolset activity configs keyed by toolset ID,
+                merged on top of the base config.
+            run_context_type: The `TemporalRunContext` subclass for run context
+                serialization/deserialization.
+
+        Note:
+            Per-tool activity config (custom timeouts, retry policies, or disabling
+            activity wrapping entirely) is configured via tool metadata:
+
+            ```python {test="skip" lint="skip"}
+            @my_toolset.tool(metadata={'temporal': ActivityConfig(...)})
+            async def my_slow_tool(...): ...
+            ```
+
+            or via the `SetToolMetadata` capability for selector-based config.
+            Setting the `'temporal'` key to `False` skips activity wrapping
+            (only valid for async tool functions).
+        """
+        super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
+        self.run_context_type = run_context_type
+        self._deps_type = deps_type
+
+        # Normalize the activity config on copies: mutating the caller's `ActivityConfig` or a
+        # `RetryPolicy` shared with other activities would leak the non-retryable entries into
+        # them, and repeated construction from the same config would accumulate duplicates.
+        activity_config = (
+            copy.copy(activity_config)
+            if activity_config
+            else ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
+        )
+        activity_config['retry_policy'] = _with_non_retryable_errors(activity_config.get('retry_policy'))
+        self.activity_config = activity_config
+        # The model activities heartbeat in the background (see `_heartbeating`), so give them a
+        # heartbeat timeout by default; an explicit `heartbeat_timeout` in either config wins.
+        self._model_activity_config: ActivityConfig = {
+            'heartbeat_timeout': _DEFAULT_MODEL_HEARTBEAT_TIMEOUT,
+            **activity_config,
+            **(model_activity_config or {}),
+        }
+        # A `retry_policy` in `model_activity_config` would otherwise replace the normalized
+        # base policy and drop the non-retryable entries.
+        self._model_activity_config['retry_policy'] = _with_non_retryable_errors(
+            self._model_activity_config.get('retry_policy')
+        )
+        self._event_stream_handler_activity_config: ActivityConfig = {
+            **activity_config,
+            **(event_stream_handler_activity_config or {}),
+        }
+        self._event_stream_handler_activity_config['retry_policy'] = _with_non_retryable_errors(
+            self._event_stream_handler_activity_config.get('retry_policy')
+        )
+        self._toolset_activity_config = toolset_activity_config or {}
+
+        # These are populated by for_agent()
+        self._temporal_activities: list[Callable[..., Any]] = []
+        self._bound_capability_classes: frozenset[type[AbstractCapability[AgentDepsT]]] = frozenset()
+
+    def _check_bindable(self) -> None:
+        if self.in_durable_context:
+            raise UserError(
+                'An agent with `TemporalDurability` must be constructed outside of a Temporal workflow, '
+                'so its activities can be registered with the worker before the workflow runs. '
+                'Construct the agent at module level (or in worker setup code) and reference it from the workflow.'
+            )
+
+    def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        # Snapshot the leaf capability classes registered with the agent so we can
+        # detect runtime additions (which would bypass activity registration).
+        self._bound_capability_classes = frozenset(type(cap) for cap in leaf_capabilities(agent.root_capability))
+
+        # Discover the deps type from the agent unless explicitly configured.
+        if self._deps_type is None:
+            self._deps_type = cast('type[AgentDepsT]', agent.deps_type)
+
+        # Register activities on the bound copy
+        self._temporal_activities = []
+        self._register_activities(agent)
+
+    def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        """Register all Temporal activities for model requests, event streaming, and toolsets."""
+        activity_name_prefix = f'agent__{self.name}'
+        assert self._deps_type is not None  # set by `for_agent` before activities are registered
+        deps_type = self._deps_type
+        run_context_type = self.run_context_type
+        activities: list[Callable[..., Any]] = []
+
+        def register_activity(fn: Callable[..., Any], *, name: str) -> Callable[..., Any]:
+            # Temporal's Pydantic payload converter deserializes `deps` by introspecting the activity's
+            # annotation, and the concrete deps type is only known once the capability is bound to an agent.
+            # Set it here so serialization uses the real type instead of the placeholder the closure declares.
+            fn.__annotations__['deps'] = deps_type | None
+            return activity.defn(name=name)(fn)
+
+        # --- Model request activities ---
+
+        async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
+            run_context = deserialize_run_context(
+                run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+            )
+            model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
+            async with _heartbeating():
+                with set_current_run_context(run_context):
+                    return await model_for_request.request(
+                        params.messages,
+                        cast(ModelSettings | None, params.model_settings),
+                        params.model_request_parameters,
+                    )
+
+        self.request_activity = register_activity(request_activity, name=f'{activity_name_prefix}__model_request')
+        activities.append(self.request_activity)
+
+        async def request_stream_activity(params: _RequestParams, deps: Any) -> StreamedActivityResult:
+            run_context = deserialize_run_context(
+                run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+            )
+            model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
+            async with _heartbeating():
+                with set_current_run_context(run_context):
+                    async with model_for_request.request_stream(
+                        params.messages,
+                        cast(ModelSettings | None, params.model_settings),
+                        params.model_request_parameters,
+                        run_context,
+                    ) as streamed_response:
+                        events = await capture_event_stream(
+                            run_context=run_context,
+                            stream=streamed_response,
+                            handler=self._event_stream_handler,
+                        )
+                return StreamedActivityResult(response=streamed_response.get(), events=events)
+
+        self.request_stream_activity = register_activity(
+            request_stream_activity, name=f'{activity_name_prefix}__model_request_stream'
+        )
+        activities.append(self.request_stream_activity)
+
+        if self._event_stream_handler is not None:
+            handler = self._event_stream_handler
+
+            async def event_stream_handler_activity(params: _EventStreamHandlerParams, deps: Any) -> None:
+                run_context = deserialize_run_context(
+                    run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+                )
+                await handler(run_context, self._single_event_stream(params.event))
+
+            self.event_stream_handler_activity = register_activity(
+                event_stream_handler_activity, name=f'{activity_name_prefix}__event_stream_handler'
+            )
+            activities.append(self.event_stream_handler_activity)
+
+        async def cancel_suspended_response_activity(params: _CancelParams, deps: Any) -> None:
+            run_context = deserialize_run_context(
+                run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+            )
+            model = await self._resolve_model_for_request(params.model_id, run_context)
+            # The cancel activity shares `_model_activity_config`, whose default `heartbeat_timeout`
+            # would otherwise fail a slow provider-teardown call for missed heartbeats.
+            async with _heartbeating():
+                with set_current_run_context(run_context):
+                    await model.cancel_suspended_response(params.response)
+
+        self.cancel_suspended_response_activity = register_activity(
+            cancel_suspended_response_activity,
+            name=f'{activity_name_prefix}__model_cancel_suspended_response',
+        )
+        activities.append(self.cancel_suspended_response_activity)
+
+        # --- Toolset wrapping ---
+        self._register_toolsets(agent)
+        for wrapped in self._toolsets_by_id.values():
+            activities.extend(toolset_temporal_activities(wrapped))
+
+        self._temporal_activities = activities
+
+    def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
+        ts_id = ts.id
+        toolset_activity_config = self.activity_config.copy()
+        if ts_id is not None:
+            toolset_activity_config.update(self._toolset_activity_config.get(ts_id, {}))
+        toolset_activity_config['retry_policy'] = _with_non_retryable_errors(
+            toolset_activity_config.get('retry_policy')
+        )
+        assert self._deps_type is not None
+        wrapped = _default_temporalize_toolset(
+            ts,
+            f'agent__{self.name}',
+            toolset_activity_config,
+            {},
+            self._deps_type,
+            self.run_context_type,
+            self._agent,
+        )
+        return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
+
+    @property
+    def temporal_activities(self) -> list[Callable[..., Any]]:
+        """All Temporal activities registered by this capability.
+
+        Register these with the Temporal worker, either directly or via
+        `AgentPlugin`.
+        """
+        return self._temporal_activities
+
+    # --- Capability hooks ---
+
+    @property
+    def in_durable_context(self) -> bool:
+        return workflow.in_workflow()
+
+    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+        config: ActivityConfig = {
+            'summary': f'handle event: {event.event_kind}',
+            **self._event_stream_handler_activity_config,
+        }
+        await workflow.execute_activity(
+            activity=self.event_stream_handler_activity,
+            args=[
+                _EventStreamHandlerParams(event=event, serialized_run_context=serialized_run_context),
+                ctx.deps,
+            ],
+            **config,
+        )
+
+    async def wrap_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        handler: WrapRunHandler,
+    ) -> AgentRunResult[Any]:
+        """Disable threads and catch serialization errors inside Temporal workflows."""
+        if not self.in_durable_context:
+            return await handler()
+
+        self._validate_per_run_capabilities(ctx)
+
+        with disable_threads(), set_agent_graph_sleep(workflow.sleep):
+            try:
+                return await handler()
+            except PydanticSerializationError as e:  # pragma: lax no cover
+                raise UserError(
+                    'The `deps` object failed to be serialized. Temporal requires all objects that are passed '
+                    "to activities to be serializable using Pydantic's `TypeAdapter`."
+                ) from e
+
+    def _validate_per_run_capabilities(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Reject per-run capabilities not registered at agent construction time.
+
+        Temporal needs activities registered with the worker before a workflow runs.
+        Capabilities added per-run (via `agent.run(capabilities=[...])`) bypass
+        `for_agent()` activity registration, so any toolsets or model wrappers they
+        contribute would silently execute in workflow code (non-deterministic, no
+        retry semantics). Reject by class identity: if a leaf in `ctx.root_capability`
+        has a type the bound chain didn't see, raise `UserError`.
+
+        Skipped when the bound tree contains a `DynamicCapability` — the resolved
+        factory result replaces the `DynamicCapability` in the run-time tree, so the
+        runtime-class check would falsely reject any class produced by the factory.
+        Issue #5253 tracks proper end-to-end durable support for `DynamicCapability`
+        toolsets; until that lands, the static class check is relaxed for any agent
+        that uses dynamic capabilities.
+
+        No equivalent check on DBOS/Prefect: their durable units (steps, tasks) are
+        plain decorated callables registered at first-use rather than worker boot, so
+        per-run capabilities can register on the fly without violating durability.
+        """
+        assert ctx.root_capability is not None
+
+        if any(issubclass(cls, DynamicCapability) for cls in self._bound_capability_classes):
+            # A `DynamicCapability`'s factory result *replaces* it in the run-time tree, so any
+            # factory-produced class would look like an unauthorized runtime addition and be
+            # falsely rejected; skip the check entirely for such agents until #5253 lands.
+            return
+
+        runtime_classes = {type(cap) for cap in leaf_capabilities(ctx.root_capability)}
+        # Capabilities that opt in via `_safe_at_runtime = True` (e.g. `Instrumentation`,
+        # auto-injected per-run by `Agent.iter()` when `instrument=…` / `LogfirePlugin` is
+        # used) don't introduce new toolsets, native tools, or model wrapping, so they
+        # don't need activities registered with the worker upfront.
+        extra = {cls for cls in runtime_classes - self._bound_capability_classes if not cls._safe_at_runtime}
+        if extra:
+            names = ', '.join(sorted(c.__name__ for c in extra))
+            raise UserError(
+                f'Capabilities added per-run inside a Temporal workflow are not supported: {names}. '
+                'Temporal activities must be registered with the worker before the workflow runs. '
+                'Attach all capabilities at agent construction time so `TemporalDurability.for_agent()` '
+                'can register their activities.'
+            )
+
+    async def wrap_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        request_context: ModelRequestContext,
+        handler: WrapModelRequestHandler,
+    ) -> ModelResponse:
+        """Route model requests through Temporal activities when inside a workflow."""
+        if not self.in_durable_context:
+            return await handler(request_context)
+
+        self._validate_model_request_parameters(request_context.model_request_parameters)
+
+        # Prefer the run's original model-id string (provenance) as the selection token;
+        # a model swapped in by an outer capability falls back to `_find_model_id` on
+        # `request_context.model` (which an outer instrumentation capability may have
+        # already unwrapped — instances are unwrap-matched by identity).
+        model_id = self._model_id_for_request(ctx, request_context)
+        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+        model_name = model_id or request_context.model.model_id
+        deps = ctx.deps
+
+        def params(request: ModelRequestContext) -> _RequestParams:
+            return _RequestParams(
+                request.messages,
+                cast(dict[str, Any] | None, request.model_settings),
+                request.model_request_parameters,
+                serialized_run_context,
+                model_id,
+            )
+
+        async def request_segment(request: ModelRequestContext) -> ModelResponse:
+            config: ActivityConfig = {'summary': f'request model: {model_name}', **self._model_activity_config}
+            return await workflow.execute_activity(
+                activity=self.request_activity, args=[params(request), deps], **config
+            )
+
+        async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
+            config: ActivityConfig = {
+                'summary': f'request model: {model_name} (stream)',
+                **self._model_activity_config,
+            }
+            return await workflow.execute_activity(
+                activity=self.request_stream_activity, args=[params(request), deps], **config
+            )
+
+        async def cancel_suspended_response_segment(response: ModelResponse) -> None:
+            config: ActivityConfig = {
+                'summary': f'cancel suspended response: {model_name}',
+                **self._model_activity_config,
+            }
+            await workflow.execute_activity(
+                activity=self.cancel_suspended_response_activity,
+                args=[_CancelParams(response, serialized_run_context, model_id), deps],
+                **config,
+            )
+
+        request_context.model = DurableModel(
+            request_context.model,
+            request_segment=request_segment,
+            request_stream_segment=request_stream_segment,
+            cancel_suspended_response_segment=cancel_suspended_response_segment,
+        )
+        return await handler(request_context)
+
+    def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
+        if model_request_parameters.allow_image_output:
+            raise UserError('Image output is not supported with Temporal because of the 2MB payload size limit.')
