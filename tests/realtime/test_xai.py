@@ -317,6 +317,18 @@ def _updated() -> str:
 
 
 @pytest.mark.anyio
+async def test_connect_captures_substituted_server_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    # xAI accepts any model slug — even a retired or misspelled one — and silently substitutes its
+    # current default, reporting the actually-served model only in `session.created`. Capturing it is
+    # the only way a session's history can show what model really answered.
+    created = json.dumps({'type': 'session.created', 'session': {'model': 'grok-voice-latest'}})
+    ws = FakeWebSocket([created, _updated()])
+    monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(ws))
+    async with _connect(_model(model='grok-voice-retired-1.0'), 'x') as conn:
+        assert conn.model_name == 'grok-voice-latest'
+
+
+@pytest.mark.anyio
 async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """The URL, bearer auth, and `session.update` frame are derived from the xAI provider."""
     # A dropped `.updated` partial followed by a real transcript proves the xAI codec is wired in.

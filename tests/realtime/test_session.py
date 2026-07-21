@@ -174,11 +174,17 @@ class FakeRealtimeConnection(RealtimeConnection):
         *,
         release: asyncio.Event | None = None,
         input_transcription_enabled: bool = True,
+        model_name: str | None = None,
     ) -> None:
         self._events = events
         self._release = release
         self._input_transcription_enabled = input_transcription_enabled
+        self._model_name = model_name
         self.sent: list[RealtimeInput] = []
+
+    @property
+    def model_name(self) -> str | None:
+        return self._model_name
 
     @property
     def input_transcription_enabled(self) -> bool:
@@ -543,6 +549,19 @@ async def test_deferred_tool_becomes_deliberate_error_result(exception: type[Exc
     events = await collect_events(session)
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert result.part.content == f"Error: The 'boom' tool {reason} and cannot be completed during a realtime session."
+
+
+async def test_response_model_name_prefers_server_reported() -> None:
+    # `ModelResponse.model_name` records the model the connection reports the server actually served
+    # (it can differ from the requested id — xAI silently substitutes its default for unknown slugs),
+    # mirroring how request-response models stamp the response's reported model, not the requested one.
+    conn = FakeRealtimeConnection(
+        [Transcript(text='hi', is_final=True), TurnCompleteEvent()], model_name='grok-voice-latest'
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='grok-voice-4-turbo')
+    _ = await collect_events(session)
+    response = next(m for m in session.all_messages() if isinstance(m, ModelResponse))
+    assert response.model_name == 'grok-voice-latest'
 
 
 async def test_tool_does_not_block_other_events() -> None:

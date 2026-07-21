@@ -593,7 +593,10 @@ class RealtimeSession:
             response = ModelResponse(
                 parts=parts,
                 usage=self._pending_response_usage,
-                model_name=self._model_name,
+                # Prefer the model the server reported actually serving the session (it can differ
+                # from the requested id — xAI silently substitutes its default for unknown slugs),
+                # mirroring how request-response models stamp the response's reported model.
+                model_name=self._connection.model_name or self._model_name,
             )
             self._history.append(response)
         self._end_chat_span(input_messages, response)

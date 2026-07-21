@@ -53,6 +53,7 @@ from ._base import (
 from ._openai_protocol import (
     expect_event,
     map_event as _map_openai_event,
+    obj,
     realtime_websocket_url,
     resolve_base_turn_detection,
     resolve_transcription_model,
@@ -230,15 +231,23 @@ class XaiRealtimeModel(RealtimeModel):
         # accumulate; teardown closes whatever is current.
         cm: AbstractAsyncContextManager[ClientConnection] | None = None
 
+        # The model the server reports actually serving, from the `session.created` handshake. xAI
+        # accepts any model slug and silently substitutes its current default, so this is the only
+        # record of what actually served the session (see `RealtimeConnection.model_name`).
+        server_model: str | None = None
+
         async def dial() -> ClientConnection:
-            nonlocal cm
+            nonlocal cm, server_model
             if cm is not None:
                 previous, cm = cm, None
                 await previous.__aexit__(None, None, None)
             opening = websockets.connect(url, additional_headers=headers)
             ws = await opening.__aenter__()
             cm = opening
-            await expect_event(ws, 'session.created', timeout=handshake_timeout)
+            created = await expect_event(ws, 'session.created', timeout=handshake_timeout)
+            model = obj(created.get('session')).get('model')
+            if isinstance(model, str) and model:
+                server_model = model
             await ws.send(json.dumps({'type': 'session.update', 'session': session_config}))
             await expect_event(ws, 'session.updated', timeout=handshake_timeout)
             return ws
@@ -254,6 +263,7 @@ class XaiRealtimeModel(RealtimeModel):
                 dial=dial,
                 reconnect=self.reconnect,
                 input_transcription_enabled=transcription_enabled,
+                model_name=server_model,
             )
         finally:
             if cm is not None:

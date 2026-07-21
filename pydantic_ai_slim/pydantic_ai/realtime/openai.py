@@ -173,8 +173,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         dial: Callable[[], Awaitable[ClientConnection]] | None = None,
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
+        model_name: str | None = None,
     ) -> None:
         self._ws = ws
+        self._model_name = model_name
         # `dial` re-establishes a fully configured connection; with a `reconnect` policy it is used to
         # recover from a dropped WebSocket.
         self._dial = dial
@@ -191,6 +193,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # single cooperative event loop the plain reads/writes are safe and eventually consistent.
         self._current_item_id: str | None = None
         self._current_content_index = 0
+
+    @property
+    def model_name(self) -> str | None:
+        return self._model_name
 
     @property
     def input_transcription_enabled(self) -> bool:
@@ -539,15 +545,22 @@ class OpenAIRealtimeModel(RealtimeModel):
         # don't accumulate; teardown closes whatever is current.
         cm: AbstractAsyncContextManager[ClientConnection] | None = None
 
+        # The model the server reports actually serving, from the `session.created` handshake; it can
+        # differ from the requested id (see `RealtimeConnection.model_name`).
+        server_model: str | None = None
+
         async def dial() -> ClientConnection:
-            nonlocal cm
+            nonlocal cm, server_model
             if cm is not None:
                 previous, cm = cm, None
                 await previous.__aexit__(None, None, None)
             opening = websockets.connect(url, additional_headers=headers)
             ws = await opening.__aenter__()
             cm = opening
-            await expect_event(ws, 'session.created', timeout=handshake_timeout)
+            created = await expect_event(ws, 'session.created', timeout=handshake_timeout)
+            model = obj(created.get('session')).get('model')
+            if isinstance(model, str) and model:
+                server_model = model
             await ws.send(json.dumps({'type': 'session.update', 'session': session_config}))
             await expect_event(ws, 'session.updated', timeout=handshake_timeout)
             return ws
@@ -563,6 +576,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 dial=dial,
                 reconnect=self.reconnect,
                 input_transcription_enabled=transcription_enabled,
+                model_name=server_model,
             )
         finally:
             if cm is not None:

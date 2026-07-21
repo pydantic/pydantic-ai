@@ -589,6 +589,19 @@ class RealtimeConnection(ABC):
         raise NotImplementedError
 
     @property
+    def model_name(self) -> str | None:
+        """The model id the server reported serving this session, when the provider reports one.
+
+        Captured from the connect handshake (e.g. the OpenAI protocol's `session.created`). It can
+        differ from the requested model id: xAI accepts any model slug and silently substitutes its
+        current default, reporting the actually-served model only here. `None` when the provider
+        doesn't report one (e.g. Gemini Live). The session stamps this on each
+        [`ModelResponse.model_name`][pydantic_ai.messages.ModelResponse.model_name], mirroring how
+        request-response models record the response's reported model rather than the requested one.
+        """
+        return None
+
+    @property
     def input_transcription_enabled(self) -> bool:
         """Whether this connection will emit [`InputTranscript`][pydantic_ai.realtime.InputTranscript] events for the user's audio.
 

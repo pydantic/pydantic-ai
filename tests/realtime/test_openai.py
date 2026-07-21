@@ -1061,6 +1061,27 @@ async def test_connect_rejects_unseedable_speech_and_response_parts(monkeypatch:
 
 
 @pytest.mark.anyio
+async def test_connect_captures_server_reported_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `session.created` reports the model actually serving the session; the connection captures it so
+    # the session can stamp it on `ModelResponse.model_name` (it can differ from the requested id).
+    created = json.dumps({'type': 'session.created', 'session': {'model': 'gpt-realtime-2025-06-03'}})
+    ws = FakeWebSocket([created, _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x') as conn:
+        assert conn.model_name == 'gpt-realtime-2025-06-03'
+
+
+@pytest.mark.anyio
+async def test_connect_without_server_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A handshake that doesn't report a model (like these bare test frames) leaves `model_name` unset,
+    # so the session falls back to the configured id.
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x') as conn:
+        assert conn.model_name is None
+
+
+@pytest.mark.anyio
 async def test_connect_seed_skips_compaction_parts(monkeypatch: pytest.MonkeyPatch) -> None:
     # Provider-session-bound compaction state can't round-trip into another session; like the classic
     # model adapters crossing APIs, seeding skips it silently rather than erroring.
