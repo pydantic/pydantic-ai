@@ -607,7 +607,8 @@ async with agent.realtime_session(
 
 Realtime sessions emit OpenTelemetry spans when the agent is instrumented — call
 `logfire.instrument_pydantic_ai()` (or set `instrument=True` on the agent). You get a session span
-carrying cumulative usage and, when `include_content` is enabled, the conversation transcript.
+(reported as an agent invocation, like a classic run) carrying cumulative usage and the conversation
+transcript (content is redacted when `include_content` is disabled).
 Nested under it, each assistant response gets a `chat {model}` span (mirroring a classic model
 request: that response's input/output messages and per-turn usage), and each tool call an
 `execute_tool` span (including any delegated text-agent run). See

@@ -31,7 +31,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -218,7 +218,9 @@ async def test_session_and_tool_spans_with_usage() -> None:
 
     sess = spans['realtime gpt-realtime']
     assert sess.attributes is not None
-    assert sess.attributes['gen_ai.operation.name'] == 'realtime'
+    # The semconv operation-name enum has no realtime value, so the session span reports the
+    # session as an agent invocation like the classic agent-run span.
+    assert sess.attributes['gen_ai.operation.name'] == 'invoke_agent'
     assert sess.attributes['gen_ai.request.model'] == 'gpt-realtime'
     assert sess.attributes['gen_ai.agent.name'] == 'assistant'
     # `gen_ai.output.type` reports the configured output modality; the default is spoken audio,
@@ -456,8 +458,9 @@ async def test_explicit_capability_settings_win_over_instrument() -> None:
 
 
 async def test_session_captures_transcript_messages() -> None:
-    # The session span reuses the shared message → gen_ai serialization on the finalized history:
-    # the user request lands as an input message, the assistant response as an output message.
+    # The session span mirrors the classic agent-run span's end-of-run contract: the full
+    # conversation, in order, under `pydantic_ai.all_messages`, with `logfire.json_schema` marking
+    # it as a JSON array so the Logfire UI renders it as a conversation.
     settings, exporter = _settings()
     conn = _Connection(
         [
@@ -471,29 +474,53 @@ async def test_session_captures_transcript_messages() -> None:
 
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
     assert sess.attributes is not None
-    assert json.loads(str(sess.attributes['gen_ai.input.messages'])) == [
+    assert json.loads(str(sess.attributes['pydantic_ai.all_messages'])) == [
         {'role': 'user', 'parts': [{'type': 'text', 'content': 'hello there'}]},
-    ]
-    assert json.loads(str(sess.attributes['gen_ai.output.messages'])) == [
         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'hi, how can I help?'}]},
     ]
-    # `logfire.json_schema` marks the message attributes as JSON arrays so the Logfire UI renders
-    # them as a conversation (matching the classic agent-run span and per-turn `chat` spans).
     assert json.loads(str(sess.attributes['logfire.json_schema']))['properties'] == {
-        'gen_ai.input.messages': {'type': 'array'},
-        'gen_ai.output.messages': {'type': 'array'},
+        'pydantic_ai.all_messages': {'type': 'array'},
     }
+    # No seeded history, so there is no prior-messages boundary to mark.
+    assert 'pydantic_ai.new_message_index' not in sess.attributes
 
 
-async def test_include_content_false_omits_transcript_messages() -> None:
+async def test_session_span_marks_seeded_history_boundary() -> None:
+    # A session seeded with `message_history=` includes the seeded messages in
+    # `pydantic_ai.all_messages` and marks where this session's own messages begin with
+    # `pydantic_ai.new_message_index`, exactly like a classic run given `message_history=`.
+    settings, exporter = _settings()
+    conn = _Connection([InputTranscript(text='and now?', is_final=True), TurnCompleteEvent()])
+    seeded: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='earlier question')]),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    session = RealtimeSession(
+        conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime', message_history=seeded
+    )
+    _ = await collect_events(session)
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    assert sess.attributes is not None
+    assert sess.attributes['pydantic_ai.new_message_index'] == 2
+    all_messages = json.loads(str(sess.attributes['pydantic_ai.all_messages']))
+    assert [m['role'] for m in all_messages] == ['user', 'assistant', 'user']
+    assert all_messages[2]['parts'] == [{'type': 'text', 'content': 'and now?'}]
+
+
+async def test_include_content_false_redacts_transcript_messages() -> None:
+    # With `include_content=False` the conversation *structure* is still emitted (matching the
+    # classic agent-run span); per-part content is redacted by `otel_message_parts`.
     settings, exporter = _settings(include_content=False)
     conn = _Connection([InputTranscript(text='secret', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
     assert sess.attributes is not None
-    assert 'gen_ai.input.messages' not in sess.attributes
-    assert 'logfire.json_schema' not in sess.attributes
+    assert json.loads(str(sess.attributes['pydantic_ai.all_messages'])) == [
+        {'role': 'user', 'parts': [{'type': 'text'}]},
+    ]
+    assert 'secret' not in str(sess.attributes['pydantic_ai.all_messages'])
 
 
 async def test_session_span_sets_conversation_id() -> None:
@@ -527,7 +554,7 @@ async def test_session_span_without_model_or_usage() -> None:
     _ = await collect_events(session)
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime')
     assert sess.attributes is not None
-    assert sess.attributes['gen_ai.operation.name'] == 'realtime'
+    assert sess.attributes['gen_ai.operation.name'] == 'invoke_agent'
     assert 'gen_ai.request.model' not in sess.attributes
     assert 'gen_ai.agent.name' not in sess.attributes
     assert 'gen_ai.usage.input_tokens' not in sess.attributes  # zero usage → no token attribute / metric

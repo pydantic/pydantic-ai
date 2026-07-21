@@ -319,8 +319,12 @@ class RealtimeSession:
 
         settings = self._instrumentation
         if settings is not None:
+            # The session is the realtime analog of an agent run, and the semconv operation-name
+            # enum has no realtime/speech value (nor do other voice frameworks emit one), so use
+            # `invoke_agent` like the classic agent-run span — backends render the session as an
+            # agent invocation — with `gen_ai.output.type` (`speech`/`text`) capturing the modality.
             attributes: dict[str, Any] = {
-                'gen_ai.operation.name': 'realtime',
+                'gen_ai.operation.name': 'invoke_agent',
                 'gen_ai.output.type': self._otel_output_type,
             }
             if self._model_name:
@@ -817,27 +821,19 @@ class RealtimeSession:
         # span) so backends that sum span attributes don't double-count it against the per-turn `chat`
         # spans, which carry each response's usage under `gen_ai.usage.*`. Shared with the classic span.
         attributes: dict[str, Any] = dict(settings.aggregated_usage_attributes(self.usage))
-        message_attributes: dict[str, str] = {}
-        if settings.include_content:
-            # Reuse the same message → gen_ai serialization the instrumented model uses. User/tool
-            # requests land as input messages; assistant responses as output messages.
-            requests: list[ModelMessage] = [m for m in self._history if isinstance(m, ModelRequest)]
-            responses: list[ModelMessage] = [m for m in self._history if isinstance(m, ModelResponse)]
-            if requests:
-                message_attributes['gen_ai.input.messages'] = safe_to_json(
-                    settings.messages_to_otel_messages(requests)
-                ).decode()
-            if responses:
-                message_attributes['gen_ai.output.messages'] = safe_to_json(
-                    settings.messages_to_otel_messages(responses)
-                ).decode()
-        if message_attributes:
-            # `logfire.json_schema` marks the message attributes as JSON arrays so the Logfire UI
-            # deserializes and renders them as a conversation rather than as strings — matching the
-            # classic agent-run span and `InstrumentationSettings.handle_messages` on `chat` spans.
-            attributes.update(message_attributes)
+        # Mirror the classic agent-run span's end-of-run contract (the `Instrumentation`
+        # capability's `_run_span_end_attributes`): the full conversation — seeded history included —
+        # under `pydantic_ai.all_messages`, with `pydantic_ai.new_message_index` marking where this
+        # session's messages begin. Emitted regardless of `include_content`: `otel_message_parts`
+        # redacts part *content* when it is disabled, leaving the conversation structure. The
+        # `logfire.json_schema` entry marks the attribute as a JSON array so the Logfire UI
+        # deserializes and renders it as a conversation rather than as a string.
+        if messages := self.all_messages():
+            attributes['pydantic_ai.all_messages'] = safe_to_json(settings.messages_to_otel_messages(messages)).decode()
+            if self._seeded:
+                attributes['pydantic_ai.new_message_index'] = len(self._seeded)
             attributes['logfire.json_schema'] = pydantic_core.to_json(
-                {'type': 'object', 'properties': {key: {'type': 'array'} for key in message_attributes}}
+                {'type': 'object', 'properties': {'pydantic_ai.all_messages': {'type': 'array'}}}
             ).decode()
         span.set_attributes(attributes)
         for token_type, tokens in (('input', self.usage.input_tokens), ('output', self.usage.output_tokens)):
