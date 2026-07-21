@@ -192,7 +192,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
                 f'{self._durable_container_noun}. Set the dynamic toolset ID with `DynamicToolset(id=...)`, '
                 "or, when it is contributed by a capability, set the capability's `id` (for example, "
-                "`DynamicCapability(..., id='user-tools')`)."
+                "`DynamicCapability(..., id='user-tools')`). A capability function passed directly to "
+                '`capabilities=` cannot carry an `id`; wrap it explicitly: '
+                "`DynamicCapability(capability_func=my_func, id='...')`."
             )
         if ts_id is not None and (existing := self._toolsets_by_id.get(ts_id)) is not None:
             if existing.wrapped is ts:
