@@ -395,7 +395,7 @@ def _ws_trace_context(client: Client) -> Generator[None]:
 
 
 @dataclass
-class GoogleRealtimeModel(RealtimeModel[GoogleRealtimeModelSettings]):
+class GoogleRealtimeModel(RealtimeModel):
     """Gemini Live API model.
 
     Session and generation configuration is read from
@@ -422,7 +422,7 @@ class GoogleRealtimeModel(RealtimeModel[GoogleRealtimeModelSettings]):
 
     model: str = 'gemini-2.5-flash-native-audio-latest'
     provider: InitVar[Provider[Client] | str] = 'google'
-    settings: GoogleRealtimeModelSettings | None = field(default=None, kw_only=True)
+    settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[Client] = field(init=False, repr=False)
 
@@ -554,7 +554,7 @@ class GoogleRealtimeModel(RealtimeModel[GoogleRealtimeModelSettings]):
         native_tools: list[AbstractNativeTool] | None = None,
         resumption_handle: str | None = None,
     ) -> genai_types.LiveConnectConfig:
-        settings = self._merge_model_settings(model_settings) or {}
+        settings = cast('GoogleRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         modality = (
             genai_types.Modality.AUDIO
             if settings.get('output_modality', 'audio') == 'audio'
@@ -608,8 +608,7 @@ class GoogleRealtimeModel(RealtimeModel[GoogleRealtimeModelSettings]):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[GoogleRealtimeConnection]:
         client = self._provider.client
-        provider_model_settings = cast('GoogleRealtimeModelSettings', model_settings)
-        settings = self._merge_model_settings(provider_model_settings) or {}
+        settings = cast('GoogleRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         instructions = get_instructions(messages) or ''
         # Transparent reconnect needs both a backoff policy and session resumption (so the server
         # restores state on re-dial). Without resumption a re-dial would lose the conversation.

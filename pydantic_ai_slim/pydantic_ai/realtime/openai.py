@@ -377,7 +377,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
 
 
 @dataclass
-class OpenAIRealtimeModel(RealtimeModel[OpenAIRealtimeModelSettings]):
+class OpenAIRealtimeModel(RealtimeModel):
     """OpenAI Realtime API model.
 
     Authentication, base URL, and the HTTP/WebSocket client come from a
@@ -399,7 +399,7 @@ class OpenAIRealtimeModel(RealtimeModel[OpenAIRealtimeModelSettings]):
 
     model: str = 'gpt-realtime'
     provider: InitVar[Provider[AsyncOpenAI] | str] = 'openai'
-    settings: OpenAIRealtimeModelSettings | None = field(default=None, kw_only=True)
+    settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
 
@@ -432,7 +432,7 @@ class OpenAIRealtimeModel(RealtimeModel[OpenAIRealtimeModelSettings]):
         tools: list[ToolDefinition] | None,
         model_settings: OpenAIRealtimeModelSettings | None,
     ) -> dict[str, Any]:
-        model_settings = self._merge_model_settings(model_settings) or {}
+        model_settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         if 'openai_turn_detection' in model_settings:
             turn_detection = model_settings['openai_turn_detection']
         elif 'turn_detection' in model_settings:
@@ -492,8 +492,7 @@ class OpenAIRealtimeModel(RealtimeModel[OpenAIRealtimeModelSettings]):
         # its realtime spans under this session's trace; the raw WebSocket bypasses the provider's
         # `httpx` client, which would otherwise inject it.
         inject_trace_context(headers)
-        provider_model_settings = cast('OpenAIRealtimeModelSettings', model_settings)
-        settings = self._merge_model_settings(provider_model_settings) or {}
+        settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         instructions = get_instructions(messages) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)

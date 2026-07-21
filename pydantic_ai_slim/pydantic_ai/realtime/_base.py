@@ -17,9 +17,9 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Generic, Literal
+from typing import TYPE_CHECKING, Literal
 
-from typing_extensions import TypeAliasType, TypedDict, TypeVar
+from typing_extensions import TypeAliasType, TypedDict
 
 from ..exceptions import UnexpectedModelBehavior
 from ..messages import (
@@ -556,18 +556,21 @@ class RealtimeConnection(ABC):
         return True
 
 
-RealtimeModelSettingsT = TypeVar('RealtimeModelSettingsT', bound=RealtimeModelSettings, default=RealtimeModelSettings)
-
-
-class RealtimeModel(AbstractModel, Generic[RealtimeModelSettingsT]):
+class RealtimeModel(AbstractModel):
     """Abstract base class for realtime model providers.
 
     [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] and the request-response
     [`Model`][pydantic_ai.models.Model] share [`AbstractModel`][pydantic_ai.models.AbstractModel].
     A realtime model opens a persistent bidirectional connection for streaming content in and out.
+
+    Like [`Model`][pydantic_ai.models.Model], the `settings` attribute and the `model_settings`
+    passed to `connect` are typed as the shared [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings];
+    each provider narrows to its own `TypedDict` subclass internally with a `cast` (as the
+    request-response models do for `ModelSettings`), rather than the base class being generic over the
+    settings type.
     """
 
-    settings: RealtimeModelSettingsT | None = None
+    settings: RealtimeModelSettings | None = None
     """Model settings used as defaults for realtime sessions."""
 
     @classmethod
@@ -575,7 +578,7 @@ class RealtimeModel(AbstractModel, Generic[RealtimeModelSettingsT]):
         """Return the native tool types implemented by this realtime model class."""
         return frozenset()
 
-    def _merge_model_settings(self, model_settings: RealtimeModelSettingsT | None) -> RealtimeModelSettingsT | None:
+    def _merge_model_settings(self, model_settings: RealtimeModelSettings | None) -> RealtimeModelSettings | None:
         """Merge model-level defaults with connection-level overrides."""
         settings = self.settings.copy() if self.settings else None
         if model_settings:

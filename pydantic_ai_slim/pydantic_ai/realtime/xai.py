@@ -112,7 +112,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
 
 
 @dataclass
-class XaiRealtimeModel(RealtimeModel[XaiRealtimeModelSettings]):
+class XaiRealtimeModel(RealtimeModel):
     """xAI Grok Voice realtime API model.
 
     Authentication and the base URL come from an [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider],
@@ -133,7 +133,7 @@ class XaiRealtimeModel(RealtimeModel[XaiRealtimeModelSettings]):
 
     model: str = 'grok-voice-latest'
     provider: InitVar[XaiProvider | str] = 'xai'
-    settings: XaiRealtimeModelSettings | None = field(default=None, kw_only=True)
+    settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
     reconnect: ReconnectPolicy | None = None
     _provider: XaiProvider = field(init=False, repr=False)
     _api_key: str = field(init=False, repr=False)
@@ -174,7 +174,7 @@ class XaiRealtimeModel(RealtimeModel[XaiRealtimeModelSettings]):
         tools: list[ToolDefinition] | None,
         model_settings: XaiRealtimeModelSettings | None,
     ) -> dict[str, Any]:
-        model_settings = self._merge_model_settings(model_settings) or {}
+        model_settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         # xAI puts `voice` and `turn_detection` at the session top level, unlike OpenAI's GA surface which
         # nests them under `audio`. `turn_detection` is always set: a dict enables VAD, `None` disables it.
         audio_input: dict[str, Any] = {'format': {'type': 'audio/pcm', 'rate': 24000}}
@@ -219,8 +219,7 @@ class XaiRealtimeModel(RealtimeModel[XaiRealtimeModelSettings]):
         headers = {'Authorization': f'Bearer {self._api_key}'}
         # Propagate trace context over the handshake (see the OpenAI provider for the rationale).
         inject_trace_context(headers)
-        provider_model_settings = cast('XaiRealtimeModelSettings', model_settings)
-        settings = self._merge_model_settings(provider_model_settings) or {}
+        settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         instructions = get_instructions(messages) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)

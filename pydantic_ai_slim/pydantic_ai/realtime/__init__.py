@@ -14,7 +14,7 @@ into the shared message/part event vocabulary from [`pydantic_ai.messages`][pyda
 ...), re-exported here for convenience, plus the realtime control-plane events defined below.
 """
 
-from typing import Any, Literal
+from typing import Literal
 
 from typing_extensions import TypeAliasType
 
@@ -80,7 +80,7 @@ KnownRealtimeModelName = TypeAliasType(
 """Known realtime model identifiers, surfaced for autocomplete."""
 
 
-def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel[Any]:
+def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
     """Infer a realtime model from a `provider:model` identifier."""
     provider, separator, model_name = model.partition(':')
     if not separator or not model_name:
