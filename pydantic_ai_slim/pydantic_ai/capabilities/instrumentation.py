@@ -202,19 +202,22 @@ class Instrumentation(AbstractCapability[Any]):
                         message_history = self._last_messages or ctx.messages
                         metadata = ctx.metadata
                     span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata))
-                    # One O(history) pass per run: turn any silent staleness the per-request
-                    # fragment cache may have recorded into a loud signal.
-                    if self._message_json_cache and has_stale_message_json(
-                        settings, message_history, self._message_json_cache
-                    ):
-                        warnings.warn(
-                            'In-place mutation of messages already in the history was detected during this run: '
-                            "the `gen_ai.input.messages` attribute recorded on the run's model request spans may "
-                            'not match the messages actually sent to the model. Mutating history messages in '
-                            'place is not supported; build new message or part objects instead, e.g. via a '
-                            'history processor.',
-                            MessageHistoryMutatedWarning,
-                        )
+                    if result is not None:
+                        # One O(history) pass per run: turn any silent staleness the per-request
+                        # fragment cache may have recorded into a loud signal. Skipped when the run
+                        # errored: with warnings configured as errors, warning here in the `finally`
+                        # would displace the propagating run exception.
+                        if self._message_json_cache and has_stale_message_json(
+                            settings, message_history, self._message_json_cache
+                        ):
+                            warnings.warn(
+                                'In-place mutation of messages already in the history was detected during this run: '
+                                "the `gen_ai.input.messages` attribute recorded on the run's model request spans may "
+                                'not match the messages actually sent to the model. Mutating history messages in '
+                                'place is not supported; build new message or part objects instead, e.g. via a '
+                                'history processor.',
+                                MessageHistoryMutatedWarning,
+                            )
 
     def _run_span_end_attributes(
         self,

@@ -133,9 +133,10 @@ class MessageHistoryMutatedWarning(Warning):
     To transform history mid-run, build new message or part objects instead — e.g. via a history
     processor ([`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory]).
 
-    The warning is best-effort: it's raised when a mutation is detected at the end of the run, which
-    covers messages still present in the final history (see `has_stale_message_json`). Its absence
-    does not guarantee that no stale span was recorded.
+    The warning is best-effort: it's raised when a mutation is detected at the end of a successful
+    run, which covers messages still present in the final history (see `has_stale_message_json`).
+    Errored runs aren't checked — with warnings configured as errors, the warning would displace the
+    run's own exception. Its absence does not guarantee that no stale span was recorded.
     """
 
 

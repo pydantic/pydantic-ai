@@ -1225,6 +1225,38 @@ async def test_in_place_history_mutation_warns_and_leaves_stale_request_spans(ca
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
+async def test_history_mutation_in_errored_run_does_not_displace_the_run_error(capfire: CaptureLogfire) -> None:
+    """A run that errors after an in-place history mutation surfaces the run's own exception.
+
+    The run-end staleness check is skipped on the error path: this suite configures warnings as
+    errors, so a `MessageHistoryMutatedWarning` raised in the run's `finally` would otherwise
+    displace the propagating exception.
+    """
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('corrupt_history', {}, tool_call_id='call_1')])
+        raise RuntimeError('model failure')
+
+    agent = Agent(
+        model=FunctionModel(model_function), capabilities=[Instrumentation(settings=InstrumentationSettings())]
+    )
+
+    @agent.tool
+    async def corrupt_history(ctx: RunContext) -> str:
+        first_message = ctx.messages[0]
+        assert isinstance(first_message, ModelRequest)
+        first_part = first_message.parts[0]
+        assert isinstance(first_part, UserPromptPart)
+        first_part.content = 'mutated prompt'
+        return 'ok'
+
+    with pytest.raises(RuntimeError, match='model failure'):
+        await agent.run('original prompt')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
 async def test_feedback(capfire: CaptureLogfire) -> None:
     from logfire.experimental.annotations import record_feedback
 
