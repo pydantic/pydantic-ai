@@ -407,7 +407,7 @@ print(result.output)
     To keep exception-based fallback alongside a response handler, pass them together as a list — see the [mixed example below](#combining-handlers).
 
 !!! note
-    Note that the [agent loop](../agent.md) only raises on empty or thinking-only responses: a
+    Note that the [agent loop](../agent.md) raises on empty or thinking-only responses: a
     `'length'` finish reason raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]
     when the model produced no actionable output (typically because it hit the token limit mid-thinking),
     and an empty response with a `'content_filter'` finish reason raises
