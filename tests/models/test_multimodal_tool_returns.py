@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from itertools import count
 from pathlib import Path
 from typing import Any, Literal, cast
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from typing_extensions import assert_never
@@ -42,6 +43,7 @@ from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.usage import UsageLimits
 from tests.cassette_utils import CassetteContext
 
+from .._inline_snapshot import snapshot
 from ..conftest import iter_message_parts, try_import
 
 with try_import() as openai_available:
@@ -65,6 +67,8 @@ with try_import() as groq_available:
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as mistral_available:
+    from mistralai.client.models import AssistantMessage, TextChunk, ToolMessage, UserMessage
+
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.providers.mistral import MistralProvider
 
@@ -173,10 +177,10 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
     ('mistral', 'image'): 'as_user_content',
     ('mistral', 'document'): 'as_user_content',
     ('mistral', 'audio'): ExpectError(
-        match=r'(?:AudioUrl|BinaryContent other than image or PDF) is not supported in Mistral user prompts'
+        match=r'(?:AudioUrl|BinaryContent other than text-like, image, or PDF) is not supported in Mistral user prompts'
     ),
     ('mistral', 'video'): ExpectError(
-        match=r'(?:VideoUrl|BinaryContent other than image or PDF) is not supported in Mistral user prompts'
+        match=r'(?:VideoUrl|BinaryContent other than text-like, image, or PDF) is not supported in Mistral user prompts'
     ),
 }
 
@@ -790,25 +794,53 @@ async def test_text_plain_document_anthropic(
 
 
 @pytest.mark.skipif(not mistral_available(), reason='mistral dependencies not installed')
-async def test_non_pdf_document_url_error(
-    mistral_api_key: str,
-    allow_model_requests: None,
-):
-    """Test that Mistral raises NotImplementedError for non-PDF DocumentUrl in tool returns."""
-    model = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
-    agent = Agent(model)
+async def test_non_pdf_document_url_mistral() -> None:
+    """Test that Mistral inlines text/plain DocumentUrl from tool returns as text.
 
-    @agent.tool_plain
-    def get_file() -> DocumentUrl:
-        return DocumentUrl(url='https://example.com/file.txt', media_type='text/plain')
+    Unit test, not VCR: the cassette matcher keys only on method/path, so this pins the internal
+    tool-return `_map_messages` mapping (the placeholder tool result plus the inlined text chunks), which no cassette would catch.
+    """
+    m = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key='test-key'))
+    doc_url = DocumentUrl(url='https://example.com/file.txt', media_type='text/plain')
+    file_text = 'Dummy TXT file'
 
-    with pytest.raises(
-        NotImplementedError, match='DocumentUrl other than PDF is not supported in Mistral user prompts'
-    ):
-        await agent.run(
-            'Use the get_file tool to retrieve a file.',
-            usage_limits=UsageLimits(output_tokens_limit=100000),
-        )
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_file',
+                    content=doc_url,
+                    tool_call_id='call1',
+                ),
+            ],
+        ),
+    ]
+
+    with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {'data': file_text, 'data_type': 'text/plain'}
+        mapped = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    mock_download.assert_called_once()
+    assert mock_download.call_args[1]['data_format'] == 'text'
+
+    assert mapped == snapshot(
+        [
+            ToolMessage(content='See file fb8964.', tool_call_id='call1'),
+            AssistantMessage(content=[TextChunk(text='OK')]),
+            UserMessage(
+                content=[
+                    TextChunk(text='This is file fb8964:'),
+                    TextChunk(
+                        text="""\
+-----BEGIN FILE id="fb8964" type="text/plain"-----
+Dummy TXT file
+-----END FILE id="fb8964"-----\
+"""
+                    ),
+                ]
+            ),
+        ]
+    )
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
