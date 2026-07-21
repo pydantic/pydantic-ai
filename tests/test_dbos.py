@@ -11,7 +11,7 @@ import re
 import time
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1909,6 +1909,46 @@ async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
 
     instructions = await _uninit_instructions_toolset.get_instructions(run_context)
     assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False)
+
+
+async def test_dbos_mcp_toolset_get_instructions_uses_step_when_server_warm(dbos: DBOS):
+    """A warm in-process MCP server must not short-circuit the `get_instructions` step (#5884).
+
+    Whether the step runs must not depend on process warmth: skipping it when the wrapped
+    server already holds instructions locally makes the durable schedule diverge between the
+    original execution and replay/recovery in a differently-warm process.
+
+    Not a VCR test: what's asserted is *which side* serves the instructions (the DBOS step vs
+    the warm server's local cache) — invisible to a network cassette, since both paths issue
+    the same MCP traffic.
+    """
+    inner = MCPToolset(
+        StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+        include_instructions=True,
+        id='warm_instructions_test',
+    )
+    wrapper = dbosify_mcp_toolset(inner, step_name_prefix='warm_instructions_test', step_config={})
+    run_context = RunContext(deps=0, model=TestModel(), usage=RunUsage())
+
+    step_calls: list[str] = []
+    original_operation = wrapper._get_instructions_operation  # pyright: ignore[reportPrivateUsage]
+    assert original_operation is not None
+
+    async def recording_operation(
+        ctx: RunContext[object],
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        step_calls.append('step')
+        return await original_operation(ctx)
+
+    wrapper._get_instructions_operation = recording_operation  # pyright: ignore[reportPrivateUsage]
+
+    # Hold the wrapped server entered so it can serve instructions locally (warm process).
+    async with inner:
+        assert await inner.get_instructions(run_context) is not None
+        instructions = await wrapper.get_instructions(run_context)
+
+    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False)
+    assert step_calls == ['step']
 
 
 # Exercises the `DBOSMCPToolset` wrapper's `get_instructions` step path with a real `MCPToolset`.

@@ -48,7 +48,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         Under the durable-execution capabilities
         ([`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability],
         [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability],
-        [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]), model
+        [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]),
         this capability's handler always runs in workflow or flow code and must be
         deterministic because it re-runs on workflow replay. Tool-call and final-output
         events arrive live; model events are the real captured events replayed after each

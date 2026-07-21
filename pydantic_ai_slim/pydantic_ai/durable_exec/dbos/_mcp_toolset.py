@@ -60,7 +60,6 @@ def dbosify_mcp_toolset(
         resolve_tool_config=lambda tool, name: {},
         lifecycle='enter-never',
         durable_config=step_config,
-        instructions_local_first=True,
     )
 
 

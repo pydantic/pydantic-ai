@@ -54,7 +54,7 @@ See the [Prefect documentation](https://docs.prefect.io/) for more information.
 
 ## Durable Agent
 
-Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] [capability](../capabilities.md). When the agent runs inside a Prefect flow, the capability routes [model requests](../models/overview.md), [tool calls](../tools.md), and [MCP communication](../mcp/client.md) through Prefect tasks. To make a run durable, call `agent.run()` inside a `@flow`.
+Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] [capability](../capabilities/overview.md). When the agent runs inside a Prefect flow, the capability routes [model requests](../models/overview.md), [tool calls](../tools.md), and [MCP communication](../mcp/client.md) through Prefect tasks. To make a run durable, call `agent.run()` inside a `@flow`.
 
 The agent stays a normal `Agent` everywhere — outside a Prefect flow the capability is transparent, and the original agent, model, and MCP server can still be used as normal.
 
@@ -104,7 +104,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-Because the same agent works inside and outside a Prefect flow, [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] composes with all other [capabilities](../capabilities.md) without each needing a Prefect-specific wrapper variant.
+Because the same agent works inside and outside a Prefect flow, [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] composes with all other [capabilities](../capabilities/overview.md) without each needing a Prefect-specific wrapper variant.
 
 For more information on how to use Prefect in Python applications, see their [Python documentation](https://docs.prefect.io/v3/how-to-guides/workflows/write-and-run).
 
@@ -152,7 +152,7 @@ Toolsets that implement their own tool listing and calling (i.e. [`FunctionTools
 
 [`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. A model instance can't be serialized across the task boundary, so it's sent as its `model_id` string and rebuilt inside the task. That faithfully reproduces model-name strings and models with standard providers, but not an instance whose exact behavior depends on a custom provider, client, or settings — pre-register those by passing a `models` dict to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] and reference them by key (or pass the registered instance). The agent's own model, set at construction, is always available as the default.
 
-To customize how a model string is built — a custom provider, or per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities.md#resolvemodelid) capability before `PrefectDurability`: it gets first crack at every string, and the resolver runs again inside the task with the run's actual `deps`, so it must be deterministic for a given `(model_id, deps)` and must not perform external I/O.
+To customize how a model string is built — a custom provider, or per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `PrefectDurability`: it gets first crack at every string, and the resolver runs again inside the task with the run's actual `deps`, so it must be deterministic for a given `(model_id, deps)` and must not perform external I/O.
 
 ### Tool Wrapping
 
@@ -275,7 +275,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 Pydantic AI and provider API clients have their own retry logic. When using Prefect, you may want to:
 
-* Disable [HTTP Request Retries](../retries.md) in Pydantic AI
+* Disable [HTTP Request Retries](../models/http-request-retries.md) in Pydantic AI
 * Turn off your provider API client's retry logic (e.g., `max_retries=0` on a [custom OpenAI client](../models/openai.md#custom-openai-client))
 * Rely on Prefect's task-level retry configuration for consistency
 
