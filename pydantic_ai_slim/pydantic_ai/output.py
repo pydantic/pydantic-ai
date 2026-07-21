@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Generic, Literal
 
@@ -377,16 +378,25 @@ def StructuredDict(
     #> {'name': 'John Doe', 'age': 30}
     ```
     """
-    json_schema = _utils.check_object_json_schema(json_schema)
+    json_schema = _utils.check_object_json_schema(deepcopy(json_schema))
 
     # Pydantic `TypeAdapter` fails when `object.__get_pydantic_json_schema__` has `$defs`, so we inline them
     # See https://github.com/pydantic/pydantic/issues/12145
     if '$defs' in json_schema:
-        json_schema = InlineDefsJsonSchemaTransformer(json_schema).walk()
-        if '$defs' in json_schema:
-            raise exceptions.UserError(
-                '`StructuredDict` does not currently support recursive `$ref`s and `$defs`. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
-            )
+        transformer = InlineDefsJsonSchemaTransformer(json_schema)
+        json_schema = transformer.walk()
+
+        # Recursive `$defs` can't be inlined, so the transformer moves the root schema into `$defs` and returns a
+        # `$ref` to it. Resolve that back into a root `object` schema, keeping the `$defs` the recursive `$ref`s
+        # point at, so the schema is valid on its own and can be handed to the model.
+        # See https://github.com/pydantic/pydantic-ai/issues/4018
+        if (root_ref := json_schema.get('$ref')) is not None:
+            defs = json_schema['$defs']
+            root_key = root_ref.removeprefix('#/$defs/')
+            # The root is only referenced from inside `$defs` if it's recursive itself; if it's not, drop it
+            # so we don't send the model a copy of the root schema it has no use for.
+            root = defs[root_key] if root_key in transformer.recursive_refs else defs.pop(root_key)
+            json_schema = {**root, '$defs': defs}
 
     if name:
         json_schema['title'] = name
@@ -396,6 +406,7 @@ def StructuredDict(
 
     class _StructuredDict(JsonSchemaValue):
         __is_model_like__ = True
+        __pydantic_ai_structured_dict_schema__ = json_schema
 
         @classmethod
         def __get_pydantic_core_schema__(
@@ -410,7 +421,15 @@ def StructuredDict(
         def __get_pydantic_json_schema__(
             cls, core_schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
         ) -> JsonSchemaValue:
-            return json_schema
+            if '$defs' in json_schema:
+                # Pydantic can't build a JSON schema for a type whose `__get_pydantic_json_schema__` returns `$defs`,
+                # so a recursive `StructuredDict` can only be passed to `output_type` directly, where Pydantic AI
+                # reads its schema without going through `TypeAdapter`.
+                # See https://github.com/pydantic/pydantic/issues/12145
+                raise exceptions.UserError(
+                    'A `StructuredDict` with recursive `$ref`s and `$defs` can only be used as an `output_type` by itself, not nested inside another type. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
+                )
+            return deepcopy(json_schema)
 
     return _StructuredDict
 

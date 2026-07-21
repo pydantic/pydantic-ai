@@ -349,7 +349,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         json_schemas: list[JsonSchema] = []
         for return_type in return_types:
-            json_schema = TypeAdapter(return_type).json_schema(mode='serialization')
+            # `StructuredDict` carries its own JSON schema, which we use directly instead of going through
+            # `TypeAdapter.json_schema()` as the latter can't handle recursive `$ref`s/`$defs`. See issue #4018.
+            if (structured_dict_schema := _utils.structured_dict_json_schema(return_type)) is not None:
+                json_schema = structured_dict_schema
+            else:
+                json_schema = TypeAdapter(return_type).json_schema(mode='serialization')
             if json_schema not in json_schemas:
                 json_schemas.append(json_schema)
 
