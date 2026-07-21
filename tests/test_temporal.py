@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import re
 import uuid
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -14,7 +16,7 @@ from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import (
     AbstractToolset,
@@ -51,11 +53,13 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
+    ToolsetTool,
     UserContent,
     UserPromptPart,
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     MCP,
@@ -66,13 +70,16 @@ from pydantic_ai.capabilities import (
     ProcessHistory,
     ResolveModelId,
     Toolset,
+    WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    SkipModelRequest,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
@@ -90,6 +97,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
@@ -116,19 +124,30 @@ try:
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
 
+    from pydantic_ai.durable_exec._toolset import (
+        CallToolResult,
+        unwrap_tool_call_result,
+        wrap_tool_call_result,
+    )
+    from pydantic_ai.durable_exec._utils import StreamedActivityResult
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         LogfirePlugin,
         PydanticAIPlugin,
         PydanticAIWorkflow,
-        TemporalAgent,
+        TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
     )
-    from pydantic_ai.durable_exec.temporal._durability import _heartbeating  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.durable_exec.temporal._durability import (
+        _CancelParams,  # pyright: ignore[reportPrivateUsage]
+        _heartbeating,  # pyright: ignore[reportPrivateUsage]
+        _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
+    from pydantic_ai.durable_exec.temporal._toolset import resolve_tool_activity_config
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
@@ -182,10 +201,20 @@ with workflow.unsafe.imports_passed_through():
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from .conftest import IsDatetime, IsInt, IsStr, message
 
+# `TemporalAgent` is deprecated in favor of `capabilities=[TemporalDurability(...)]`.
+# These tests exercise the wrapper-agent path on purpose; suppress the warning here
+# rather than globally in `pyproject.toml`. The `pytestmark` entry below covers warnings
+# emitted *inside* test functions; the `filterwarnings` call below covers warnings emitted
+# at module import time (e.g. module-level construction of `TemporalAgent`).
+warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', category=PydanticAIDeprecationWarning)
+
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='temporal'),
+    pytest.mark.filterwarnings(
+        'ignore:`TemporalAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    ),
 ]
 
 
@@ -317,7 +346,7 @@ model = OpenAIChatModel(
 simple_agent = Agent(model, name='simple_agent')
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-simple_temporal_agent = TemporalAgent(simple_agent, activity_config=BASE_ACTIVITY_CONFIG)
+simple_temporal_agent = TemporalAgent(simple_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -350,7 +379,7 @@ async def _migration_event_stream_handler(ctx: RunContext[None], stream: AsyncIt
 
 
 _migration_agent_name = 'temporal_agent_migration'
-_legacy_migration_agent = TemporalAgent(
+_legacy_migration_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     Agent(TestModel(custom_output_text='migrated'), name=_migration_agent_name, deps_type=type(None)),
     activity_config=BASE_ACTIVITY_CONFIG,
     event_stream_handler=_migration_event_stream_handler,
@@ -376,11 +405,6 @@ class TemporalAgentMigrationWorkflow:
         return (await _migration_agent.run(prompt)).output
 
 
-@pytest.mark.xfail(
-    reason='TODO #6625: make histories recorded with TemporalAgent replay under TemporalDurability',
-    raises=RuntimeError,
-    strict=True,
-)
 async def test_temporal_agent_history_replays_after_migrating_to_durability(client: Client) -> None:
     """A recorded wrapper-agent workflow must replay with the capability implementation.
 
@@ -415,15 +439,50 @@ async def test_temporal_agent_history_replays_after_migrating_to_durability(clie
             workflow_runner=UnsandboxedWorkflowRunner(),
             data_converter=pydantic_data_converter,
         ).replay_workflow(history)
-    except RuntimeError as exc:
-        failure = str(exc)
-        assert 'Failed decoding arguments' in failure
-        assert '2 validation errors for StreamedActivityResult' in failure
-        assert 'response\\n  Field required' in failure
-        assert 'events\\n  Field required' in failure
-        raise
     finally:
         _migration_agent = _legacy_migration_agent
+
+
+def test_temporal_agent_construction_warns_deprecated() -> None:
+    """The `TemporalAgent` deprecation fires at runtime; the module-level filters only suppress it."""
+    with pytest.warns(PydanticAIDeprecationWarning, match='`TemporalAgent` is deprecated'):
+        TemporalAgent(Agent(TestModel(), name='temporal_agent_deprecation_probe'))  # pyright: ignore[reportDeprecated]
+
+
+async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> None:
+    """Temporal decodes old cancel payloads and resolves registered and inferred models."""
+    response = ModelResponse(parts=[TextPart(content='cancel')], model_name='test')
+    params = TypeAdapter(_CancelParams).validate_python({'response': response, 'model_id': None})
+    assert params == _CancelParams(response=response)
+    assert params.serialized_run_context is None
+
+    cancelled: list[tuple[str, ModelResponse]] = []
+
+    class RecordingModel(TestModel):
+        def __init__(self, name: str):
+            super().__init__()
+            self.name = name
+
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            cancelled.append((self.name, response))
+
+    registered_model = RecordingModel('registered')
+    inferred_model = RecordingModel('inferred')
+    agent = Agent(
+        TestModel(),
+        name='legacy_cancel_payload',
+        capabilities=[TemporalDurability(models={'registered': registered_model})],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    signature = inspect.signature(durability.cancel_suspended_response_activity)
+    assert signature.parameters['deps'].default is None
+
+    await durability.cancel_suspended_response_activity(_CancelParams(response, model_id='registered'))
+    with patch('pydantic_ai.durable_exec.temporal._durability.infer_model', return_value=inferred_model):
+        await durability.cancel_suspended_response_activity(_CancelParams(response, model_id='unregistered'))
+
+    assert cancelled == [('registered', response), ('inferred', response)]
 
 
 class Deps(BaseModel):
@@ -479,7 +538,7 @@ complex_agent = Agent(
 )
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-complex_temporal_agent = TemporalAgent(
+complex_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     complex_agent,
     event_stream_handler=event_stream_handler,
     activity_config=BASE_ACTIVITY_CONFIG,
@@ -1026,10 +1085,10 @@ def _call_mcp_then_finish(messages: list[ModelMessage], info: AgentInfo) -> Mode
 
 # A holder lets the replay step swap in a freshly-constructed (cold-process) instance,
 # reproducing the worker-restart scenario from #5875.
-mcp_replay_holder: dict[str, TemporalAgent[None, str]] = {}
+mcp_replay_holder: dict[str, TemporalAgent[None, str]] = {}  # pyright: ignore[reportDeprecated]
 
 
-def _make_mcp_replay_agent(cache_tools: bool = True) -> TemporalAgent[None, str]:
+def _make_mcp_replay_agent(cache_tools: bool = True) -> TemporalAgent[None, str]:  # pyright: ignore[reportDeprecated]
     agent = Agent(
         FunctionModel(_call_mcp_then_finish),
         name='mcp_replay_agent',
@@ -1042,7 +1101,7 @@ def _make_mcp_replay_agent(cache_tools: bool = True) -> TemporalAgent[None, str]
             )
         ],
     )
-    return TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)
+    return TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 mcp_replay_holder['agent'] = _make_mcp_replay_agent()
@@ -1509,7 +1568,7 @@ async def test_agent_without_name():
             "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
         ),
     ):
-        TemporalAgent(Agent())
+        TemporalAgent(Agent())  # pyright: ignore[reportDeprecated]
 
 
 async def test_agent_without_model():
@@ -1519,7 +1578,7 @@ async def test_agent_without_model():
             "The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time."
         ),
     ):
-        TemporalAgent(Agent(name='test_agent'))
+        TemporalAgent(Agent(name='test_agent'))  # pyright: ignore[reportDeprecated]
 
 
 async def test_old_temporalize_toolset_func_compat():
@@ -1531,7 +1590,7 @@ async def test_old_temporalize_toolset_func_compat():
     ) -> Any:
         return temporalize_toolset(toolset, prefix, config, tool_config, deps_type, run_context_type)
 
-    TemporalAgent(
+    TemporalAgent(  # pyright: ignore[reportDeprecated]
         Agent(model=model, name='old_compat_agent'),
         activity_config=BASE_ACTIVITY_CONFIG,
         temporalize_toolset_func=old_style_func,  # pyright: ignore[reportArgumentType]
@@ -1545,7 +1604,7 @@ async def test_toolset_without_id():
             "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
         ),
     ):
-        TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
+        TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))  # pyright: ignore[reportDeprecated]
 
 
 async def test_capability_contributed_toolset_id_from_capability():
@@ -1572,7 +1631,7 @@ async def test_capability_contributed_toolset_id_from_capability():
         ],
     )
     # Previously raised `UserError` because the contributed leaf toolsets had `id=None`.
-    temporal_agent = TemporalAgent(agent)
+    temporal_agent = TemporalAgent(agent)  # pyright: ignore[reportDeprecated]
 
     # Each contributed leaf toolset is registered as activities named after the capability id, so the
     # function toolset and the MCP server can be driven durably.
@@ -1607,7 +1666,7 @@ async def test_deferred_capability_contributed_toolset_id_from_capability():
             MCP(url='https://mcp.example.com/api', id='docs', defer_loading=True),
         ],
     )
-    temporal_agent = TemporalAgent(agent)
+    temporal_agent = TemporalAgent(agent)  # pyright: ignore[reportDeprecated]
 
     activity_names = {
         ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
@@ -1641,7 +1700,7 @@ def my_dynamic_toolset(ctx: RunContext[DynamicToolsetDeps]) -> FunctionToolset[D
     return toolset
 
 
-dynamic_toolset_temporal_agent = TemporalAgent(
+dynamic_toolset_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     dynamic_toolset_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
@@ -1699,7 +1758,7 @@ def dynamic_instruction_toolset(ctx: RunContext[object]) -> AbstractToolset[obje
     return FunctionToolset(instructions='SENTINEL_INSTRUCTION_FROM_DYNAMIC_TOOLSET', id='instruction-only-toolset')
 
 
-dynamic_instructions_temporal_agent = TemporalAgent(
+dynamic_instructions_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     dynamic_instructions_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
@@ -1780,7 +1839,7 @@ def multi_step_instruction_toolset(ctx: RunContext[object]) -> AbstractToolset[o
     return toolset
 
 
-multi_step_instructions_temporal_agent = TemporalAgent(
+multi_step_instructions_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     multi_step_instructions_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
@@ -1826,10 +1885,10 @@ async def test_dynamic_toolset_instructions_refresh_across_steps_in_workflow(
 # introduces no `TMPRL1100` nondeterminism.
 
 # A holder lets the replay step swap in a freshly-constructed (cold-process) instance.
-dynamic_instructions_replay_holder: dict[str, TemporalAgent[object, str]] = {}
+dynamic_instructions_replay_holder: dict[str, TemporalAgent[object, str]] = {}  # pyright: ignore[reportDeprecated]
 
 
-def _make_dynamic_instructions_replay_agent() -> TemporalAgent[object, str]:
+def _make_dynamic_instructions_replay_agent() -> TemporalAgent[object, str]:  # pyright: ignore[reportDeprecated]
     agent = Agent(FunctionModel(_echo_instructions_after_tool_call), name='dynamic_instructions_replay_agent')
 
     @agent.toolset(id='replay_instruction_toolset')
@@ -1844,7 +1903,7 @@ def _make_dynamic_instructions_replay_agent() -> TemporalAgent[object, str]:
 
         return toolset
 
-    return TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)
+    return TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 dynamic_instructions_replay_holder['agent'] = _make_dynamic_instructions_replay_agent()
@@ -1912,7 +1971,7 @@ def my_mcptoolset_dynamic_toolset(ctx: RunContext) -> MCPToolset:
     return MCPToolset('https://mcp.deepwiki.com/mcp')
 
 
-mcptoolset_dynamic_toolset_temporal_agent = TemporalAgent(
+mcptoolset_dynamic_toolset_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     mcptoolset_dynamic_toolset_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
@@ -2232,7 +2291,7 @@ def drop_first_message(msgs: list[ModelMessage]) -> list[ModelMessage]:
 agent_with_sync_history_processor = Agent(
     model, name='agent_with_sync_history_processor', capabilities=[ProcessHistory(drop_first_message)]
 )
-temporal_agent_with_sync_history_processor = TemporalAgent(
+temporal_agent_with_sync_history_processor = TemporalAgent(  # pyright: ignore[reportDeprecated]
     agent_with_sync_history_processor, activity_config=BASE_ACTIVITY_CONFIG
 )
 
@@ -2275,7 +2334,7 @@ def sync_instructions_fn() -> str:
     return 'You are a helpful assistant.'
 
 
-temporal_agent_with_sync_instructions = TemporalAgent(
+temporal_agent_with_sync_instructions = TemporalAgent(  # pyright: ignore[reportDeprecated]
     agent_with_sync_instructions, activity_config=BASE_ACTIVITY_CONFIG
 )
 
@@ -2519,7 +2578,7 @@ runtime_external_agent = Agent(
     name='runtime_external_toolset_agent',
     output_type=[str, DeferredToolRequests],
 )
-runtime_external_temporal_agent = TemporalAgent(runtime_external_agent, activity_config=BASE_ACTIVITY_CONFIG)
+runtime_external_temporal_agent = TemporalAgent(runtime_external_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 runtime_external_toolset = ExternalToolset(
     tool_defs=[
@@ -2706,7 +2765,7 @@ async def test_temporal_agent_override_deps_in_workflow(allow_model_requests: No
 agent_with_sync_tool = Agent(model, name='agent_with_sync_tool', tools=[get_weather])
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-temporal_agent_with_sync_tool_activity_disabled = TemporalAgent(
+temporal_agent_with_sync_tool_activity_disabled = TemporalAgent(  # pyright: ignore[reportDeprecated]
     agent_with_sync_tool,
     activity_config=BASE_ACTIVITY_CONFIG,
     tool_activity_config={
@@ -2754,7 +2813,7 @@ async def test_temporal_agent_mcp_server_activity_disabled(client: Client):
             'but MCP tools require the use of IO and so cannot be run outside of an activity.'
         ),
     ):
-        TemporalAgent(
+        TemporalAgent(  # pyright: ignore[reportDeprecated]
             complex_agent,
             tool_activity_config={
                 'mcp': {
@@ -2805,7 +2864,7 @@ async def get_model_name(ctx: RunContext[Model]) -> str:
 
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-unserializable_deps_temporal_agent = TemporalAgent(unserializable_deps_agent, activity_config=BASE_ACTIVITY_CONFIG)
+unserializable_deps_temporal_agent = TemporalAgent(unserializable_deps_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -2896,7 +2955,7 @@ async def delete_file(ctx: RunContext, path: str) -> bool:
     return True
 
 
-hitl_temporal_agent = TemporalAgent(hitl_agent, activity_config=BASE_ACTIVITY_CONFIG)
+hitl_temporal_agent = TemporalAgent(hitl_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -3086,7 +3145,7 @@ def get_weather_in_city(city: str) -> str:
     return 'sunny'
 
 
-model_retry_temporal_agent = TemporalAgent(model_retry_agent, activity_config=BASE_ACTIVITY_CONFIG)
+model_retry_temporal_agent = TemporalAgent(model_retry_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -3247,7 +3306,7 @@ return_settings_model = FunctionModel(return_settings, settings=model_settings)
 settings_agent = Agent(return_settings_model, name='settings_agent')
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-settings_temporal_agent = TemporalAgent(settings_agent, activity_config=BASE_ACTIVITY_CONFIG)
+settings_temporal_agent = TemporalAgent(settings_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -3291,7 +3350,7 @@ mcptoolset_instructions_agent = Agent(
     ],
 )
 
-mcptoolset_instructions_temporal_agent = TemporalAgent(
+mcptoolset_instructions_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     mcptoolset_instructions_agent, activity_config=BASE_ACTIVITY_CONFIG
 )
 
@@ -3325,7 +3384,7 @@ def test_temporalize_mcptoolset_dispatches_to_temporalmcptoolset():
     """`temporalize_toolset` wraps `MCPToolset` in `TemporalMCPToolset`."""
     toolset = MCPToolset('https://example.com/mcp', id='test_dispatch')
     agent = Agent(model=model, name='dispatch_agent', toolsets=[toolset])
-    temporal = TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)
+    temporal = TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
     wrapped = next(ts for ts in temporal.toolsets if isinstance(ts, TemporalMCPToolset))
     assert wrapped.wrapped is toolset
 
@@ -3333,7 +3392,7 @@ def test_temporalize_mcptoolset_dispatches_to_temporalmcptoolset():
 image_agent = Agent(model, name='image_agent', output_type=BinaryImage)
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-image_temporal_agent = TemporalAgent(image_agent, activity_config=BASE_ACTIVITY_CONFIG)
+image_temporal_agent = TemporalAgent(image_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -3374,7 +3433,7 @@ document_url_agent = Agent(
     output_type=DocumentUrl,
 )
 
-document_url_temporal_agent = TemporalAgent(document_url_agent, activity_config=BASE_ACTIVITY_CONFIG)
+document_url_temporal_agent = TemporalAgent(document_url_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -3427,7 +3486,7 @@ uploaded_file_agent = Agent(
     output_type=UploadedFile,
 )
 
-uploaded_file_temporal_agent = TemporalAgent(uploaded_file_agent, activity_config=BASE_ACTIVITY_CONFIG)
+uploaded_file_temporal_agent = TemporalAgent(uploaded_file_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -3473,7 +3532,7 @@ web_search_agent = Agent(
 )
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-web_search_temporal_agent = TemporalAgent(
+web_search_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     web_search_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
     model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=300)),
@@ -3665,7 +3724,7 @@ def analyze_data() -> ToolReturn:
     )
 
 
-_tool_return_metadata_temporal_agent = TemporalAgent(_tool_return_metadata_agent, activity_config=BASE_ACTIVITY_CONFIG)
+_tool_return_metadata_temporal_agent = TemporalAgent(_tool_return_metadata_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -3743,7 +3802,7 @@ mcptoolset_agent = Agent(
     toolsets=[MCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
 )
 
-mcptoolset_temporal_agent = TemporalAgent(
+mcptoolset_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     mcptoolset_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
@@ -3797,7 +3856,7 @@ def get_agent_name(ctx: RunContext) -> str:
     return (ctx.agent.name or 'unnamed') if ctx.agent else 'unknown'
 
 
-_ctx_agent_temporal_agent = TemporalAgent(_ctx_agent_test_agent, activity_config=BASE_ACTIVITY_CONFIG)
+_ctx_agent_temporal_agent = TemporalAgent(_ctx_agent_test_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -4032,7 +4091,7 @@ test_model_error_unregistered = TestModel()
 
 # Module-level temporal agents
 agent_selection = Agent(test_model_selection_1, name='multi_model_workflow_test')
-multi_model_selection_test_agent = TemporalAgent(
+multi_model_selection_test_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     agent_selection,
     name='multi_model_workflow_test',
     models={
@@ -4043,7 +4102,7 @@ multi_model_selection_test_agent = TemporalAgent(
 )
 
 agent_error = Agent(test_model_error_1, name='error_test')
-multi_model_error_test_agent = TemporalAgent(
+multi_model_error_test_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     agent_error,
     name='error_test',
     models={'other': test_model_error_2},
@@ -4099,7 +4158,7 @@ builtin_tool_agent = Agent(
     capabilities=[NativeTool(_select_builtin_tool)],
 )
 
-builtin_tool_temporal_agent = TemporalAgent(
+builtin_tool_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     builtin_tool_agent,
     name='builtin_tool_dynamic_agent',
     models={'code': code_execution_builtin_model},
@@ -4132,7 +4191,7 @@ builtins_in_workflow_agent = Agent(
 )
 
 # TemporalAgent registers an alternate model that DOES support builtins
-builtins_in_workflow_temporal_agent = TemporalAgent(
+builtins_in_workflow_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     builtins_in_workflow_agent,
     name='builtins_in_workflow',
     models={'web_search': web_search_builtin_override_model},
@@ -4164,7 +4223,7 @@ async def test_temporal_agent_multi_model_reserved_id():
 
     agent = Agent(test_model1, name='reserved_id_test')
     with pytest.raises(UserError, match="Model ID 'default' is reserved"):
-        TemporalAgent(
+        TemporalAgent(  # pyright: ignore[reportDeprecated]
             agent,
             name='reserved_id_test',
             models={'default': test_model2},
@@ -4298,7 +4357,7 @@ async def test_temporal_agent_multi_model_outside_workflow():
     test_model_unregistered = TestModel(custom_output_text='Unregistered model response')
 
     agent = Agent(test_model1, name='outside_workflow_test')
-    temporal_agent = TemporalAgent(
+    temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
         agent,
         name='outside_workflow_test',
         models={'secondary': test_model2},
@@ -4331,7 +4390,7 @@ async def test_temporal_agent_without_default_model():
 
     # Agent without a model
     agent = Agent(name='no_default_model_test')
-    temporal_agent = TemporalAgent(
+    temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
         agent,
         name='no_default_model_test',
         models={
@@ -4897,7 +4956,7 @@ def get_multimodal_content(ctx: RunContext) -> list[str | MultiModalContent]:
     ]
 
 
-multimodal_content_temporal_agent = TemporalAgent(multimodal_content_agent, activity_config=BASE_ACTIVITY_CONFIG)
+multimodal_content_temporal_agent = TemporalAgent(multimodal_content_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -5049,7 +5108,7 @@ def get_nested_multimodal_content(ctx: RunContext) -> dict[str, str | MultiModal
     }
 
 
-nested_multimodal_tool_return_temporal_agent = TemporalAgent(
+nested_multimodal_tool_return_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     nested_multimodal_tool_return_agent, activity_config=BASE_ACTIVITY_CONFIG
 )
 
@@ -5375,6 +5434,35 @@ def test_durability_find_model_id_by_identity():
     assert bound is not None
     assert bound._find_model_id(m1) is None  # default → None  # pyright: ignore[reportPrivateUsage]
     assert bound._find_model_id(m2) == 'alt'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_durability_find_model_id_prefers_registered_wrapper_identity():
+    """Temporal preserves a registered wrapper's alias before considering its inner model."""
+    model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='bare')]))
+    wrapped = WrapperModel(model)
+    agent = Agent(model, name='test', capabilities=[TemporalDurability(models={'wrapped': wrapped})])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    assert bound._find_model_id(wrapped) == 'wrapped'  # pyright: ignore[reportPrivateUsage]
+    # An unregistered wrapper (e.g. a user-built `InstrumentedModel`) around a registered
+    # wrapper peels off to the shallowest registered match instead of collapsing to the default.
+    assert bound._find_model_id(WrapperModel(wrapped)) == 'wrapped'  # pyright: ignore[reportPrivateUsage]
+    # An unregistered wrapper around the bare default still takes the default's fast path.
+    assert bound._find_model_id(WrapperModel(model)) is None  # pyright: ignore[reportPrivateUsage]
+
+
+def test_durability_find_model_id_does_not_unwrap_registered_wrappers():
+    """A registered wrapper's identity holds at its registered depth.
+
+    Its bare inner model must not inherit the wrapper's alias — the worker would rebuild the
+    wrapper and add behavior the request never had — so it falls back to its own `model_id`.
+    """
+    default = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='default')]))
+    inner = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='inner')]))
+    agent = Agent(default, name='test', capabilities=[TemporalDurability(models={'wrapped_alt': WrapperModel(inner)})])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    assert bound._find_model_id(inner) == inner.model_id  # pyright: ignore[reportPrivateUsage]
 
 
 def test_durability_temporal_activities():
@@ -5824,75 +5912,54 @@ def test_durability_find_model_id_falls_back_to_model_id_string():
     assert bound._find_model_id(m_runtime) == m_runtime.model_id  # pyright: ignore[reportPrivateUsage]
 
 
-# --- _validate_per_run_capabilities rejects runtime-added classes ---
+# --- Runtime capability validation ---
 
 
-def test_durability_rejects_runtime_added_capabilities():
-    """Per-run capabilities not seen at construction time are rejected.
-
-    Capability instances added via `agent.run(capabilities=[...])` bypass the
-    activity-registration step in `for_agent`. The capability detects this by
-    snapshotting the bound chain's classes and comparing against `ctx.root_capability`.
-    """
-    from pydantic_ai._run_context import RunContext
-    from pydantic_ai.capabilities.abstract import AbstractCapability
-    from pydantic_ai.capabilities.combined import CombinedCapability
-    from pydantic_ai.result import RunUsage
+async def test_durability_validates_only_resolved_runtime_capability_layers():
+    """Temporal accepts resolved and safe per-run layers but rejects per-run dynamic layers."""
 
     @dataclass
-    class _UnregisteredCap(AbstractCapability[None]):
+    class _BaseOne(AbstractCapability[None]):
         pass
-
-    durability = TemporalDurability()
-    agent = Agent(_durability_fn_model, name='runtime_cap_test', capabilities=[durability])
-    bound = TemporalDurability.from_agent(agent)
-    assert bound is not None
-
-    def make_ctx(root: AbstractCapability[Any]) -> RunContext[None]:
-        return RunContext[None](deps=None, model=_durability_fn_model, usage=RunUsage(), root_capability=root)
-
-    bound_chain = agent.root_capability
-    runtime_chain = CombinedCapability([*bound_chain.capabilities, _UnregisteredCap()])
-    with pytest.raises(UserError, match='Capabilities added per-run inside a Temporal workflow'):
-        bound._validate_per_run_capabilities(make_ctx(runtime_chain))  # pyright: ignore[reportPrivateUsage]
-
-    # Sanity: the bound chain alone passes validation.
-    bound._validate_per_run_capabilities(make_ctx(bound_chain))  # pyright: ignore[reportPrivateUsage]
-
-
-def test_durability_skips_per_run_check_when_dynamic_capability_bound():
-    """Per-run validation is skipped when the bound chain contains a `DynamicCapability`.
-
-    A `DynamicCapability` resolves to a different capability instance per run, so the
-    static-class check would falsely reject any class produced by the factory. Issue
-    #5253 tracks proper end-to-end durable support; until then, the check is relaxed.
-    """
-    from pydantic_ai._run_context import RunContext
-    from pydantic_ai.capabilities import DynamicCapability
-    from pydantic_ai.capabilities.abstract import AbstractCapability
-    from pydantic_ai.capabilities.combined import CombinedCapability
-    from pydantic_ai.result import RunUsage
 
     @dataclass
-    class _UnregisteredCap(AbstractCapability[None]):
+    class _BaseTwo(AbstractCapability[None]):
         pass
 
-    durability = TemporalDurability()
+    @dataclass
+    class _ExtraOne(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class _ExtraTwo(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class _SkipRequest(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+    def base_factory(ctx: RunContext[None]) -> AbstractCapability[None]:
+        return CombinedCapability([_BaseOne(), _BaseTwo(), _SkipRequest()])
+
+    def extra_factory(ctx: RunContext[None]) -> AbstractCapability[None]:
+        return CombinedCapability([_ExtraOne(), _ExtraTwo()])
 
     agent = Agent(
-        _durability_fn_model,
-        name='dynamic_cap_test',
-        capabilities=[durability, lambda ctx: None],
+        TestModel(),
+        name='runtime_capability_layers',
+        deps_type=type(None),
+        capabilities=[base_factory, WrapperCapability(wrapped=TemporalDurability())],
     )
-    bound = TemporalDurability.from_agent(agent)
-    assert bound is not None
-    assert any(issubclass(cls, DynamicCapability) for cls in bound._bound_capability_classes)  # pyright: ignore[reportPrivateUsage]
 
-    # Even with an unregistered class in the runtime chain, validation passes
-    # because a `DynamicCapability` is in the bound chain.
-    runtime_chain = CombinedCapability([*agent.root_capability.capabilities, _UnregisteredCap()])
-    ctx = RunContext[None](deps=None, model=_durability_fn_model, usage=RunUsage(), root_capability=runtime_chain)
-    bound._validate_per_run_capabilities(ctx)  # pyright: ignore[reportPrivateUsage]
+    with patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True):
+        result = await agent.run('hello', capabilities=[Instrumentation(InstrumentationSettings())])
+        assert result.output == 'skipped'
+
+        with pytest.raises(UserError, match='Capabilities added per-run inside a Temporal workflow'):
+            await agent.run('hello', capabilities=[extra_factory])
 
 
 # --- get_serialization_name returns None ---
@@ -6243,12 +6310,11 @@ def test_durability_tool_metadata_disables_activity():
 
 
 def test_resolve_tool_activity_config_reads_metadata():
-    """Per-tool Temporal config from `tool_def.metadata['temporal']` takes priority."""
-    from pydantic_ai.tools import ToolDefinition
-    from pydantic_ai.toolsets import ToolsetTool
-    from pydantic_ai_slim.pydantic_ai.durable_exec.temporal._toolset import resolve_tool_activity_config
-
-    metadata_config = ActivityConfig(start_to_close_timeout=timedelta(seconds=120))
+    """Tool metadata takes priority while defaults and caller-owned retry policies stay intact."""
+    configured_retry_policy = RetryPolicy(maximum_attempts=3, non_retryable_error_types=['CustomError'])
+    metadata_config = ActivityConfig(
+        start_to_close_timeout=timedelta(seconds=120), retry_policy=configured_retry_policy
+    )
 
     fn_toolset = FunctionToolset[None](id='resolve_meta_toolset')
 
@@ -6266,7 +6332,26 @@ def test_resolve_tool_activity_config_reads_metadata():
 
     # Metadata wins over the per-tool dict.
     resolved = resolve_tool_activity_config(tool, 'fn_tool', {'fn_tool': ActivityConfig(summary='from_dict')})
-    assert resolved is metadata_config
+    assert resolved is not metadata_config
+    assert resolved is not False
+    assert metadata_config.get('retry_policy') is configured_retry_policy
+    assert configured_retry_policy.non_retryable_error_types == ['CustomError']
+    retry_policy = resolved.get('retry_policy')
+    assert retry_policy is not None
+    assert retry_policy.non_retryable_error_types == [
+        'CustomError',
+        'UserError',
+        'PydanticUserError',
+        'UnexpectedModelBehavior',
+    ]
+
+    inherited_retry_policy = RetryPolicy(maximum_attempts=7)
+    resolved_without_override = resolve_tool_activity_config(None, 'fn_tool', {})
+    assert resolved_without_override is not False
+    assert resolved_without_override == {}
+    assert ActivityConfig(retry_policy=inherited_retry_policy) | resolved_without_override == {
+        'retry_policy': inherited_retry_policy
+    }
 
     # `False` in metadata also wins.
     tool.tool_def.metadata = {'temporal': False}
@@ -6277,6 +6362,80 @@ def test_resolve_tool_activity_config_reads_metadata():
     tool.tool_def.metadata = {'temporal': '5s'}
     with pytest.raises(UserError, match=r"Tool 'fn_tool' has invalid 'temporal' metadata"):
         resolve_tool_activity_config(tool, 'fn_tool', {})
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        {'kind': 'tool-return', 'value': 1},
+        {'kind': 'tool-return', 'return_value': 'user-data'},
+    ],
+)
+async def test_tool_return_content_with_framework_kind_round_trips(content: dict[str, Any]) -> None:
+    """User mappings with framework-like `kind` keys round-trip as ordinary tool content."""
+
+    async def return_content() -> dict[str, Any]:
+        return content
+
+    wrapped = await wrap_tool_call_result(return_content())
+    assert wrapped.kind == 'tool_content_result'
+    payloads = await pydantic_data_converter.encode([wrapped])
+    decoded = await pydantic_data_converter.decode(payloads, [CallToolResult])  # pyright: ignore[reportArgumentType]
+    assert unwrap_tool_call_result(decoded[0]) == content
+
+
+async def test_structured_tool_return_round_trips() -> None:
+    """Temporal serialization preserves every field of an explicit structured `ToolReturn`."""
+
+    async def return_structured() -> ToolReturn:
+        return ToolReturn('result', content='extra', metadata={'source': 'test'})
+
+    wrapped = await wrap_tool_call_result(return_structured())
+    assert wrapped.kind == 'tool_return'
+    payloads = await pydantic_data_converter.encode([wrapped])
+    decoded = await pydantic_data_converter.decode(payloads, [CallToolResult])  # pyright: ignore[reportArgumentType]
+    assert unwrap_tool_call_result(decoded[0]) == ToolReturn('result', content='extra', metadata={'source': 'test'})
+
+
+async def test_ordinary_tool_return_keeps_legacy_wire_shape() -> None:
+    """Ordinary return values retain the legacy `tool_return` wire discriminator."""
+
+    async def return_content() -> str:
+        return 'result'
+
+    wrapped = await wrap_tool_call_result(return_content())
+
+    assert wrapped.kind == 'tool_return'
+
+
+async def test_legacy_structured_tool_return_payload_decodes() -> None:
+    """Temporal still decodes structured tool returns recorded with the legacy payload shape."""
+    payloads = await pydantic_data_converter.encode(
+        [{'result': {'return_value': 'legacy', 'kind': 'tool-return'}, 'kind': 'tool_return'}]
+    )
+    decoded = await pydantic_data_converter.decode(payloads, [CallToolResult])  # pyright: ignore[reportArgumentType]
+    assert unwrap_tool_call_result(decoded[0]) == ToolReturn('legacy')
+
+
+async def test_stream_activity_payload_decodes_both_recorded_shapes() -> None:
+    """The stream-activity result union decodes both recorded wire shapes unambiguously.
+
+    A `TemporalDurability` history (v2.14+) records a `StreamedActivityResult`; a legacy
+    `TemporalAgent` history recorded the bare `ModelResponse`. Replay of either kind of
+    in-flight workflow decodes the recorded payload through `_StreamedActivityPayload`.
+    """
+    response = {'parts': [{'content': 'streamed', 'part_kind': 'text'}], 'kind': 'response'}
+    event = {'index': 0, 'part': {'content': 'streamed', 'part_kind': 'text'}, 'event_kind': 'part_start'}
+    payloads = await pydantic_data_converter.encode([{'response': response, 'events': [event]}, response])
+
+    hints = [_StreamedActivityPayload, _StreamedActivityPayload]
+    current_shape, legacy_shape = await pydantic_data_converter.decode(payloads, hints)  # pyright: ignore[reportArgumentType]
+
+    assert isinstance(current_shape, StreamedActivityResult)
+    assert current_shape.response.parts == [TextPart(content='streamed')]
+    assert current_shape.events == [PartStartEvent(index=0, part=TextPart(content='streamed'))]
+    assert isinstance(legacy_shape, ModelResponse)
+    assert legacy_shape.parts == [TextPart(content='streamed')]
 
 
 async def test_durability_process_event_stream_fires_workflow_side(client: Client):

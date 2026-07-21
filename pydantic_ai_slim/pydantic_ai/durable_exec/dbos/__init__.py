@@ -8,7 +8,7 @@ except ImportError as _import_error:
         'you can use the `dbos` optional group — `pip install "pydantic-ai-slim[dbos]"`'
     ) from _import_error
 
-from ._agent import DBOSAgent, DBOSParallelExecutionMode
+from ._agent import DBOSAgent, DBOSParallelExecutionMode  # pyright: ignore[reportDeprecated]
 from ._durability import DBOSDurability
 from ._model import DBOSModel
 from ._utils import StepConfig

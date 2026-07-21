@@ -61,6 +61,7 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
+from ..capabilities.abstract import leaf_capabilities
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -1197,13 +1198,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The string the run's model was selected from, if any — carried through to
         # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
         # the original selection token (e.g. an alias only a `resolve_model_id` capability
-        # can resolve) across the activity/step/task boundary. Only meaningful when the run
-        # has a default model; a capability-selected model isn't round-tripped this way.
+        # can resolve) across the activity/step/task boundary.
         model_id: str | None = None
+        default_model_id: str | None = None
         default_model: models.Model | None = None
         if has_default_model:
             raw_model = self._pick_raw_model(model)
             model_id = raw_model if isinstance(raw_model, str) else None
+            default_model_id = model_id
             default_model = await self._resolve_model_selection(
                 raw_model,
                 capability=bootstrap_capability,
@@ -1219,7 +1221,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 messages=list(message_history) if message_history else [],
                 usage=usage,
             )
-            model_used = await self._evaluate_model_contribution(
+            model_used, model_id = await self._evaluate_model_contribution(
                 model_contribution,
                 capability=bootstrap_capability,
                 ctx=selection_ctx,
@@ -1384,6 +1386,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front).
         # Slicing from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
+        base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
+            initial_ctx,
+            [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
+        )
         if len(resolved_layers) > 1:
             run_capability = CombinedCapability(resolved_layers)
         else:
@@ -1539,11 +1545,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 deps=deps,
                 resolved_models=resolved_models_by_selection,
             )
+            model_id = run_model_contribution if isinstance(run_model_contribution, str) else None
             model_selector = None
             model_selected_for_step = None
             capability_owns_current_model = True
         elif default_model is not None:
             model_used = default_model
+            # The bootstrap contribution was withdrawn in `for_run`, so provenance reverts to the run's default.
+            model_id = default_model_id
             model_selector = None
             model_selected_for_step = None
             capability_owns_current_model = False
@@ -1554,7 +1563,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         async def evaluate_model_selector(
             selector: ModelSelector[AgentDepsT], selection_ctx: models.ModelSelectionContext[AgentDepsT]
-        ) -> models.Model:
+        ) -> tuple[models.Model, str | None]:
             return await self._evaluate_model_contribution(
                 selector,
                 capability=run_capability,
@@ -2153,7 +2162,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     messages=messages,
                     usage=usage,
                 )
-                selected_model = await self._evaluate_model_contribution(
+                selected_model, _ = await self._evaluate_model_contribution(
                     contribution, capability=capability, ctx=selection_ctx
                 )
             elif default_model is not None:
@@ -2679,14 +2688,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capability: AbstractCapability[AgentDepsT],
         ctx: models.ModelSelectionContext[AgentDepsT],
         resolved_models: dict[tuple[int, str], models.Model] | None = None,
-    ) -> models.Model:
+    ) -> tuple[models.Model, str | None]:
         """Evaluate a static or dynamic model contribution and resolve its result."""
         selection = contribution(ctx) if callable(contribution) and not _is_model(contribution) else contribution
         if inspect.isawaitable(selection):
             selection = await selection
-        return await self._resolve_model_selection(
+        model = await self._resolve_model_selection(
             selection, capability=capability, deps=ctx.deps, resolved_models=resolved_models
         )
+        return model, selection if isinstance(selection, str) else None
 
     @staticmethod
     def _check_dynamic_model_resume(

@@ -6,6 +6,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from dbos import DBOS, DBOSConfiguredInstance
+from typing_extensions import deprecated
 
 from pydantic_ai import (
     AbstractToolset,
@@ -15,6 +16,7 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import (
     AbstractAgent,
     AgentRun,
@@ -51,6 +53,17 @@ DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """
 
 
+@deprecated(
+    """`DBOSAgent` is deprecated in favor of the `DBOSDurability` capability. Migrate each constructor argument as follows:
+- With the capability, call `agent.run()` inside a `@DBOS.workflow`; the wrapper did this automatically.
+- `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[DBOSDurability(...)])`.
+- `name=` → set `name=` on `Agent`, or `name=` on `DBOSDurability`.
+- `event_stream_handler=` → pass `event_stream_handler=` to `DBOSDurability`; it runs inside steps, exactly like before.
+- `mcp_step_config=` → set `mcp_step_config=` on `DBOSDurability`.
+- `model_step_config=` → set `model_step_config=` on `DBOSDurability`.
+- `parallel_execution_mode=` → set `parallel_execution_mode=` on `DBOSDurability`.""",
+    category=PydanticAIDeprecationWarning,
+)
 @DBOS.dbos_class()
 class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
     _parallel_execution_mode: ParallelExecutionMode
@@ -225,7 +238,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             spec: dict[str, Any] | AgentSpec | None = None,
         ) -> AgentRunResult[Any]:
             with self._dbos_overrides(toolsets, event_stream_handler=event_stream_handler):
-                return super(DBOSAgent, self).run_sync(
+                return super(DBOSAgent, self).run_sync(  # pyright: ignore[reportDeprecated]
                     user_prompt,
                     output_type=output_type,
                     message_history=message_history,

@@ -108,12 +108,14 @@ Because the same agent works inside and outside a DBOS workflow, [`DBOSDurabilit
 
 For more information on how to use DBOS in Python applications, see their [Python SDK guide](https://docs.dbos.dev/python/programming-guide).
 
-### Wrapper-agent path
+### Wrapper-agent path (deprecated)
 
-[`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent] remains supported as the wrapper-agent alternative to [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability].
+!!! warning "Deprecated"
+    [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent] is the original wrapper-agent path for DBOS integration and will be removed in v3. New code should use the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] capability shown above.
 
-!!! warning "Migration"
     **When migrating, you must wrap the run in a workflow yourself.** `DBOSAgent` wrapped `run` / `run_sync` as a DBOS workflow automatically; `DBOSDurability` deliberately does not — a run is only durable when `agent.run()` is called inside your own `@DBOS.workflow`. Porting the constructor arguments but calling `agent.run()` directly produces a run that works but is **not durable**.
+
+    **Unlike [Temporal](temporal.md#wrapper-agent-path-deprecated), migrating is not safe for in-flight workflows.** `DBOSAgent` registered the `{agent name}.run` / `{agent name}.run_sync` workflows itself; once you migrate, those workflows no longer exist, so DBOS cannot recover runs that were interrupted under `DBOSAgent`. Let in-flight runs finish before deploying the migration, or keep an executor on the old application version until they have.
 
 Any agent can be wrapped in a [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent] to get a durable agent variant that routes model requests and MCP communication through DBOS steps:
 

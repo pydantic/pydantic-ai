@@ -163,10 +163,12 @@ Because Temporal workflows need to be defined at the top level of the file and t
 
 For more information on how to use Temporal in Python applications, see their [Python SDK guide](https://docs.temporal.io/develop/python).
 
-### Wrapper-agent path
+### Wrapper-agent path (deprecated)
 
-!!! warning "Migration compatibility"
-    Some workflow histories recorded with [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent], including streamed model activity results, do not currently replay under [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. Continue using `TemporalAgent` for existing workflows until migration compatibility is restored.
+!!! warning "Deprecated"
+    [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] is the original wrapper-agent path for Temporal integration and will be removed in v3. New code should use the [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability shown above.
+
+    [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] accepts the activity names and payload shapes recorded by `TemporalAgent` (as long as the agent's `name`, toolset `id`s, and `models=` registry keys stay the same, and `event_stream_handler=` remains on `TemporalDurability` while `TemporalAgent`-era workflows are still in flight), so workflows started under `TemporalAgent` will replay correctly after switching — there's no need to drain or version your workflows first. Histories recorded with an event stream handler registered a per-event activity; migrating to [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] before those workflows finish breaks replay.
 
 Any agent can be wrapped in a [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] to get a durable agent variant that can be used inside a Temporal workflow. At the time of wrapping, the agent's model and toolsets are frozen, activities are dynamically created for each, and the original model and toolsets are wrapped to call on the worker to execute the corresponding activities instead of directly performing the actions inside the workflow. The original agent can still be used as normal outside the Temporal workflow, but any changes to its model or toolsets after wrapping will not be reflected in the durable agent.
 

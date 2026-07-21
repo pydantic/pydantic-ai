@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import os
+import threading
 import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from pydantic_ai import (
     Agent,
@@ -37,12 +38,16 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import MCP, Capability, Instrumentation, ProcessEventStream, ResolveModelId, Toolset
+from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext, create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -55,16 +60,17 @@ try:
 
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
-        PrefectAgent,
+        PrefectAgent,  # pyright: ignore[reportDeprecated]
         PrefectDurability,
-        PrefectFunctionToolset,
-        PrefectMCPToolset,
+        PrefectFunctionToolset,  # pyright: ignore[reportDeprecated]
+        PrefectMCPToolset,  # pyright: ignore[reportDeprecated]
         PrefectModel,
         TaskConfig,
     )
     from pydantic_ai.durable_exec.prefect._cache_policies import (
         PrefectAgentInputs,
         _replace_run_context,  # pyright: ignore[reportPrivateUsage]
+        _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
@@ -92,19 +98,19 @@ from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
-# The legacy `MCPServer*` / `FastMCPToolset` classes are deprecated in favor of `MCPToolset`.
-warnings.filterwarnings(
-    'ignore',
-    message=r'`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated',
-    category=DeprecationWarning,
-)
+# `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`.
+# These tests exercise the wrapper-agent path on purpose; suppress the warnings here
+# rather than globally in `pyproject.toml`. The `pytestmark` entries below cover warnings
+# emitted *inside* test functions; the `filterwarnings` calls below cover warnings emitted
+# at module import time (e.g. module-level construction of `PrefectAgent`).
+warnings.filterwarnings('ignore', message='`PrefectAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
     pytest.mark.filterwarnings(
-        'ignore:`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated:DeprecationWarning'
+        'ignore:`PrefectAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
     ),
 ]
 
@@ -156,7 +162,13 @@ model = OpenAIChatModel(
 
 # Simple agent for basic testing
 simple_agent = Agent(model, name='simple_agent')
-simple_prefect_agent = PrefectAgent(simple_agent)
+simple_prefect_agent = PrefectAgent(simple_agent)  # pyright: ignore[reportDeprecated]
+
+
+def test_prefect_agent_construction_warns_deprecated() -> None:
+    """The `PrefectAgent` deprecation fires at runtime; the module-level filters only suppress it."""
+    with pytest.warns(PydanticAIDeprecationWarning, match='`PrefectAgent` is deprecated'):
+        PrefectAgent(Agent(TestModel(), name='prefect_agent_deprecation_probe'))  # pyright: ignore[reportDeprecated]
 
 
 async def test_simple_agent_run_in_flow(allow_model_requests: None) -> None:
@@ -240,7 +252,7 @@ complex_agent = Agent(
     capabilities=[Instrumentation(settings=InstrumentationSettings())],
     name='complex_agent',
 )
-complex_prefect_agent = PrefectAgent(complex_agent, event_stream_handler=event_stream_handler)
+complex_prefect_agent = PrefectAgent(complex_agent, event_stream_handler=event_stream_handler)  # pyright: ignore[reportDeprecated]
 
 
 async def runtime_handler_stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
@@ -253,7 +265,7 @@ runtime_handler_stream_agent = Agent(
     FunctionModel(stream_function=runtime_handler_stream_function),
     name='runtime_handler_stream_agent',
 )
-runtime_handler_stream_prefect_agent = PrefectAgent(runtime_handler_stream_agent)
+runtime_handler_stream_prefect_agent = PrefectAgent(runtime_handler_stream_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: CaptureLogfire) -> None:
@@ -677,7 +689,7 @@ async def test_event_stream_handler_property_outside_flow() -> None:
     # Outside a Prefect flow, the `event_stream_handler` property resolves to the effective handler
     # directly, rather than the in-flow per-event dispatcher.
     agent = Agent(TestModel(), name='event_stream_handler_property_agent')
-    prefect_agent = PrefectAgent(agent, event_stream_handler=runtime_event_stream_handler)
+    prefect_agent = PrefectAgent(agent, event_stream_handler=runtime_event_stream_handler)  # pyright: ignore[reportDeprecated]
     assert prefect_agent.event_stream_handler is runtime_event_stream_handler
 
 
@@ -686,7 +698,7 @@ async def test_agent_requires_name() -> None:
     agent_without_name = Agent(model)
 
     with pytest.raises(UserError) as exc_info:
-        PrefectAgent(agent_without_name)
+        PrefectAgent(agent_without_name)  # pyright: ignore[reportDeprecated]
 
     assert 'unique' in str(exc_info.value).lower() and 'name' in str(exc_info.value).lower()
 
@@ -696,7 +708,7 @@ async def test_agent_requires_model_at_creation() -> None:
     agent_without_model = Agent(name='test_agent')
 
     with pytest.raises(UserError) as exc_info:
-        PrefectAgent(agent_without_model)
+        PrefectAgent(agent_without_model)  # pyright: ignore[reportDeprecated]
 
     assert 'model' in str(exc_info.value).lower()
 
@@ -704,7 +716,41 @@ async def test_agent_requires_model_at_creation() -> None:
 async def test_toolset_without_id():
     """Test that agents can be created with toolsets without IDs."""
     # This is allowed in Prefect
-    PrefectAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
+    PrefectAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))  # pyright: ignore[reportDeprecated]
+
+
+async def test_prefect_toolset_legacy_constructors() -> None:
+    """The deprecated legacy Prefect toolset classes retain wrapping, IDs, and retry configuration."""
+    calls = 0
+
+    async def fail() -> str:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError('failed')
+
+    function_toolset = FunctionToolset()
+    function_toolset.add_function(fail)
+    with pytest.warns(PydanticAIDeprecationWarning, match='PrefectFunctionToolset'):
+        wrapped_function = PrefectFunctionToolset(  # pyright: ignore[reportDeprecated]
+            function_toolset,
+            task_config=TaskConfig(retries=1, retry_delay_seconds=0),
+            tool_task_config={},
+        )
+    assert wrapped_function.wrapped is function_toolset
+    assert wrapped_function.id is None
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = (await wrapped_function.get_tools(ctx))['fail']
+    with pytest.warns(UserWarning, match='without a flow run id'):
+        with pytest.raises(RuntimeError, match='failed'):
+            await wrapped_function.call_tool('fail', {}, ctx, tool)
+    assert calls == 2
+
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+    with pytest.warns(PydanticAIDeprecationWarning, match='PrefectMCPToolset'):
+        wrapped_mcp = PrefectMCPToolset(mcp_toolset, task_config={})  # pyright: ignore[reportDeprecated]
+    assert wrapped_mcp.wrapped is mcp_toolset
+    assert wrapped_mcp.id is None
 
 
 async def test_capability_contributed_toolset_id_from_capability():
@@ -729,12 +775,12 @@ async def test_capability_contributed_toolset_id_from_capability():
             MCP(url='https://mcp.example.com/api'),
         ],
     )
-    prefect_agent = PrefectAgent(agent)
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
 
     leaves: list[AbstractToolset[object]] = []
     for toolset in prefect_agent.toolsets:
         toolset.apply(leaves.append)
-    # The contributed MCP leaf carries the URL-derived id, so its `PrefectMCPToolset` wrapper is built
+    # The contributed MCP leaf carries the URL-derived id, so its durable Prefect wrapper is built
     # under a stable id; the `billing` function toolset carries the capability id.
     assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
     assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
@@ -751,8 +797,8 @@ async def test_prefect_agent():
     assert len(toolsets) >= 4
 
     # Find the wrapped toolsets (skip the internal output toolset)
-    prefect_function_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectFunctionToolset)]
-    prefect_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectMCPToolset)]
+    prefect_function_toolsets = [ts for ts in toolsets if isinstance(ts, DurableFunctionToolset)]
+    prefect_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, DurableMCPToolset)]
     external_toolsets = [ts for ts in toolsets if isinstance(ts, ExternalToolset)]
 
     # Verify we have the expected wrapped toolsets
@@ -773,7 +819,7 @@ async def test_prefect_agent():
 def test_prefect_wrapper_visit_and_replace():
     """Prefect wrapper toolsets should not be replaced by visit_and_replace."""
     toolsets = complex_prefect_agent.toolsets
-    prefect_function_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectFunctionToolset)]
+    prefect_function_toolsets = [ts for ts in toolsets if isinstance(ts, DurableFunctionToolset)]
     assert len(prefect_function_toolsets) >= 1
 
     prefect_toolset = prefect_function_toolsets[0]
@@ -1005,7 +1051,7 @@ async def test_prefect_agent_run_with_runtime_external_toolset() -> None:
         name='runtime_external_toolset_prefect_agent',
         output_type=[str, DeferredToolRequests],
     )
-    prefect_agent = PrefectAgent(agent)
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
 
     result = await prefect_agent.run(
         'Call the runtime external tool.',
@@ -1042,7 +1088,7 @@ async def test_prefect_agent_run_rejects_executing_runtime_toolsets(kind: str) -
     }
     labels = {'function': 'FunctionToolset', 'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
 
-    prefect_agent = PrefectAgent(Agent(TestModel(), name=f'reject_{kind}_prefect_agent'))
+    prefect_agent = PrefectAgent(Agent(TestModel(), name=f'reject_{kind}_prefect_agent'))  # pyright: ignore[reportDeprecated]
     with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
         await prefect_agent.run('Hello', toolsets=[toolset_factories[kind]()])
 
@@ -1096,7 +1142,7 @@ def delete_file(ctx: RunContext, path: str) -> bool:
     return True
 
 
-hitl_prefect_agent = PrefectAgent(hitl_agent)
+hitl_prefect_agent = PrefectAgent(hitl_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_prefect_agent_with_hitl_tool(allow_model_requests: None) -> None:
@@ -1166,7 +1212,7 @@ def get_weather_in_city(city: str) -> str:
     return 'sunny'
 
 
-model_retry_prefect_agent = PrefectAgent(model_retry_agent)
+model_retry_prefect_agent = PrefectAgent(model_retry_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_prefect_agent_with_model_retry(allow_model_requests: None) -> None:
@@ -1232,7 +1278,7 @@ def toggle(ctx: RunContext[ToggleableDeps]):
     ctx.deps.toggle()
 
 
-dynamic_prefect_agent = PrefectAgent(dynamic_agent)
+dynamic_prefect_agent = PrefectAgent(dynamic_agent)  # pyright: ignore[reportDeprecated]
 
 
 def test_dynamic_toolset():
@@ -1398,6 +1444,90 @@ async def test_cache_policy_per_run_ids_excluded_but_dict_keys_kept():
     assert tool_args_hash1 != tool_args_hash2
 
 
+def test_cache_policy_keeps_user_dataclass_fields():
+    """Cache projection preserves user dependency fields that share internal context names."""
+
+    @dataclass
+    class CacheDeps:
+        timestamp: str
+        run_id: str
+        conversation_id: str
+
+    deps = CacheDeps(timestamp='user-time', run_id='user-run', conversation_id='user-conversation')
+    ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+
+    projected = _strip_cache_excluded_fields(_replace_run_context({'ctx': ctx}))
+
+    assert projected['ctx']['deps'] == {
+        'timestamp': 'user-time',
+        'run_id': 'user-run',
+        'conversation_id': 'user-conversation',
+    }
+
+
+def test_cache_policy_excludes_timestamps_on_parts_outside_messages_module():
+    """Framework parts outside `pydantic_ai.messages` still exclude per-run fields.
+
+    Otherwise deferred-capability and tool-search histories bust the cache on flow retry.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    time1 = datetime.now()
+    time2 = time1 + timedelta(minutes=5)
+
+    def key_for(timestamp: datetime) -> str | None:
+        part = LoadCapabilityReturnPart(
+            content={'instructions': 'Use the loaded capability.'},
+            tool_call_id='load-capability-1',
+            timestamp=timestamp,
+        )
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': [part]}, flow_parameters={})
+
+    assert key_for(time1) == key_for(time2)
+
+
+def test_cache_policy_excludes_non_serializable_deps():
+    """Non-serializable dependency values are excluded without dropping serializable siblings.
+
+    Prefect's `INPUTS.compute_key` raises `ValueError` on inputs it can't hash, and dependencies
+    routinely hold live resources (HTTP clients, DB connections, locks), so the projection replaces
+    those values with a stable sentinel while serializable dependency values still fork the key.
+    """
+
+    @dataclass
+    class CacheDeps:
+        tenant: str
+        lock: threading.Lock = field(default_factory=threading.Lock)
+
+    class CacheModelDeps(BaseModel):
+        tenant: str
+        # `Any` rather than `threading.Lock`: on Python < 3.13 `threading.Lock` is a factory
+        # function, not a class, so pydantic warns (an error under pytest) when it's an annotation.
+        lock: Any = Field(default_factory=threading.Lock)
+
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(deps: object) -> str | None:
+        ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'ctx': ctx}, flow_parameters={})
+
+    assert key_for(CacheDeps(tenant='acme')) != key_for(CacheDeps(tenant='globex'))
+    assert key_for(CacheDeps(tenant='acme')) == key_for(CacheDeps(tenant='acme'))
+    assert key_for(CacheModelDeps(tenant='acme')) != key_for(CacheModelDeps(tenant='globex'))
+    assert key_for(CacheModelDeps(tenant='acme')) == key_for(CacheModelDeps(tenant='acme'))
+
+    lock_key = key_for(threading.Lock())
+    assert lock_key is not None
+    assert lock_key == key_for(threading.Lock())
+
+    assert key_for('acme') != key_for('globex')
+
+    # Containers recurse per item: serializable members fork the key, unhashable members don't.
+    assert key_for(['acme', threading.Lock()]) == key_for(['acme', threading.Lock()])
+    assert key_for(('acme', threading.Lock())) != key_for(('globex', threading.Lock()))
+
+
 async def test_cache_policy_with_tuples():
     """Test that cache policy handles tuples with timestamps correctly."""
     cache_policy = PrefectAgentInputs()
@@ -1461,9 +1591,6 @@ def test_cache_key_run_context_projection_is_exhaustive():
     """
     # Fields that legitimately don't belong in the cache key, each with its reason.
     cache_irrelevant = {
-        'deps',  # user object; hashed separately as a task input, not via RunContext
-        'agent',  # the agent instance, identified by task source not run state
-        'model',  # live Model instance, not hashable run state
         'usage',  # accumulates per run; not an input that should fork the cache
         'tracer',  # tracing plumbing, not run state
         'tool_manager',  # live ToolManager, not hashable run state
@@ -1516,7 +1643,7 @@ async def test_repeated_run_hits_cache():
         call_count += 1
         return ModelResponse(parts=[TextPart('4')])
 
-    prefect_agent = PrefectAgent(
+    prefect_agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
         Agent(FunctionModel(counting_model), name='cache_test_agent'),
         model_task_config=TaskConfig(cache_policy=PrefectAgentInputs()),
     )
@@ -1589,7 +1716,7 @@ model_settings = CustomModelSettings(max_tokens=123, custom_setting='custom_valu
 function_model = FunctionModel(return_settings, settings=model_settings)
 
 settings_agent = Agent(function_model, name='settings_agent')
-settings_prefect_agent = PrefectAgent(settings_agent)
+settings_prefect_agent = PrefectAgent(settings_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_custom_model_settings(allow_model_requests: None):
@@ -1613,7 +1740,7 @@ async def test_tool_call_outside_flow():
     def simple_tool(ctx: RunContext[SimpleDeps]) -> str:
         return f'Tool called with: {ctx.deps.value}'
 
-    test_prefect_agent = PrefectAgent(test_agent)
+    test_prefect_agent = PrefectAgent(test_agent)  # pyright: ignore[reportDeprecated]
 
     # Call run() outside a flow - tools should still work
     result = await test_prefect_agent.run('Call the tool', deps=SimpleDeps(value='test'))
@@ -1633,7 +1760,7 @@ async def test_disabled_tool():
         return 'Tool executed'
 
     # Create PrefectAgent with the tool disabled
-    test_prefect_agent = PrefectAgent(
+    test_prefect_agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
         test_agent,
         tool_task_config_by_name={
             'my_tool': None,
@@ -1911,6 +2038,27 @@ async def test_prefect_durability_outside_flow() -> None:
     assert result.output == 'Echo: Hello outside'
 
 
+async def test_prefect_durability_tool_config_is_ignored_outside_flow() -> None:
+    """Prefect tool task retries are inactive when an agent runs outside a Prefect flow."""
+    calls = 0
+    agent = Agent(
+        TestModel(),
+        name='durability_outside_tool_config',
+        retries=0,
+        capabilities=[PrefectDurability(tool_task_config=TaskConfig(retries=1, retry_delay_seconds=0))],
+    )
+
+    @agent.tool_plain
+    def fail() -> str:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError('failed')
+
+    with pytest.raises(RuntimeError, match='failed'):
+        await agent.run('Call the tool')
+    assert calls == 1
+
+
 def test_prefect_durability_requires_agent_name() -> None:
     """PrefectDurability raises UserError when the agent has no name."""
     with pytest.raises(UserError, match='unique `name`'):
@@ -1966,6 +2114,32 @@ async def test_prefect_durability_runtime_registered_model() -> None:
 
     assert await run_by_key() == 'alt-response'
     assert await run_by_instance() == 'alt-response'
+
+
+class _BehaviorChangingWrapper(WrapperModel):
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='wrapped-response')])
+
+
+async def test_prefect_durability_runtime_registered_wrapper_model() -> None:
+    """Prefect round-trips a registered wrapper by identity without unwrapping its behavior."""
+    wrapped = _BehaviorChangingWrapper(_durability_fn_model)
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_runtime_registered_wrapper',
+        capabilities=[PrefectDurability(models={'wrapped': wrapped})],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('hello', model=wrapped)).output
+
+    assert await run_agent() == 'wrapped-response'
 
 
 async def test_prefect_durability_override_registered_model() -> None:
@@ -2027,16 +2201,14 @@ async def test_prefect_durability_resolve_model_id_capability_is_deps_aware() ->
         capabilities=[ResolveModelId(_prefect_tenant_resolver), PrefectDurability()],
     )
 
-    # Separate flow runs so each request gets its own task-cache scope: within one flow the
-    # `'tenant-model'` model task caches by input and would replay the first tenant's result.
     @flow
-    async def run_agent(model_id: str, tenant: str) -> str:
-        return (await agent.run('hi', model=model_id, deps=tenant)).output
+    async def run_agent() -> tuple[str, str, str]:
+        first = await agent.run('hi', model='tenant-model', deps='acme')
+        second = await agent.run('hi', model='tenant-model', deps='globex')
+        fallback = await agent.run('hi', model='test', deps='acme')
+        return first.output, second.output, fallback.output
 
-    assert await run_agent('tenant-model', 'acme') == 'tenant:acme'
-    assert await run_agent('tenant-model', 'globex') == 'tenant:globex'
-    # A string the resolver doesn't recognize defers to the default `infer_model` flow.
-    assert await run_agent('test', 'acme') == 'success (no tool calls)'
+    assert await run_agent() == ('tenant:acme', 'tenant:globex', 'success (no tool calls)')
 
 
 async def test_prefect_durability_alias_default_model() -> None:

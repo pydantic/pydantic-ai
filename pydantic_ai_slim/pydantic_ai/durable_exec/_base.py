@@ -15,6 +15,7 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrde
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
@@ -314,9 +315,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         result to rebuild the same `Model` on the other side via
         `_resolve_model_for_request`.
 
-        Instances are matched by identity after stripping `WrapperModel` layers,
-        so e.g. an `InstrumentedModel`-wrapped default still takes the default's
-        fast path. The `model_id` fallback covers models built from a run-time
+        `WrapperModel` layers are peeled off the request's model one at a time, matching
+        registered instances as-is at each depth and preferring the shallowest match: a
+        registered behavior-changing wrapper keeps its own ID — even under further
+        unregistered wrapping, e.g. an `InstrumentedModel` around it — while an
+        unregistered wrapper around the default still takes the default's fast path.
+        The registered side is never unwrapped: a registered wrapper's identity holds at
+        its registered depth, so its bare inner model doesn't inherit the wrapper's ID. The
+        `model_id` fallback covers models built from a run-time
         string (via `resolve_model_id`) and models an outer capability swaps in
         via `before_model_request`: the worker rebuilds them by looking the
         `model_id` up in the registry, then falling back to the `resolve_model_id`
@@ -325,10 +331,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         can rebuild — a pre-built instance with a custom provider, client, or
         settings that isn't registered in `models=` will not survive it faithfully.
         """
-        unwrapped = unwrap_model(model)
-        for model_id, registered in self._models_by_id.items():
-            if unwrap_model(registered) is unwrapped:
-                return None if model_id == 'default' else model_id
+        candidate: Model | None = model
+        while candidate is not None:
+            for model_id, registered in self._models_by_id.items():
+                if registered is candidate:
+                    return None if model_id == 'default' else model_id
+            candidate = candidate.wrapped if isinstance(candidate, WrapperModel) else None
         # Runtime-built or swapped-in Model: round-trip via its model_id string. The worker
         # rebuilds it the same way (registry lookup → resolve_model_id chain → infer_model).
         return model.model_id

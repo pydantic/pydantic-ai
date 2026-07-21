@@ -3,9 +3,13 @@ from typing import Any, TypeGuard
 
 from prefect.cache_policies import INPUTS, RUN_ID, TASK_SOURCE, CachePolicy
 from prefect.context import TaskRunContext
+from prefect.utilities.hashing import hash_objects
+from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai.tools import RunContext
+
+_NON_SERIALIZABLE = '<non-serializable>'
 
 
 def _is_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
@@ -24,13 +28,46 @@ def _is_toolset_tool(obj: Any) -> TypeGuard[ToolsetTool]:
     return isinstance(obj, ToolsetTool)
 
 
+def _is_run_context(obj: Any) -> TypeGuard[RunContext[object]]:
+    return isinstance(obj, RunContext)
+
+
+def _cacheable_deps(deps: Any) -> Any:
+    """Project `deps` for cache-key hashing, excluding non-serializable values.
+
+    Dependencies routinely hold live resources (HTTP clients, DB connections, locks) that
+    Prefect can't hash; those values are replaced with a stable sentinel rather than failing
+    the task, while serializable siblings still fork the key. Plain non-dataclass and
+    non-`BaseModel` objects are treated as indivisible values.
+    """
+    projected = _strip_cache_excluded_fields(deps)
+
+    def exclude_non_serializable(value: Any) -> Any:
+        if hash_objects(value, raise_on_failure=False) is not None:
+            return value
+        if _is_dict(value):
+            return {key: exclude_non_serializable(item) for key, item in value.items()}
+        if _is_list(value):
+            return [exclude_non_serializable(item) for item in value]
+        if _is_tuple(value):
+            return tuple(exclude_non_serializable(item) for item in value)
+        if isinstance(value, BaseModel):
+            return {name: exclude_non_serializable(getattr(value, name)) for name in type(value).model_fields}
+        return _NON_SERIALIZABLE
+
+    return exclude_non_serializable(projected)
+
+
 def _replace_run_context(
     inputs: dict[str, Any],
 ) -> Any:
     """Replace RunContext objects with a dict containing only hashable fields."""
     for key, value in inputs.items():
-        if isinstance(value, RunContext):
+        if _is_run_context(value):
             inputs[key] = {
+                'deps': _cacheable_deps(value.deps),
+                'agent': value.agent.name if value.agent is not None else None,
+                'model': value.model.model_id,
                 'retries': value.retries,
                 'tool_call_id': value.tool_call_id,
                 'tool_name': value.tool_name,
@@ -58,7 +95,7 @@ def _replace_run_context(
 
 
 _CACHE_EXCLUDED_FIELDS = frozenset({'timestamp', 'run_id', 'conversation_id'})
-"""Message and part dataclass fields excluded from cache key computation as they vary per-run."""
+"""Framework dataclass fields excluded from cache key computation as they vary per-run."""
 
 
 def _strip_cache_excluded_fields(
@@ -66,14 +103,16 @@ def _strip_cache_excluded_fields(
 ) -> Any:
     """Recursively convert dataclasses to dicts, excluding cache-irrelevant fields.
 
-    Only dataclass fields are excluded: those are ours (message and part attributes like
-    `timestamp` and `conversation_id`). Plain dict keys are user or provider data (tool args,
-    `provider_details`) where an identically-named key is meaningful and must fork the key.
+    Only framework (`pydantic_ai.*`) dataclass fields are excluded. Fields on user-provided
+    dataclasses and plain dict keys are meaningful input data and must fork the key even when
+    they share a name with a per-run framework field.
     """
     if is_dataclass(obj) and not isinstance(obj, type):
         result: dict[str, Any] = {}
+        module = type(obj).__module__
+        excluded_fields = _CACHE_EXCLUDED_FIELDS if module == 'pydantic_ai' or module.startswith('pydantic_ai.') else ()
         for f in fields(obj):
-            if f.name not in _CACHE_EXCLUDED_FIELDS:
+            if f.name not in excluded_fields:
                 value = getattr(obj, f.name)
                 result[f.name] = _strip_cache_excluded_fields(value)
         return result

@@ -15,6 +15,7 @@ from pydantic_core import PydanticSerializationError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
+from typing_extensions import deprecated
 
 from pydantic_ai import (
     AbstractToolset,
@@ -25,6 +26,7 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, RunOutputDataT
 from pydantic_ai.capabilities import AgentCapability
@@ -58,6 +60,21 @@ class _EventStreamHandlerParams:
     serialized_run_context: Any
 
 
+@deprecated(
+    """`TemporalAgent` is deprecated in favor of the `TemporalDurability` capability. Migrate each constructor argument as follows:
+- `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[TemporalDurability(...)])`.
+- `name=` → set `name=` on `Agent`, or `name=` on `TemporalDurability`.
+- `models=` → set `models=` on `TemporalDurability`.
+- `provider_factory=` → use a deps-aware `ResolveModelId` capability.
+- `event_stream_handler=` → pass `event_stream_handler=` to `TemporalDurability`; it runs inside activities, exactly like before; for streams that don't need to run inside activities, register a `ProcessEventStream` capability instead.
+- `activity_config=` → set `activity_config=` on `TemporalDurability`.
+- `model_activity_config=` → set `model_activity_config=` on `TemporalDurability`.
+- `toolset_activity_config=` → set `toolset_activity_config=` on `TemporalDurability`.
+- `tool_activity_config=` → use per-tool `metadata={'temporal': ...}` or a `SetToolMetadata` capability.
+- `run_context_type=` → set `run_context_type=` on `TemporalDurability`.
+- `temporalize_toolset_func=` → not supported on the capability path; open an issue if you need it.""",
+    category=PydanticAIDeprecationWarning,
+)
 class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def __init__(
         self,
