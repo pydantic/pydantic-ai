@@ -39,10 +39,11 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import MCP, Capability
+from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UsageLimitExceeded, UserError
-from pydantic_ai.models import ModelResolutionContext, create_async_http_client
+from pydantic_ai.models import ModelRequestContext, ModelResolutionContext, create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -2394,11 +2395,43 @@ async def test_dbos_durability_alias_default_model(dbos: DBOS) -> None:
     assert await run_agent() == 'tenant:acme'
 
 
+@dataclass
+class _WrapRequestModelCapability(AbstractCapability[str]):
+    """Swaps a transparent `WrapperModel` around the request's model in `before_model_request`."""
+
+    async def before_model_request(
+        self, ctx: RunContext[str], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        request_context.model = WrapperModel(request_context.model)
+        return request_context
+
+
+async def test_dbos_durability_wrapper_swap_keeps_alias_provenance(dbos: DBOS) -> None:
+    """A transparent wrapper swapped in by `before_model_request` doesn't invalidate provenance.
+
+    Unwrapping both sides shows the request still targets the run's model, so the original
+    alias string crosses the step boundary and the worker re-resolves it deps-aware.
+    """
+    agent = Agent(
+        'tenant-model',
+        name='durability_wrapper_swap_provenance',
+        deps_type=str,
+        capabilities=[_WrapRequestModelCapability(), ResolveModelId(_dbos_tenant_resolver), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hi', deps='acme')).output
+
+    assert await run_agent() == 'tenant:acme'
+
+
 async def test_dbos_durability_allows_instrumented_default_model(dbos: DBOS) -> None:
     """An outer `Instrumentation` capability wraps the model, but the default model is still accepted.
 
-    `_find_model_id` unwraps the `InstrumentedModel` wrapper before comparing instances by
-    identity, so an instrumented run still takes the default's `model_id=None` fast path.
+    `_find_model_id` peels any wrapper layers off the request's model before comparing
+    instances by identity, so an instrumented run still takes the default's `model_id=None`
+    fast path.
     """
     agent = Agent(
         _durability_fn_model,
