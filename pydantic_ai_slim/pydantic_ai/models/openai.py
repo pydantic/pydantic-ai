@@ -655,6 +655,11 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     if the message history you're sending does not match exactly what was received from the Responses API in a previous response,
     for example if you're using a [history processor](../../message-history.md#processing-message-history).
     In that case, you'll want to disable this.
+
+    Most server-side tool items (web search, code interpreter, image generation) are replayed *by* their ID,
+    so disabling this also stops them from being sent back entirely. Hosted tool-search items are the exception:
+    they carry their state (the query and discovered tools) inline, so they are still replayed with the IDs
+    omitted, and previously discovered tools stay callable.
     """
 
     openai_truncation: Literal['disabled', 'auto']
@@ -2988,6 +2993,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     from_same_provider = item.provider_name == self.system or (
                         item.provider_name is None and message.provider_name == self.system
                     )
+                    # Two distinct gates. `should_send_item_id` controls echoing server item IDs
+                    # (`rs_...`, `ts_...`) back to OpenAI; for most native tool items the ID *is*
+                    # the replay payload (their state lives server-side), so it also decides
+                    # whether those items are sent at all. Hosted tool-search items carry their
+                    # state inline, so they replay on `from_same_provider` alone and this flag
+                    # only strips their IDs (see the `openai_send_reasoning_ids` docstring).
                     should_send_item_id = send_item_ids and from_same_provider
 
                     if isinstance(item, TextPart):
