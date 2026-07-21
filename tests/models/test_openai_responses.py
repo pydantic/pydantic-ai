@@ -936,9 +936,9 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
 
 
 async def test_openai_responses_moderation(allow_model_requests: None, openai_api_key: str):
-    """Moderation results requested via `extra_body` are surfaced in `provider_details['moderation']`."""
+    """Moderation results requested via `openai_moderation` are surfaced in `provider_details['moderation']`."""
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    settings = OpenAIResponsesModelSettings(extra_body={'moderation': {'model': 'omni-moderation-latest'}})
+    settings = OpenAIResponsesModelSettings(openai_moderation={'model': 'omni-moderation-latest'})
     agent = Agent(model=model, model_settings=settings)
 
     result = await agent.run('What is the capital of France?')
@@ -1057,7 +1057,7 @@ async def test_openai_responses_moderation(allow_model_requests: None, openai_ap
 async def test_openai_responses_moderation_stream(allow_model_requests: None, openai_api_key: str):
     """Streaming moderation results arrive on the final `response.completed` event and are surfaced in `provider_details['moderation']`."""
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    settings = OpenAIResponsesModelSettings(extra_body={'moderation': {'model': 'omni-moderation-latest'}})
+    settings = OpenAIResponsesModelSettings(openai_moderation={'model': 'omni-moderation-latest'})
     agent = Agent(model=model, model_settings=settings)
 
     async with agent.run_stream('What is the capital of France?') as result:

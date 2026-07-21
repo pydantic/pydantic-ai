@@ -365,7 +365,7 @@ Because the request is queued server-side, the time to the first token is higher
 
 ### Moderation
 
-The Responses API can run [moderation](https://platform.openai.com/docs/guides/moderation) on the input and output of a request. There is no typed model setting for the request side; pass the `moderation` request parameter via [`extra_body`][pydantic_ai.settings.ModelSettings.extra_body]:
+The Responses API can run [moderation](https://platform.openai.com/docs/guides/moderation) on the input and output of a request. Enable it with [`openai_moderation`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_moderation]:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -373,7 +373,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModel
 
 model = OpenAIResponsesModel('gpt-5.2')
 settings = OpenAIResponsesModelSettings(
-    extra_body={'moderation': {'model': 'omni-moderation-latest'}}
+    openai_moderation={'model': 'omni-moderation-latest'}
 )
 agent = Agent(model, model_settings=settings)
 
