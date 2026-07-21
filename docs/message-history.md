@@ -494,7 +494,7 @@ _(This example is complete, it can be run "as is")_
     `system_prompt` is different: system prompt parts are part of the message
     history. If the receiving agent has its own `system_prompt` and you need to
     ensure it is present when reusing history, see
-    [`ReinjectSystemPrompt`](capabilities.md#reinjectsystemprompt). Use
+    [`ReinjectSystemPrompt`](capabilities/reinject-system-prompt.md). Use
     `replace_existing=True` when a system prompt from another agent should not
     remain authoritative.
 
