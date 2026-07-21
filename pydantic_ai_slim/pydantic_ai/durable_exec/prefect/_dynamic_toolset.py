@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from prefect import task
+from prefect.context import FlowRunContext
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai.durable_exec._toolset import (
@@ -48,11 +49,13 @@ def prefectify_dynamic_toolset(
 
     return DurableDynamicToolset(
         wrapped,
-        # Prefect tasks degrade gracefully to plain calls outside a flow.
-        in_durable_context=lambda: True,
+        # Prefect tasks do NOT degrade outside a flow (the full task engine runs, with
+        # retries and cache lookups), so gate on an active flow run like the other
+        # Prefect toolset factories.
+        in_durable_context=lambda: FlowRunContext.get() is not None,
         get_tools_operation=get_tools_operation,
         call_tool_operation=call_tool_operation,
-        resolve_tool_config=lambda tool, name: resolve_tool_task_config(tool, name, {}),
+        resolve_tool_config=lambda tool, name: resolve_tool_task_config(tool, name, tool_task_config),
         lifecycle='enter-never',
         durable_config=base_config,
     )

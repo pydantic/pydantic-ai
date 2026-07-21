@@ -7563,7 +7563,7 @@ _temporal_dynamic_capability_agent = Agent(
     TestModel(),
     name='temporal_dynamic_capability_agent',
     capabilities=[
-        DynamicCapability(capability_func=_temporal_dynamic_capability_factory, id='dyn'),
+        DynamicCapability(_temporal_dynamic_capability_factory, id='dyn'),
         TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
     ],
 )
@@ -7597,10 +7597,39 @@ def test_durability_dynamic_capability_requires_id() -> None:
             TestModel(),
             name='idless_dynamic_capability',
             capabilities=[
-                DynamicCapability(capability_func=_temporal_dynamic_capability_factory),
+                DynamicCapability(_temporal_dynamic_capability_factory),
                 TemporalDurability(),
             ],
         )
+
+
+async def test_durability_dynamic_capability_transparent_outside_workflow():
+    """Outside a workflow, dynamic-capability tools resolve and run inline, not via activities.
+
+    The durable wrapper's `for_run` must hand the run the *resolved* dynamic toolset:
+    delegating to the unresolved construction-time factory would silently contribute no tools.
+    """
+    in_activity_flags: list[bool] = []
+
+    def dynamic_tool() -> str:
+        in_activity_flags.append(activity.in_activity())
+        return 'inline result'
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return Capability(tools=[dynamic_tool])
+
+    agent = Agent(
+        TestModel(),
+        name='temporal_dynamic_capability_outside',
+        capabilities=[
+            DynamicCapability(factory, id='dyn_outside'),
+            TemporalDurability(),
+        ],
+    )
+
+    result = await agent.run('Call the tool')
+    assert result.output == '{"dynamic_tool":"inline result"}'
+    assert in_activity_flags == [False]
 
 
 # --- ToolReturn metadata round-trip ---

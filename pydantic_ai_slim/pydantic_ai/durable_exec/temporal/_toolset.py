@@ -183,9 +183,9 @@ def temporalize_toolset(
         )
 
     if isinstance(toolset, DynamicToolset):
-        from ._dynamic_toolset import TemporalDynamicToolset
+        from ._dynamic_toolset import temporalize_dynamic_toolset
 
-        return TemporalDynamicToolset(
+        return temporalize_dynamic_toolset(
             toolset,
             activity_name_prefix=activity_name_prefix,
             activity_config=activity_config,

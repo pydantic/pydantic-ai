@@ -322,13 +322,24 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
         self._run_instructions: Instructions = None
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        if not self._in_durable_context():  # pragma: no cover
-            return await super().for_run(ctx)
+        if not self._in_durable_context():
+            # Fully transparent outside the durable context: resolve the dynamic toolset
+            # and hand the run its resolved form directly, without the durable dispatch.
+            # (The wrapped `DynamicToolset` only resolves in `for_run`; delegating the
+            # individual methods to the unresolved factory would silently yield no tools.)
+            return await self.wrapped.for_run(ctx)
         # Per-run copy isolates `_run_instructions` from the process-shared instance. The
         # shallow copy shares the engine-registered operations; this is only state isolation.
         run_copy = copy.copy(self)
         run_copy._run_instructions = None
         return run_copy
+
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        # The per-run copy is stable across steps: resolution happens inside the durable
+        # units per call, so a `per_run_step=True` factory must not be re-evaluated in
+        # workflow/flow code here. (Outside the durable context this wrapper isn't in the
+        # run's tree at all — `for_run` above replaced it with the resolved toolset.)
+        return self
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         result = await self._get_tools_operation(ctx)

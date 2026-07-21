@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import copy
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Literal
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
@@ -10,168 +9,115 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai import ToolsetTool
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
-    DynamicToolInfo,
+    DurableDynamicToolset,
     DynamicToolsResult,
-    Instructions,
     call_dynamic_tool,
     get_dynamic_tools,
+    unwrap_tool_call_result,
+    wrap_tool_call_result,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
 from ._run_context import TemporalRunContext, deserialize_run_context
-
-if TYPE_CHECKING:
-    from pydantic_ai.agent.abstract import AbstractAgent
 from ._toolset import (
     CallToolParams,
     GetToolsParams,
-    TemporalWrapperToolset,
     resolve_tool_activity_config,
 )
 
+if TYPE_CHECKING:
+    from pydantic_ai.agent.abstract import AbstractAgent
 
-class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
-    """Temporal wrapper for DynamicToolset.
 
-    This provides static activities (get_tools, call_tool) that are registered at worker start time,
-    while the actual toolset selection happens dynamically inside the activities where I/O is allowed.
+def temporalize_dynamic_toolset(
+    toolset: DynamicToolset[AgentDepsT],
+    *,
+    activity_name_prefix: str,
+    activity_config: ActivityConfig,
+    tool_activity_config: dict[str, ActivityConfig | Literal[False]],
+    deps_type: type[AgentDepsT],
+    run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+    agent: AbstractAgent[AgentDepsT, Any] | None = None,
+) -> DurableDynamicToolset[AgentDepsT]:
+    """Temporalize a dynamic toolset.
+
+    Registers static `get_tools`/`call_tool` activities at worker start time; the actual
+    toolset resolution happens inside the activities, where I/O is allowed.
     """
 
-    def __init__(
-        self,
-        toolset: DynamicToolset[AgentDepsT],
-        *,
-        activity_name_prefix: str,
-        activity_config: ActivityConfig,
-        tool_activity_config: dict[str, ActivityConfig | Literal[False]],
-        deps_type: type[AgentDepsT],
-        run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
-        agent: AbstractAgent[AgentDepsT, Any] | None = None,
-    ):
-        super().__init__(toolset)
-        self._agent = agent
-        self.activity_config = activity_config
-        self.tool_activity_config = tool_activity_config
-        self.run_context_type = run_context_type
+    async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> DynamicToolsResult:
+        ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+        return await get_dynamic_tools(toolset, ctx)
 
-        # Set by `get_tools`, read by `get_instructions`; lives on the per-run `for_run` copy (no run-id key).
-        self._run_instructions: Instructions = None
+    get_tools_activity.__annotations__['deps'] = deps_type
+    registered_get_tools = activity.defn(name=f'{activity_name_prefix}__dynamic_toolset__{toolset.id}__get_tools')(
+        get_tools_activity
+    )
 
-        async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> DynamicToolsResult:
-            """Activity that resolves the dynamic toolset and returns its tools and instructions."""
-            ctx = deserialize_run_context(
-                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
-            )
-            return await get_dynamic_tools(self.wrapped, ctx)
+    async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
+        ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+        return await wrap_tool_call_result(call_dynamic_tool(toolset, params.name, params.tool_args, ctx))
 
-        get_tools_activity.__annotations__['deps'] = deps_type
+    call_tool_activity.__annotations__['deps'] = deps_type
+    registered_call_tool = activity.defn(name=f'{activity_name_prefix}__dynamic_toolset__{toolset.id}__call_tool')(
+        call_tool_activity
+    )
 
-        self.get_tools_activity = activity.defn(name=f'{activity_name_prefix}__dynamic_toolset__{self.id}__get_tools')(
-            get_tools_activity
-        )
-
-        async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
-            """Activity that instantiates the dynamic toolset and calls the tool."""
-            ctx = deserialize_run_context(
-                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
-            )
-            return await self._wrap_call_tool_result(
-                call_dynamic_tool(self.wrapped, params.name, params.tool_args, ctx)
-            )
-
-        call_tool_activity.__annotations__['deps'] = deps_type
-
-        self.call_tool_activity = activity.defn(name=f'{activity_name_prefix}__dynamic_toolset__{self.id}__call_tool')(
-            call_tool_activity
-        )
-
-    @property
-    def temporal_activities(self) -> list[Callable[..., Any]]:
-        return [self.get_tools_activity, self.call_tool_activity]
-
-    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        if not workflow.in_workflow():  # pragma: no cover
-            return await super().for_run(ctx)
-
-        # Per-run copy isolates `_run_instructions` from the process-shared, module-level instance.
-        # Shallow, so the copy shares the worker-registered activities (`execute_activity` resolves by
-        # name). The base `return self` is about wrapped-toolset lifecycle; this is only state isolation.
-        run_copy = copy.copy(self)
-        run_copy._run_instructions = None
-        return run_copy
-
-    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> Instructions:
-        if not workflow.in_workflow():  # pragma: no cover
-            return await super().get_instructions(ctx)
-
-        # Set by `get_tools`, which the framework runs (via `for_run_step`) earlier in each step.
-        return self._run_instructions
-
-    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if not workflow.in_workflow():  # pragma: no cover
-            return await super().get_tools(ctx)
-
-        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        activity_config: ActivityConfig = {'summary': f'get tools: {self.id}', **self.activity_config}
-        result = await workflow.execute_activity(
-            activity=self.get_tools_activity,
+    async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
+        config: ActivityConfig = {'summary': f'get tools: {toolset.id}', **activity_config}
+        return await workflow.execute_activity(
+            activity=registered_get_tools,
             args=[
-                GetToolsParams(serialized_run_context=serialized_run_context),
+                GetToolsParams(serialized_run_context=run_context_type.serialize_run_context(ctx)),
                 ctx.deps,
             ],
-            **activity_config,
+            **config,
         )
-        self._run_instructions = result.instructions
-        return {name: self._tool_for_tool_info(tool_info) for name, tool_info in result.tools.items()}
 
-    async def call_tool(
-        self,
+    async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
+        config: Mapping[str, Any],
     ) -> Any:
-        if not workflow.in_workflow():  # pragma: no cover
-            return await super().call_tool(name, tool_args, ctx, tool)
-
-        tool_activity_config = resolve_tool_activity_config(tool, name, self.tool_activity_config)
-        if tool_activity_config is False:  # pragma: no cover
-            return await super().call_tool(name, tool_args, ctx, tool)
-
-        activity_config: ActivityConfig = {
-            'summary': f'call tool: {self.id}:{name}',
-            **self.activity_config,
-            **tool_activity_config,
-        }
-        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        return self._unwrap_call_tool_result(
-            await workflow.execute_activity(
-                activity=self.call_tool_activity,
-                args=[
-                    CallToolParams(
-                        name=name,
-                        tool_args=tool_args,
-                        serialized_run_context=serialized_run_context,
-                        tool_def=tool.tool_def,
-                    ),
-                    ctx.deps,
-                ],
+        merged_config = cast(
+            'ActivityConfig',
+            {
+                'summary': f'call tool: {toolset.id}:{name}',
                 **activity_config,
-            )
+                **config,
+            },
         )
-
-    def _tool_for_tool_info(self, tool_info: DynamicToolInfo) -> ToolsetTool[AgentDepsT]:
-        """Create a `ToolsetTool` from a `DynamicToolInfo` for use outside activities.
-
-        We use `TOOL_SCHEMA_VALIDATOR` here which just parses JSON without additional validation,
-        because the actual args validation happens inside `call_tool_activity`.
-        """
-        return ToolsetTool(
-            toolset=self,
-            tool_def=tool_info.tool_def,
-            max_retries=tool_info.max_retries,
-            args_validator=TOOL_SCHEMA_VALIDATOR,
+        result = await workflow.execute_activity(
+            activity=registered_call_tool,
+            args=[
+                CallToolParams(
+                    name=name,
+                    tool_args=tool_args,
+                    serialized_run_context=run_context_type.serialize_run_context(ctx),
+                    tool_def=tool.tool_def,
+                ),
+                ctx.deps,
+            ],
+            **merged_config,
         )
+        return unwrap_tool_call_result(result)
+
+    return DurableDynamicToolset(
+        toolset,
+        in_durable_context=workflow.in_workflow,
+        get_tools_operation=get_tools_operation,
+        call_tool_operation=call_tool_operation,
+        resolve_tool_config=lambda tool, name: resolve_tool_activity_config(tool, name, tool_activity_config),
+        # Resolution and lifecycle happen inside the activities (or, outside a workflow,
+        # on the resolved toolset that `for_run` hands the run); the construction-time
+        # factory itself has nothing to enter.
+        lifecycle='enter-never',
+        durable_registrations=[registered_get_tools, registered_call_tool],
+        durable_config=activity_config,
+    )
+
+
+TemporalDynamicToolset = DurableDynamicToolset
