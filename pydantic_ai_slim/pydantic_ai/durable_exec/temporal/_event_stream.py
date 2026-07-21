@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from collections.abc import AsyncIterator, Callable
 from datetime import timedelta
 from typing import Any, cast
@@ -22,6 +21,11 @@ AgentStreamEventFilter = Callable[[AgentStreamEvent], bool]
 
 _DEFAULT_BATCH_INTERVAL = timedelta(milliseconds=100)
 _DEFAULT_POLL_COOLDOWN = timedelta(milliseconds=100)
+
+# Bounded per-consumer buffer for the fan-out below. Awaited sends into a finite buffer apply
+# backpressure — a slow handler slows the shared stream rather than letting an in-memory buffer
+# grow without limit (matching how a `ProcessEventStream` handler back-pressures the stream).
+_FANOUT_BUFFER_SIZE = 100
 
 
 def workflow_stream_event_handler(
@@ -80,14 +84,15 @@ def combine_event_stream_handlers(
 
     Used to keep `event_stream_topic=` orthogonal to `event_stream_handler=`: the topic publisher is
     installed as one more independent consumer of the same stream a user-supplied handler sees, so neither
-    has to merge the other in by hand.
+    has to merge the other in by hand. Sends are awaited into a finite per-consumer buffer, so a slow
+    handler applies backpressure to the shared stream instead of growing an unbounded buffer.
     """
 
     async def combined(run_context: RunContext[AgentDepsT], stream: Any) -> None:
         senders: list[Any] = []
         async with anyio.create_task_group() as tg:
             for handler in handlers:
-                send, receive = anyio.create_memory_object_stream[_messages.AgentStreamEvent](math.inf)
+                send, receive = anyio.create_memory_object_stream[_messages.AgentStreamEvent](_FANOUT_BUFFER_SIZE)
                 senders.append(send)
 
                 async def run(handler: EventStreamHandler[AgentDepsT] = handler, receive: Any = receive) -> None:
@@ -100,7 +105,7 @@ def combine_event_stream_handlers(
                 async for event in stream:
                     for send in senders:
                         try:
-                            send.send_nowait(event)
+                            await send.send(event)
                         except anyio.BrokenResourceError:  # pragma: no cover - a consumer stopped early
                             pass
             finally:
