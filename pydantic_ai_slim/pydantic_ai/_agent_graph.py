@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
-from pydantic_ai._cost import best_effort_cost, best_effort_usage_cost
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, time_to_first_chunk_ctx
 from pydantic_ai._tool_execution import process_tool_calls
@@ -791,7 +790,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         conversation_id=ctx.state.conversation_id,
                     )
                     ctx.state.usage.incr(partial_response.usage)
-                    ctx.state.usage.cost += best_effort_cost(partial_response)
+                    # ^ Above should handle it for us ideally
+                    # ctx.state.usage.cost += best_effort_cost(partial_response)
                     ctx.state.message_history.append(partial_response)
             else:
                 try:
@@ -1039,12 +1039,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             usage.incr(counted_usage)
             # Add the best-effort cost of this request's input tokens to the accumulated cost. Output tokens don't
             # exist yet, so this is a lower bound: it only catches a request whose input alone exceeds the limit.
-            usage.cost += best_effort_usage_cost(
-                counted_usage,
-                model_name=model.model_name,
-                provider_api_url=model.base_url,
-                provider_name=model.system,
-            )
 
         ctx.deps.usage_limits.check_before_request(usage)
 
@@ -1109,7 +1103,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """Append a model response to history, updating usage tracking."""
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.usage.incr(response.usage)
-        ctx.state.usage.cost += best_effort_cost(response)
+        # Above should handle it for us ^
+        # ctx.state.usage.cost += best_effort_cost(response)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
             ctx.deps.usage_limits.check_cost(ctx.state.usage)

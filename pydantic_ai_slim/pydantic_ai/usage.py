@@ -59,6 +59,8 @@ class UsageBase:
     ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
+    cost: Decimal | None = None
+
     def __copy__(self) -> UsageBase:
         """Shallow copy that also copies mutable fields like `details`."""
         cls = type(self)
@@ -213,13 +215,6 @@ class RunUsage(UsageBase):
     output_tokens: int = 0
     """Total number of output/completion tokens."""
 
-    cost: Decimal = Decimal(0)
-    """Total cost of the run in USD, calculated with [genai-prices](https://github.com/pydantic/genai-prices).
-
-    This is a best-effort estimate: requests to models or providers that genai-prices doesn't have pricing data for
-    don't contribute to the total.
-    """
-
     details: dict[str, int] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
@@ -232,7 +227,8 @@ class RunUsage(UsageBase):
         if isinstance(incr_usage, RunUsage):
             self.requests += incr_usage.requests
             self.tool_calls += incr_usage.tool_calls
-        return _incr_usage_tokens(self, incr_usage)
+        _incr_usage_tokens(self, incr_usage)
+        _incr_usage_cost(self, incr_usage)
 
     def __add__(self, other: RunUsage | RequestUsage) -> RunUsage:
         """Add two RunUsages together.
@@ -242,6 +238,11 @@ class RunUsage(UsageBase):
         new_usage = copy(self)
         new_usage.incr(other)
         return new_usage
+
+
+def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
+    if incr_usage.cost is not None:
+        slf.cost = (slf.cost or 0) + incr_usage.cost
 
 
 def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
@@ -258,9 +259,6 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
     slf.cache_audio_read_tokens += incr_usage.cache_audio_read_tokens
     slf.output_audio_tokens += incr_usage.output_audio_tokens
     slf.output_tokens += incr_usage.output_tokens
-
-    if isinstance(slf, RunUsage) and isinstance(incr_usage, RunUsage):
-        slf.cost += incr_usage.cost
 
     for key, value in incr_usage.details.items():
         # Note: value can be None at runtime from model responses despite the type annotation
@@ -336,7 +334,7 @@ class UsageLimits:
             )
 
         cost = usage.cost
-        if self.cost_limit is not None and cost > self.cost_limit:
+        if cost and self.cost_limit is not None and cost > self.cost_limit:
             raise UsageLimitExceeded(f'The next request would exceed the cost_limit of {self.cost_limit} ({cost=})')
 
     def check_cost(self, usage: RunUsage) -> None:
@@ -348,7 +346,7 @@ class UsageLimits:
                     'This usually means genai-prices has no pricing data for the model or provider in use.'
                 )
             )
-        if self.cost_limit is not None and usage.cost > self.cost_limit:
+        if usage.cost and self.cost_limit is not None and usage.cost > self.cost_limit:
             raise UsageLimitExceeded(f'Exceeded the cost_limit of {self.cost_limit} ({usage.cost=})')
 
     def check_tokens(self, usage: RunUsage) -> None:

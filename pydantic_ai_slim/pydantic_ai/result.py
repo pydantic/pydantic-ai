@@ -13,7 +13,6 @@ from pydantic import ValidationError
 from typing_extensions import Self
 
 from . import _utils, exceptions, messages as _messages, models
-from ._cost import best_effort_cost
 from ._output import (
     OutputDataT_inv,
     OutputSchema,
@@ -200,7 +199,6 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         # `_raw_stream_response.usage` is a `RequestUsage` and carries no cost, so add this request's
         # best-effort cost (computed from the usage consumed so far) on top of the earlier requests' cost.
         usage = self._initial_run_ctx_usage + self._raw_stream_response.usage
-        usage.cost += best_effort_cost(self._raw_stream_response.get())
         return usage
 
     @property
