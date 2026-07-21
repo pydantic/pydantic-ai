@@ -1917,6 +1917,10 @@ async def test_dbos_mcp_toolset_get_instructions_uses_step_when_server_warm(dbos
     Whether the step runs must not depend on process warmth: skipping it when the wrapped
     server already holds instructions locally makes the durable schedule diverge between the
     original execution and replay/recovery in a differently-warm process.
+
+    Not a VCR test: what's asserted is *which side* serves the instructions (the DBOS step vs
+    the warm server's local cache) — invisible to a network cassette, since both paths issue
+    the same MCP traffic.
     """
     inner = MCPToolset(
         StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
