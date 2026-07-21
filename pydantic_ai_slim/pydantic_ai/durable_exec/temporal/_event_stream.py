@@ -139,7 +139,13 @@ async def stream_agent_events(
         from_offset: The stream offset to start from; pass the offset after the last event seen to resume.
         poll_cooldown: How long to wait between polls when no new events are ready.
     """
-    stream_client = WorkflowStreamClient.create(client, handle.id)
+    # Pin the subscription to the run the handle refers to, so a reused workflow ID can't redirect
+    # us to a different execution. `WorkflowStreamClient.create` resolves `handle.id` to the *latest*
+    # execution; building the client from a run-pinned handle instead targets the caller's run, while
+    # `subscribe` still follows continue-as-new (which it does whenever a `client` is supplied).
+    run_id = handle.run_id or handle.first_execution_run_id
+    pinned_handle = client.get_workflow_handle(handle.id, run_id=run_id) if run_id else handle
+    stream_client = WorkflowStreamClient(pinned_handle, client=client)
     subscription = cast(
         AsyncIterator[WorkflowStreamItem[AgentStreamEvent]],
         stream_client.subscribe(

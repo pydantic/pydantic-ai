@@ -252,30 +252,47 @@ class AssistantWorkflow:
         # Hosts the stream that the agent's activities publish to. Without this,
         # published events are silently dropped.
         self.stream = WorkflowStream()
+        self._released = False
 
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await agent.run(prompt)
+        # A Workflow Stream subscription is an Update long-poll that can't complete once the
+        # workflow has returned, so stay alive until the consumer signals it has finished draining.
+        # Otherwise a consumer that starts late or lags behind would miss the tail of the stream.
+        await workflow.wait_condition(lambda: self._released)
         return result.output
+
+    @workflow.signal
+    def release(self) -> None:
+        self._released = True
 ```
 
-An external consumer (with just the workflow handle) observes events as they arrive using [`stream_agent_events`][pydantic_ai.durable_exec.temporal.stream_agent_events], which decodes them back into typed [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s — effectively a durable [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] across the workflow boundary:
+An external consumer (with just the workflow handle) observes events as they arrive using [`stream_agent_events`][pydantic_ai.durable_exec.temporal.stream_agent_events], which decodes them back into typed [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s — effectively a durable [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] across the workflow boundary. Once it has drained the events it needs, it signals the workflow to complete:
 
 ```python {test="skip"}
 from temporalio.client import Client
 
 from pydantic_ai.durable_exec.temporal import stream_agent_events
+from pydantic_ai.messages import PartEndEvent
 
 
 async def relay_events(client: Client, prompt: str) -> None:
     handle = await client.start_workflow(
         AssistantWorkflow.run, prompt, id='assistant-1', task_queue='my-task-queue'
     )
-    async for event in stream_agent_events(client, handle, 'agent-events'):
-        ...  # e.g. forward `event` to the frontend over SSE
+    try:
+        async for event in stream_agent_events(client, handle, 'agent-events'):
+            ...  # e.g. forward `event` to the frontend over SSE
+            if isinstance(event, PartEndEvent):  # the assistant's answer is complete
+                break
+    finally:
+        # Let the workflow complete now that we've drained the stream.
+        await handle.signal(AssistantWorkflow.release)
+    print((await handle.result()).output)
 ```
 
-Because Workflow Streams are offset-addressed, a reconnecting consumer can resume from its last seen offset via `stream_agent_events(..., from_offset=...)`, which is more robust than ordinary in-process streaming.
+Because Workflow Streams are offset-addressed, a reconnecting consumer can resume from its last seen offset via `stream_agent_events(..., from_offset=...)`, which is more robust than ordinary in-process streaming. `stream_agent_events` targets the specific run behind the handle you pass, so it's unaffected by later executions that reuse the same workflow ID.
 
 A model stream emits a [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] per token, so to keep the volume down you can publish only a subset of events with the `event_stream_events` predicate:
 
