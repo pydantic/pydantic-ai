@@ -1931,12 +1931,16 @@ async def test_prefect_durability_outside_flow() -> None:
     assert result.output == 'Echo: Hello outside'
 
 
-async def test_prefect_durability_dynamic_capability_tool_runs_inline() -> None:
-    """A dynamic capability's tools run inline under Prefect, and no toolset `id` is required (nothing is wrapped)."""
+async def test_prefect_durability_dynamic_capability_tool_runs_as_task() -> None:
+    """A dynamic capability's tool calls run as Prefect tasks."""
     calls: list[str] = []
+    task_run_names: list[str] = []
 
     def dynamic_tool() -> str:
         calls.append('called')
+        task_run_context = TaskRunContext.get()
+        assert task_run_context is not None
+        task_run_names.append(task_run_context.task_run.name)
         return 'dynamic result'
 
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
@@ -1945,7 +1949,7 @@ async def test_prefect_durability_dynamic_capability_tool_runs_inline() -> None:
     agent = Agent(
         TestModel(),
         name='prefect_dynamic_capability',
-        capabilities=[DynamicCapability(capability_func=factory), PrefectDurability()],
+        capabilities=[DynamicCapability(capability_func=factory, id='dyn'), PrefectDurability()],
     )
 
     @flow
@@ -1954,6 +1958,46 @@ async def test_prefect_durability_dynamic_capability_tool_runs_inline() -> None:
 
     assert await run_agent() == '{"dynamic_tool":"dynamic result"}'
     assert calls == ['called']
+    assert len(task_run_names) == 1
+    assert task_run_names[0].startswith('Call Tool: dynamic_tool')
+
+
+def test_prefect_durability_dynamic_capability_requires_id() -> None:
+    def factory(ctx: RunContext[Any]) -> Capability[Any]:
+        return Capability()
+
+    with pytest.raises(UserError, match=r"DynamicCapability\(\.\.\., id='user-tools'\)"):
+        Agent(
+            TestModel(),
+            name='prefect_dynamic_capability_no_id',
+            capabilities=[DynamicCapability(capability_func=factory), PrefectDurability()],
+        )
+
+
+async def test_prefect_durability_dynamic_capability_tool_opts_out_of_task() -> None:
+    task_contexts: list[TaskRunContext[Any] | None] = []
+
+    def dynamic_tool() -> str:
+        task_contexts.append(TaskRunContext.get())
+        return 'dynamic result'
+
+    def factory(ctx: RunContext[Any]) -> Capability[Any]:
+        toolset = FunctionToolset()
+        toolset.add_function(dynamic_tool, metadata={'prefect': False})
+        return Capability(toolsets=[toolset])
+
+    agent = Agent(
+        TestModel(),
+        name='prefect_dynamic_capability_inline_tool',
+        capabilities=[DynamicCapability(capability_func=factory, id='dyn_inline'), PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Call the tool')).output
+
+    assert await run_agent() == '{"dynamic_tool":"dynamic result"}'
+    assert task_contexts == [None]
 
 
 def test_prefect_durability_requires_agent_name() -> None:

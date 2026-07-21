@@ -18,6 +18,7 @@ from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._runtime_toolsets import RuntimeToolsetKind, reject_unsupported_runtime_toolsets
 from ._utils import unwrap_model
@@ -184,6 +185,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         ts_id = ts.id
+        if ts_id is None and isinstance(ts, DynamicToolset):
+            raise UserError(
+                f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
+                f'need to have a unique `id` in order to be used with {self.engine_name}. '
+                f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
+                f'{self._durable_container_noun}. Set the dynamic toolset ID with `DynamicToolset(id=...)`, '
+                "or, when it is contributed by a capability, set the capability's `id` (for example, "
+                "`DynamicCapability(..., id='user-tools')`)."
+            )
         if ts_id is not None and (existing := self._toolsets_by_id.get(ts_id)) is not None:
             if existing.wrapped is ts:
                 # The same toolset instance can appear in more than one place in the tree;
@@ -200,9 +210,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if wrapped is None:
             return ts
         if ts_id is None:
-            # Only leaves this engine actually wraps need an `id` — e.g. a `DynamicToolset` under an
-            # engine that runs dynamic tools inline can stay anonymous. (Temporal raises its own,
-            # dynamic-specific id error before construction, in `temporalize_toolset`.)
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '

@@ -11,7 +11,6 @@ from temporalio.workflow import ActivityConfig
 from typing_extensions import Self
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableToolsetBase,
@@ -86,32 +85,6 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
 
     def _unwrap_call_tool_result(self, result: CallToolResult) -> Any:
         return unwrap_tool_call_result(result)
-
-    async def _call_tool_in_activity(
-        self,
-        name: str,
-        tool_args: dict[str, Any],
-        ctx: RunContext[AgentDepsT],
-        tool: ToolsetTool[AgentDepsT],
-        *,
-        toolset: AbstractToolset[AgentDepsT] | None = None,
-    ) -> CallToolResult:
-        """Call a tool inside an activity, re-validating args that were deserialized.
-
-        The tool args will already have been validated into their proper types in the `ToolManager`,
-        but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
-
-        Args:
-            name: The name of the tool to call.
-            tool_args: The raw tool arguments to re-validate and pass.
-            ctx: The run context.
-            tool: The tool definition.
-            toolset: The toolset to call the tool on. Defaults to `self.wrapped`.
-        """
-        toolset = toolset or self.wrapped
-        args_dict = tool.args_validator.validate_python(tool_args)
-        return await self._wrap_call_tool_result(toolset.call_tool(name, args_dict, ctx, tool))
-
 
 def resolve_tool_activity_config(
     tool: ToolsetTool[Any] | None,
@@ -192,16 +165,6 @@ def temporalize_toolset(
     if isinstance(toolset, DynamicToolset):
         from ._dynamic_toolset import TemporalDynamicToolset
 
-        if toolset.id is None:
-            # Checked here rather than by the caller's generic leaf-id validation because
-            # `TemporalDynamicToolset` needs the `id` to derive its activity names at construction.
-            raise UserError(
-                "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
-                'need to have a unique `id` in order to be used with Temporal. '
-                "The ID will be used to identify the toolset's activities within the workflow. "
-                'Set the dynamic toolset ID with `DynamicToolset(id=...)`, or, when it is contributed '
-                "by a capability, set the capability's `id` (for example, `DynamicCapability(..., id='user-tools')`)."
-            )
         return TemporalDynamicToolset(
             toolset,
             activity_name_prefix=activity_name_prefix,

@@ -6,6 +6,7 @@ from typing import Any, Literal, cast
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._types import TaskConfig
 
@@ -63,6 +64,20 @@ def prefectify_toolset(
             wrapped=toolset,
             task_config=tool_task_config,
             tool_task_config=tool_task_config_by_name,
+        )
+
+    if isinstance(toolset, DynamicToolset):
+        # The deprecated `PrefectAgent` still accepts anonymous dynamic toolsets and
+        # must retain its existing inline behavior. The capability path validates IDs
+        # before dispatching here.
+        if toolset.id is None:
+            return toolset
+        from ._dynamic_toolset import prefectify_dynamic_toolset
+
+        return prefectify_dynamic_toolset(
+            wrapped=toolset,
+            task_config=tool_task_config,
+            tool_task_config={},
         )
 
     try:

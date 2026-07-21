@@ -902,9 +902,9 @@ To return more than one capability from a single factory, wrap them in a [`Combi
 
 !!! note "Durable execution (Temporal, DBOS, Prefect)"
 
-    Dynamic capabilities, including their contributed toolsets, work with durable execution. With [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], set a stable `id` on [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability]; it names the pre-registered activities, inside which the factory is re-run when tools are listed and called (the activity boundary can't carry the run's resolved capability). The factory must therefore be deterministic given the run's dependencies when used with durable execution.
+    Dynamic capabilities, including their contributed toolsets, work with durable execution. Set a stable `id` on [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] with all three engines so their activities, steps, or tasks can be registered consistently.
 
-    DBOS and Prefect use the same dynamic capability mechanics, but dynamically resolved toolsets are not wrapped in durable steps or tasks (no `id` required): their tools — including any MCP communication — run inline in the workflow or flow, without step checkpointing or task retries, matching their behavior for [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset].
+    DBOS runs dynamic tool discovery and calls in steps, checkpointing any MCP I/O, while Prefect runs dynamic tool calls in tasks and resolves tools in flow code. Both reuse the capability already resolved for the run inside their steps or tasks. Temporal re-runs the factory inside activities because the activity boundary cannot carry the run's resolved capability, so the factory must be deterministic given the run's dependencies.
 
 ## Composition and middleware semantics
 

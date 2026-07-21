@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ToolsetTool
-from pydantic_ai.durable_exec._toolset import CallToolResult
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import InstructionPart
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.durable_exec._toolset import (
+    CallToolResult,
+    DynamicToolInfo,
+    DynamicToolsResult,
+    Instructions,
+    call_dynamic_tool,
+    get_dynamic_tools,
+)
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
@@ -27,28 +31,6 @@ from ._toolset import (
     TemporalWrapperToolset,
     resolve_tool_activity_config,
 )
-
-
-@dataclass
-class _ToolInfo:
-    """Serializable tool information returned from get_tools_activity."""
-
-    tool_def: ToolDefinition
-    max_retries: int
-
-
-@dataclass
-class _GetToolsResult:
-    """Serializable result of `get_tools_activity`: the resolved toolset's tools and its instructions.
-
-    Instructions are collected in the same activity (and thus the same single resolution and entry of
-    the inner toolset) as the tools. For an MCP-backed dynamic toolset this means the server is entered
-    once per run step instead of once for tools and again for instructions; the second entry would add a
-    redundant `initialize` round-trip whose `notifications/initialized` races teardown.
-    """
-
-    tools: dict[str, _ToolInfo]
-    instructions: str | InstructionPart | Sequence[str | InstructionPart] | None
 
 
 class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
@@ -76,26 +58,14 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         self.run_context_type = run_context_type
 
         # Set by `get_tools`, read by `get_instructions`; lives on the per-run `for_run` copy (no run-id key).
-        self._run_instructions: str | InstructionPart | Sequence[str | InstructionPart] | None = None
+        self._run_instructions: Instructions = None
 
-        async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> _GetToolsResult:
+        async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> DynamicToolsResult:
             """Activity that resolves the dynamic toolset and returns its tools and instructions."""
             ctx = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
-
-            run_toolset = await self.wrapped.for_run(ctx)
-            async with run_toolset:
-                run_toolset = await run_toolset.for_run_step(ctx)
-                tools = await run_toolset.get_tools(ctx)
-                instructions = await run_toolset.get_instructions(ctx)
-                return _GetToolsResult(
-                    tools={
-                        name: _ToolInfo(tool_def=tool.tool_def, max_retries=tool.max_retries)
-                        for name, tool in tools.items()
-                    },
-                    instructions=instructions,
-                )
+            return await get_dynamic_tools(self.wrapped, ctx)
 
         get_tools_activity.__annotations__['deps'] = deps_type
 
@@ -108,19 +78,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             ctx = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
-
-            run_toolset = await self.wrapped.for_run(ctx)
-            async with run_toolset:
-                run_toolset = await run_toolset.for_run_step(ctx)
-                tools = await run_toolset.get_tools(ctx)
-                tool = tools.get(params.name)
-                if tool is None:  # pragma: no cover
-                    raise UserError(
-                        f'Tool {params.name!r} not found in dynamic toolset {self.id!r}. '
-                        'The dynamic toolset function may have returned a different toolset than expected.'
-                    )
-
-                return await self._call_tool_in_activity(params.name, params.tool_args, ctx, tool, toolset=run_toolset)
+            return await self._wrap_call_tool_result(call_dynamic_tool(self.wrapped, params.name, params.tool_args, ctx))
 
         call_tool_activity.__annotations__['deps'] = deps_type
 
@@ -143,9 +101,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         run_copy._run_instructions = None
         return run_copy
 
-    async def get_instructions(
-        self, ctx: RunContext[AgentDepsT]
-    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> Instructions:
         if not workflow.in_workflow():  # pragma: no cover
             return await super().get_instructions(ctx)
 
@@ -205,8 +161,8 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             )
         )
 
-    def _tool_for_tool_info(self, tool_info: _ToolInfo) -> ToolsetTool[AgentDepsT]:
-        """Create a ToolsetTool from a _ToolInfo for use outside activities.
+    def _tool_for_tool_info(self, tool_info: DynamicToolInfo) -> ToolsetTool[AgentDepsT]:
+        """Create a `ToolsetTool` from a `DynamicToolInfo` for use outside activities.
 
         We use `TOOL_SCHEMA_VALIDATOR` here which just parses JSON without additional validation,
         because the actual args validation happens inside `call_tool_activity`.
