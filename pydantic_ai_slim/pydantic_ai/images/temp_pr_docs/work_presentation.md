@@ -133,15 +133,17 @@ generation/editing and deterministic wire tests cover `UploadedFile` mapping.
 - Calls the typed `client.aio.models.generate_content` surface.
 - Uses public `GenerateContentConfigDict`, `ImageConfigDict`, `PartDict`, and response types.
 - Preserves reference-image `media_resolution` metadata.
-- Requests mixed text/image response modalities where required and normalizes only final inline images.
-- Keeps response text, thoughts, finish data, and safety metadata in provider details without duplicating image bytes.
+- Requests image-only output to match the public `ImageGenerator` result contract and avoid billed text that the result
+  cannot expose.
+- Filters thought parts and keeps finish and safety metadata without duplicating image bytes.
 
 `generate_content` is an intentional compatibility choice. Interactions is the forward-looking Gemini API, but the
 repository's supported SDK surface and Google Cloud path do not yet provide the same public typing and support shape.
 The mapping is isolated inside the adapter so a later transport migration need not change the core API.
 
 The shorthand `google:` path is documented for the Gemini Developer API. Google Cloud is not advertised by the direct
-API until direct generation and editing are recorded with Cloud credentials.
+API until direct generation and editing are recorded with Cloud credentials and its mixed-modality requirement has an
+explicit transport policy.
 
 ### xAI
 

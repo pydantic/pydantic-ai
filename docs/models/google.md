@@ -348,7 +348,9 @@ generator = ImageGenerator(
 
 The direct adapter accepts inline images, downloadable image URLs, and Google Files API URIs represented as
 [`UploadedFile`][pydantic_ai.messages.UploadedFile]. The provider name must be `google`. See the
-[image-generation guide](../image-generation.md) for the common API and geometry behavior.
+[image-generation guide](../image-generation.md) for the common API and geometry behavior. The adapter requests an
+image-only response because [`ImageGenerator`][pydantic_ai.images.ImageGenerator] returns generated images rather than
+Gemini's optional conversational text.
 
 ## Model settings
 

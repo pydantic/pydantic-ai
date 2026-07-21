@@ -291,11 +291,12 @@ because they explain why the implementation changed.
 
 ### DEC-031: Advertise Google Cloud only after direct evidence
 
-- **Status:** working choice; needs maintainer validation.
+- **Status:** Cloud gate retained; shared mixed-modality request superseded by DEC-061.
 - **Decision:** share a transport-compatible implementation but do not advertise Google Cloud for the direct API until
   direct generation and reference editing have their own Cloud recordings.
 - **Evidence:** existing conversational-model recordings and SDK probes establish prior art but do not exercise the new
-  adapter contract. Cloud also requires mixed `TEXT`/`IMAGE` response modalities.
+  adapter contract. Cloud requires mixed `TEXT`/`IMAGE` response modalities, while the Developer API can return images
+  only.
 - **Rejected:** claiming Cloud support from mocks or from unrelated conversational cassettes alone.
 
 ### DEC-032: Use current Google image model IDs for new recordings
@@ -567,6 +568,20 @@ because they explain why the implementation changed.
   widen a public contract only to accommodate the wire representation of Agent Specs.
 - **Validation:** a public `Agent.from_spec()` regression test supplies JSON/YAML-shaped `[1280, 720]` and asserts that
   the resulting capability stores `(1280, 720)` and can resolve its direct image toolset.
+
+### DEC-061: Request image-only output from Google
+
+- **Status:** implemented after edge-case review; supersedes the mixed-modality part of DEC-031.
+- **Problem:** the adapter requested `TEXT` and `IMAGE` but normalized only image parts. Gemini could generate and bill
+  text that callers could not read through `ImageGenerationResult`.
+- **Decision:** send `response_modalities=['IMAGE']` for both generation and reference editing on the advertised Gemini
+  Developer API adapter. Keep thought filtering and non-content response metadata unchanged.
+- **Reason:** `ImageGenerator` promises generated images, not a mixed conversational response. Requesting only the public
+  result type avoids hidden output and cost instead of adding Google text to provider metadata.
+- **Cloud boundary:** Google Cloud remains unadvertised. Its mixed-modality requirement needs an explicit provider path
+  and direct recordings before Cloud support can be claimed.
+- **Validation:** the deterministic wire test asserts `responseModalities: ['IMAGE']`; both real Google recordings are
+  re-recorded against the image-only request and replay without credentials.
 
 ## Questions to Resolve with Maintainers
 

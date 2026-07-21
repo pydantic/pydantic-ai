@@ -243,7 +243,7 @@ def _resolve_google_settings(settings: GoogleImageGenerationSettings, *, model_n
 
     return _GoogleResolvedSettings(
         config=GenerateContentConfigDict(
-            response_modalities=['TEXT', 'IMAGE'],
+            response_modalities=['IMAGE'],
             image_config=image_config or None,
             http_options=http_options,
         ),

@@ -484,7 +484,6 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
                     {
                         'content': {
                             'parts': [
-                                {'text': 'Here is the edited image.'},
                                 {
                                     'inlineData': {'data': 'dGhvdWdodA==', 'mimeType': 'image/png'},
                                     'thought': True,
@@ -608,7 +607,7 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
             ],
             'generationConfig': {
                 'imageConfig': {'aspectRatio': '1:1', 'imageSize': '1K'},
-                'responseModalities': ['TEXT', 'IMAGE'],
+                'responseModalities': ['IMAGE'],
             },
         }
     )

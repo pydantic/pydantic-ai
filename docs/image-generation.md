@@ -58,7 +58,8 @@ endpoint requires file content, so use `BinaryImage` or `ImageUrl` with OpenAI.
 | xAI | ✅ | ✅ | ✅ | ✅ |
 
 The `google:` shorthand currently covers the Gemini Developer API. Google Cloud is not advertised for the direct API
-until direct generation and reference editing have provider-specific integration recordings.
+until direct generation and reference editing have provider-specific integration recordings. The Google adapter asks
+Gemini for image-only output, matching the `ImageGenerator` result contract and avoiding unused text output.
 
 ## Settings
 
