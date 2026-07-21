@@ -9,6 +9,7 @@ from prefect.context import FlowRunContext
 from typing_extensions import deprecated
 
 from pydantic_ai import FunctionToolset, ToolsetTool
+from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.durable_exec._toolset import (
     CallToolOperation,
@@ -16,10 +17,19 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._toolset import resolve_tool_task_config, with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
+
+
+class _EnqueueGuard(list[PendingMessage]):
+    def append(self, pending: PendingMessage) -> None:
+        raise UserError(
+            '`ctx.enqueue()` is not supported inside Prefect task-wrapped tools because task-cache replay '
+            'would drop the enqueued messages. Enqueue messages from flow-level code instead.'
+        )
 
 
 def _call_tool_operation(wrapped: FunctionToolset[AgentDepsT], base_config: TaskConfig) -> CallToolOperation:
@@ -30,14 +40,7 @@ def _call_tool_operation(wrapped: FunctionToolset[AgentDepsT], base_config: Task
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> Any:
-        task_ctx = replace(
-            ctx,
-            pending_messages=None,
-            _enqueue_error=(
-                '`ctx.enqueue()` is not supported inside Prefect task-wrapped tools because task-cache replay '
-                'would drop the enqueued messages. Enqueue messages from flow-level code instead.'
-            ),
-        )
+        task_ctx = replace(ctx, pending_messages=_EnqueueGuard())
         return await wrap_tool_call_result(wrapped.call_tool(tool_name, tool_args, task_ctx, tool))
 
     async def call_tool_operation(
