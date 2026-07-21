@@ -1834,10 +1834,11 @@ async def test_temporal_wrapper_toolset_extension_surface():
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     assert await toolset.for_run_step(ctx) is toolset
 
-    # Outside a workflow the wrapper enters/exits its wrapped toolset; inside one, exit is a no-op.
+    # Outside a workflow the wrapper enters/exits its wrapped toolset; inside one, both are no-ops.
     async with toolset:
         pass
     with patch('pydantic_ai.durable_exec.temporal._toolset.workflow.in_workflow', return_value=True):
+        assert await toolset.__aenter__() is toolset
         assert await toolset.__aexit__(None, None, None) is None
 
     async def return_value() -> str:
