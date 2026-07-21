@@ -230,9 +230,10 @@ async with agent.realtime_session(
 
 [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] contains the settings shared by
 all realtime providers: `tool_choice`, `parallel_tool_calls`, `max_tokens`, `voice`,
-`input_transcription_model`, `output_modality`, and
-[`turn_detection`][pydantic_ai.realtime.TurnDetection]. You can instead set defaults on a model and
-override individual values for one session:
+`input_transcription_model`, `output_modality`,
+[`turn_detection`][pydantic_ai.realtime.TurnDetection], and
+[`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] (see [Reasoning](#reasoning)). You
+can instead set defaults on a model and override individual values for one session:
 
 ```python {test="skip" lint="skip"}
 async with agent.realtime_session(
@@ -256,8 +257,37 @@ settings = OpenAIRealtimeModelSettings(
 )
 ```
 
+To keep the prompt-cached audio prefix stable as a long session grows (cached audio is far cheaper
+than re-encoding it), OpenAI also accepts
+[`openai_truncation`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings.openai_truncation] —
+`'auto'`, `'disabled'`, or a `{'type': 'retention_ratio', 'retention_ratio': 0.8}` dict.
+
 The agent's regular `model_settings` and capability `get_model_settings()` contributions do not apply
 to realtime sessions. OpenAI and xAI realtime sessions do not accept `temperature`.
+
+### Reasoning
+
+The cross-provider [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting mirrors
+the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] on the request-response models:
+`True` enables reasoning at the provider default, `False` disables it, and
+`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'` selects an effort level.
+
+It applies only to realtime models that support reasoning — reported by the model's
+[`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] profile flag. Today
+that is OpenAI's `gpt-realtime-2` family (e.g. `gpt-realtime-2.1` and `gpt-realtime-2.1-mini`); the GA
+`gpt-realtime` is a standard speech-to-speech model without reasoning, so a `thinking` setting is
+ignored with a warning rather than sent (the API would otherwise reject it).
+
+```python {test="skip" lint="skip"}
+async with agent.realtime_session(
+    model=OpenAIRealtimeModel('gpt-realtime-2.1', settings=OpenAIRealtimeModelSettings(thinking='low')),
+) as session:
+    ...
+```
+
+Gemini Live exposes reasoning through its own
+[`google_thinking_config`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_thinking_config]
+instead (its Live models configure thinking as a token budget or a level depending on the model).
 
 ### Gemini configuration
 
@@ -769,6 +799,8 @@ Some capabilities are intentionally out of scope:
 - **Realtime-specific capability hooks.** Capabilities run their [tool-lifecycle hooks](#relationship-to-run-iter) only; there are no before/after-exchange hooks.
 - **Dynamic instructions mid-session.** Instructions are resolved once at connect and not re-evaluated during the session.
 - **Audio replay when seeding history.** Seeding a session with `message_history=` projects text and transcripts only; prior audio is not replayed (see [Message history](#message-history)).
+- **Unified `thinking` on Gemini.** The cross-provider [`thinking`](#reasoning) setting currently maps to OpenAI reasoning models only; Gemini reasoning is configured through its native `google_thinking_config`.
+- **Proactive resume before Gemini's session cap.** Gemini Live signals an upcoming disconnect (`GoAway`) near its session-length limit; the session doesn't yet resume proactively on that signal, only [reconnecting](#reconnecting) after a drop.
 
 ## Implementing a provider
 
