@@ -1932,6 +1932,7 @@ async def test_prefect_durability_outside_flow() -> None:
 
 
 async def test_prefect_durability_dynamic_capability_tool_runs_inline() -> None:
+    """A dynamic capability's tools run inline under Prefect, and no toolset `id` is required (nothing is wrapped)."""
     calls: list[str] = []
 
     def dynamic_tool() -> str:
@@ -1944,7 +1945,7 @@ async def test_prefect_durability_dynamic_capability_tool_runs_inline() -> None:
     agent = Agent(
         TestModel(),
         name='prefect_dynamic_capability',
-        capabilities=[DynamicCapability(capability_func=factory, id='dyn'), PrefectDurability()],
+        capabilities=[DynamicCapability(capability_func=factory), PrefectDurability()],
     )
 
     @flow

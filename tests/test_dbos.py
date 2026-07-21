@@ -2705,6 +2705,7 @@ async def test_dbos_durability_allows_runtime_function_toolset(dbos: DBOS) -> No
 
 
 async def test_dbos_durability_dynamic_capability_tool_runs_inline(dbos: DBOS) -> None:
+    """A dynamic capability's tools run inline under DBOS, and no toolset `id` is required (nothing is wrapped)."""
     calls: list[str] = []
 
     def dynamic_tool() -> str:
@@ -2717,7 +2718,7 @@ async def test_dbos_durability_dynamic_capability_tool_runs_inline(dbos: DBOS) -
     agent = Agent(
         TestModel(),
         name='dbos_dynamic_capability',
-        capabilities=[DynamicCapability(capability_func=factory, id='dyn'), DBOSDurability()],
+        capabilities=[DynamicCapability(capability_func=factory), DBOSDurability()],
     )
 
     @DBOS.workflow()

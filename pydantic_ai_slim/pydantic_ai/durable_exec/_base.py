@@ -185,15 +185,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         ts_id = ts.id
-        if ts_id is None and isinstance(ts, DynamicToolset):
-            raise UserError(
-                f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
-                f'need to have a unique `id` in order to be used with {self.engine_name}. '
-                f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
-                f'{self._durable_container_noun}. Set the dynamic toolset ID with `DynamicToolset(id=...)`, or, '
-                "when it is contributed by a capability, set the capability's `id` (for example, "
-                "`DynamicCapability(..., id='user-tools')`)."
-            )
         if ts_id is not None and (existing := self._toolsets_by_id.get(ts_id)) is not None:
             if existing.wrapped is ts:
                 # The same toolset instance can appear in more than one place in the tree;
@@ -210,11 +201,19 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if wrapped is None:
             return ts
         if ts_id is None:
+            # Only leaves this engine actually wraps need an `id`; e.g. a `DynamicToolset`
+            # under an engine that runs dynamic tools inline can stay anonymous.
+            dynamic_hint = (
+                ' Set the dynamic toolset ID with `DynamicToolset(id=...)`, or, when it is contributed '
+                "by a capability, set the capability's `id` (for example, `DynamicCapability(..., id='user-tools')`)."
+                if isinstance(ts, DynamicToolset)
+                else ''
+            )
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '
                 f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
-                f'{self._durable_container_noun}.'
+                f'{self._durable_container_noun}.{dynamic_hint}'
             )
         self._toolsets_by_id[ts_id] = wrapped
         return wrapped

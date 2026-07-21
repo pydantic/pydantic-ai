@@ -32,8 +32,9 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
     its toolset is exposed through the dynamic toolset.
 
     Under durable execution, the factory is additionally called inside the durable
-    unit whenever tools are listed or called there. A stable `id` is required on
-    `DynamicCapability` because it names those durable units.
+    unit whenever tools are listed or called there. Engines that wrap dynamic
+    toolsets (e.g. Temporal) require a stable `id` on `DynamicCapability` because
+    it names those durable units.
 
     Pass a [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] directly
     to `Agent(capabilities=[...])` or `agent.run(capabilities=[...])` and it
