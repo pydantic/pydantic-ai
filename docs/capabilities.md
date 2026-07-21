@@ -662,6 +662,9 @@ The convenience capability adapts both forms to the asynchronous
 
 Resolvers form a chain in capability order: the first non-`None` result wins, and Pydantic AI falls back to normal model inference if every resolver returns `None`. See [Resolving model IDs](#resolving-model-ids) to implement the hook in a custom capability and understand when each resolver tree is used.
 
+!!! note "Durable execution"
+    Under [durable execution](durable_execution/overview.md) (Temporal, DBOS, Prefect), the resolver runs again inside the activity/step/task to rebuild the model on the worker, so it must be deterministic for a given `(model_id, deps)` and must not perform external I/O — carry credentials and registry data on `deps` instead.
+
 ### Provider-adaptive tools
 
 [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], [`XSearch`][pydantic_ai.capabilities.XSearch], and [`MCP`][pydantic_ai.capabilities.MCP] each cover a single capability (web search, URL fetch, image generation, X search, MCP) across two implementations:

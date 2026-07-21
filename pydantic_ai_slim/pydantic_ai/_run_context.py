@@ -157,6 +157,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Temporal activity boundaries.
     """
 
+    root_capability: AbstractCapability[RunContextAgentDepsT] | None = None
+    """The effective root capability for this run.
+
+    Reflects the merged capability chain (agent-level + per-run extras) that
+    is driving model requests, hooks, and toolsets for the current run.
+    Capability implementations can use this to validate per-run additions
+    (e.g. detect runtime-added capabilities that require worker registration).
+
+    Not part of the Temporal activity-boundary serialization (capabilities
+    don't round-trip), but populated on the activity side from the bound
+    agent's `root_capability`.
+    """
+
     capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=lambda: {})
     """All capabilities registered for the current run, including deferred ones."""
 

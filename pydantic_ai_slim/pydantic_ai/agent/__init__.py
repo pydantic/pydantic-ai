@@ -61,6 +61,7 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
+from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
@@ -440,7 +441,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Keep the constructor value untouched while capabilities bind. A capability may interpret
         # model IDs itself, so eagerly inferring a string here could construct the wrong provider
         # (and perform its authentication/configuration side effects) before `for_agent()` can add
-        # the appropriate resolver.
+        # the appropriate resolver. Durability capabilities tolerate a raw-string model in their
+        # `for_agent` and rebuild it worker-side, so they no longer need a concrete `Model` here.
         self._model = model
 
         self.model_settings = model_settings
@@ -535,7 +537,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._cap_native_tools: list[AgentNativeTool[AgentDepsT]] = []
         self._cap_model_settings: AgentModelSettings[AgentDepsT] | None = None
 
-        self._root_capability = self._root_capability.for_agent(self)
+        # Let capabilities bind to this agent (discover model, name, toolsets, etc.).
+        # Binding happens in two phases: capabilities in the `innermost` ordering tier
+        # (i.e. durability capabilities) wrap all of the agent's toolsets in their
+        # `for_agent`, so they only bind after every other capability has bound and had
+        # its contributed toolsets extracted into `self._cap_toolsets` (and thereby
+        # `self.toolsets`). The flip side is that `innermost` capabilities can't
+        # contribute toolsets of their own.
+        self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=False)
+        cap_toolset = self._root_capability.get_toolset()
+        if cap_toolset is not None:
+            self._cap_toolsets = [cap_toolset]
+        self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=True)
+
         if model is not None and not defer_model_check and not self._root_capability.has_resolve_model_id:
             self._model = models.infer_model(model)
 
@@ -545,13 +559,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._root_capability.apply(static_capabilities.append)
         _validate_capability_ids(static_capabilities)
 
+        # Extract capability-contributed configuration (after for_agent so caps can provide instructions etc.)
         self._cap_instructions = _instructions.normalize_instructions(self._root_capability.get_instructions())
         self._cap_native_tools = list(self._root_capability.get_native_tools())
         _validate_native_tool_ids(self._cap_native_tools, source='agent capabilities')
         self._cap_model_settings = self._root_capability.get_model_settings()
-        cap_toolset = self._root_capability.get_toolset()
-        if cap_toolset is not None:
-            self._cap_toolsets = [cap_toolset]
 
     @overload
     @classmethod
@@ -1174,16 +1186,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._check_dynamic_model_resume(model_contribution, message_history)
 
         has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
-        default_model = (
-            await self._resolve_model_selection(
-                self._pick_raw_model(model),
+
+        # The string the run's model was selected from, if any — carried through to
+        # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
+        # the original selection token (e.g. an alias only a `resolve_model_id` capability
+        # can resolve) across the activity/step/task boundary. Only meaningful when the run
+        # has a default model; a capability-selected model isn't round-tripped this way.
+        model_id: str | None = None
+        default_model: models.Model | None = None
+        if has_default_model:
+            raw_model = self._pick_raw_model(model)
+            model_id = raw_model if isinstance(raw_model, str) else None
+            default_model = await self._resolve_model_selection(
+                raw_model,
                 capability=bootstrap_capability,
                 deps=deps,
                 resolved_models=resolved_models_by_selection,
             )
-            if has_default_model
-            else None
-        )
         if model_contribution is not None:
             selection_ctx = models.ModelSelectionContext(
                 agent=self,
@@ -1346,7 +1365,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # once per run and may have per-run side effects (e.g. the durable-exec integrations
         # rely on this for deterministic replay). Composing from the resolved pieces below
         # yields the same structure as resolving a pre-composed tree, since the same
-        # flatten-and-sort runs on the same resolved children either way.
+        # flatten-and-sort runs on the same resolved children either way. The base capability
+        # is a `CombinedCapability`, so composing it back as a layer here lets its leaves
+        # (which may span outermost and innermost tiers, e.g. `ToolSearch` and
+        # `TemporalDurability`) re-flatten into siblings for the ordering pass.
         resolved_layers = await _utils.gather(*(cap.for_run(initial_ctx) for cap in run_layers))
         model_layer_start = len(run_layers) - len(model_layers)
         model_layers_unchanged = all(
@@ -1552,6 +1574,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             resumed_request=None,
             resumed_request_index=None,
             model=model_used,
+            model_id=model_id,
             model_selector=model_selector,
             model_selected_for_step=model_selected_for_step,
             evaluate_model_selector=evaluate_model_selector,
