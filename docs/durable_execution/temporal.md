@@ -284,7 +284,7 @@ class AssistantWorkflow:
 
 An external consumer (with just the workflow handle) observes events as they arrive using [`stream_agent_events`][pydantic_ai.durable_exec.temporal.stream_agent_events], which decodes them back into typed [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s — effectively a durable [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] across the workflow boundary. The run — not any individual event — is the terminal signal (an event like `PartEndEvent` only ends a single response part, and tool calls or further parts can follow), so the consumer relays until the run has finished, then releases the workflow so it completes and the subscription ends:
 
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 import asyncio
 
 from temporalio.client import Client
@@ -317,6 +317,7 @@ Because Workflow Streams are offset-addressed, a reconnecting consumer can resum
 A model stream emits a [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] per token, so to keep the volume down you can publish only a subset of events with the `event_stream_events` predicate:
 
 ```python {test="skip"}
+from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai.messages import PartDeltaEvent
 
 TemporalDurability(
