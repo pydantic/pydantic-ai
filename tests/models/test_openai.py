@@ -31,6 +31,7 @@ from pydantic_ai import (
     ModelRetry,
     PartDeltaEvent,
     PartEndEvent,
+    PartStartEvent,
     RetryPromptPart,
     TextContent,
     TextPart,
@@ -47,7 +48,7 @@ from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_ty
 from pydantic_ai.capabilities import Capability, NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
+from pydantic_ai.messages import FinalResultEvent, InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
@@ -852,6 +853,314 @@ async def test_no_delta(allow_model_requests: None):
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+
+
+async def test_disable_streaming_events(allow_model_requests: None):
+    """`openai_disable_streaming` replays a complete non-streamed response as stream events.
+
+    A mock is used rather than a cassette to pin the exact events the wrapper emits from a fixed
+    response (a whole part per `PartStartEvent`, no deltas), which is the internal contract the AG-UI
+    and Vercel AI adapters rely on. The response covers every part kind an open-weight model served
+    over Chat Completions can produce here: an inline `<think>` block (as Qwen3 via Ollama emits),
+    text, and parallel tool calls.
+    """
+    c = completion_message(
+        ChatCompletionMessage(
+            content='<think>They want the weather in two cities.</think>Let me look that up for you.',
+            role='assistant',
+            tool_calls=[
+                ChatCompletionMessageFunctionToolCall(
+                    id='call_1',
+                    function=Function(arguments='{"city": "Mexico City"}', name='get_weather'),
+                    type='function',
+                ),
+                ChatCompletionMessageFunctionToolCall(
+                    id='call_2',
+                    function=Function(arguments='{"city": "Kraków"}', name='get_weather'),
+                    type='function',
+                ),
+            ],
+        ),
+        usage=CompletionUsage(completion_tokens=5, prompt_tokens=3, total_tokens=8),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='get_weather')], allow_text_output=True)
+
+    async with m.request_stream(
+        [ModelRequest.user_text_prompt('What is the weather in Mexico City and Kraków?')],
+        OpenAIChatModelSettings(openai_disable_streaming=True),
+        params,
+    ) as stream:
+        events = [event async for event in stream]
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(content='They want the weather in two cities.', id='content', provider_name='openai'),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(content='They want the weather in two cities.', id='content', provider_name='openai'),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=1, part=TextPart(content='Let me look that up for you.'), previous_part_kind='thinking'
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(index=1, part=TextPart(content='Let me look that up for you.'), next_part_kind='tool-call'),
+            PartStartEvent(
+                index=2,
+                part=ToolCallPart(tool_name='get_weather', args='{"city": "Mexico City"}', tool_call_id='call_1'),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=2,
+                part=ToolCallPart(tool_name='get_weather', args='{"city": "Mexico City"}', tool_call_id='call_1'),
+                next_part_kind='tool-call',
+            ),
+            PartStartEvent(
+                index=3,
+                part=ToolCallPart(tool_name='get_weather', args='{"city": "Kraków"}', tool_call_id='call_2'),
+                previous_part_kind='tool-call',
+            ),
+            PartEndEvent(
+                index=3,
+                part=ToolCallPart(tool_name='get_weather', args='{"city": "Kraków"}', tool_call_id='call_2'),
+            ),
+        ]
+    )
+    assert stream.get() == snapshot(
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='They want the weather in two cities.', id='content', provider_name='openai'),
+                TextPart(content='Let me look that up for you.'),
+                ToolCallPart(tool_name='get_weather', args='{"city": "Mexico City"}', tool_call_id='call_1'),
+                ToolCallPart(tool_name='get_weather', args='{"city": "Kraków"}', tool_call_id='call_2'),
+            ],
+            usage=RequestUsage(input_tokens=3, output_tokens=5),
+            model_name='gpt-4o-123',
+            timestamp=IsDatetime(),
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1',
+            provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+            provider_response_id='123',
+            finish_reason='stop',
+        )
+    )
+
+
+async def test_disable_streaming_multiple_text_parts_are_not_repeated(allow_model_requests: None):
+    """Text split across parts by a thinking block is streamed once, not once per source.
+
+    `AgentStream._stream_response_text` yields the text parts already on the response before it
+    starts reading events, so the replayed parts must only reach it as events. A mock is used rather
+    than a cassette to pin this exact part sequence, which depends on where the model puts its
+    thinking tags.
+    """
+    c = completion_message(
+        ChatCompletionMessage(content='Before.<think>reason</think>After.', role='assistant'),
+        usage=CompletionUsage(completion_tokens=5, prompt_tokens=3, total_tokens=8),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_disable_streaming=True))
+
+    async with agent.run_stream('What is up?') as result:
+        chunks = [chunk async for chunk in result.stream_text(debounce_by=None)]
+        output = await result.get_output()
+
+    assert chunks == snapshot(['Before.', 'Before.After.'])
+    assert output == snapshot('Before.After.')
+
+
+async def test_disable_streaming_ignores_leading_whitespace(allow_model_requests: None):
+    """A whitespace-only text part ahead of tool calls does not end the run early.
+
+    Qwen3 on Ollama emits `<think>...</think>\\n\\n` before its tool calls. The streamed path drops
+    that whitespace via `ignore_streamed_leading_whitespace`, and the replayed path must too, or
+    `run_stream` returns the whitespace as the final result and never calls the tool. A mock is used
+    rather than a cassette to pin this exact response shape, which a live model emits only sometimes.
+    """
+    responses = [
+        completion_message(
+            ChatCompletionMessage(
+                content='<think>I should check the weather.</think>\n\n',
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='call_1',
+                        function=Function(arguments='{"city": "Mexico City"}', name='get_weather'),
+                        type='function',
+                    )
+                ],
+            ),
+        ),
+        completion_message(ChatCompletionMessage(content='It is sunny in Mexico City.', role='assistant')),
+    ]
+    mock_client = MockOpenAI.create_mock(responses)
+    m = OpenAIChatModel(
+        'qwen3',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=ModelProfile(ignore_streamed_leading_whitespace=True),
+    )
+    agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_disable_streaming=True))
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return f'sunny in {city}'
+
+    async with agent.run_stream('What is the weather in Mexico City?') as result:
+        output = await result.get_output()
+
+    assert output == snapshot('It is sunny in Mexico City.')
+    assert result.usage == snapshot(RunUsage(requests=2, tool_calls=1))
+
+
+async def test_disable_streaming_ignores_whitespace_after_thinking(allow_model_requests: None):
+    """Whitespace following a thinking part is dropped even when text came before it.
+
+    The streamed path stops tracking the text part at the closing thinking tag, so the whitespace
+    that follows starts a fresh text part and is skipped there too. A mock is used rather than a
+    cassette to pin this exact part sequence, which depends on where the model puts its thinking tags.
+    """
+    c = completion_message(
+        ChatCompletionMessage(content='Sure.<think>I should check the weather.</think>\n\n', role='assistant')
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'qwen3',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=ModelProfile(ignore_streamed_leading_whitespace=True),
+    )
+
+    async with m.request_stream(
+        [ModelRequest.user_text_prompt('What is the weather in Mexico City?')],
+        OpenAIChatModelSettings(openai_disable_streaming=True),
+        ModelRequestParameters(allow_text_output=True),
+    ) as stream:
+        [event async for event in stream]
+
+    assert stream.get().parts == snapshot(
+        [
+            TextPart(content='Sure.'),
+            ThinkingPart(content='I should check the weather.', id='content', provider_name='openai'),
+        ]
+    )
+
+
+async def test_disable_streaming(allow_model_requests: None):
+    """Streaming an agent run with `openai_disable_streaming` still drives tools and final output.
+
+    A mock is used rather than a cassette to replay a fixed two-response sequence, and because the
+    mock asserts the request was made with `stream=False`, which a cassette would not reliably catch.
+    """
+    responses = [
+        completion_message(
+            ChatCompletionMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='call_1',
+                        function=Function(arguments='{"city": "Mexico City"}', name='get_weather'),
+                        type='function',
+                    )
+                ],
+            ),
+        ),
+        completion_message(ChatCompletionMessage(content='It is sunny in Mexico City.', role='assistant')),
+    ]
+    mock_client = MockOpenAI.create_mock(responses)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_disable_streaming=True))
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return f'sunny in {city}'
+
+    async with agent.run_stream('What is the weather in Mexico City?') as result:
+        assert not result.is_complete
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['It is sunny in Mexico City.'])
+        assert result.is_complete
+
+    assert await result.get_output() == 'It is sunny in Mexico City.'
+    assert result.usage == snapshot(RunUsage(requests=2, tool_calls=1))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the weather in Mexico City?', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Mexico City"}', tool_call_id='call_1')],
+                model_name='gpt-4o-123',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='sunny in Mexico City',
+                        tool_call_id='call_1',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='It is sunny in Mexico City.')],
+                model_name='gpt-4o-123',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_disable_streaming_cancel(allow_model_requests: None):
+    """Cancelling a non-streamed replay is a no-op that does not raise.
+
+    The full response was already fetched before replay, so there is no live connection to close.
+    A mock is used rather than a cassette because this pins the wrapper's teardown behavior, which
+    no recorded HTTP exchange would exercise.
+    """
+    c = completion_message(ChatCompletionMessage(content='hello world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_disable_streaming=True))
+
+    async with agent.run_stream('hello') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.is_complete
+        assert result.cancelled
 
 
 def none_delta_chunk(finish_reason: FinishReason | None = None) -> chat.ChatCompletionChunk:

@@ -131,6 +131,16 @@ with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
+with try_import() as openai_imports_successful:
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+    from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
+    from openai.types.chat.chat_completion_message_tool_call import Function
+
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAI, completion_message
+
 with try_import() as interrupts_imports_successful:
     # `ResumeEntry` and the interrupt-aware run lifecycle were added in ag-ui-protocol 0.1.19
     # (PR #1569). On older installs, the dedicated interrupt tests below are skipped.
@@ -4057,6 +4067,108 @@ async def test_event_stream_multiple_responses_with_tool_calls():
     )
 
     assert result_message_id != new_message_id
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_non_streamed_response_translates(allow_model_requests: None) -> None:
+    """A non-streamed response (`openai_disable_streaming`) translates to AG-UI events.
+
+    The model returns a thinking-plus-text-plus-tool-call response and a final text response, but
+    with streaming disabled each is replayed as whole parts with no deltas (see
+    `tests/models/test_openai.py::test_disable_streaming_events`). This drives a real agent run
+    through the AG-UI adapter to verify thinking, text, tool call, tool result, and final text all
+    produce the expected events.
+    """
+    responses = [
+        completion_message(
+            ChatCompletionMessage(
+                content='<think>They want the weather.</think>Let me check the weather for you.',
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='call_1',
+                        function=Function(arguments='{"city": "Mexico City"}', name='get_weather'),
+                        type='function',
+                    )
+                ],
+            ),
+        ),
+        completion_message(ChatCompletionMessage(content='It is sunny in Mexico City.', role='assistant')),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(responses)))
+    agent = Agent(model=model, model_settings=OpenAIChatModelSettings(openai_disable_streaming=True))
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return f'sunny in {city}'
+
+    run_input = create_input(UserMessage(id='msg_1', content='What is the weather in Mexico City?'))
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'THINKING_START', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'delta': 'They want the weather.'},
+            {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
+            {'type': 'THINKING_END', 'timestamp': IsInt()},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': message_id,
+                'delta': 'Let me check the weather for you.',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'call_1',
+                'toolCallName': 'get_weather',
+                'parentMessageId': message_id,
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'call_1',
+                'delta': '{"city": "Mexico City"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'call_1'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': 'call_1',
+                'content': 'sunny in Mexico City',
+                'role': 'tool',
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id_2 := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': message_id_2,
+                'delta': 'It is sunny in Mexico City.',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id_2},
+            {'type': 'RUN_FINISHED', 'timestamp': IsInt(), 'threadId': thread_id, 'runId': run_id},
+        ]
+    )
 
 
 async def test_timestamps_are_set():

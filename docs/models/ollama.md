@@ -95,3 +95,24 @@ agent = Agent(model, output_type=NativeOutput(CityLocation))
     When [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel] detects a Cloud path — either a `base_url` on `ollama.com` or a model name ending in `-cloud` — it automatically disables `supports_json_schema_output` on the profile.
 
     If you use [`NativeOutput`][pydantic_ai.output.NativeOutput] with an Ollama Cloud model, you'll get a clear [`UserError`][pydantic_ai.exceptions.UserError] instead of a silent retry loop. Use the default [`ToolOutput`][pydantic_ai.output.ToolOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput] instead — both work on Cloud.
+
+## Disabling streaming
+
+Some open-weight models mangle tool calls when their responses are streamed. If you hit this but still need a streaming interface (for example when serving an agent over [AG-UI](../ui/ag-ui.md) or [Vercel AI](../ui/vercel-ai.md)), set [`openai_disable_streaming`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_disable_streaming]. The model then fetches each response with a regular non-streamed request and replays its parts as whole events, so streaming consumers keep receiving the events they expect:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.ollama import OllamaModel
+from pydantic_ai.models.openai import OpenAIChatModelSettings
+from pydantic_ai.providers.ollama import OllamaProvider
+
+model = OllamaModel(
+    'qwen3', provider=OllamaProvider(base_url='http://localhost:11434/v1')
+)
+agent = Agent(model, model_settings=OpenAIChatModelSettings(openai_disable_streaming=True))
+...
+```
+
+Because the whole response is generated before anything is emitted, consumers see no incremental output.
+
+The setting lives on [`OpenAIChatModelSettings`][pydantic_ai.models.openai.OpenAIChatModelSettings], so it works for any model served over the Chat Completions API, including open-weight models served by vLLM.

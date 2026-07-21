@@ -440,6 +440,22 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
     return None
 
 
+def _drop_whitespace_text_parts(parts: Sequence[ModelResponsePart]) -> list[ModelResponsePart]:
+    r"""Drop text parts that are empty or whitespace-only.
+
+    Mirrors `ModelResponsePartsManager.handle_text_delta(ignore_leading_whitespace=True)` for
+    responses that were not streamed: models like Ollama + Qwen3 emit `<think>\n</think>\n\n` or an
+    empty text part ahead of tool calls, which `run_stream` would otherwise treat as a final result,
+    ending the run before the tool calls are executed. Streaming can never build a whitespace-only
+    text part under that setting, so dropping them here reproduces its end state.
+
+    Whitespace leading a part that also holds real text is kept, as `run()` keeps it: streaming would
+    have skipped it only if the model happened to put it in a delta of its own, and a complete
+    response carries no delta boundaries to recover.
+    """
+    return [part for part in parts if not (isinstance(part, TextPart) and (not part.content or part.content.isspace()))]
+
+
 def _merge_leading_system_messages(
     openai_messages: list[chat.ChatCompletionMessageParam], system_prompt_role: str
 ) -> list[chat.ChatCompletionMessageParam]:
@@ -652,6 +668,21 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     usage values rather than summing all intermediate values.
 
     See [OpenAI's streaming documentation](https://platform.openai.com/docs/api-reference/chat/create#stream_options) for more information.
+    """
+
+    openai_disable_streaming: bool
+    """Force `OpenAIChatModel.request_stream()` to make a non-streamed request under the hood.
+
+    When `True`, `request_stream()` fetches the complete response via a regular non-streamed request
+    and then emits each part of it whole, instead of streaming incremental deltas from the API.
+
+    This is useful for open-weight models served via vLLM or Ollama that mangle tool calls when
+    streaming, while still letting streaming protocols like AG-UI and Vercel AI receive the events
+    (text, tool calls, etc.) they need. Note that nothing is emitted until the whole response has
+    been generated, so consumers see no incremental output and token limits are only enforced
+    afterwards.
+
+    This setting only applies to the Chat Completions API; it is ignored by `OpenAIResponsesModel`.
     """
 
 
@@ -939,16 +970,24 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             model_settings,
             model_request_parameters,
         )
-        response = await self._completions_create(
-            messages, False, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
+        return await self._request(
+            messages, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
+
+    async def _request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        """Make a non-streamed request. Expects `model_settings`/`model_request_parameters` to be prepared."""
+        response = await self._completions_create(messages, False, model_settings, model_request_parameters)
 
         # Handle ModelResponse returned directly (for content filters)
         if isinstance(response, ModelResponse):
             return response
 
-        model_response = self._process_response(response)
-        return model_response
+        return self._process_response(response)
 
     def _translate_thinking(
         self,
@@ -977,9 +1016,22 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             model_request_parameters,
         )
         model_settings_cast = cast(OpenAIChatModelSettings, model_settings or {})
-        response = await self._completions_create(messages, True, model_settings_cast, model_request_parameters)
-        async with response:
-            yield await self._process_streamed_response(response, model_request_parameters, model_settings_cast)
+
+        if model_settings_cast.get('openai_disable_streaming'):
+            # Fetch the complete response without streaming (some models mangle tool calls when
+            # streaming) and replay its parts so streaming consumers keep working.
+            model_response = await self._request(messages, model_settings_cast, model_request_parameters)
+            if self.profile.get('ignore_streamed_leading_whitespace', False):
+                model_response = replace(model_response, parts=_drop_whitespace_text_parts(model_response.parts))
+            yield _ModelResponseStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                _model_response=model_response,
+                _replay_parts=True,
+            )
+        else:
+            response = await self._completions_create(messages, True, model_settings_cast, model_request_parameters)
+            async with response:
+                yield await self._process_streamed_response(response, model_request_parameters, model_settings_cast)
 
     @overload
     async def _completions_create(
@@ -3678,9 +3730,21 @@ class OpenAIStreamedResponse(StreamedResponse):
 
 @dataclass
 class _ModelResponseStreamedResponse(StreamedResponse):
-    """`StreamedResponse` wrapper for pre-built `ModelResponse` objects."""
+    """`StreamedResponse` wrapper for pre-built `ModelResponse` objects.
+
+    With `_replay_parts=True` (used by `openai_disable_streaming`), each part is emitted whole as a
+    single `PartStartEvent` as the consumer iterates (the base class adds the matching
+    `PartEndEvent`s), so streaming consumers like the AG-UI and Vercel AI adapters keep working
+    without incremental deltas. The parts must not also be populated up front in that case:
+    `AgentStream._stream_response_text` yields the text parts already on the response before
+    it starts reading events, so a part that is both pre-populated and replayed is emitted twice.
+
+    Otherwise the parts are populated up front and no events are emitted, for responses whose content
+    is only read back via `get()` (e.g. a cursor-less background resume).
+    """
 
     _model_response: ModelResponse
+    _replay_parts: bool = False
 
     def __post_init__(self) -> None:
         self._usage = self._model_response.usage
@@ -3689,18 +3753,21 @@ class _ModelResponseStreamedResponse(StreamedResponse):
         self.finish_reason = self._model_response.finish_reason
         self.state = self._model_response.state
         self.metadata = self._model_response.metadata
-        for index, part in enumerate(self._model_response.parts):
-            self._parts_manager.handle_part(vendor_part_id=index, part=part)
+        if not self._replay_parts:
+            for index, part in enumerate(self._model_response.parts):
+                self._parts_manager.handle_part(vendor_part_id=index, part=part)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        if False:  # pragma: no cover
-            yield cast(ModelResponseStreamEvent, None)
+        if self._replay_parts:
+            for index, part in enumerate(self._model_response.parts):
+                yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
 
     async def close_stream(self) -> None:
         # No live connection to tear down: this wraps an already-retrieved `ModelResponse` (e.g. a
-        # cursor-less background resume). `cancel()` and the continuation composite's teardown call this,
-        # so it must no-op rather than inherit the base `NotImplementedError`; a server-side background
-        # job is cancelled via `cancel_suspended_response`, not here.
+        # cursor-less background resume or an `openai_disable_streaming` replay). `cancel()` and the
+        # continuation composite's teardown call this, so it must no-op rather than inherit the base
+        # `NotImplementedError`; a server-side background job is cancelled via `cancel_suspended_response`,
+        # not here.
         pass
 
     @property
