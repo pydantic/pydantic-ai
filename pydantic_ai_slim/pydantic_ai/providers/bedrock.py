@@ -517,6 +517,7 @@ class BedrockProvider(Provider[BaseClient]):
 
     @property
     def client(self) -> BaseClient:
+        """The boto3 client used to make requests to the Bedrock API."""
         return self._client
 
     @client.setter

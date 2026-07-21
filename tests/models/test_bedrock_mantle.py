@@ -98,7 +98,9 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
                             provider_name='bedrock-mantle',
                         )
                     ],
-                    usage=RequestUsage(input_tokens=88, output_tokens=14, details={'reasoning_tokens': 0}),
+                    usage=RequestUsage(
+                        input_tokens=88, cache_write_tokens=86, output_tokens=14, details={'reasoning_tokens': 0}
+                    ),
                     model_name='openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
                     provider_name='bedrock-mantle',
@@ -133,7 +135,9 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
                             provider_name='bedrock-mantle',
                         )
                     ],
-                    usage=RequestUsage(input_tokens=115, output_tokens=14, details={'reasoning_tokens': 0}),
+                    usage=RequestUsage(
+                        input_tokens=115, cache_write_tokens=27, output_tokens=14, details={'reasoning_tokens': 0}
+                    ),
                     model_name='openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
                     provider_name='bedrock-mantle',
@@ -177,7 +181,9 @@ Second tool result: `second result`\
                             provider_details={'phase': 'final_answer'},
                         ),
                     ],
-                    usage=RequestUsage(input_tokens=142, output_tokens=33, details={'reasoning_tokens': 11}),
+                    usage=RequestUsage(
+                        input_tokens=142, cache_write_tokens=27, output_tokens=33, details={'reasoning_tokens': 11}
+                    ),
                     model_name='openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
                     provider_name='bedrock-mantle',

@@ -5707,7 +5707,7 @@ requires-dist = [
     { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=2.45.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=2.45.0" },
     { name = "openai", marker = "extra == 'openrouter'", specifier = ">=2.45.0" },
-    { name = "openai", marker = "extra == 'zai'", specifier = ">=2.29.0" },
+    { name = "openai", marker = "extra == 'zai'", specifier = ">=2.45.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7.5" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },

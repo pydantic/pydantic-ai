@@ -8,7 +8,7 @@ pip/uv-add pydantic-ai
 
 (Requires Python 3.10+)
 
-This installs the `pydantic_ai` package, core dependencies, and libraries required to use the OpenAI, Anthropic, and Google models, plus the [CLI](cli.md), [MCP](mcp/client.md), [Evals](evals.md), [Web UI](ui/overview.md), [Retries](retries.md), and [Logfire](logfire.md) integrations.
+This installs the `pydantic_ai` package, core dependencies, and libraries required to use the OpenAI, Anthropic, and Google models, plus the [CLI](cli.md), [MCP](mcp/client.md), [Evals](evals.md), [Web UI](ui/overview.md), [Retries](models/http-request-retries.md), and [Logfire](logfire.md) integrations.
 To use any other models or integrations, add the relevant extras to your install command, e.g. `pydantic-ai[bedrock,temporal]`. Alternatively, you can install the [`pydantic-ai-slim`](#slim-install) package with only the extras you need.
 
 ## Use with Pydantic Logfire
@@ -64,7 +64,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `ui` - installs [UI Event Streams](ui/overview.md) dependency `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 * `web` - installs [Web UI](ui/overview.md) dependencies `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}, `httpx` [PyPI ↗](https://pypi.org/project/httpx){:target="_blank"}, and `uvicorn` [PyPI ↗](https://pypi.org/project/uvicorn){:target="_blank"}
 * `ag-ui` - installs [AG-UI Event Stream Protocol](ui/ag-ui.md) dependencies `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
-* `retries` - installs [HTTP Retries](retries.md) dependency `tenacity` [PyPI ↗](https://pypi.org/project/tenacity){:target="_blank"}
+* `retries` - installs [HTTP Retries](models/http-request-retries.md) dependency `tenacity` [PyPI ↗](https://pypi.org/project/tenacity){:target="_blank"}
 * `temporal` - installs [Temporal Durable Execution](durable_execution/temporal.md) dependency `temporalio` [PyPI ↗](https://pypi.org/project/temporalio){:target="_blank"}
 * `dbos` - installs [DBOS Durable Execution](durable_execution/dbos.md) dependency `dbos` [PyPI ↗](https://pypi.org/project/dbos){:target="_blank"}
 * `prefect` - installs [Prefect Durable Execution](durable_execution/prefect.md) dependency `prefect` [PyPI ↗](https://pypi.org/project/prefect){:target="_blank"}

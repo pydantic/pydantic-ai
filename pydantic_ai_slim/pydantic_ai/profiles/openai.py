@@ -276,6 +276,14 @@ class OpenAIModelProfile(ModelProfile, total=False):
     setting is sent as `max_tokens` instead.
     """
 
+    openai_supports_prompt_cache_breakpoints: bool
+    """Whether the model supports OpenAI explicit prompt cache breakpoints. Default: False.
+
+    When enabled, [`CachePoint`][pydantic_ai.messages.CachePoint] markers are translated into
+    `prompt_cache_breakpoint` fields on the preceding content block, on both the Chat Completions and
+    Responses APIs. When disabled, `CachePoint` markers are filtered out.
+    """
+
 
 def validate_openai_profile(profile: ModelProfile) -> None:
     """Validate an OpenAI-compatible profile after resolution. Called from `OpenAIChatModel.__init__`."""
@@ -313,6 +321,12 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5', 'gpt-5.6'))
     supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
 
+    # Explicit prompt cache breakpoints are supported on gpt-5.6 and later models, on both the
+    # Chat Completions and Responses APIs. Like the other gates in this function, this enumerates
+    # known versions rather than matching open-endedly.
+    # See https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints.
+    supports_prompt_cache_breakpoints = model_name.startswith('gpt-5.6')
+
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
@@ -333,6 +347,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_reasoning_effort_none=reasoning.can_be_disabled,
         openai_responses_supports_reasoning_mode=reasoning.supports_mode,
         openai_supports_phase=supports_phase,
+        openai_supports_prompt_cache_breakpoints=supports_prompt_cache_breakpoints,
         supported_native_tools=supported_native_tools,
     )
 

@@ -123,6 +123,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_responses_supports_reasoning_mode': False,
     'openai_responses_requires_function_call_status_none': False,
     'openai_supports_phase': False,
+    'openai_supports_prompt_cache_breakpoints': False,
     'openai_chat_supports_document_input': True,
     # AnthropicModelProfile subclass defaults
     'anthropic_supports_fast_speed': False,
@@ -308,6 +309,7 @@ def test_openai_gpt_5_6():
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_mode': True,
             'openai_supports_phase': True,
+            'openai_supports_prompt_cache_breakpoints': True,
         }
     )
 
