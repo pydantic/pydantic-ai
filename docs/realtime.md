@@ -291,6 +291,13 @@ disables thinking). For finer Gemini control — a token budget, or thought summ
 [`google_thinking_config`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_thinking_config],
 which takes precedence over `thinking`.
 
+!!! note "Reasoning is internal — no thinking parts"
+    Unlike the request-response APIs, the realtime APIs don't stream the model's reasoning as separate
+    thinking events: `thinking` tunes the model's *internal* reasoning effort (a quality-vs-latency
+    trade-off that improves the spoken/text answer), but no `ThinkingPart` or reasoning trace is
+    emitted. Both `gpt-realtime-2.1` and Gemini's native-audio models were verified to send only their
+    answer, not a reasoning stream.
+
 ### Gemini configuration
 
 [`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel] exposes Gemini Live's knobs
