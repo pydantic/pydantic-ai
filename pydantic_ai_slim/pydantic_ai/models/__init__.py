@@ -1030,7 +1030,7 @@ class CompletedStreamedResponse(StreamedResponse):
     the real stream inside an activity/step/task and only surfaces the final
     [`ModelResponse`][pydantic_ai.messages.ModelResponse] to the workflow.
 
-    What the stream yields is controlled by `events`:
+    What the stream yields is controlled by `replay_events`:
 
     - `False` (default): yield no events — the response is complete and no streaming
       consumer needs to observe it.
@@ -1048,20 +1048,60 @@ class CompletedStreamedResponse(StreamedResponse):
         response: ModelResponse,
         *,
         model_request_parameters: ModelRequestParameters,
-        events: bool | list[ModelResponseStreamEvent] = False,
+        replay_events: bool | list[ModelResponseStreamEvent] = False,
     ) -> None: ...
 
     @overload
     @deprecated('Pass the response first and `model_request_parameters` as a keyword argument.')
-    def __init__(self, model_request_parameters: ModelRequestParameters, response: ModelResponse, /) -> None: ...
+    def __init__(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        response: ModelResponse,
+        /,
+        *,
+        replay_events: bool | list[ModelResponseStreamEvent] = False,
+    ) -> None: ...
+
+    @overload
+    @deprecated('Use `replay_events` instead of `events`.')
+    def __init__(
+        self,
+        response: ModelResponse,
+        *,
+        model_request_parameters: ModelRequestParameters,
+        events: bool | list[ModelResponseStreamEvent] = False,
+    ) -> None: ...
+
+    @overload
+    @deprecated('Use `replay_events` instead of `events`.')
+    def __init__(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        response: ModelResponse,
+        /,
+        *,
+        events: bool | list[ModelResponseStreamEvent] = False,
+    ) -> None: ...
 
     def __init__(
         self,
         response: ModelResponse | ModelRequestParameters,
         model_request_parameters: ModelRequestParameters | ModelResponse | None = None,
         *,
-        events: bool | list[ModelResponseStreamEvent] = False,
+        replay_events: bool | list[ModelResponseStreamEvent] | _utils.Unset = _utils.UNSET,
+        events: bool | list[ModelResponseStreamEvent] | None = None,
     ):
+        if events is not None:
+            warnings.warn(
+                '`events` is deprecated; use `replay_events` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            # The deprecated alias only fills the gap: an explicit `replay_events` wins.
+            if isinstance(replay_events, _utils.Unset):
+                replay_events = events
+        if isinstance(replay_events, _utils.Unset):
+            replay_events = False
         if isinstance(response, ModelRequestParameters):
             # The positional `(model_request_parameters, response)` order predates the move
             # from `pydantic_ai.models.wrapper` to `pydantic_ai.models`.
@@ -1077,16 +1117,16 @@ class CompletedStreamedResponse(StreamedResponse):
         super().__init__(model_request_parameters)
         self.response = response
         self.state = response.state
-        self._events = events
+        self._replay_events = replay_events
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        if not isinstance(self._events, list):
+        if not isinstance(self._replay_events, list):
             return super().__aiter__()
         # Buffered events were already produced by the live stream's `__aiter__`,
         # which means they include `PartEndEvent`s. Yield them directly so the
         # parent `__aiter__` doesn't re-inject PartEnds.
         if self._event_iterator is None:
-            self._event_iterator = self._iter_buffered(self._events)
+            self._event_iterator = self._iter_buffered(self._replay_events)
         return self._event_iterator
 
     async def _iter_buffered(self, events: list[ModelResponseStreamEvent]) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -1096,9 +1136,9 @@ class CompletedStreamedResponse(StreamedResponse):
         self._finished = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        # Only reached when `events` is a bool — `__aiter__` short-circuits the
+        # Only reached when `replay_events` is a bool — `__aiter__` short-circuits the
         # buffered-list path above.
-        if self._events is False:
+        if self._replay_events is False:
             return
         for part in self.response.parts:
             # Register the complete part with the parts manager, which yields a single
@@ -1117,7 +1157,7 @@ class CompletedStreamedResponse(StreamedResponse):
         pass
 
     def get(self) -> ModelResponse:
-        if isinstance(self._events, list):
+        if isinstance(self._replay_events, list):
             return replace(
                 self.response,
                 parts=self._parts_manager.get_parts(),

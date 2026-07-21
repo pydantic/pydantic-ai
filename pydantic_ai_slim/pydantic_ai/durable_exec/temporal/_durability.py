@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import copy
-from collections.abc import AsyncGenerator, Callable, Mapping
-from contextlib import asynccontextmanager, suppress
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager, nullcontext, suppress
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, TypeAlias, cast
 
 from pydantic import ConfigDict, with_config
-from pydantic.errors import PydanticUserError
 from pydantic_core import PydanticSerializationError
 from temporalio import activity, workflow
-from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import messages as _messages
@@ -20,12 +17,10 @@ from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     WrapModelRequestHandler,
     WrapRunHandler,
-    leaf_capabilities,
 )
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
@@ -36,12 +31,14 @@ from pydantic_ai.durable_exec._utils import (
     capture_event_stream,
     disable_threads,
 )
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import (
+    CompletedStreamedResponse,
     Model,
     ModelRequestContext,
     ModelRequestParameters,
+    infer_model,
 )
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
@@ -53,6 +50,7 @@ from ._toolset import (
     TemporalWrapperToolset,
     temporalize_toolset as _default_temporalize_toolset,
     toolset_temporal_activities,
+    with_non_retryable_errors,
 )
 
 
@@ -72,8 +70,8 @@ class _RequestParams:
 @dataclass
 class _CancelParams:
     response: ModelResponse
-    serialized_run_context: Any
     model_id: str | None = None
+    serialized_run_context: Any = None
 
 
 @dataclass
@@ -81,6 +79,12 @@ class _CancelParams:
 class _EventStreamHandlerParams:
     event: AgentStreamEvent
     serialized_run_context: Any
+
+
+# The `ModelResponse` arm decodes histories recorded by the deprecated `TemporalAgent`, whose
+# stream activity returned the bare response. Remove it (and the workflow-side event synthesis
+# in `request_stream_segment`) once those histories have aged out, along with `TemporalAgent`.
+_StreamedActivityPayload: TypeAlias = StreamedActivityResult | ModelResponse
 
 
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
@@ -131,22 +135,6 @@ async def _heartbeating() -> AsyncGenerator[None]:
         with suppress(asyncio.CancelledError):
             # Anything but our own cancellation is a `beat()` crash — propagate it.
             await task
-
-
-def _with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
-    """Return a copy of `retry_policy` with the framework's non-retryable errors ensured.
-
-    `UserError` and `PydanticUserError` won't be fixed by re-running the activity, and an
-    `UnexpectedModelBehavior` (e.g. a model staying suspended past the continuation ceiling)
-    would only re-incur the request's cost. A user-supplied `retry_policy` in any activity
-    config would otherwise replace the base policy wholesale and silently drop these, so the
-    guarantee is re-applied after every merge that may override the policy.
-    """
-    retry_policy = copy.copy(retry_policy) if retry_policy else RetryPolicy()
-    existing = retry_policy.non_retryable_error_types or []
-    additional = [UserError.__name__, PydanticUserError.__name__, UnexpectedModelBehavior.__name__]
-    retry_policy.non_retryable_error_types = [*existing, *(name for name in additional if name not in existing)]
-    return retry_policy
 
 
 @dataclass(init=False)
@@ -258,11 +246,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         # `RetryPolicy` shared with other activities would leak the non-retryable entries into
         # them, and repeated construction from the same config would accumulate duplicates.
         activity_config = (
-            copy.copy(activity_config)
-            if activity_config
-            else ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
+            activity_config.copy() if activity_config else ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
         )
-        activity_config['retry_policy'] = _with_non_retryable_errors(activity_config.get('retry_policy'))
+        activity_config['retry_policy'] = with_non_retryable_errors(activity_config.get('retry_policy'))
         self.activity_config = activity_config
         # The model activities heartbeat in the background (see `_heartbeating`), so give them a
         # heartbeat timeout by default; an explicit `heartbeat_timeout` in either config wins.
@@ -273,21 +259,20 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         }
         # A `retry_policy` in `model_activity_config` would otherwise replace the normalized
         # base policy and drop the non-retryable entries.
-        self._model_activity_config['retry_policy'] = _with_non_retryable_errors(
+        self._model_activity_config['retry_policy'] = with_non_retryable_errors(
             self._model_activity_config.get('retry_policy')
         )
         self._event_stream_handler_activity_config: ActivityConfig = {
             **activity_config,
             **(event_stream_handler_activity_config or {}),
         }
-        self._event_stream_handler_activity_config['retry_policy'] = _with_non_retryable_errors(
+        self._event_stream_handler_activity_config['retry_policy'] = with_non_retryable_errors(
             self._event_stream_handler_activity_config.get('retry_policy')
         )
         self._toolset_activity_config = toolset_activity_config or {}
 
         # These are populated by for_agent()
         self._temporal_activities: list[Callable[..., Any]] = []
-        self._bound_capability_classes: frozenset[type[AbstractCapability[AgentDepsT]]] = frozenset()
 
     def _check_bindable(self) -> None:
         if self.in_durable_context:
@@ -298,10 +283,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             )
 
     def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
-        # Snapshot the leaf capability classes registered with the agent so we can
-        # detect runtime additions (which would bypass activity registration).
-        self._bound_capability_classes = frozenset(type(cap) for cap in leaf_capabilities(agent.root_capability))
-
         # Discover the deps type from the agent unless explicitly configured.
         if self._deps_type is None:
             self._deps_type = cast('type[AgentDepsT]', agent.deps_type)
@@ -343,7 +324,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self.request_activity = register_activity(request_activity, name=f'{activity_name_prefix}__model_request')
         activities.append(self.request_activity)
 
-        async def request_stream_activity(params: _RequestParams, deps: Any) -> StreamedActivityResult:
+        async def request_stream_activity(params: _RequestParams, deps: Any) -> _StreamedActivityPayload:
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -382,15 +363,22 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             )
             activities.append(self.event_stream_handler_activity)
 
-        async def cancel_suspended_response_activity(params: _CancelParams, deps: Any) -> None:
-            run_context = deserialize_run_context(
-                run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
-            )
-            model = await self._resolve_model_for_request(params.model_id, run_context)
+        async def cancel_suspended_response_activity(params: _CancelParams, deps: Any = None) -> None:
+            if params.serialized_run_context is None:
+                model = self._models_by_id.get(params.model_id or 'default')
+                if model is None:
+                    assert params.model_id is not None
+                    model = infer_model(params.model_id)
+                run_context = None
+            else:
+                run_context = deserialize_run_context(
+                    run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+                )
+                model = await self._resolve_model_for_request(params.model_id, run_context)
             # The cancel activity shares `_model_activity_config`, whose default `heartbeat_timeout`
             # would otherwise fail a slow provider-teardown call for missed heartbeats.
             async with _heartbeating():
-                with set_current_run_context(run_context):
+                with nullcontext() if run_context is None else set_current_run_context(run_context):
                     await model.cancel_suspended_response(params.response)
 
         self.cancel_suspended_response_activity = register_activity(
@@ -411,9 +399,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         toolset_activity_config = self.activity_config.copy()
         if ts_id is not None:
             toolset_activity_config.update(self._toolset_activity_config.get(ts_id, {}))
-        toolset_activity_config['retry_policy'] = _with_non_retryable_errors(
-            toolset_activity_config.get('retry_policy')
-        )
+        toolset_activity_config['retry_policy'] = with_non_retryable_errors(toolset_activity_config.get('retry_policy'))
         assert self._deps_type is not None
         wrapped = _default_temporalize_toolset(
             ts,
@@ -466,8 +452,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if not self.in_durable_context:
             return await handler()
 
-        self._validate_per_run_capabilities(ctx)
-
         with disable_threads(), set_agent_graph_sleep(workflow.sleep):
             try:
                 return await handler()
@@ -477,41 +461,16 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     "to activities to be serializable using Pydantic's `TypeAdapter`."
                 ) from e
 
-    def _validate_per_run_capabilities(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Reject per-run capabilities not registered at agent construction time.
-
-        Temporal needs activities registered with the worker before a workflow runs.
-        Capabilities added per-run (via `agent.run(capabilities=[...])`) bypass
-        `for_agent()` activity registration, so any toolsets or model wrappers they
-        contribute would silently execute in workflow code (non-deterministic, no
-        retry semantics). Reject by class identity: if a leaf in `ctx.root_capability`
-        has a type the bound chain didn't see, raise `UserError`.
-
-        Resolved dynamic capability wrappers and their delegated leaves are exempt:
-        their toolsets are dispatched through pre-registered dynamic activities,
-        while their capability hooks always run in workflow code.
-
-        No equivalent check on DBOS/Prefect: their durable units (steps, tasks) are
-        plain decorated callables registered at first-use rather than worker boot, so
-        per-run capabilities can register on the fly without violating durability.
-        """
-        assert ctx.root_capability is not None
-
-        runtime_capabilities = leaf_capabilities(ctx.root_capability)
-        exempt: set[int] = set()
-        for capability in runtime_capabilities:
-            if isinstance(capability, ResolvedDynamicCapability):
-                exempt.add(id(capability))
-                exempt.update(id(leaf) for leaf in leaf_capabilities(capability.wrapped))
-
-        runtime_classes = {type(cap) for cap in runtime_capabilities if id(cap) not in exempt}
-        # Capabilities that opt in via `_safe_at_runtime = True` (e.g. `Instrumentation`,
-        # auto-injected per-run by `Agent.iter()` when `instrument=…` / `LogfirePlugin` is
-        # used) don't introduce new toolsets, native tools, or model wrapping, so they
-        # don't need activities registered with the worker upfront.
-        extra = {cls for cls in runtime_classes - self._bound_capability_classes if not cls._safe_at_runtime}
-        if extra:
-            names = ', '.join(sorted(c.__name__ for c in extra))
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        """Reject per-run capabilities whose activities were not registered with the worker."""
+        if self.in_durable_context:
+            unsafe_capabilities = [capability for capability in capabilities if not capability._safe_at_runtime]
+        else:
+            unsafe_capabilities = []
+        if unsafe_capabilities:
+            names = ', '.join(sorted(type(capability).__name__ for capability in unsafe_capabilities))
             raise UserError(
                 f'Capabilities added per-run inside a Temporal workflow are not supported: {names}. '
                 'Temporal activities must be registered with the worker before the workflow runs. '
@@ -561,9 +520,17 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 'summary': f'request model: {model_name} (stream)',
                 **self._model_activity_config,
             }
-            return await workflow.execute_activity(
+            result = await workflow.execute_activity(
                 activity=self.request_stream_activity, args=[params(request), deps], **config
             )
+            if isinstance(result, ModelResponse):
+                stream = CompletedStreamedResponse(
+                    result,
+                    model_request_parameters=request.model_request_parameters,
+                    replay_events=True,
+                )
+                return StreamedActivityResult(response=result, events=[event async for event in stream])
+            return result
 
         async def cancel_suspended_response_segment(response: ModelResponse) -> None:
             config: ActivityConfig = {
@@ -572,7 +539,14 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             }
             await workflow.execute_activity(
                 activity=self.cancel_suspended_response_activity,
-                args=[_CancelParams(response, serialized_run_context, model_id), deps],
+                args=[
+                    _CancelParams(
+                        response=response,
+                        model_id=model_id,
+                        serialized_run_context=serialized_run_context,
+                    ),
+                    deps,
+                ],
                 **config,
             )
 

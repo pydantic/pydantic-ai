@@ -88,6 +88,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             return self
         return replace(self, capabilities=list(new_caps))
 
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        for capability in self.capabilities:
+            capability._validate_runtime_capabilities(ctx, capabilities)
+
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         instructions: list[str | SystemPromptFunc[AgentDepsT]] = []
         for capability in self.capabilities:

@@ -26,6 +26,7 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, RunOutputDataT
 from pydantic_ai.capabilities import AgentCapability
@@ -71,7 +72,8 @@ class _EventStreamHandlerParams:
 - `toolset_activity_config=` → set `toolset_activity_config=` on `TemporalDurability`.
 - `tool_activity_config=` → use per-tool `metadata={'temporal': ...}` or a `SetToolMetadata` capability.
 - `run_context_type=` → set `run_context_type=` on `TemporalDurability`.
-- `temporalize_toolset_func=` → not supported on the capability path; open an issue if you need it."""
+- `temporalize_toolset_func=` → not supported on the capability path; open an issue if you need it.""",
+    category=PydanticAIDeprecationWarning,
 )
 class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def __init__(
@@ -434,9 +436,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -579,9 +581,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -718,9 +720,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -878,9 +880,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -1072,9 +1074,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -1158,8 +1160,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
             retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
-                override the output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries]
-                dict for finer control. When set, any per-run `retries` argument is ignored.
+                override both the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries]
+                dict to override just one (e.g. `retries={'tools': 3}`). When set, any per-run `retries` argument is ignored.
             spec: Optional agent spec to apply as overrides.
         """
         if workflow.in_workflow():
