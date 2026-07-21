@@ -21,7 +21,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
-    from pydantic_ai.providers.gateway import gateway_provider
+    from pydantic_ai.providers.gateway import gateway_provider, is_gateway_provider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -53,6 +53,11 @@ def test_init_with_base_url(
     assert isinstance(provider, provider_cls)
     assert provider.base_url == f'https://example.com/{route}/'
     assert provider.client.api_key == 'foobar'
+
+
+def test_is_gateway_provider():
+    assert is_gateway_provider(gateway_provider('openai', api_key='gw-key', base_url=GATEWAY_BASE_URL))
+    assert not is_gateway_provider(OpenAIProvider(api_key='k'))
 
 
 def test_init_gateway_without_api_key_raises_error(env: TestEnv):

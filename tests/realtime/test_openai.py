@@ -87,6 +87,7 @@ with try_import() as imports_successful:
         UsageTranscriptTextUsageTokensInputTokenDetails,
     )
 
+    from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime import openai as rt_openai
     from pydantic_ai.realtime.openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, map_event
@@ -154,6 +155,21 @@ def _connect(
         model_settings=model_settings,
         model_request_parameters=ModelRequestParameters(function_tools=tools or []),
     )
+
+
+def test_realtime_url_for_gateway_provider(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('PYDANTIC_AI_GATEWAY_API_KEY', 'gw-key')
+    monkeypatch.setenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
+    string_model = OpenAIRealtimeModel('gpt-realtime', provider='gateway/openai')
+    instance_model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=gateway_provider('openai', api_key='gw-key', base_url='https://gateway.pydantic.dev/proxy'),
+    )
+    plain_model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
+
+    assert '/v1/realtime' in string_model._realtime_url()
+    assert '/v1/realtime' in instance_model._realtime_url()
+    assert plain_model._realtime_url().count('/v1') == 1
 
 
 def test_map_audio_delta() -> None:

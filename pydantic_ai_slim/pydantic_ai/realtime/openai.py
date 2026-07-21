@@ -54,6 +54,7 @@ from ..messages import ModelMessage
 from ..models import ModelRequestParameters
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
+from ..providers.gateway import is_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._base import (
@@ -502,9 +503,6 @@ class OpenAIRealtimeModel(RealtimeModel):
 
     def __post_init__(self, provider: Provider[AsyncOpenAI] | str) -> None:
         if isinstance(provider, str):
-            # The gateway's base URL points at the OpenAI proxy root: it inserts `/v1` for REST paths
-            # but forwards the realtime WebSocket path verbatim, so realtime must target `/v1` itself.
-            self._gateway = provider == 'gateway/openai'
             provider = cast('Provider[AsyncOpenAI]', infer_provider(provider))
         if provider.name == 'azure':
             raise UserError(
@@ -513,6 +511,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 '`azure:` prefix) for Azure OpenAI realtime, or `AzureRealtimeModel` for Azure AI Voice Live.'
             )
         self._provider = provider
+        self._gateway = is_gateway_provider(provider)
 
     @property
     def client(self) -> AsyncOpenAI:
