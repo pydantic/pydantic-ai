@@ -1501,7 +1501,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolset,
             root_capability=run_capability,
             default_max_retries=effective_tool_retries_resolved,
-            timeout=self._tool_timeout,
+            default_timeout=self._tool_timeout,
         )
 
         # Build instructions with per-run capability contributions

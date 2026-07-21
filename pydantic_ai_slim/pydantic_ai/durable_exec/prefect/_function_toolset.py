@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any, cast
 
 from prefect import task
@@ -16,6 +17,7 @@ from pydantic_ai.durable_exec._toolset import (
     wrap_tool_call_result,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._toolset import guard_task_enqueue, resolve_tool_task_config, with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
@@ -30,6 +32,8 @@ def _call_tool_operation(wrapped: FunctionToolset[AgentDepsT], base_config: Task
         tool: ToolsetTool[AgentDepsT],
     ) -> Any:
         task_ctx = guard_task_enqueue(ctx)
+        assert isinstance(tool, FunctionToolsetTool)
+        tool = replace(tool, enforce_timeout=True)
         return await wrap_tool_call_result(wrapped.call_tool(tool_name, tool_args, task_ctx, tool))
 
     async def call_tool_operation(
