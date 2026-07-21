@@ -193,7 +193,7 @@ class RealtimeSession:
 
     - assistant speech becomes [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] /
       [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] / [`PartEndEvent`][pydantic_ai.messages.PartEndEvent]
-      events carrying an [`SpeechPart`][pydantic_ai.messages.SpeechPart]
+      events carrying a [`SpeechPart`][pydantic_ai.messages.SpeechPart]
       (`speaker='assistant'`), finalized into a [`ModelResponse`][pydantic_ai.messages.ModelResponse]
       at the end of the turn;
     - user speech becomes the same part events with `speaker='user'`, finalized into a
@@ -208,8 +208,12 @@ class RealtimeSession:
     back over the connection once it is ready. This mirrors how a person can keep talking while work
     happens.
 
-    A [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] is always sent for every tool call, even
-    when argument parsing or the tool itself fails, so the model never stalls waiting on a result.
+    A [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] is produced for every tool call, including
+    argument-parsing and execution failures. It is normally sent back to the model. If the provider
+    cancels an in-flight call, the session records a synthetic cancellation return for valid history
+    but does not send that abandoned result to the provider. Realtime tool-output channels are
+    string-only: for a [`ToolReturn`][pydantic_ai.messages.ToolReturn], only `return_value` is sent and
+    recorded; `content` and `metadata` are not preserved.
 
     History is accumulated in the order events are reported, which is authoritative for turn-by-turn
     speech but approximate at the edges: user transcripts that a provider reports asynchronously are
@@ -219,6 +223,10 @@ class RealtimeSession:
     its [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] is placed directly after the response
     carrying its call — request-response APIs require that adjacency, so the history stays valid for a
     handoff to a standard [`Agent.run`][pydantic_ai.agent.AbstractAgent.run].
+
+    Images and video frames streamed with [`send`][pydantic_ai.realtime.RealtimeSession.send] are
+    provider context but are not stored in session history. Retain them separately if a later handoff
+    must include them.
 
     When constructing a session directly, use it as an async context manager. The context owns the
     receive pump, background tool tasks, and instrumentation spans; iteration only reads its event
@@ -419,11 +427,12 @@ class RealtimeSession:
             span.set_status(StatusCode.ERROR)
 
     def all_messages(self) -> list[ModelMessage]:
-        """A snapshot of the full conversation: the seeded history plus everything from this session.
+        """A snapshot of the seeded history plus messages recorded during this session.
 
         Returns a copy, so the result doesn't change as the session continues. Feed it into
         [`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run] to hand the
-        conversation off to a standard agent run.
+        conversation off to a standard agent run. Images streamed with `send()` are provider context
+        and are not recorded in this history.
         """
         return [*self._seeded, *self._history]
 
@@ -438,9 +447,10 @@ class RealtimeSession:
 
         Accepts a precise [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput], plain
         text as a `str`, image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], or a
-        sequence of these inputs, dispatched in order. All
-        Inputs preserve the same history bookkeeping and model-profile guards as the dedicated
-        control methods.
+        sequence of these inputs, dispatched in order. Text is recorded in session history; image
+        inputs are provider context and are not recorded. Audio is recorded later through its
+        transcript and/or `audio_retention`. Profile-gated operations use the same guards as the
+        dedicated control methods.
 
         [`ToolResult`][pydantic_ai.realtime.ToolResult] is deliberately excluded (`RealtimeSessionInput`
         is [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput] minus `ToolResult`): the session sends

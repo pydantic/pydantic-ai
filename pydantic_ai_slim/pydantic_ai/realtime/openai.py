@@ -3,9 +3,10 @@
 Connects to `wss://api.openai.com/v1/realtime` over a WebSocket and maps the OpenAI event
 protocol to the shared realtime event types.
 
-Requires the `websockets` package, available via the `realtime` optional group:
+Requires the `websockets` and `openai` packages, available via the `realtime` and `openai` optional
+groups:
 
-    pip install "pydantic-ai-slim[realtime]"
+    pip install "pydantic-ai-slim[realtime,openai]"
 """
 
 from __future__ import annotations as _annotations
@@ -206,7 +207,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         """Send content to the OpenAI Realtime API.
 
         Accepts `AudioInput` (PCM16, 24kHz, mono), `TextInput`, `ImageInput`, `ToolResult`, and the
-        control verbs `CommitAudio`, `ClearAudio`, `CreateResponse`, and `CancelResponse`.
+        control verbs `CommitAudio`, `ClearAudio`, `CreateResponse`, `CancelResponse`, and
+        `TruncateOutput`.
         """
         if isinstance(content, AudioInput):
             await self._send_event(
@@ -407,21 +409,24 @@ class OpenAIRealtimeConnection(RealtimeConnection):
 class OpenAIRealtimeModel(RealtimeModel):
     """OpenAI Realtime API model.
 
-    Authentication, base URL, and the HTTP/WebSocket client come from a
+    Authentication and the base URL come from a
     [`Provider`][pydantic_ai.providers.Provider], mirroring [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
     Pass `provider='openai'` (the default) to read `OPENAI_API_KEY` / `OPENAI_BASE_URL` from the
     environment, or an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] instance for a
-    custom key, base URL, or `httpx` client. The realtime WebSocket URL is derived from the provider's
-    base URL (e.g. `https://api.openai.com/v1/` → `wss://api.openai.com/v1/realtime`), so
-    OpenAI-compatible endpoints that expose a realtime API work too.
+    custom key or base URL. The realtime transport is opened separately with `websockets`, so the
+    provider's `httpx` client is not used for the WebSocket connection. The realtime WebSocket URL is
+    derived from the provider's base URL (e.g. `https://api.openai.com/v1/` →
+    `wss://api.openai.com/v1/realtime`), so OpenAI-compatible endpoints that expose a realtime API
+    work too.
 
     Args:
         model: The model name, e.g. `gpt-realtime` or `gpt-realtime-2.1-mini`.
         provider: The provider to use for authentication and the base URL. Defaults to `'openai'`.
             Azure OpenAI is not supported (its realtime endpoint uses a different URL and auth scheme).
         reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
-            recover from a dropped connection. `None` (the default) surfaces a drop as a non-recoverable
-            `SessionErrorEvent` instead.
+            recover from a dropped connection. With no policy, the low-level connection reports a
+            non-recoverable session error; `RealtimeSession` raises
+            [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from iteration.
     """
 
     model: str = 'gpt-realtime'

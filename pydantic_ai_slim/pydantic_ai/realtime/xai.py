@@ -74,7 +74,11 @@ _AUTO_TRANSCRIPTION_MODEL = 'grok-transcribe'
 
 
 class XaiRealtimeModelSettings(RealtimeModelSettings, total=False):
-    """Settings specific to xAI realtime models."""
+    """Settings specific to xAI realtime models.
+
+    xAI ignores the inherited `output_modality` and `thinking` settings and always produces audio
+    output.
+    """
 
     xai_turn_detection: ServerVAD
     """xAI-specific server-VAD configuration.
@@ -116,11 +120,11 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
 class XaiRealtimeModel(RealtimeModel):
     """xAI Grok Voice realtime API model.
 
-    Authentication and the base URL come from an [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider],
-    mirroring [`XaiModel`][pydantic_ai.models.xai.XaiModel]. Pass `provider='xai'` (the default, reads
-    `XAI_API_KEY`) or an [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider] instance for a custom key.
-    The realtime WebSocket URL is derived from the provider's base URL
-    (`https://api.x.ai/v1` → `wss://api.x.ai/v1/realtime`).
+    Pass `provider='xai'` (the default, which reads `XAI_API_KEY`) or an
+    [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider] constructed with `api_key=`. A custom
+    `api_host` is not supported, and a provider constructed only with `xai_client=` cannot be used
+    because the WebSocket connection needs access to the API key. The realtime WebSocket URL is
+    `wss://api.x.ai/v1/realtime`.
 
     Args:
         model: The model name, e.g. `grok-voice-latest` (the default, tracks the current model) or a
@@ -128,8 +132,9 @@ class XaiRealtimeModel(RealtimeModel):
             the server, which otherwise falls back to a default silently.
         provider: The provider to use for authentication and the base URL. Defaults to `'xai'`.
         reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
-            recover from a dropped connection. `None` (the default) surfaces a drop as a non-recoverable
-            `SessionErrorEvent` instead.
+            recover from a dropped connection. With no policy, the low-level connection reports a
+            non-recoverable session error; `RealtimeSession` raises
+            [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from iteration.
     """
 
     model: str = 'grok-voice-latest'

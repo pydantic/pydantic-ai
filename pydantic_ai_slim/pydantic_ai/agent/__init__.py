@@ -2964,11 +2964,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for the parameters that map to a long-lived, bidirectional session. Parameters that are
         specific to the request-response graph — `output_type`, `retries`, `event_stream_handler`,
         `deferred_tool_results` — do not apply; structured output should be delegated to a normal
-        [`Agent`][pydantic_ai.Agent] (see the realtime docs). Of the
-        `capabilities` lifecycle, only the **tool** hooks (`prepare_tools`,
-        `before`/`after`/`wrap` `tool_validate`, and `before`/`after`/`wrap`/`on_error` `tool_execute`)
-        run, since the session validates and executes tools but has no model-request/graph/output
-        stages.
+        [`Agent`][pydantic_ai.Agent] (see the realtime docs). Capabilities run `for_run` once when the
+        session connects; their instructions, toolsets, and native tools are applied. Tool hooks
+        (`prepare_tools` and `before`/`after`/`wrap`/`on_error` for `tool_validate` and `tool_execute`)
+        run for each tool call. Run-, graph-, model-request-, event-stream-, and output-stage hooks do
+        not run.
 
         Example:
         ```python {test="skip"}
@@ -2997,16 +2997,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 instructions. Dynamic instruction functions (`@agent.instructions`) are evaluated
                 once at connect time (there is no per-request rebuild in a realtime session).
             toolsets: Optional additional toolsets for this session, on top of the agent's.
-            capabilities: Optional additional capabilities for this session. Only the tool-lifecycle
-                hooks apply (see above); model-request/graph/output hooks are not invoked.
+            capabilities: Optional additional capabilities for this session. Their `for_run`, setup
+                contributions, and tool-lifecycle hooks apply; run, model-request, graph, event-stream,
+                and output hooks are not invoked.
             usage: Optional [`RunUsage`][pydantic_ai.usage.RunUsage] to accumulate token usage into;
                 exposed as `session.usage`. A fresh one is used when omitted.
-            usage_limits: Optional [`UsageLimits`][pydantic_ai.usage.UsageLimits]. Token and
-                request, token, and tool-call limits are enforced as usage accrues; a breach raises
+            usage_limits: Optional [`UsageLimits`][pydantic_ai.usage.UsageLimits]. Request, token, and
+                tool-call limits are enforced as usage accrues; a breach raises
                 [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from the session's
                 event iterator, matching how `run` / `iter` surface a usage limit.
             metadata: Optional metadata set on the [`RunContext`][pydantic_ai.tools.RunContext]
-                available to tools and capabilities.
+                available to tools and capabilities, and on the realtime session telemetry span.
             conversation_id: Optional conversation id, set on the run context and the telemetry span
                 so a realtime session can be correlated with other runs. Session-built messages are
                 stamped with it as well, allowing a later standard run to resume the same conversation;

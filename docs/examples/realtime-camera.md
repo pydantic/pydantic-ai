@@ -1,10 +1,12 @@
-Point your phone's camera at something and *ask about it* — out loud — like the camera mode in the
-ChatGPT and Gemini apps. Hold up a plant: "what is this?" Show it a circuit board: "which pin is
-ground?" The model sees what you see and answers in its own voice.
+This example sends microphone audio and one camera frame per second from a browser to a
+[Gemini Live realtime session](../realtime.md), then plays the model's spoken responses. You can ask
+about objects in view or show the assistant a sketch to redraw.
 
-It's a wonderfully small amount of code, because [Gemini Live](../realtime.md) accepts video frames
-natively. The browser streams your microphone *and* a frame a second from the camera into one
-realtime session, and plays the audio back. No tools, no supervisor — just conversation, with eyes.
+By default, the assistant includes a `redraw_diagram` function tool that hands a captured frame to a
+vision agent and renders the resulting diagram in the browser. Gemini 2.5 cannot combine function
+calling with native Google Search grounding, so drawing and web search are mutually exclusive. The
+default `CAMERA_DRAW=true` disables web search; set `CAMERA_DRAW=false` and leave
+`CAMERA_WEB_SEARCH=true` to use grounding instead.
 
 Demonstrates:
 
@@ -13,9 +15,11 @@ Demonstrates:
   [`BinaryContent`][pydantic_ai.messages.BinaryContent] sent with [`send`][pydantic_ai.realtime.RealtimeSession.send]
 - [live vision](../realtime.md#images) — `turn_coverage='all_input'` plus a *Watch* toggle so the
   assistant reacts to what changes, not just to your voice
+- function tools — the default `redraw_diagram` tool converts a sketch into a clean diagram
 - [web search](../realtime.md#built-in-tools-web-search) — the
   [`WebSearch`][pydantic_ai.capabilities.WebSearch] capability (Grounding with Google Search), so it
-  can answer with current facts and render citations from native-tool return part events (on by default)
+  can answer with current facts and render citations from native-tool return part events when drawing
+  is disabled
 
 ## Running the Example
 
@@ -32,35 +36,32 @@ With [dependencies installed and your key set](./setup.md#usage), start the serv
 uvicorn pydantic_ai_examples.realtime_camera.app:app
 ```
 
-Open <http://localhost:8000>, tap **Start**, allow camera + microphone, and start talking. Hold
-things up to the camera and ask away.
+Open <http://localhost:8000>, tap **Start**, allow camera and microphone access, and ask about what
+the camera sees.
 
 !!! note "Camera and mic need a secure context"
-    Browsers only grant camera/microphone on `localhost` or over HTTPS — which is exactly why the
-    *next* section exists, so you can use it from your phone.
+    Browsers grant camera and microphone access on `localhost` or over HTTPS. Use the HTTPS setup
+    below when opening the example from another device.
 
-### A frame alone won't make it talk — that's where *Watch* comes in
+### Triggering turns with Watch
 
-Here's a subtlety worth understanding. In a realtime session, what makes the model *take its turn*
-is your **voice** (the server detects when you stop speaking). A camera frame is passive context — it
-rides along, but on its own it doesn't trigger a reply. So if you silently show two fingers, the
-model stays quiet until you ask "how many fingers?".
+Camera frames are passive context and do not trigger a model turn. Without speech or text input, the
+model stays quiet even as the scene changes.
 
-The example handles this in two complementary ways:
+The example handles this in two ways:
 
 1. The assistant always receives **every** frame (`turn_coverage='all_input'`), so the live scene is
    in context whenever it *does* answer.
-2. The **Watch** toggle makes it proactive: while it's on, the browser nudges the model every couple
-   of seconds — "say what changed, otherwise stay silent" — so it narrates the scene on its own.
+2. The **Watch** toggle periodically sends a short text turn asking the model to describe changes or
+   stay silent when nothing notable changed.
 
 !!! note "`all_video` vs `all_input` on Vertex"
-    `turn_coverage='all_input'` is the default because it works everywhere. The newer `all_video`
-    value (all video, but audio only during speech) isn't accepted on Vertex's `v1beta1` API yet — if
-    you set `CAMERA_TURN_COVERAGE=all_video` there you'll get an "invalid value" error, so stick with
-    `all_input` on Vertex.
+    `turn_coverage='all_input'` is the default because it works on both supported Google API
+    surfaces. Vertex's `v1beta1` API does not accept `all_video` (all video, but audio only during
+    speech); use `all_input` on Vertex.
 
-For the best version of this, let the (native-audio) model decide when to speak, so it
-stays quiet when nothing's changed instead of replying to every nudge:
+With a native-audio model, proactive audio lets the model decide whether a Watch prompt needs a
+spoken response:
 
 ```bash
 export CAMERA_PROACTIVE=true     # the model decides when to talk (native-audio only)
@@ -68,22 +69,22 @@ export CAMERA_AFFECTIVE=true     # optional: emotion-aware delivery
 ```
 
 !!! tip "Watch mode costs tokens"
-    Because *Watch* prompts the model on a timer, it uses tokens even while you're quiet. It's great
-    for a demo or a hands-free "keep an eye on this" moment; turn it off when you just want to chat.
+    Watch prompts the model on a timer, so it uses tokens even while no one is speaking. Turn it off
+    when timed scene updates are not needed.
 
 ### Use it from your phone (HTTPS)
 
-This example is *made* to be used from a phone — that's where a camera you can wave around is most
-fun. Phones need HTTPS, so expose your local server with a [Cloudflare](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
-quick tunnel (no account needed):
+To use the example from a phone, expose the local server over HTTPS with a
+[Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
+(no account needed):
 
 ```bash
 cloudflared tunnel --url http://localhost:8000
 ```
 
-It prints a `https://<random>.trycloudflare.com` URL — open *that* on your phone, tap **Start**, and
-allow camera + mic. The tunnel forwards the WebSocket too, so audio and frames flow straight through.
-(`ngrok http 8000` works the same way.)
+Open the printed `https://<random>.trycloudflare.com` URL on the phone, tap **Start**, and allow
+camera and microphone access. The tunnel also forwards the WebSocket. `ngrok http 8000` is an
+alternative.
 
 ### Using a work Google Cloud account (Vertex AI)
 

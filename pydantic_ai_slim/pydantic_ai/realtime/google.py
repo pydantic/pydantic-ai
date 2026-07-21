@@ -9,8 +9,9 @@ Unlike the OpenAI provider, Gemini wants **16 kHz** PCM input audio (output is 2
 single response modality per session (audio *or* text), and natively accepts a stream of video
 frames sent as `ImageInput`.
 
-Authenticates against the Gemini Developer API with an API key by default, or against Vertex AI with
-Application Default Credentials when `vertexai=True` (useful where org policy disallows API keys).
+Use `provider='google'` for the Gemini Developer API, or `provider='google-cloud'` /
+[`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] for Google Cloud with
+Application Default Credentials.
 """
 
 from __future__ import annotations as _annotations
@@ -137,15 +138,25 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Whether the model may decide *when* to respond, including staying silent on input not
     addressed to it (native-audio models only). Useful for "react to the camera" experiences."""
     google_input_transcription: bool
-    """Whether to transcribe input audio. Defaults to `True`."""
+    """Whether to transcribe input audio. Defaults to `True`.
+
+    When `False`, the session's `audio_retention` must be `'input'` or `'both'` so user turns can be
+    recorded.
+    """
     google_output_transcription: bool
-    """Whether to transcribe output audio. Defaults to `True`."""
+    """Whether to transcribe output audio. Defaults to `True`.
+
+    When `False`, retain output audio if assistant audio turns need to appear in history. Assistant
+    audio without a transcript cannot be handed off or seeded.
+    """
     google_transcription_language_codes: list[str]
     """Language hints applied to input and output transcription."""
     google_vad: AutomaticVAD
     """Gemini-specific server-side voice activity detection settings.
 
     When present, this fully overrides the cross-provider `turn_detection` setting.
+    Do not use `AutomaticVAD(disabled=True)` through `RealtimeSession`: Pydantic AI does not expose
+    Gemini activity markers or manual turn controls, so the resulting session cannot drive turns.
     """
     google_activity_handling: Literal['interrupts', 'no_interruption']
     """Whether detected user activity interrupts the model."""
@@ -171,7 +182,12 @@ class AutomaticVAD:
     """Server-side voice activity detection — the default turn-taking mode for Gemini Live."""
 
     disabled: bool = False
-    """Turn off automatic VAD entirely; the client then drives turns with activity markers."""
+    """Turn off automatic VAD entirely.
+
+    Do not set this through `RealtimeSession`: Pydantic AI does not expose Gemini activity markers or
+    manual turn controls. Use automatic VAD instead; the shared `turn_detection=False` setting is
+    rejected for the same reason.
+    """
     start_sensitivity: Literal['high', 'low'] | None = None
     """How readily speech onset is detected. `high` triggers on quieter audio; `low` is stricter."""
     end_sensitivity: Literal['high', 'low'] | None = None
@@ -550,7 +566,9 @@ class GoogleRealtimeModel(RealtimeModel):
             API, the default) or `'google-cloud'` (Vertex AI), or a `Provider` instance.
         settings: Model-level defaults for session and generation configuration.
         reconnect: Backoff policy for transparently re-dialing a dropped session; requires
-            `google_enable_session_resumption=True`. `None` (default) makes a drop end the stream.
+            `google_enable_session_resumption=True`. With no policy, the low-level connection reports
+            a non-recoverable session error; `RealtimeSession` raises
+            [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from iteration.
     """
 
     model: str = 'gemini-2.5-flash-native-audio-latest'
@@ -566,7 +584,7 @@ class GoogleRealtimeModel(RealtimeModel):
 
     @property
     def client(self) -> Client:
-        """The underlying `google-genai` [`Client`][google.genai.Client] from the provider."""
+        """The underlying `google.genai.Client` from the provider."""
         return self._provider.client
 
     @property

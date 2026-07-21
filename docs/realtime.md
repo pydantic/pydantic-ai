@@ -1,7 +1,7 @@
 # Realtime (speech-to-speech)
 
 Some providers offer **realtime** models that exchange audio over a persistent bidirectional
-connection (WebSocket or HTTP/2) instead of the request-response pattern of the standard
+WebSocket instead of the request-response pattern of the standard
 [`Model`][pydantic_ai.models.Model] interface. These models listen and speak at the same time,
 detect when the user starts talking (so the model can be interrupted), and can call tools mid
 conversation.
@@ -27,7 +27,7 @@ loop for you.
     which feeds it into the session with [`session.send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio]
     and streams the session's audio events back out. The [camera example](examples/realtime-camera.md)
     is a full browser-to-server demo (mic, speaker, and live video frames over a WebSocket). Direct
-    browser-to-provider transport (WebRTC) is [not yet supported](#not-yet-supported).
+    browser-to-provider transport (WebRTC) is listed under [Limitations](#limitations).
 
 ## Installation
 
@@ -38,11 +38,12 @@ WebSockets plus the `openai` client, available via the `realtime` and `openai` o
 pip install "pydantic-ai-slim[realtime,openai]"
 ```
 
-Authentication, base URL, and HTTP client come from the `provider` argument, mirroring
+Authentication and the base URL come from the `provider` argument, mirroring
 [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]: pass `provider='openai'` (the
 default, reads `OPENAI_API_KEY`) or an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]
-instance for a custom key, base URL, or client. OpenAI-compatible endpoints that expose a realtime
-API work too; Azure OpenAI is not supported.
+instance for a custom key or base URL. The realtime transport is opened separately with
+`websockets`, so a custom `OpenAIProvider` `httpx` client is not used for the WebSocket connection.
+OpenAI-compatible endpoints that expose a realtime API work too; Azure OpenAI is not supported.
 
 The Gemini provider ([`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel]) uses
 the `google-genai` SDK, available via the `google` optional group:
@@ -59,20 +60,22 @@ available via the `realtime` and `xai` optional groups:
 pip install "pydantic-ai-slim[realtime,xai]"
 ```
 
-xAI's realtime API is a clone of the OpenAI Realtime protocol. Authentication and the base URL come
-from the `provider` argument, mirroring [`XaiModel`][pydantic_ai.models.xai.XaiModel]: pass
-`provider='xai'` (the default, reads `XAI_API_KEY`) or an
-[`XaiProvider`][pydantic_ai.providers.xai.XaiProvider] instance for a custom key.
+xAI's realtime API is a clone of the OpenAI Realtime protocol. Use `provider='xai'` (the default,
+which reads `XAI_API_KEY`) or an [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider] constructed
+with `api_key=`. Realtime does not support a custom `api_host`, and a provider constructed only with
+`xai_client=` cannot be used because the WebSocket connection needs access to the API key.
 
 All three implement the same [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] interface, so the
 rest of this guide applies to any of them — swap `OpenAIRealtimeModel('gpt-realtime')` for
 `GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')` or `XaiRealtimeModel('grok-voice-latest')`. A few
-provider differences are worth knowing: Gemini expects **16 kHz** PCM input audio (OpenAI and xAI use
-24 kHz), produces a single response modality per session, and natively accepts **live video frames**
+provider differences are worth knowing: send mono PCM16 input at **16 kHz** for Gemini and **24 kHz**
+for OpenAI and xAI; all three produce mono PCM16 output at **24 kHz**. Gemini produces a single
+response modality per session and natively accepts **live video frames**
 sent as [`ImageInput`][pydantic_ai.realtime.ImageInput] (stream camera/screen frames with
 [`send`][pydantic_ai.realtime.RealtimeSession.send] for "show me this" interactions). xAI
 Grok Voice supports cancellation-based barge-in but not output truncation (see
-[model profile](#model-profile)), and Pydantic AI normalizes its per-response usage.
+[model profile](#model-profile)). xAI reports response usage, including audio-token buckets and
+`billable_audio_seconds` in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details].
 
 ## Quickstart
 
@@ -107,8 +110,8 @@ session:
 
 | Method | Sends |
 | --- | --- |
-| [`send_audio`][pydantic_ai.realtime.RealtimeSession.send_audio] | A chunk of microphone audio (PCM16). |
-| [`send`][pydantic_ai.realtime.RealtimeSession.send] | Everything else: a complete text turn (`str`), an image as conversation context — e.g. a video frame — (image [`BinaryContent`][pydantic_ai.messages.BinaryContent]), or any typed session input. |
+| [`send_audio`][pydantic_ai.realtime.RealtimeSession.send_audio] | A chunk of raw mono PCM16 microphone audio at the model profile's input sample rate. |
+| [`send`][pydantic_ai.realtime.RealtimeSession.send] | Plain text, image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], a typed [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput], or a sequence of these. |
 
 ## Events
 
@@ -116,25 +119,25 @@ A session speaks the same event vocabulary as a standard streamed agent run: ite
 [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] yields the shared message/part events from
 [`pydantic_ai.messages`][pydantic_ai.messages] for content, plus realtime control-plane events.
 
-Spoken content (both the user's and the model's) streams as an
+Spoken content (both the user's and the model's) streams as a
 [`SpeechPart`][pydantic_ai.messages.SpeechPart] (distinguished by
 `speaker`), assembled through the standard part events:
 
 | Event | Meaning |
 | --- | --- |
 | [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] | A new part started — a `SpeechPart` (assistant or user), a `ToolCallPart`, or a plain `TextPart` when [`output_modality='text'`](#configuring-the-session). |
-| [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | An [`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta]: `audio_chunk` for playback and/or `transcript_delta` for incremental text (a [`TextPartDelta`][pydantic_ai.messages.TextPartDelta] in text mode). |
-| [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | A part completed; `part.transcript` holds the full transcript (and retained `audio`, per `audio_retention`). |
+| [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | A [`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta]: `audio_chunk` for playback and/or `transcript_delta` for incremental text (a [`TextPartDelta`][pydantic_ai.messages.TextPartDelta] in text mode). |
+| [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | The completed part: speech has `transcript` and optional retained `audio`, text has `content`, and tool parts carry their own fields. |
 | [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] | The session began executing a tool the model requested (carries the `ToolCallPart`). |
-| [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | The tool finished and its `ToolReturnPart` result was sent back to the model. |
+| [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | The tool finished and produced a `ToolReturnPart`. Normally the result is sent to the model; a provider-cancelled call records a synthetic cancellation result only in local history. |
 
 The remaining realtime control-plane events:
 
 | Event | Meaning |
 | --- | --- |
-| [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] | The provider detected the user started speaking (barge-in). |
-| [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | The user stopped speaking; the model is about to respond. |
-| [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn (`interrupted=True` if the user barged in). |
+| [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] | OpenAI/xAI detected speech onset, or Gemini reported activity that interrupted model output. |
+| [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | OpenAI/xAI detected the end of speech; Gemini does not emit this event. |
+| [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn. `interrupted` reflects cancellation on OpenAI/xAI; Gemini reports `False` even after barge-in. |
 | [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] | The connection dropped and was automatically re-established (see [Reconnecting](#reconnecting)). |
 | [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] | The provider reported a **recoverable** error mid-session; the session keeps running. A non-recoverable error instead raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]. |
 
@@ -148,13 +151,15 @@ extraction, or follow-up. Spoken turns are recorded as
 [`SpeechPart`][pydantic_ai.messages.SpeechPart]s; everything else is the
 ordinary [`ModelRequest`][pydantic_ai.messages.ModelRequest] /
 [`ModelResponse`][pydantic_ai.messages.ModelResponse] shape, including tool calls and results.
+Images and video frames streamed with `send()` are provider context but are not stored in session
+history; retain them separately if a later handoff must include them.
 
 The session exposes two snapshots (each a copy, so it won't change as the session continues):
 
 | Method | Returns |
 | --- | --- |
-| [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] | The seeded history plus everything from this session. |
-| [`session.new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] | Only the messages created during this session. |
+| [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] | The seeded history plus completed spoken/text turns and tool rounds recorded by this session. |
+| [`session.new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] | Only the recorded messages created during this session. |
 
 Seed a session with `message_history=` and hand its history off to a text agent afterwards:
 
@@ -242,12 +247,13 @@ async with agent.realtime_session(
 
 [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] defines the common settings
 vocabulary for realtime providers: `tool_choice`, `parallel_tool_calls`, `max_tokens`, `voice`,
-`input_transcription_model`, `output_modality`,
+`input_transcription_model`, `output_modality`, `handshake_timeout`,
 [`turn_detection`][pydantic_ai.realtime.TurnDetection], and
 [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] (see [Reasoning](#reasoning)). You
 can instead set defaults on a model and override individual values for one session. Gemini ignores
-`tool_choice`, `parallel_tool_calls`, and `handshake_timeout`; provider-specific setting docstrings
-document other exceptions.
+`tool_choice`, `parallel_tool_calls`, `input_transcription_model`, and `handshake_timeout`; use its
+Google-prefixed transcription fields instead. xAI ignores `output_modality` and `thinking` and
+always produces audio output. Provider-specific setting docstrings document other exceptions.
 
 ```python {test="skip" lint="skip"}
 async with agent.realtime_session(
@@ -283,12 +289,12 @@ to realtime sessions. OpenAI and xAI realtime sessions do not accept `temperatur
 
 The cross-provider [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting mirrors
 the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] on the request-response models:
-`True` enables reasoning at the provider default, `False` disables it, and
+`True` enables reasoning at the provider default, and
 `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'` selects an effort level.
 
 It applies only to realtime models that support reasoning — reported by the model's
-[`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] profile flag. Today
-those are OpenAI's `gpt-realtime-2` family (e.g. `gpt-realtime-2.1` and `gpt-realtime-2.1-mini`) and
+[`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] profile flag. This
+includes OpenAI's `gpt-realtime-2` family (e.g. `gpt-realtime-2.1` and `gpt-realtime-2.1-mini`) and
 Gemini's native-audio Live models. The GA `gpt-realtime` is a standard speech-to-speech model without
 reasoning, so a `thinking` setting is ignored with a warning rather than sent (the API would otherwise
 reject it).
@@ -300,8 +306,10 @@ async with agent.realtime_session(
     ...
 ```
 
-On OpenAI the effort maps to `reasoning.effort`; on Gemini it maps to a thinking level (and `False`
-disables thinking). For finer Gemini control — a token budget, or thought summaries — set
+On OpenAI the effort maps to `reasoning.effort`. OpenAI realtime does not accept a disabled effort,
+so `False` omits `reasoning` and leaves the model's default behavior unchanged. On Gemini the setting
+maps to a thinking level, and `False` disables thinking. xAI ignores `thinking`. For finer Gemini
+control — a token budget, or thought summaries — set
 [`google_thinking_config`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_thinking_config],
 which takes precedence over `thinking`.
 
@@ -310,7 +318,7 @@ which takes precedence over `thinking`.
     answer); the session does not surface the reasoning itself as `ThinkingPart`s. OpenAI's realtime
     API never streams reasoning (`reasoning.effort` is input-only), and Gemini's native-audio
     *audio*-output sessions emit no thought summaries. Gemini's *text*-output sessions can emit thought
-    summaries, but the realtime session currently drops them rather than surfacing them.
+    summaries, but the realtime session does not surface them.
 
 ### Gemini configuration
 
@@ -355,10 +363,17 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 | `google_enable_session_resumption`, `reconnect` | Transparent resume on a dropped connection (see [Reconnecting](#reconnecting)) |
 | `google_config_overrides` | Raw keys merged last into the `LiveConnectConfig` — forward-compat escape hatch |
 
+!!! warning "Keep automatic VAD enabled"
+    Do not set `AutomaticVAD(disabled=True)` through `RealtimeSession`: Pydantic AI does not expose
+    Gemini activity markers or manual turn controls. Use automatic VAD; `turn_detection=False` is
+    rejected for the same reason.
+
 Authentication comes from the `provider` argument, mirroring
 [`GoogleModel`][pydantic_ai.models.google.GoogleModel]: pass `provider='google'` (the default,
 Gemini Developer API) or `provider='google-cloud'` for Vertex AI / ADC, or a
-[`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] instance for a custom key or client.
+[`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] instance for a custom key or client,
+or a [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instance for
+custom Google Cloud credentials, project, or region.
 
 ### xAI Grok Voice configuration
 
@@ -392,12 +407,20 @@ xAI transcribe the user's audio with a dedicated model, set via `input_transcrip
 
 | Value | Behaviour |
 | --- | --- |
-| `'auto'` (default) | The provider's recommended transcription model, so user turns are captured under the default `audio_retention='transcript_only'`. The concrete model behind `'auto'` can change across releases; pin a specific id to opt out of that. |
+| `'auto'` (default) | The provider's recommended transcription model, so user turns are captured under the default `audio_retention='transcript_only'`. Pin a specific id when the transcription model must remain fixed. |
 | An explicit id (e.g. `'gpt-4o-transcribe'`) | Used verbatim. Known ids autocomplete via [`KnownRealtimeTranscriptionModelName`][pydantic_ai.realtime.KnownRealtimeTranscriptionModelName], but any string works. |
-| `None` | Transcription disabled — no transcription model is sent. No user transcripts arrive, so [`audio_retention`](#message-history) **must** be `'input'`/`'both'` to keep the raw audio; each user turn is then finalized as an audio-only [`SpeechPart`][pydantic_ai.messages.SpeechPart] (no transcript, so not usable for a text handoff). Disabling transcription while `audio_retention` doesn't retain input audio raises a `UserError`, since the user's turns would otherwise be silently dropped from history. |
+| `None` | Transcription disabled — no transcription model is sent. No user transcripts arrive, so [`audio_retention`](#retaining-audio) **must** be `'input'`/`'both'` to keep the raw audio; each user turn is then finalized as an audio-only [`SpeechPart`][pydantic_ai.messages.SpeechPart] (no transcript, so not usable for a text handoff). Disabling transcription while `audio_retention` doesn't retain input audio raises a `UserError`, since the user's turns would otherwise be silently dropped from history. |
 
 Gemini transcribes with `google_input_transcription` (on by default) rather than a model id: the
-Live model transcribes natively, so there is no separate transcription model to choose.
+Live model transcribes natively, so there is no separate transcription model to choose. If
+`google_input_transcription=False`, set `audio_retention='input'` or `'both'`; otherwise session
+creation raises [`UserError`][pydantic_ai.exceptions.UserError] because user turns could not be
+recorded. If `google_output_transcription=False`, retain output audio to keep assistant audio turns
+in history at all. Transcript-less assistant audio cannot be handed off to a text agent or seeded
+into another realtime session.
+
+OpenAI and Gemini may stream partial user transcripts. xAI suppresses revisable partial snapshots
+and emits the finalized user transcript at the end of the turn.
 
 ## Turn-taking and barge-in
 
@@ -436,7 +459,7 @@ Voice lacks — call `interrupt()` without `audio_end_ms` there.
 
 Automatic detection is **on by default**; disable it with `turn_detection=False` for push-to-talk.
 This is only supported on providers that expose manual turn control through Pydantic AI (OpenAI and
-xAI — see [`supports_manual_turn_control`](#capabilities)); Gemini Live has no manual turn verbs, so
+xAI — see [`supports_manual_turn_control`](#model-profile)); Gemini Live has no manual turn verbs, so
 `turn_detection=False` raises a `UserError` there. Drive the turn yourself: stream audio,
 [`commit_audio`][pydantic_ai.realtime.RealtimeSession.commit_audio] to end the user's turn, then
 [`create_response`][pydantic_ai.realtime.RealtimeSession.create_response] to ask the model to reply.
@@ -472,12 +495,13 @@ xAI use 24 kHz in both directions; Gemini uses 16 kHz input and 24 kHz output.
 | [`supports_session_seeding`][pydantic_ai.realtime.RealtimeModelProfile.supports_session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ | ✅ |
 | [`supports_seeding_images`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_images] | Images in `message_history` | ✅ | ✅ | ❌ |
 | [`supports_seeding_audio`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_audio] | Transcript-less retained user audio in `message_history` | ✅ | ❌ | ❌ |
+| [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] | [`thinking`](#reasoning) | `gpt-realtime-2*` | Native-audio models | ❌ |
 
 Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
 exposes neither the manual turn verbs nor an explicit `interrupt()`. xAI Grok Voice supports
 cancelling a response (`interrupt()`) but not truncating its audio to the point the user actually
 heard, so `supports_output_truncation` is off — `interrupt(audio_end_ms=…)`
-raise while `interrupt()` works. Calling a method the model doesn't support raises a clear
+raises while `interrupt()` works. Calling a method the model doesn't support raises a clear
 [`UserError`][pydantic_ai.exceptions.UserError] *before* anything is sent, so you can branch on the
 model's `profile` up front rather than handle a mid-session failure:
 
@@ -511,9 +535,16 @@ model keeps quiet when nothing changed.
 
 Tools registered on the agent are offered to the realtime model. When the model calls one, the
 session emits a [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent], runs the tool,
-sends the result back, and emits a [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent].
-A result is always returned to the model, even when the arguments fail to parse or the tool raises,
-so the conversation never stalls.
+normally sends the result back, and emits a
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Parse failures and tool
+exceptions are returned as string results so the conversation does not stall.
+If the provider cancels an in-flight call, Pydantic AI cancels the task and emits a synthetic
+cancellation result for valid local history, but does not send that abandoned result back to the
+provider.
+
+Realtime provider tool-output channels are string-only. If a tool returns
+[`ToolReturn`][pydantic_ai.messages.ToolReturn], only `return_value` is sent and recorded; `content` and
+`metadata` are not preserved.
 
 ### Concurrent tools
 
@@ -524,9 +555,10 @@ when the tool finishes; [`all_messages()`][pydantic_ai.realtime.RealtimeSession.
 the result adjacent to its call so the history remains valid for a text-agent handoff.
 
 !!! note "Deferred and approval-required tools"
-    Tools that raise `CallDeferred` or `ApprovalRequired` are not supported in a realtime session:
-    a live conversation cannot pause for an out-of-band answer. Unless a capability handler resolves
-    the call in-session, the model receives an error-string tool result.
+    Deferred and approval-required calls can be resolved inline by
+    [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]. If no handler
+    resolves the call, the model receives an explanation that the tool cannot complete during a
+    realtime session; the session cannot pause for an out-of-band result.
 
 ### Built-in tools (web search)
 
@@ -596,8 +628,8 @@ model does support, before the session connects.
 The session accumulates token usage as the model responds. Read it from
 [`RealtimeSession.usage`][pydantic_ai.realtime.RealtimeSession.usage] — a
 [`RunUsage`][pydantic_ai.usage.RunUsage] with input/output tokens (including audio and cached
-breakdowns) and tool-call counts. Each completed response is also surfaced as a
-Usage updates are accumulated on `session.usage` and are not yielded as session events.
+breakdowns) and tool-call counts. Usage updates are accumulated on `session.usage` and are not
+yielded as session events.
 
 ```python {test="skip" lint="skip"}
 async with agent.realtime_session(model=model) as session:
@@ -627,11 +659,17 @@ async with agent.realtime_session(
 Realtime sessions emit OpenTelemetry spans when the agent is instrumented — call
 `logfire.instrument_pydantic_ai()` (or set `instrument=True` on the agent). You get a session span
 (reported as an agent invocation, like a classic run) carrying cumulative usage and the conversation
-transcript (content is redacted when `include_content` is disabled).
-Nested under it, each assistant response gets a `chat {model}` span (mirroring a classic model
-request: that response's input/output messages and per-turn usage), and each tool call an
+transcript (content is redacted when `include_content` is disabled). The session span uses
+`gen_ai.operation.name='invoke_agent'` and sets `gen_ai.output.type` to `'speech'` or `'text'`.
+Nested under it, each assistant response gets a `chat {model}` span with
+`gen_ai.output.type` set to the same value, and each tool call gets an
 `execute_tool` span (including any delegated text-agent run). See
 [Debugging and monitoring](logfire.md).
+
+OpenAI and xAI `chat` spans carry the response's own usage, including function-call-only responses.
+Gemini finalizes a function-call response before the provider reports usage; that response has zero
+usage, while Gemini's later completed turn carries the reported turn usage. The cumulative
+`session.usage` and session span remain authoritative totals.
 
 ```python {test="skip" lint="skip"}
 import logfire
@@ -655,9 +693,9 @@ model = OpenAIRealtimeModel('gpt-realtime', provider='gateway/openai')
 
 When a span is active as the session connects, the client propagates
 [W3C trace context](https://www.w3.org/TR/trace-context/) over the realtime WebSocket handshake, so a
-gateway that emits its own spans nests them under the same trace. The session and `chat` spans only
-open once you start iterating, so to guarantee the gateway's spans join the trace, wrap the session in
-your own span:
+gateway that emits its own spans nests them under the same trace. The provider connection is
+established before the realtime session span opens, so wrap the entire session context in your own
+span to ensure gateway handshake spans join the trace:
 
 ```python {test="skip" lint="skip"}
 with logfire.span('voice call'):
@@ -679,10 +717,11 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 model = OpenAIRealtimeModel('gpt-realtime', reconnect=ReconnectPolicy(max_attempts=5))
 ```
 
-Reconnecting restores the session configuration but **not** server-side conversation state (the
-audio buffer and prior turns) — treat a `ReconnectedEvent` event as the start of a fresh turn. Without a
-policy (the default), a dropped connection surfaces as a non-recoverable
-app can restart the session itself.
+For OpenAI and xAI, reconnecting restores the session configuration but **not** server-side
+conversation state (the audio buffer and prior turns), so treat a
+[`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] as the start of a fresh turn. Without a
+policy (the default), a dropped connection raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]
+from the session iterator, so the app can open a new session itself.
 
 Gemini reconnects via **session resumption**, which *does* restore conversation state. Enable it with
 both `google_enable_session_resumption=True` and a
@@ -717,9 +756,10 @@ ones that are specific to the request-response graph (faking them would be misle
 | `metadata`, `conversation_id` | ✅ set on the `RunContext` and telemetry span; `conversation_id` is also stamped on session-built history |
 | `message_history` | ✅ seeds replayable text, transcripts, thinking, tool rounds, images, and supported retained user audio; included in `all_messages()` |
 | `output_type` | ❌ no structured output → [delegate](#delegating-to-a-text-agent) |
-| `conversation_id` (provider state) | ❌ live conversation state lives on the provider; for Gemini see [session resumption](#reconnecting) |
-| `user_prompt` | ❌ stream input with `send_audio` / `send` / `send` instead |
-| `retries`, `deferred_tool_results`, `event_stream_handler` | ❌ graph-only (the session *is* the event stream) |
+| Provider-side session handle/resumption | ❌ no persistent handle API; for Gemini's in-process recovery see [session resumption](#reconnecting) |
+| `user_prompt` | ❌ stream input with `send_audio()` or `send()` instead |
+| `retries` | ❌ no per-session argument or output-validation retries; agent-level tool retries still apply |
+| `deferred_tool_results`, `event_stream_handler` | ❌ graph-only (the session *is* the event stream) |
 
 Realtime-only: `audio_retention` keeps spoken audio bytes on the history parts. Tool calls always run
 concurrently with the session.
@@ -752,9 +792,10 @@ async with agent.realtime_session(
 
 `realtime_session` lives on [`AbstractAgent`][pydantic_ai.agent.AbstractAgent], so it's available on
 [`WrapperAgent`][pydantic_ai.agent.WrapperAgent] and wrapped agents (durable, instrumented, …) just
-like `run`/`iter`. [`agent.override(...)`][pydantic_ai.agent.AbstractAgent.override] of `deps`,
-`toolsets`, `instructions`, `metadata`, and `native_tools` is honored (spec-based capability override
-is the one exception, since capabilities only run their tool hooks here).
+like `run`/`iter`. [`agent.override(...)`][pydantic_ai.agent.AbstractAgent.override] of `name`, `deps`,
+`tools`, `toolsets`, `instructions`, `metadata`, and `native_tools` is honored. Regular model and model
+setting overrides do not select or configure the realtime model. A capability replacement supplied
+through `override(spec=...)` is not applied to realtime sessions.
 
 ### Capabilities
 
@@ -767,8 +808,7 @@ stages have nothing to fire on and are **silently skipped**.
 What a capability contributes to a session:
 
 - **Setup** — its toolsets, native (built-in) tools, and instructions are applied when
-  the session connects, and its `for_run` runs, resolved through the same
-  `Agent._resolve_run_capabilities` as a graph run. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
+  the session connects, and its `for_run` runs. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
   is wired in exactly as for `run`/`iter` (see [Observability](#observability-with-logfire)).
   Regular capability model settings intentionally do not apply to realtime sessions.
 - **Tool hooks** — every tool call routes through the same tool manager as `run`/`iter`, so
@@ -790,8 +830,8 @@ What does **not** run in a session (no corresponding stage):
 
 So a capability that scopes, guards, or instruments **tools**, or contributes tools/toolsets/native
 tools/instructions, works unchanged in a session; one that hooks the **model request, run, graph, or
-output** is inert here. Session- and turn-level capability hooks (to observe or wrap a whole exchange)
-are a planned addition; today, use the tool hooks and the [session event stream](#events).
+output** is inert here. There are no session- or turn-level capability hooks; use the tool hooks and
+the [session event stream](#events).
 
 ## Delegating to a text agent
 
@@ -829,7 +869,7 @@ async def main():
 
 The delegated run executes concurrently, so the model can keep talking while the analysis runs.
 
-## Not yet supported
+## Limitations
 
 Some capabilities are intentionally out of scope:
 
@@ -837,10 +877,10 @@ Some capabilities are intentionally out of scope:
 - **Telephony (SIP).** Connecting a session to a phone call over SIP is not built in.
 - **Session resumption beyond automatic reconnect.** You can't persist a handle and resume a session in a later process; recovery is limited to in-process [reconnection](#reconnecting).
 - **Bounded structured-output runs.** A session has no `output_type` or `session.run()` with an output schema — [delegate to a text agent](#delegating-to-a-text-agent) for structured results.
-- **Realtime-specific capability hooks.** Capabilities run their [tool-lifecycle hooks](#relationship-to-run-iter) only; there are no before/after-exchange hooks.
+- **Realtime-specific capability hooks.** Capabilities run once for setup and apply their instructions, toolsets, and native tools; tool-lifecycle hooks also run, but there are no before/after-exchange hooks.
 - **Dynamic instructions mid-session.** Instructions are resolved once at connect and not re-evaluated during the session.
 - **Provider-limited audio replay when seeding history.** OpenAI can replay retained user audio when a [`SpeechPart`][pydantic_ai.messages.SpeechPart] has no transcript. Gemini and xAI cannot seed retained audio, and no provider can seed assistant audio; use transcripts or filter those parts before connecting (see [Message history](#message-history)).
-- **Proactive resume before Gemini's session cap.** Gemini Live signals an upcoming disconnect (`GoAway`) near its session-length limit; the session doesn't yet resume proactively on that signal, only [reconnecting](#reconnecting) after a drop.
+- **Proactive resume before Gemini's session cap.** Gemini Live signals an upcoming disconnect (`GoAway`) near its session-length limit, but the session only [reconnects](#reconnecting) after a drop.
 
 ## Implementing a provider
 

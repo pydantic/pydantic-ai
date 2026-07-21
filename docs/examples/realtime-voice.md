@@ -14,12 +14,10 @@ shows a running transcript of both sides of the conversation plus any tool calls
 
 ## Running the Example
 
-The example uses [`sounddevice`](https://python-sounddevice.readthedocs.io) for microphone and
-speaker access, which isn't included in the examples dependencies:
-
-```bash
-pip/uv-add sounddevice
-```
+The examples dependencies include
+[`sounddevice`](https://python-sounddevice.readthedocs.io) for microphone and speaker access. It
+also requires the PortAudio system library; on Linux, install `libportaudio2` if importing
+`sounddevice` fails.
 
 The realtime model runs on `gpt-realtime`, so you'll need an OpenAI API key set via
 `OPENAI_API_KEY`.
