@@ -207,6 +207,8 @@ include = [
     ".github/scripts/test_ci_duration.py",
     ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
     ".github/scripts/test_pydantic_ai_runner.py",
+    ".github/scripts/issue_pr_attention_monitor.py",
+    ".github/scripts/test_issue_pr_attention_monitor.py",
 ]
 
 [tool.ruff.lint]
@@ -259,6 +261,7 @@ quote-style = "single"
 ".github/scripts/ci_duration.py" = ["D"]
 ".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
+".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
 
 [tool.pyright]
 pythonVersion = "3.10"
@@ -278,7 +281,11 @@ include = [
     ".github/scripts/test_ci_duration.py",
     ".github/scripts/pydantic_ai_gh_aw_shim",
     ".github/scripts/test_pydantic_ai_runner.py",
+    ".github/scripts/issue_pr_attention_monitor.py",
 ]
+# The monitor policy tests deliberately exercise private helpers and loose GitHub
+# webhook dictionaries through monkeypatching; pytest covers them, while the
+# production policy module above remains under strict Pyright.
 venvPath = '.'
 venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
