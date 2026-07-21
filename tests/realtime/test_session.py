@@ -13,7 +13,7 @@ from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai._instrumentation import get_instructions
-from pydantic_ai.capabilities import AbstractCapability, NativeTool, WebFetch
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, NativeTool, WebFetch
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -70,7 +70,7 @@ from pydantic_ai.realtime import (
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -1903,10 +1903,6 @@ async def test_agent_realtime_session_tool_return_is_unwrapped() -> None:
 
 
 async def test_agent_realtime_session_denied_tool_returns_denial_message() -> None:
-    from pydantic_ai.capabilities import HandleDeferredToolCalls
-    from pydantic_ai.exceptions import ApprovalRequired
-    from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
-
     agent: Agent[None, str] = Agent()
 
     @agent.tool_plain

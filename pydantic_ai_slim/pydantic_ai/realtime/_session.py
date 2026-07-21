@@ -865,11 +865,14 @@ class RealtimeSession:
             except ToolRetryError as e:
                 result = e.tool_retry.model_response()
             except (ApprovalRequired, CallDeferred) as e:
-                # Deferred-tool flows are graph-only (see the support matrix in the realtime docs): a
-                # live session can't pause for out-of-band approval or an external result, and the
-                # provider expects an answer on the string-only tool channel. Answer with a deliberate
-                # explanation — rather than a leaked exception repr — so the model can voice why the
-                # action didn't happen and the conversation keeps flowing.
+                # `handle_call` already gave the `HandleDeferredToolCalls` capability handler the
+                # chance to resolve the deferral inline (approve, deny, retry, or substitute a
+                # result); reaching here means no handler resolved it. The graph's fallback — pausing
+                # the run with a `DeferredToolRequests` output — has no realtime analog (a live
+                # conversation can't wait for an out-of-band result, and the provider expects an
+                # answer on the string-only tool channel), so answer with a deliberate explanation —
+                # rather than a leaked exception repr — that the model can voice, keeping the
+                # conversation flowing.
                 reason = 'requires approval' if isinstance(e, ApprovalRequired) else 'runs externally'
                 result = (
                     f'Error: The {call.tool_name!r} tool {reason} and cannot be completed during a '
