@@ -5433,6 +5433,25 @@ def test_durability_find_model_id_prefers_registered_wrapper_identity():
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
     assert bound._find_model_id(wrapped) == 'wrapped'  # pyright: ignore[reportPrivateUsage]
+    # An unregistered wrapper (e.g. a user-built `InstrumentedModel`) around a registered
+    # wrapper peels off to the shallowest registered match instead of collapsing to the default.
+    assert bound._find_model_id(WrapperModel(wrapped)) == 'wrapped'  # pyright: ignore[reportPrivateUsage]
+    # An unregistered wrapper around the bare default still takes the default's fast path.
+    assert bound._find_model_id(WrapperModel(model)) is None  # pyright: ignore[reportPrivateUsage]
+
+
+def test_durability_find_model_id_does_not_unwrap_registered_wrappers():
+    """A registered wrapper's identity holds at its registered depth.
+
+    Its bare inner model must not inherit the wrapper's alias — the worker would rebuild the
+    wrapper and add behavior the request never had — so it falls back to its own `model_id`.
+    """
+    default = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='default')]))
+    inner = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='inner')]))
+    agent = Agent(default, name='test', capabilities=[TemporalDurability(models={'wrapped_alt': WrapperModel(inner)})])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    assert bound._find_model_id(inner) == inner.model_id  # pyright: ignore[reportPrivateUsage]
 
 
 def test_durability_temporal_activities():
