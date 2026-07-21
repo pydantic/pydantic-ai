@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
+from inline_snapshot import snapshot
 
 pytest.importorskip('opentelemetry.sdk')  # only installed via the optional `logfire` extra
 
@@ -64,6 +65,26 @@ def RealtimeSession(connection: RealtimeConnection, runner: Any, **kwargs: Any) 
 async def collect_events(session: _RealtimeSession) -> list[RealtimeEvent]:
     async with session:
         return [event async for event in session]
+
+
+def _span_tree(exporter: InMemorySpanExporter) -> list[dict[str, Any]]:
+    """Render the finished spans as nested `{name: [children]}` dicts, ordered by start time.
+
+    A readable view of the whole session's span tree, so a test can pin the parent/child shape
+    (session span parenting its `chat` and `execute_tool` spans) in one assertion.
+    """
+    spans = exporter.get_finished_spans()
+    by_id = {span.context.span_id: span for span in spans if span.context is not None}
+    children: dict[int | None, list[Any]] = {}
+    for span in spans:
+        parent_id = span.parent.span_id if span.parent is not None and span.parent.span_id in by_id else None
+        children.setdefault(parent_id, []).append(span)
+
+    def render(span: Any) -> dict[str, Any]:
+        kids = sorted(children.get(span.context.span_id, []), key=lambda child: child.start_time)
+        return {span.name: [render(child) for child in kids]}
+
+    return [render(root) for root in sorted(children.get(None, []), key=lambda span: span.start_time)]
 
 
 class _Connection(RealtimeConnection):
@@ -290,6 +311,50 @@ async def test_chat_spans_split_on_tool_call_are_session_children() -> None:
     assert json.loads(str(second.attributes['gen_ai.output.messages'])) == [
         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'it is sunny'}]},
     ]
+
+
+async def test_conversation_span_tree() -> None:
+    """The whole span tree for a realistic session, in one view.
+
+    A first user turn where the assistant speaks, calls a tool, then answers (two `chat` spans around
+    one `execute_tool` span), followed by a second spoken turn (a third `chat` span). Every `chat` and
+    `execute_tool` span is a direct child of the single `realtime` session span.
+    """
+    settings, exporter = _settings()
+    agent = _weather_agent(name='assistant')
+    agent.instrument = settings
+    conn = _Connection(
+        [
+            InputTranscript(text='weather in Paris?', is_final=True),
+            Transcript(text='let me check'),
+            ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
+            Transcript(text='it is sunny'),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            TurnCompleteEvent(),
+            InputTranscript(text='and tomorrow?', is_final=True),
+            Transcript(text='also sunny'),
+            TurnCompleteEvent(),
+        ]
+    )
+    async with agent.realtime_session(model=_Model(conn)) as session:
+        _ = [e async for e in session]
+
+    # Two turns → three `chat` spans (the first turn splits around the tool call) plus one
+    # `execute_tool` span, all direct children of the one session span. Children are ordered by start
+    # time: the tool span starts last here because the synthetic connection emits every event without
+    # yielding, so the concurrent tool only runs after the pump has drained and opened all `chat` spans.
+    assert _span_tree(exporter) == snapshot(
+        [
+            {
+                'realtime gpt-realtime': [
+                    {'chat gpt-realtime': []},
+                    {'chat gpt-realtime': []},
+                    {'chat gpt-realtime': []},
+                    {'execute_tool get_weather': []},
+                ]
+            }
+        ]
+    )
 
 
 # --- capability precedence: injected `instrument=` vs. explicit `Instrumentation` capability ------
