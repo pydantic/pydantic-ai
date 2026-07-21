@@ -41,7 +41,7 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
 from pydantic_ai.realtime._openai_protocol import realtime_websocket_url
-from pydantic_ai.settings import ToolOrOutput
+from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -419,10 +419,8 @@ def test_session_config_truncation_modes() -> None:
 def test_session_config_thinking_maps_to_reasoning_on_reasoning_models() -> None:
     # `thinking` maps to reasoning effort on the `gpt-realtime-2*` reasoning models (live-verified
     # that these accept `reasoning.effort` while the GA `gpt-realtime` rejects it).
-    def reasoning(thinking: object) -> object:
-        model = OpenAIRealtimeModel(
-            'gpt-realtime-2.1', settings=rt_openai.OpenAIRealtimeModelSettings(thinking=thinking)
-        )  # type: ignore[typeddict-item]
+    def reasoning(thinking: ThinkingLevel) -> object:
+        model = OpenAIRealtimeModel('gpt-realtime-2.1', settings=rt_openai.OpenAIRealtimeModelSettings(thinking=thinking))
         return model._session_config('hi', None, None).get('reasoning')  # pyright: ignore[reportPrivateUsage]
 
     assert reasoning('low') == {'effort': 'low'}
