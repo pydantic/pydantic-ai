@@ -1,12 +1,14 @@
 from __future__ import annotations as _annotations
 
 import os
+from datetime import timedelta
 from typing import overload
 
 import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 
@@ -36,7 +38,17 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        return openai_model_profile(model_name)
+        # GPT-5.6 explicit caching documents a model-determined floor: a cached prefix stays eligible
+        # for reuse for at least 30 minutes. Earlier models have no honest boundary to record, because
+        # their retention policy defaults to `24h` for organizations without zero data retention and to
+        # `in_memory` (5-10 minutes of inactivity) for organizations with it — an org setting that isn't
+        # knowable from the model. Those stay unset (`'unknown'`) rather than guess in either direction:
+        # too low a boundary would declare a live cache cold and throw away a real hit, too high a one
+        # would report expiry as an unexpected collapse. Users who know their policy (or set
+        # `openai_prompt_cache_retention`) pass `retention=` to `prompt_cache_outlook` explicitly.
+        # https://developers.openai.com/api/docs/guides/prompt-caching
+        retention = timedelta(minutes=30) if model_name.startswith('gpt-5.6') else None
+        return merge_profile(openai_model_profile(model_name), ModelProfile(prompt_cache_retention=retention))
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

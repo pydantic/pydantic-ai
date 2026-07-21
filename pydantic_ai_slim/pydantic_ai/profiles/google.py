@@ -64,6 +64,9 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name
     thinking_always_enabled = is_thinking_model and is_pro
+    # `prompt_cache_retention` is intentionally left unset (None): Gemini's implicit caching (the default,
+    # applied automatically) documents no retention window — only explicit `CachedContent` has a
+    # user-set TTL, which isn't a model-family fact. https://ai.google.dev/gemini-api/docs/caching
     return GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,

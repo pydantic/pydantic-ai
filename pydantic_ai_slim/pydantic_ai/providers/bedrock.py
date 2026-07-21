@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
@@ -512,17 +513,27 @@ class BedrockProvider(Provider[BaseClient]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': bedrock_anthropic_model_profile,
+            'anthropic': lambda model_name: merge_profile(
+                bedrock_anthropic_model_profile(model_name),
+                # Bedrock's Claude model cards document a 5-minute TTL; some models accept a 1-hour
+                # `cachePoint` TTL, which `prompt_cache_outlook` detects in message history.
+                # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+                ModelProfile(prompt_cache_retention=timedelta(minutes=5)),
+            ),
             'mistral': bedrock_mistral_model_profile,
             'cohere': lambda model_name: _strip_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
             'meta': bedrock_meta_model_profile,
             'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
             # Converse rejects `reasoning_effort='none'` — mark always-on.
-            'openai': lambda _mn: BedrockModelProfile(
+            'openai': lambda model_name: BedrockModelProfile(
                 bedrock_thinking_variant='openai',
                 supports_thinking=True,
                 thinking_always_enabled=True,
+                # GPT-5.6 on Bedrock has a documented 30-minute minimum TTL; earlier OpenAI models get
+                # automatic caching with no documented retention.
+                # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+                prompt_cache_retention=timedelta(minutes=30) if model_name.startswith('gpt-5.6') else None,
             ),
             'qwen': bedrock_qwen_model_profile,
             'google': bedrock_google_model_profile,

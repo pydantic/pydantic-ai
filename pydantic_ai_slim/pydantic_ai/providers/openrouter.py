@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from datetime import timedelta
 from typing import overload
 
 import httpx
@@ -186,6 +187,11 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 openrouter_supports_tool_cache=supports_anthropic_cache,
                 openrouter_supports_dynamic_instruction_cache=supports_anthropic_cache,
                 openrouter_max_cache_points=4 if supports_anthropic_cache else None,
+                # OpenRouter documents cache TTLs for the providers whose cache control it passes through:
+                # Anthropic's 5-minute default (1-hour opt-in via `CachePoint`) and Gemini's 5-minute cache
+                # writes. Other routed caches have no OpenRouter-level retention commitment.
+                # https://openrouter.ai/docs/features/prompt-caching
+                prompt_cache_retention=timedelta(minutes=5) if supports_cache_control else None,
             ),
         )
 
