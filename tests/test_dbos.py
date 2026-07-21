@@ -38,6 +38,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import MCP, Capability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
@@ -100,13 +101,13 @@ from .continuation_utils import ScriptedContinuationModel, StreamSegment, script
 # rather than globally in `pyproject.toml`. The `pytestmark` entry below covers warnings
 # emitted *inside* test functions; the `filterwarnings` call below covers warnings emitted
 # at module import time (e.g. `simple_dbos_agent = DBOSAgent(...)`).
-warnings.filterwarnings('ignore', message='`DBOSAgent` is deprecated', category=DeprecationWarning)
+warnings.filterwarnings('ignore', message='`DBOSAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='dbos'),
-    pytest.mark.filterwarnings('ignore:`DBOSAgent` is deprecated:DeprecationWarning'),
+    pytest.mark.filterwarnings('ignore:`DBOSAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'),
 ]
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically

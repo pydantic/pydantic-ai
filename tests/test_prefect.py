@@ -39,7 +39,9 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import MCP, Capability, Instrumentation, ProcessEventStream, ResolveModelId, Toolset
+from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext, create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -60,8 +62,8 @@ try:
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
         PrefectAgent,  # pyright: ignore[reportDeprecated]
         PrefectDurability,
-        PrefectFunctionToolset,
-        PrefectMCPToolset,
+        PrefectFunctionToolset,  # pyright: ignore[reportDeprecated]
+        PrefectMCPToolset,  # pyright: ignore[reportDeprecated]
         PrefectModel,
         TaskConfig,
     )
@@ -96,26 +98,19 @@ from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
-# `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`, and
-# the legacy `MCPServer*` / `FastMCPToolset` classes are deprecated in favor of `MCPToolset`.
+# `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warnings here
 # rather than globally in `pyproject.toml`. The `pytestmark` entries below cover warnings
 # emitted *inside* test functions; the `filterwarnings` calls below cover warnings emitted
 # at module import time (e.g. module-level construction of `PrefectAgent`).
-warnings.filterwarnings('ignore', message='`PrefectAgent` is deprecated', category=DeprecationWarning)
-warnings.filterwarnings(
-    'ignore',
-    message=r'`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated',
-    category=DeprecationWarning,
-)
+warnings.filterwarnings('ignore', message='`PrefectAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
-    pytest.mark.filterwarnings('ignore:`PrefectAgent` is deprecated:DeprecationWarning'),
     pytest.mark.filterwarnings(
-        'ignore:`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated:DeprecationWarning'
+        'ignore:`PrefectAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
     ),
 ]
 
@@ -719,7 +714,7 @@ async def test_toolset_without_id():
 
 
 async def test_prefect_toolset_legacy_constructors() -> None:
-    """Deprecated Prefect toolset constructors retain wrapping, IDs, and retry configuration."""
+    """The deprecated legacy Prefect toolset classes retain wrapping, IDs, and retry configuration."""
     calls = 0
 
     async def fail() -> str:
@@ -729,11 +724,12 @@ async def test_prefect_toolset_legacy_constructors() -> None:
 
     function_toolset = FunctionToolset()
     function_toolset.add_function(fail)
-    wrapped_function = PrefectFunctionToolset(
-        function_toolset,
-        task_config=TaskConfig(retries=1, retry_delay_seconds=0),
-        tool_task_config={},
-    )
+    with pytest.warns(PydanticAIDeprecationWarning, match='PrefectFunctionToolset'):
+        wrapped_function = PrefectFunctionToolset(  # pyright: ignore[reportDeprecated]
+            function_toolset,
+            task_config=TaskConfig(retries=1, retry_delay_seconds=0),
+            tool_task_config={},
+        )
     assert wrapped_function.wrapped is function_toolset
     assert wrapped_function.id is None
 
@@ -745,7 +741,8 @@ async def test_prefect_toolset_legacy_constructors() -> None:
     assert calls == 2
 
     mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
-    wrapped_mcp = PrefectMCPToolset(mcp_toolset, task_config={})
+    with pytest.warns(PydanticAIDeprecationWarning, match='PrefectMCPToolset'):
+        wrapped_mcp = PrefectMCPToolset(mcp_toolset, task_config={})  # pyright: ignore[reportDeprecated]
     assert wrapped_mcp.wrapped is mcp_toolset
     assert wrapped_mcp.id is None
 
@@ -777,7 +774,7 @@ async def test_capability_contributed_toolset_id_from_capability():
     leaves: list[AbstractToolset[object]] = []
     for toolset in prefect_agent.toolsets:
         toolset.apply(leaves.append)
-    # The contributed MCP leaf carries the URL-derived id, so its `PrefectMCPToolset` wrapper is built
+    # The contributed MCP leaf carries the URL-derived id, so its durable Prefect wrapper is built
     # under a stable id; the `billing` function toolset carries the capability id.
     assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
     assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
@@ -794,8 +791,8 @@ async def test_prefect_agent():
     assert len(toolsets) >= 4
 
     # Find the wrapped toolsets (skip the internal output toolset)
-    prefect_function_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectFunctionToolset)]
-    prefect_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectMCPToolset)]
+    prefect_function_toolsets = [ts for ts in toolsets if isinstance(ts, DurableFunctionToolset)]
+    prefect_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, DurableMCPToolset)]
     external_toolsets = [ts for ts in toolsets if isinstance(ts, ExternalToolset)]
 
     # Verify we have the expected wrapped toolsets
@@ -816,7 +813,7 @@ async def test_prefect_agent():
 def test_prefect_wrapper_visit_and_replace():
     """Prefect wrapper toolsets should not be replaced by visit_and_replace."""
     toolsets = complex_prefect_agent.toolsets
-    prefect_function_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectFunctionToolset)]
+    prefect_function_toolsets = [ts for ts in toolsets if isinstance(ts, DurableFunctionToolset)]
     assert len(prefect_function_toolsets) >= 1
 
     prefect_toolset = prefect_function_toolsets[0]

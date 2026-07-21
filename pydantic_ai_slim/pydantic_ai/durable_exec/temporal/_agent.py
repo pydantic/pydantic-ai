@@ -26,6 +26,7 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, RunOutputDataT
 from pydantic_ai.capabilities import AgentCapability
@@ -71,7 +72,8 @@ class _EventStreamHandlerParams:
 - `toolset_activity_config=` → set `toolset_activity_config=` on `TemporalDurability`.
 - `tool_activity_config=` → use per-tool `metadata={'temporal': ...}` or a `SetToolMetadata` capability.
 - `run_context_type=` → set `run_context_type=` on `TemporalDurability`.
-- `temporalize_toolset_func=` → not supported on the capability path; open an issue if you need it."""
+- `temporalize_toolset_func=` → not supported on the capability path; open an issue if you need it.""",
+    category=PydanticAIDeprecationWarning,
 )
 class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def __init__(

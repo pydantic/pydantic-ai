@@ -16,6 +16,7 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import (
     AbstractAgent,
     AgentRun,
@@ -60,7 +61,8 @@ DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 - `event_stream_handler=` → pass `event_stream_handler=` to `DBOSDurability`; it runs inside steps, exactly like before.
 - `mcp_step_config=` → set `mcp_step_config=` on `DBOSDurability`.
 - `model_step_config=` → set `model_step_config=` on `DBOSDurability`.
-- `parallel_execution_mode=` → set `parallel_execution_mode=` on `DBOSDurability`."""
+- `parallel_execution_mode=` → set `parallel_execution_mode=` on `DBOSDurability`.""",
+    category=PydanticAIDeprecationWarning,
 )
 @DBOS.dbos_class()
 class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):

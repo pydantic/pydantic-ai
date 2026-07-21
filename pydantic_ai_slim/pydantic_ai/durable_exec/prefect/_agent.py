@@ -18,6 +18,7 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, RunOutputDataT
 from pydantic_ai.capabilities import AgentCapability
@@ -56,7 +57,8 @@ from ._types import TaskConfig, default_task_config
 - `tool_task_config=` → set `tool_task_config=` on `PrefectDurability`.
 - `tool_task_config_by_name=` → use per-tool `metadata={'prefect': ...}` or a `SetToolMetadata` capability.
 - `event_stream_handler_task_config=` → set `event_stream_handler_task_config=` on `PrefectDurability`.
-- `prefectify_toolset_func=` → not supported on the capability path; open an issue if you need it."""
+- `prefectify_toolset_func=` → not supported on the capability path; open an issue if you need it.""",
+    category=PydanticAIDeprecationWarning,
 )
 class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def __init__(
@@ -199,7 +201,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         *,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> Generator[None]:
-        # Override with PrefectModel and PrefectMCPToolset in the toolsets.
+        # Override with PrefectModel and the durable Prefect toolset wrappers.
         # A per-run `event_stream_handler` is stashed on a `ContextVar` that `PrefectModel` reads inside its
         # task (via `_effective_event_stream_handler`), so the runtime handler is honored without rebuilding
         # the model and re-registering its Prefect tasks. When no per-run handler is given, keep whatever an

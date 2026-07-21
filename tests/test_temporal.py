@@ -59,6 +59,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     MCP,
@@ -203,13 +204,15 @@ with workflow.unsafe.imports_passed_through():
 # rather than globally in `pyproject.toml`. The `pytestmark` entry below covers warnings
 # emitted *inside* test functions; the `filterwarnings` call below covers warnings emitted
 # at module import time (e.g. module-level construction of `TemporalAgent`).
-warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', category=DeprecationWarning)
+warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='temporal'),
-    pytest.mark.filterwarnings('ignore:`TemporalAgent` is deprecated:DeprecationWarning'),
+    pytest.mark.filterwarnings(
+        'ignore:`TemporalAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    ),
 ]
 
 
