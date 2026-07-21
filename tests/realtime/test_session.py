@@ -309,6 +309,24 @@ async def test_user_transcript_final_becomes_request() -> None:
     )
 
 
+async def test_user_transcript_final_snapshot_reconciles_whitespace_drift() -> None:
+    # OpenAI's input-transcription deltas can carry a leading space that the `.completed` full-text
+    # snapshot trims. The final snapshot must replace the accumulated deltas, not append a near-
+    # duplicate (` Hello…` + `Hello…` = ` Hello…Hello…`).
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text=' Hello, my name', is_final=False),
+            InputTranscript(text=' is Marcelo.', is_final=False),
+            InputTranscript(text='Hello, my name is Marcelo.', is_final=True),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+    _ = await collect_events(session)
+    assert session.new_messages() == snapshot(
+        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='Hello, my name is Marcelo.')])]
+    )
+
+
 async def test_audio_delta_streams_and_transcript_pairs() -> None:
     conn = FakeRealtimeConnection(
         [AudioDelta(data=b'\x00\x01'), Transcript(text='hi', is_final=True), TurnCompleteEvent()]

@@ -9,6 +9,7 @@ live API with `--record-mode=rewrite`, then replayed offline forever.
 
 from __future__ import annotations as _annotations
 
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -76,6 +77,48 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     assert isinstance(part.audio, BinaryContent)
     assert part.audio.media_type == 'audio/pcm'
     assert len(part.audio.data) > 0
+
+
+async def test_audio_in_server_vad_turn(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """A spoken user turn (audio in, server VAD) is transcribed into a user turn in history.
+
+    The default microphone workflow — no explicit turn control, input transcription on by default —
+    must land the user's turn in history, not just the assistant's reply. This is the end-to-end
+    guard for the dropped-user-turn bug: without a transcription default, an audio-only turn produces
+    neither an `InputTranscript` nor a retained recording, so `all_messages()` would hold only the
+    assistant response.
+    """
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
+
+    events: list[Any] = []
+    async with agent.realtime_session(model=model) as session:
+        # Stream the clip in ~100 ms chunks like a live mic; the trailing silence lets server VAD end
+        # the turn without any manual `commit_audio()`.
+        for start in range(0, len(pcm), 4800):
+            await session.send_audio(pcm[start : start + 4800])
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+                events.append(event)
+                if isinstance(event, TurnCompleteEvent):
+                    break
+
+    messages = session.all_messages()
+    # The spoken turn is transcribed into a user request ahead of the assistant's reply.
+    assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
+    user_turn = messages[0]
+    assert isinstance(user_turn, ModelRequest)
+    user_part = user_turn.parts[0]
+    assert isinstance(user_part, SpeechPart)
+    assert user_part.speaker == 'user'
+    assert user_part.transcript == snapshot('Hello, my name is Marcelo.')
+    reply = messages[1]
+    assert isinstance(reply, ModelResponse)
+    assert isinstance(reply.parts[0], SpeechPart)
 
 
 async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:

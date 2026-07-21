@@ -126,9 +126,17 @@ def _accumulate_transcript(accumulated: str, text: str) -> tuple[str, str]:
     update and only the new suffix is appended; otherwise `text` is an incremental piece appended as-is.
     The second element is the newly appended text (empty when a final event merely repeats the deltas),
     suitable for a [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent].
+
+    A cumulative/final snapshot can differ from the accumulated deltas by leading/trailing whitespace —
+    OpenAI's input-audio-transcription deltas start with a leading space that the `.completed` snapshot
+    trims — so the prefix check is applied to the stripped text too, adopting the snapshot as
+    authoritative rather than concatenating a near-duplicate.
     """
     if accumulated and text.startswith(accumulated):
         return text, text[len(accumulated) :]
+    stripped = accumulated.strip()
+    if stripped and (stripped_text := text.strip()).startswith(stripped):
+        return text, stripped_text[len(stripped) :]
     return accumulated + text, text
 
 
