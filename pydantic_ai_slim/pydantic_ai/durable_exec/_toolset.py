@@ -72,6 +72,9 @@ class _ToolReturn:
 
 @dataclass
 class _ToolContentResult:
+    # Emitted only when a user dict's `kind` collides with `'tool-return'`. Workers predating this
+    # variant cannot decode it, but those payloads already failed to round-trip there; ordinary
+    # results deliberately retain the legacy `tool_return` shape for rolling upgrades.
     result: ToolReturnContent
     kind: Literal['tool_content_result'] = 'tool_content_result'
 

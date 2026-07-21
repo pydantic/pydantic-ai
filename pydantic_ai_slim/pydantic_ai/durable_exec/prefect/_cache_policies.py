@@ -5,8 +5,10 @@ from prefect.cache_policies import INPUTS, RUN_ID, TASK_SOURCE, CachePolicy
 from prefect.context import TaskRunContext
 from prefect.utilities.hashing import hash_objects
 
-from pydantic_ai import ToolsetTool, messages
+from pydantic_ai import ToolsetTool
 from pydantic_ai.tools import RunContext
+
+_NON_SERIALIZABLE = '<non-serializable>'
 
 
 def _is_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
@@ -30,16 +32,26 @@ def _is_run_context(obj: Any) -> TypeGuard[RunContext[object]]:
 
 
 def _cacheable_deps(deps: Any) -> Any:
-    """Project `deps` for cache-key hashing, excluding them when non-serializable.
+    """Project `deps` for cache-key hashing, excluding non-serializable values.
 
     Dependencies routinely hold live resources (HTTP clients, DB connections, locks) that
-    Prefect can't hash; as documented, those are excluded from cache computation rather
-    than failing the task, so only serializable dependencies fork the key.
+    Prefect can't hash; those values are replaced with a stable sentinel rather than failing
+    the task, while serializable siblings still fork the key.
     """
     projected = _strip_cache_excluded_fields(deps)
-    if hash_objects(projected, raise_on_failure=False) is None:
-        return None
-    return projected
+
+    def exclude_non_serializable(value: Any) -> Any:
+        if hash_objects(value, raise_on_failure=False) is not None:
+            return value
+        if _is_dict(value):
+            return {key: exclude_non_serializable(item) for key, item in value.items()}
+        if _is_list(value):
+            return [exclude_non_serializable(item) for item in value]
+        if _is_tuple(value):
+            return tuple(exclude_non_serializable(item) for item in value)
+        return _NON_SERIALIZABLE
+
+    return exclude_non_serializable(projected)
 
 
 def _replace_run_context(
@@ -79,7 +91,7 @@ def _replace_run_context(
 
 
 _CACHE_EXCLUDED_FIELDS = frozenset({'timestamp', 'run_id', 'conversation_id'})
-"""Message and part dataclass fields excluded from cache key computation as they vary per-run."""
+"""Framework dataclass fields excluded from cache key computation as they vary per-run."""
 
 
 def _strip_cache_excluded_fields(
@@ -87,13 +99,14 @@ def _strip_cache_excluded_fields(
 ) -> Any:
     """Recursively convert dataclasses to dicts, excluding cache-irrelevant fields.
 
-    Only Pydantic AI message dataclass fields are excluded. Fields on user-provided dataclasses
-    and plain dict keys are meaningful input data and must fork the key even when they share a
-    name with a per-run message field.
+    Only framework (`pydantic_ai.*`) dataclass fields are excluded. Fields on user-provided
+    dataclasses and plain dict keys are meaningful input data and must fork the key even when
+    they share a name with a per-run framework field.
     """
     if is_dataclass(obj) and not isinstance(obj, type):
         result: dict[str, Any] = {}
-        excluded_fields = _CACHE_EXCLUDED_FIELDS if type(obj).__module__ == messages.__name__ else ()
+        module = type(obj).__module__
+        excluded_fields = _CACHE_EXCLUDED_FIELDS if module == 'pydantic_ai' or module.startswith('pydantic_ai.') else ()
         for f in fields(obj):
             if f.name not in excluded_fields:
                 value = getattr(obj, f.name)

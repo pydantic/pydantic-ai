@@ -38,6 +38,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart
 from pydantic_ai.capabilities import MCP, Capability, Instrumentation, ProcessEventStream, ResolveModelId, Toolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext, create_async_http_client
@@ -1461,13 +1462,40 @@ def test_cache_policy_keeps_user_dataclass_fields():
     }
 
 
+def test_cache_policy_excludes_timestamps_on_parts_outside_messages_module():
+    """Framework parts outside `pydantic_ai.messages` still exclude per-run fields.
+
+    Otherwise deferred-capability and tool-search histories bust the cache on flow retry.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    time1 = datetime.now()
+    time2 = time1 + timedelta(minutes=5)
+
+    def key_for(timestamp: datetime) -> str | None:
+        part = LoadCapabilityReturnPart(
+            content={'instructions': 'Use the loaded capability.'},
+            tool_call_id='load-capability-1',
+            timestamp=timestamp,
+        )
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': [part]}, flow_parameters={})
+
+    assert key_for(time1) == key_for(time2)
+
+
 def test_cache_policy_excludes_non_serializable_deps():
-    """Non-serializable dependencies are excluded from cache computation instead of failing the task.
+    """Non-serializable dependency values are excluded without dropping serializable siblings.
 
     Prefect's `INPUTS.compute_key` raises `ValueError` on inputs it can't hash, and dependencies
-    routinely hold live resources (HTTP clients, DB connections, locks), so the projection drops
-    those — as documented — while serializable dependencies still fork the key.
+    routinely hold live resources (HTTP clients, DB connections, locks), so the projection replaces
+    those values with a stable sentinel while serializable dependency values still fork the key.
     """
+
+    @dataclass
+    class CacheDeps:
+        tenant: str
+        lock: threading.Lock = field(default_factory=threading.Lock)
+
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
 
@@ -1475,12 +1503,18 @@ def test_cache_policy_excludes_non_serializable_deps():
         ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
         return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'ctx': ctx}, flow_parameters={})
 
+    assert key_for(CacheDeps(tenant='acme')) != key_for(CacheDeps(tenant='globex'))
+    assert key_for(CacheDeps(tenant='acme')) == key_for(CacheDeps(tenant='acme'))
+
     lock_key = key_for(threading.Lock())
     assert lock_key is not None
-    # Excluded deps hash like absent deps: the unhashable object doesn't poison the rest of the key.
-    assert lock_key == key_for(None)
-    # Serializable deps still fork the key.
+    assert lock_key == key_for(threading.Lock())
+
     assert key_for('acme') != key_for('globex')
+
+    # Containers recurse per item: serializable members fork the key, unhashable members don't.
+    assert key_for(['acme', threading.Lock()]) == key_for(['acme', threading.Lock()])
+    assert key_for(('acme', threading.Lock())) != key_for(('globex', threading.Lock()))
 
 
 async def test_cache_policy_with_tuples():
