@@ -20,6 +20,9 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, 
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import InitVar, dataclass, field
 from typing import Any, Literal, cast
+from weakref import WeakKeyDictionary
+
+from anyio import Lock
 
 try:
     from google.genai import Client, errors as genai_errors, types as genai_types
@@ -197,6 +200,17 @@ _TURN_COVERAGE = {
     'all_input': genai_types.TurnCoverage.TURN_INCLUDES_ALL_INPUT,
     'all_video': genai_types.TurnCoverage.TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO,
 }
+
+_WS_CONNECT_LOCKS: WeakKeyDictionary[Client, Lock] = WeakKeyDictionary()
+
+
+def _ws_connect_lock(client: Client) -> Lock:
+    """Return the lock serializing temporary handshake-header mutations for one SDK client."""
+    lock = _WS_CONNECT_LOCKS.get(client)
+    if lock is None:
+        lock = Lock()
+        _WS_CONNECT_LOCKS[client] = lock
+    return lock
 
 
 def _automatic_vad_from_turn_detection(turn_detection: TurnDetection) -> AutomaticVAD:
@@ -593,8 +607,9 @@ class GoogleRealtimeModel(RealtimeModel[GoogleRealtimeModelSettings]):
                 resumption_handle=handle,
             )
             opening = client.aio.live.connect(model=self.model, config=config)
-            with _single_ws_user_agent(client), _ws_trace_context(client):
-                session = await opening.__aenter__()
+            async with _ws_connect_lock(client):
+                with _single_ws_user_agent(client), _ws_trace_context(client):
+                    session = await opening.__aenter__()
             cm = opening
             return session
 

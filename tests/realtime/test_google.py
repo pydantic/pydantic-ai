@@ -5,8 +5,10 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
+from contextvars import ContextVar
 from typing import Any, Literal, cast
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent
@@ -216,6 +218,54 @@ def test_ws_trace_context_noop_without_http_options() -> None:
     client = SimpleNamespace(_api_client=None)
     with rt_google._ws_trace_context(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
         pass
+
+
+async def test_connect_serializes_shared_client_header_mutations(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = GoogleProvider(api_key='test-key')
+    client = provider.client
+    headers = client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
+    assert headers is not None
+    original_headers = headers.copy()
+    handshake_headers: list[dict[str, str]] = []
+
+    class _ConcurrentConnect:
+        async def __aenter__(self) -> _RecordingSession:
+            # Let the other task reach the handshake. Without per-client serialization its header
+            # contexts overlap this suspension and one handshake observes the other's mutations.
+            await anyio.sleep(0)
+            handshake_headers.append(headers.copy())
+            return _RecordingSession()
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+    def connect(*, model: str, config: genai_types.LiveConnectConfig) -> _ConcurrentConnect:
+        return _ConcurrentConnect()
+
+    traceparent: ContextVar[str] = ContextVar('traceparent')
+
+    def inject(carrier: dict[str, str]) -> None:
+        carrier['traceparent'] = traceparent.get()
+
+    monkeypatch.setattr(client.aio.live, 'connect', connect)
+    monkeypatch.setattr(rt_google, 'inject_trace_context', inject)
+    model = GoogleRealtimeModel(provider=provider)
+
+    async def open_connection(value: str) -> None:
+        token = traceparent.set(value)
+        try:
+            async with _connect(model, ''):
+                pass
+        finally:
+            traceparent.reset(token)
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(open_connection, 'trace-1')
+        task_group.start_soon(open_connection, 'trace-2')
+
+    assert {captured['traceparent'] for captured in handshake_headers} == {'trace-1', 'trace-2'}
+    assert all(sum(key.lower() == 'user-agent' for key in captured) == 1 for captured in handshake_headers)
+    assert headers == original_headers
 
 
 # --- provider resolution & capabilities --------------------------------------

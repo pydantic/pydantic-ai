@@ -1040,6 +1040,33 @@ async def test_deferred_response_dropped_when_active_response_cancelled() -> Non
 
 
 @pytest.mark.anyio
+async def test_late_cancelled_response_done_does_not_clear_new_response() -> None:
+    ws = PushWebSocket()
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    task = asyncio.create_task(_drain(conn))
+
+    ws.push({'type': 'response.created', 'response': {'id': 'resp_old'}})
+    await _settle()
+    await conn.send(CancelResponse())
+    await conn.send(TextInput(text='new turn'))
+    ws.push({'type': 'response.created', 'response': {'id': 'resp_new'}})
+    await _settle()
+
+    ws.push({'type': 'response.done', 'response': {'id': 'resp_old', 'status': 'cancelled', 'output': []}})
+    await _settle()
+    await conn.send(CreateResponse())
+    assert ws.sent_types().count('response.create') == 1
+
+    ws.push({'type': 'response.done', 'response': {'id': 'resp_new', 'status': 'completed', 'output': []}})
+    await _settle()
+    assert ws.sent_types().count('response.create') == 2
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.anyio
 async def test_tool_result_triggers_response_when_idle() -> None:
     ws = PushWebSocket()
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]

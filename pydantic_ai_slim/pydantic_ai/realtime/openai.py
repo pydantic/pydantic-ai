@@ -163,6 +163,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # We track that window and defer requests (e.g. a background tool result that lands while the
         # model is mid-answer) until the active response finishes, so the model still announces it.
         self._response_active = False
+        self._active_response_id: str | None = None
         self._pending_response = False
         # The current output audio item, tracked from output-audio deltas so a `TruncateOutput` can
         # name it. These are mutated by `__aiter__` and read by `send` from a separate task; under a
@@ -237,6 +238,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             if self._response_active:
                 await self._send_event({'type': 'response.cancel'})
             self._response_active = False
+            self._active_response_id = None
             self._pending_response = False
         elif isinstance(content, TruncateOutput):
             # No current output item (e.g. the model wasn't speaking) → nothing to truncate.
@@ -258,6 +260,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             self._pending_response = True
         else:
             self._response_active = True
+            self._active_response_id = None
             await self._send_event({'type': 'response.create'})
 
     async def _send_event(self, event: dict[str, Any]) -> None:
@@ -311,6 +314,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         events: list[RealtimeCodecEvent] = []
         if event_type == 'response.created':
             self._response_active = True
+            response_id = obj(data.get('response')).get('id')
+            self._active_response_id = response_id if isinstance(response_id, str) else None
         elif event_type in AUDIO_DELTA_TYPES:
             # Track the speaking item so a later `TruncateOutput` can name it.
             item_id = data.get('item_id')
@@ -319,19 +324,30 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 content_index = data.get('content_index')
                 self._current_content_index = content_index if isinstance(content_index, int) else 0
         elif event_type == 'response.done':
-            self._response_active = False
-            self._current_item_id = None
+            response = obj(data.get('response'))
+            response_id = response.get('id')
+            # OpenAI response events always carry an ID. Keep the ID-less fallback for compatible
+            # protocol implementations and defensive unit inputs that predate response tracking.
+            matches_active_response = not isinstance(response_id, str) or (
+                self._response_active and response_id == self._active_response_id
+            )
+            if matches_active_response:
+                self._response_active = False
+                self._active_response_id = None
+                self._current_item_id = None
             # Emit usage for every response (including intermediate function-call-only ones)
-            # so the session accounts for all tokens, then defer a pending response if needed.
-            usage = _map_usage(obj(data.get('response')))
+            # so the session accounts for all tokens. Only the active response may replay a pending
+            # request; a late completion for a superseded response must not change current state.
+            usage = _map_usage(response)
             if usage is not None:
                 events.append(SessionUsageEvent(usage=usage))
-            if self._pending_response:
+            if matches_active_response and self._pending_response:
                 self._pending_response = False
                 # A cancelled response means the user barged in: a new turn is starting, so
                 # don't replay the deferred response over it.
-                if obj(data.get('response')).get('status') != 'cancelled':
+                if response.get('status') != 'cancelled':
                     self._response_active = True
+                    self._active_response_id = None
                     await self._send_event({'type': 'response.create'})
         if (event := self._map_event(data)) is not None:
             events.append(event)
@@ -352,6 +368,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # bug in `dial()` and propagates rather than masquerading as a failed reconnect.
             return False
         self._response_active = False
+        self._active_response_id = None
         self._pending_response = False
         self._current_item_id = None
         return True
