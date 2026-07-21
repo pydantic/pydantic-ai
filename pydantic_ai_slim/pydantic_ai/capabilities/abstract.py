@@ -164,14 +164,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     Lifecycle: capabilities are passed to an [`Agent`][pydantic_ai.Agent] at construction time, where
     most `get_*` methods are called to collect static configuration (instructions, model
-    settings, toolsets, native tools). The exception is
+    settings, toolsets, native tools). When [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]
+    returns a replacement instance, that configuration is re-extracted from the replacement at run
+    setup. The exception is
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
-    which is called per-run during toolset assembly. Then, on each model request during a
+    which is always called per-run during toolset assembly. Then, on each model request during a
     run, the [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request]
     and [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request]
     hooks are called to allow dynamic adjustments.
 
-    See the [capabilities documentation](capabilities.md) for built-in capabilities.
+    See the [capabilities documentation](../capabilities/overview.md) for built-in capabilities.
 
     [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name]
     and [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] support
@@ -352,7 +354,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id],
         where the first resolver to return a model wins.
 
-        See [Selecting the model](../capabilities.md#selecting-the-model) for precedence,
+        See [Selecting the model](../capabilities/custom.md#selecting-the-model) for precedence,
         bootstrap, and deferred-capability semantics.
         """
         return None
@@ -540,9 +542,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         the returned next node, call `handler` multiple times (retry), or
         return a different node to redirect graph progression.
 
-        Note: this hook fires when using `agent.run()`,
-        `agent.run_stream()`, and when manually driving
-        an `agent.iter()` run with `agent_run.next()`, but it does **not** fire when
+        Note: this hook fires when using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run],
+        [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and when manually driving
+        an [`agent.iter()`][pydantic_ai.agent.Agent.iter] run with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], but it does **not** fire when
         iterating over the run with bare `async for` (which yields stream events, not
         node results).
 

@@ -23,13 +23,14 @@ nav:
           - dependencies.md
           - tools.md
           - output.md
-          - capabilities.md
+          - Multimodal Input: input.md
           - Hooks: hooks.md
           - Agent Specs: agent-spec.md
           - message-history.md
           - direct.md
       - Models & Providers:
           - Overview: models/overview.md
+          - HTTP Request Retries: models/http-request-retries.md
           - models/openai.md
           - models/anthropic.md
           - models/google.md
@@ -51,10 +52,40 @@ nav:
           - native-tools.md
           - common-tools.md
           - third-party-tools.md
-      - Advanced Features:
-          - input.md
-          - thinking.md
-          - retries.md
+      - Capabilities:
+          - Overview: capabilities/overview.md
+          - On-Demand Capabilities: capabilities/on-demand.md
+          - Building Custom Capabilities: capabilities/custom.md
+          - Third-Party Capabilities: capabilities/third-party.md
+          - Thinking: capabilities/thinking.md
+          - Instrumentation: capabilities/instrumentation.md
+          - Web Search: capabilities/web-search.md
+          - Web Fetch: capabilities/web-fetch.md
+          - Image Generation: capabilities/image-generation.md
+          - X Search: capabilities/x-search.md
+          - MCP: capabilities/mcp.md
+          - Tool Search: capabilities/tool-search.md
+          - Compaction: capabilities/compaction.md
+          - Thread Executor: capabilities/thread-executor.md
+          - Select Model: capabilities/select-model.md
+          - Resolve Model ID: capabilities/resolve-model-id.md
+          - Prepare Tools: capabilities/prepare-tools.md
+          - Prefix Tools: capabilities/prefix-tools.md
+          - Include Tool Return Schemas: capabilities/include-tool-return-schemas.md
+          - Set Tool Metadata: capabilities/set-tool-metadata.md
+          - Raise Content Filter Error: capabilities/raise-content-filter-error.md
+          - Reinject System Prompt: capabilities/reinject-system-prompt.md
+          - Handle Deferred Tool Calls: capabilities/handle-deferred-tool-calls.md
+          - Process History: capabilities/process-history.md
+          - Process Event Stream: capabilities/process-event-stream.md
+          - Durable Execution:
+              - Overview: durable_execution/overview.md
+              - Temporal: durable_execution/temporal.md
+              - DBOS: durable_execution/dbos.md
+              - Prefect: durable_execution/prefect.md
+              - Restate: durable_execution/restate.md
+              - Kitaru: durable_execution/kitaru.md
+              - Apache Airflow: durable_execution/airflow.md
       - MCP:
           - Overview: mcp/overview.md
           - mcp/client.md
@@ -106,14 +137,6 @@ nav:
 
   - Integrations:
       - Debugging & Monitoring with Pydantic Logfire: logfire.md
-      - Durable Execution:
-          - Overview: durable_execution/overview.md
-          - Temporal: durable_execution/temporal.md
-          - DBOS: durable_execution/dbos.md
-          - Prefect: durable_execution/prefect.md
-          - Restate: durable_execution/restate.md
-          - Kitaru: durable_execution/kitaru.md
-          - Apache Airflow: durable_execution/airflow.md
       - UI Event Streams:
           - Overview: ui/overview.md
           - AG-UI: ui/ag-ui.md
@@ -188,6 +211,7 @@ nav:
           - api/retries.md
           - api/run.md
           - api/settings.md
+          - api/template.md
           - api/tools.md
           - api/toolsets.md
           - api/ui/ag_ui.md
@@ -364,6 +388,7 @@ plugins:
             - url: https://dirty-equals.helpmanual.io/latest/objects.inv
             - url: https://fastapi.tiangolo.com/objects.inv
             - url: https://typing-extensions.readthedocs.io/en/latest/objects.inv
+            - url: https://anyio.readthedocs.io/en/stable/objects.inv
             - url: https://rich.readthedocs.io/en/stable/objects.inv
             - url: https://modelcontextprotocol.github.io/python-sdk/objects.inv
             # waiting for https://github.com/encode/httpx/discussions/3091#discussioncomment-11205594
@@ -384,7 +409,6 @@ plugins:
           - agent.md
           - agent-spec.md
           - native-tools.md
-          - capabilities.md
           - dependencies.md
           - deferred-tools.md
           - direct.md
@@ -394,16 +418,16 @@ plugins:
           - tools.md
           - common-tools.md
           - output.md
-          - retries.md
           - message-history.md
           - extensibility.md
           - hooks.md
           - multi-agent-applications.md
-          - thinking.md
           - third-party-tools.md
           - tools-advanced.md
           - toolsets.md
           - web.md
+        Capabilities:
+          - capabilities/*.md
         Models:
           - models/*.md
         Graphs:
