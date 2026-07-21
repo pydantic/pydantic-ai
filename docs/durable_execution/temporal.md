@@ -231,6 +231,9 @@ Rather than standing up a separate message queue, you can use Temporal's built-i
 Set `event_stream_topic` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] and construct a [`WorkflowStream`](https://docs.temporal.io/develop/python/workflows/workflow-streams) in your workflow's `@workflow.init`. Every event is then published to that topic from within the activity. Setting `event_stream_topic` enables streaming on its own, and it's orthogonal to `event_stream_handler`: if you also pass a handler, both run and each sees every event.
 
 ```python {test="skip"}
+import asyncio
+from datetime import timedelta
+
 from temporalio import workflow
 from temporalio.contrib.workflow_streams import WorkflowStream
 
@@ -252,44 +255,61 @@ class AssistantWorkflow:
         # Hosts the stream that the agent's activities publish to. Without this,
         # published events are silently dropped.
         self.stream = WorkflowStream()
+        self._finished = False
         self._released = False
 
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await agent.run(prompt)
-        # A Workflow Stream subscription is an Update long-poll that can't complete once the
-        # workflow has returned, so stay alive until the consumer signals it has finished draining.
-        # Otherwise a consumer that starts late or lags behind would miss the tail of the stream.
-        await workflow.wait_condition(lambda: self._released)
+        # All events are published by now. A Workflow Stream subscription is an Update long-poll
+        # that can't complete once the workflow has returned, so stay alive until the consumer
+        # acknowledges it has drained the stream — otherwise a consumer that starts late or lags
+        # behind would miss the tail. Bound the wait so a consumer that never connects can't hang
+        # the run.
+        self._finished = True
+        try:
+            await workflow.wait_condition(lambda: self._released, timeout=timedelta(minutes=1))
+        except asyncio.TimeoutError:
+            pass
         return result.output
+
+    @workflow.query
+    def finished(self) -> bool:
+        return self._finished
 
     @workflow.signal
     def release(self) -> None:
         self._released = True
 ```
 
-An external consumer (with just the workflow handle) observes events as they arrive using [`stream_agent_events`][pydantic_ai.durable_exec.temporal.stream_agent_events], which decodes them back into typed [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s — effectively a durable [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] across the workflow boundary. Once it has drained the events it needs, it signals the workflow to complete:
+An external consumer (with just the workflow handle) observes events as they arrive using [`stream_agent_events`][pydantic_ai.durable_exec.temporal.stream_agent_events], which decodes them back into typed [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s — effectively a durable [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] across the workflow boundary. The run — not any individual event — is the terminal signal (an event like `PartEndEvent` only ends a single response part, and tool calls or further parts can follow), so the consumer relays until the run has finished, then releases the workflow so it completes and the subscription ends:
 
 ```python {test="skip"}
+import asyncio
+
 from temporalio.client import Client
 
 from pydantic_ai.durable_exec.temporal import stream_agent_events
-from pydantic_ai.messages import PartEndEvent
 
 
-async def relay_events(client: Client, prompt: str) -> None:
+async def relay_events(client: Client, prompt: str) -> str:
     handle = await client.start_workflow(
         AssistantWorkflow.run, prompt, id='assistant-1', task_queue='my-task-queue'
     )
-    try:
+
+    async def relay() -> None:
         async for event in stream_agent_events(client, handle, 'agent-events'):
-            ...  # e.g. forward `event` to the frontend over SSE
-            if isinstance(event, PartEndEvent):  # the assistant's answer is complete
-                break
-    finally:
-        # Let the workflow complete now that we've drained the stream.
-        await handle.signal(AssistantWorkflow.release)
-    print((await handle.result()).output)
+            ...  # forward `event` to the frontend over SSE
+
+    relay_task = asyncio.create_task(relay())
+    # Wait until the run has finished producing events — queryable while the workflow is still
+    # alive, unlike `handle.result()` which is gated on the release below — then let the relay
+    # drain and release the workflow so it completes and the subscription ends.
+    while not await handle.query(AssistantWorkflow.finished):
+        await asyncio.sleep(0.2)
+    await handle.signal(AssistantWorkflow.release)
+    await relay_task
+    return (await handle.result()).output
 ```
 
 Because Workflow Streams are offset-addressed, a reconnecting consumer can resume from its last seen offset via `stream_agent_events(..., from_offset=...)`, which is more robust than ordinary in-process streaming. `stream_agent_events` targets the specific run behind the handle you pass, so it's unaffected by later executions that reuse the same workflow ID.
