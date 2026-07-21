@@ -1,8 +1,3 @@
-# pyright: reportDeprecated=false
-# `TemporalAgent` (the wrapper-agent path) is deprecated in favor of the
-# `TemporalDurability` capability, but this file still exercises both paths in
-# parallel for parity. Silenced at file level rather than annotating every
-# individual usage.
 from __future__ import annotations
 
 import asyncio
@@ -138,7 +133,7 @@ try:
         LogfirePlugin,
         PydanticAIPlugin,
         PydanticAIWorkflow,
-        TemporalAgent,
+        TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
     )
     from pydantic_ai.durable_exec.temporal._durability import (
@@ -346,7 +341,7 @@ model = OpenAIChatModel(
 simple_agent = Agent(model, name='simple_agent')
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-simple_temporal_agent = TemporalAgent(simple_agent, activity_config=BASE_ACTIVITY_CONFIG)
+simple_temporal_agent = TemporalAgent(simple_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -379,7 +374,7 @@ async def _migration_event_stream_handler(ctx: RunContext[None], stream: AsyncIt
 
 
 _migration_agent_name = 'temporal_agent_migration'
-_legacy_migration_agent = TemporalAgent(
+_legacy_migration_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     Agent(TestModel(custom_output_text='migrated'), name=_migration_agent_name, deps_type=type(None)),
     activity_config=BASE_ACTIVITY_CONFIG,
     event_stream_handler=_migration_event_stream_handler,
@@ -532,7 +527,7 @@ complex_agent = Agent(
 )
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-complex_temporal_agent = TemporalAgent(
+complex_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     complex_agent,
     event_stream_handler=event_stream_handler,
     activity_config=BASE_ACTIVITY_CONFIG,
@@ -1079,10 +1074,10 @@ def _call_mcp_then_finish(messages: list[ModelMessage], info: AgentInfo) -> Mode
 
 # A holder lets the replay step swap in a freshly-constructed (cold-process) instance,
 # reproducing the worker-restart scenario from #5875.
-mcp_replay_holder: dict[str, TemporalAgent[None, str]] = {}
+mcp_replay_holder: dict[str, TemporalAgent[None, str]] = {}  # pyright: ignore[reportDeprecated]
 
 
-def _make_mcp_replay_agent(cache_tools: bool = True) -> TemporalAgent[None, str]:
+def _make_mcp_replay_agent(cache_tools: bool = True) -> TemporalAgent[None, str]:  # pyright: ignore[reportDeprecated]
     agent = Agent(
         FunctionModel(_call_mcp_then_finish),
         name='mcp_replay_agent',
@@ -1095,7 +1090,7 @@ def _make_mcp_replay_agent(cache_tools: bool = True) -> TemporalAgent[None, str]
             )
         ],
     )
-    return TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)
+    return TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 mcp_replay_holder['agent'] = _make_mcp_replay_agent()
@@ -1562,7 +1557,7 @@ async def test_agent_without_name():
             "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
         ),
     ):
-        TemporalAgent(Agent())
+        TemporalAgent(Agent())  # pyright: ignore[reportDeprecated]
 
 
 async def test_agent_without_model():
@@ -1572,7 +1567,7 @@ async def test_agent_without_model():
             "The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time."
         ),
     ):
-        TemporalAgent(Agent(name='test_agent'))
+        TemporalAgent(Agent(name='test_agent'))  # pyright: ignore[reportDeprecated]
 
 
 async def test_old_temporalize_toolset_func_compat():
@@ -1584,7 +1579,7 @@ async def test_old_temporalize_toolset_func_compat():
     ) -> Any:
         return temporalize_toolset(toolset, prefix, config, tool_config, deps_type, run_context_type)
 
-    TemporalAgent(
+    TemporalAgent(  # pyright: ignore[reportDeprecated]
         Agent(model=model, name='old_compat_agent'),
         activity_config=BASE_ACTIVITY_CONFIG,
         temporalize_toolset_func=old_style_func,  # pyright: ignore[reportArgumentType]
@@ -1598,7 +1593,7 @@ async def test_toolset_without_id():
             "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
         ),
     ):
-        TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
+        TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))  # pyright: ignore[reportDeprecated]
 
 
 async def test_capability_contributed_toolset_id_from_capability():
@@ -1625,7 +1620,7 @@ async def test_capability_contributed_toolset_id_from_capability():
         ],
     )
     # Previously raised `UserError` because the contributed leaf toolsets had `id=None`.
-    temporal_agent = TemporalAgent(agent)
+    temporal_agent = TemporalAgent(agent)  # pyright: ignore[reportDeprecated]
 
     # Each contributed leaf toolset is registered as activities named after the capability id, so the
     # function toolset and the MCP server can be driven durably.
@@ -1660,7 +1655,7 @@ async def test_deferred_capability_contributed_toolset_id_from_capability():
             MCP(url='https://mcp.example.com/api', id='docs', defer_loading=True),
         ],
     )
-    temporal_agent = TemporalAgent(agent)
+    temporal_agent = TemporalAgent(agent)  # pyright: ignore[reportDeprecated]
 
     activity_names = {
         ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
@@ -1694,7 +1689,7 @@ def my_dynamic_toolset(ctx: RunContext[DynamicToolsetDeps]) -> FunctionToolset[D
     return toolset
 
 
-dynamic_toolset_temporal_agent = TemporalAgent(
+dynamic_toolset_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     dynamic_toolset_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
@@ -1752,7 +1747,7 @@ def dynamic_instruction_toolset(ctx: RunContext[object]) -> AbstractToolset[obje
     return FunctionToolset(instructions='SENTINEL_INSTRUCTION_FROM_DYNAMIC_TOOLSET', id='instruction-only-toolset')
 
 
-dynamic_instructions_temporal_agent = TemporalAgent(
+dynamic_instructions_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     dynamic_instructions_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
@@ -1833,7 +1828,7 @@ def multi_step_instruction_toolset(ctx: RunContext[object]) -> AbstractToolset[o
     return toolset
 
 
-multi_step_instructions_temporal_agent = TemporalAgent(
+multi_step_instructions_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     multi_step_instructions_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
@@ -1879,10 +1874,10 @@ async def test_dynamic_toolset_instructions_refresh_across_steps_in_workflow(
 # introduces no `TMPRL1100` nondeterminism.
 
 # A holder lets the replay step swap in a freshly-constructed (cold-process) instance.
-dynamic_instructions_replay_holder: dict[str, TemporalAgent[object, str]] = {}
+dynamic_instructions_replay_holder: dict[str, TemporalAgent[object, str]] = {}  # pyright: ignore[reportDeprecated]
 
 
-def _make_dynamic_instructions_replay_agent() -> TemporalAgent[object, str]:
+def _make_dynamic_instructions_replay_agent() -> TemporalAgent[object, str]:  # pyright: ignore[reportDeprecated]
     agent = Agent(FunctionModel(_echo_instructions_after_tool_call), name='dynamic_instructions_replay_agent')
 
     @agent.toolset(id='replay_instruction_toolset')
@@ -1897,7 +1892,7 @@ def _make_dynamic_instructions_replay_agent() -> TemporalAgent[object, str]:
 
         return toolset
 
-    return TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)
+    return TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 dynamic_instructions_replay_holder['agent'] = _make_dynamic_instructions_replay_agent()
@@ -1965,7 +1960,7 @@ def my_mcptoolset_dynamic_toolset(ctx: RunContext) -> MCPToolset:
     return MCPToolset('https://mcp.deepwiki.com/mcp')
 
 
-mcptoolset_dynamic_toolset_temporal_agent = TemporalAgent(
+mcptoolset_dynamic_toolset_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     mcptoolset_dynamic_toolset_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
@@ -2285,7 +2280,7 @@ def drop_first_message(msgs: list[ModelMessage]) -> list[ModelMessage]:
 agent_with_sync_history_processor = Agent(
     model, name='agent_with_sync_history_processor', capabilities=[ProcessHistory(drop_first_message)]
 )
-temporal_agent_with_sync_history_processor = TemporalAgent(
+temporal_agent_with_sync_history_processor = TemporalAgent(  # pyright: ignore[reportDeprecated]
     agent_with_sync_history_processor, activity_config=BASE_ACTIVITY_CONFIG
 )
 
@@ -2328,7 +2323,7 @@ def sync_instructions_fn() -> str:
     return 'You are a helpful assistant.'
 
 
-temporal_agent_with_sync_instructions = TemporalAgent(
+temporal_agent_with_sync_instructions = TemporalAgent(  # pyright: ignore[reportDeprecated]
     agent_with_sync_instructions, activity_config=BASE_ACTIVITY_CONFIG
 )
 
@@ -2572,7 +2567,7 @@ runtime_external_agent = Agent(
     name='runtime_external_toolset_agent',
     output_type=[str, DeferredToolRequests],
 )
-runtime_external_temporal_agent = TemporalAgent(runtime_external_agent, activity_config=BASE_ACTIVITY_CONFIG)
+runtime_external_temporal_agent = TemporalAgent(runtime_external_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 runtime_external_toolset = ExternalToolset(
     tool_defs=[
@@ -2759,7 +2754,7 @@ async def test_temporal_agent_override_deps_in_workflow(allow_model_requests: No
 agent_with_sync_tool = Agent(model, name='agent_with_sync_tool', tools=[get_weather])
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-temporal_agent_with_sync_tool_activity_disabled = TemporalAgent(
+temporal_agent_with_sync_tool_activity_disabled = TemporalAgent(  # pyright: ignore[reportDeprecated]
     agent_with_sync_tool,
     activity_config=BASE_ACTIVITY_CONFIG,
     tool_activity_config={
@@ -2807,7 +2802,7 @@ async def test_temporal_agent_mcp_server_activity_disabled(client: Client):
             'but MCP tools require the use of IO and so cannot be run outside of an activity.'
         ),
     ):
-        TemporalAgent(
+        TemporalAgent(  # pyright: ignore[reportDeprecated]
             complex_agent,
             tool_activity_config={
                 'mcp': {
@@ -2858,7 +2853,7 @@ async def get_model_name(ctx: RunContext[Model]) -> str:
 
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-unserializable_deps_temporal_agent = TemporalAgent(unserializable_deps_agent, activity_config=BASE_ACTIVITY_CONFIG)
+unserializable_deps_temporal_agent = TemporalAgent(unserializable_deps_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -2949,7 +2944,7 @@ async def delete_file(ctx: RunContext, path: str) -> bool:
     return True
 
 
-hitl_temporal_agent = TemporalAgent(hitl_agent, activity_config=BASE_ACTIVITY_CONFIG)
+hitl_temporal_agent = TemporalAgent(hitl_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -3139,7 +3134,7 @@ def get_weather_in_city(city: str) -> str:
     return 'sunny'
 
 
-model_retry_temporal_agent = TemporalAgent(model_retry_agent, activity_config=BASE_ACTIVITY_CONFIG)
+model_retry_temporal_agent = TemporalAgent(model_retry_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -3300,7 +3295,7 @@ return_settings_model = FunctionModel(return_settings, settings=model_settings)
 settings_agent = Agent(return_settings_model, name='settings_agent')
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-settings_temporal_agent = TemporalAgent(settings_agent, activity_config=BASE_ACTIVITY_CONFIG)
+settings_temporal_agent = TemporalAgent(settings_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -3344,7 +3339,7 @@ mcptoolset_instructions_agent = Agent(
     ],
 )
 
-mcptoolset_instructions_temporal_agent = TemporalAgent(
+mcptoolset_instructions_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     mcptoolset_instructions_agent, activity_config=BASE_ACTIVITY_CONFIG
 )
 
@@ -3378,7 +3373,7 @@ def test_temporalize_mcptoolset_dispatches_to_temporalmcptoolset():
     """`temporalize_toolset` wraps `MCPToolset` in `TemporalMCPToolset`."""
     toolset = MCPToolset('https://example.com/mcp', id='test_dispatch')
     agent = Agent(model=model, name='dispatch_agent', toolsets=[toolset])
-    temporal = TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)
+    temporal = TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
     wrapped = next(ts for ts in temporal.toolsets if isinstance(ts, TemporalMCPToolset))
     assert wrapped.wrapped is toolset
 
@@ -3386,7 +3381,7 @@ def test_temporalize_mcptoolset_dispatches_to_temporalmcptoolset():
 image_agent = Agent(model, name='image_agent', output_type=BinaryImage)
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-image_temporal_agent = TemporalAgent(image_agent, activity_config=BASE_ACTIVITY_CONFIG)
+image_temporal_agent = TemporalAgent(image_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -3427,7 +3422,7 @@ document_url_agent = Agent(
     output_type=DocumentUrl,
 )
 
-document_url_temporal_agent = TemporalAgent(document_url_agent, activity_config=BASE_ACTIVITY_CONFIG)
+document_url_temporal_agent = TemporalAgent(document_url_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -3480,7 +3475,7 @@ uploaded_file_agent = Agent(
     output_type=UploadedFile,
 )
 
-uploaded_file_temporal_agent = TemporalAgent(uploaded_file_agent, activity_config=BASE_ACTIVITY_CONFIG)
+uploaded_file_temporal_agent = TemporalAgent(uploaded_file_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -3526,7 +3521,7 @@ web_search_agent = Agent(
 )
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-web_search_temporal_agent = TemporalAgent(
+web_search_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     web_search_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
     model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=300)),
@@ -3718,7 +3713,7 @@ def analyze_data() -> ToolReturn:
     )
 
 
-_tool_return_metadata_temporal_agent = TemporalAgent(_tool_return_metadata_agent, activity_config=BASE_ACTIVITY_CONFIG)
+_tool_return_metadata_temporal_agent = TemporalAgent(_tool_return_metadata_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -3796,7 +3791,7 @@ mcptoolset_agent = Agent(
     toolsets=[MCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
 )
 
-mcptoolset_temporal_agent = TemporalAgent(
+mcptoolset_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     mcptoolset_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
@@ -3850,7 +3845,7 @@ def get_agent_name(ctx: RunContext) -> str:
     return (ctx.agent.name or 'unnamed') if ctx.agent else 'unknown'
 
 
-_ctx_agent_temporal_agent = TemporalAgent(_ctx_agent_test_agent, activity_config=BASE_ACTIVITY_CONFIG)
+_ctx_agent_temporal_agent = TemporalAgent(_ctx_agent_test_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -4085,7 +4080,7 @@ test_model_error_unregistered = TestModel()
 
 # Module-level temporal agents
 agent_selection = Agent(test_model_selection_1, name='multi_model_workflow_test')
-multi_model_selection_test_agent = TemporalAgent(
+multi_model_selection_test_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     agent_selection,
     name='multi_model_workflow_test',
     models={
@@ -4096,7 +4091,7 @@ multi_model_selection_test_agent = TemporalAgent(
 )
 
 agent_error = Agent(test_model_error_1, name='error_test')
-multi_model_error_test_agent = TemporalAgent(
+multi_model_error_test_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     agent_error,
     name='error_test',
     models={'other': test_model_error_2},
@@ -4152,7 +4147,7 @@ builtin_tool_agent = Agent(
     capabilities=[NativeTool(_select_builtin_tool)],
 )
 
-builtin_tool_temporal_agent = TemporalAgent(
+builtin_tool_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     builtin_tool_agent,
     name='builtin_tool_dynamic_agent',
     models={'code': code_execution_builtin_model},
@@ -4185,7 +4180,7 @@ builtins_in_workflow_agent = Agent(
 )
 
 # TemporalAgent registers an alternate model that DOES support builtins
-builtins_in_workflow_temporal_agent = TemporalAgent(
+builtins_in_workflow_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     builtins_in_workflow_agent,
     name='builtins_in_workflow',
     models={'web_search': web_search_builtin_override_model},
@@ -4217,7 +4212,7 @@ async def test_temporal_agent_multi_model_reserved_id():
 
     agent = Agent(test_model1, name='reserved_id_test')
     with pytest.raises(UserError, match="Model ID 'default' is reserved"):
-        TemporalAgent(
+        TemporalAgent(  # pyright: ignore[reportDeprecated]
             agent,
             name='reserved_id_test',
             models={'default': test_model2},
@@ -4351,7 +4346,7 @@ async def test_temporal_agent_multi_model_outside_workflow():
     test_model_unregistered = TestModel(custom_output_text='Unregistered model response')
 
     agent = Agent(test_model1, name='outside_workflow_test')
-    temporal_agent = TemporalAgent(
+    temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
         agent,
         name='outside_workflow_test',
         models={'secondary': test_model2},
@@ -4384,7 +4379,7 @@ async def test_temporal_agent_without_default_model():
 
     # Agent without a model
     agent = Agent(name='no_default_model_test')
-    temporal_agent = TemporalAgent(
+    temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
         agent,
         name='no_default_model_test',
         models={
@@ -4950,7 +4945,7 @@ def get_multimodal_content(ctx: RunContext) -> list[str | MultiModalContent]:
     ]
 
 
-multimodal_content_temporal_agent = TemporalAgent(multimodal_content_agent, activity_config=BASE_ACTIVITY_CONFIG)
+multimodal_content_temporal_agent = TemporalAgent(multimodal_content_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
@@ -5102,7 +5097,7 @@ def get_nested_multimodal_content(ctx: RunContext) -> dict[str, str | MultiModal
     }
 
 
-nested_multimodal_tool_return_temporal_agent = TemporalAgent(
+nested_multimodal_tool_return_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     nested_multimodal_tool_return_agent, activity_config=BASE_ACTIVITY_CONFIG
 )
 

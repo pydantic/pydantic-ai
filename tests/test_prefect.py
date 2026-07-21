@@ -1,8 +1,3 @@
-# pyright: reportDeprecated=false
-# `PrefectAgent` (the wrapper-agent path) is deprecated in favor of the
-# `PrefectDurability` capability, but this file still exercises both paths in
-# parallel for parity. Silenced at file level rather than annotating every
-# individual usage.
 from __future__ import annotations
 
 import os
@@ -61,7 +56,7 @@ try:
 
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
-        PrefectAgent,
+        PrefectAgent,  # pyright: ignore[reportDeprecated]
         PrefectDurability,
         PrefectFunctionToolset,
         PrefectMCPToolset,
@@ -170,7 +165,7 @@ model = OpenAIChatModel(
 
 # Simple agent for basic testing
 simple_agent = Agent(model, name='simple_agent')
-simple_prefect_agent = PrefectAgent(simple_agent)
+simple_prefect_agent = PrefectAgent(simple_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_simple_agent_run_in_flow(allow_model_requests: None) -> None:
@@ -254,7 +249,7 @@ complex_agent = Agent(
     capabilities=[Instrumentation(settings=InstrumentationSettings())],
     name='complex_agent',
 )
-complex_prefect_agent = PrefectAgent(complex_agent, event_stream_handler=event_stream_handler)
+complex_prefect_agent = PrefectAgent(complex_agent, event_stream_handler=event_stream_handler)  # pyright: ignore[reportDeprecated]
 
 
 async def runtime_handler_stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
@@ -267,7 +262,7 @@ runtime_handler_stream_agent = Agent(
     FunctionModel(stream_function=runtime_handler_stream_function),
     name='runtime_handler_stream_agent',
 )
-runtime_handler_stream_prefect_agent = PrefectAgent(runtime_handler_stream_agent)
+runtime_handler_stream_prefect_agent = PrefectAgent(runtime_handler_stream_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: CaptureLogfire) -> None:
@@ -691,7 +686,7 @@ async def test_event_stream_handler_property_outside_flow() -> None:
     # Outside a Prefect flow, the `event_stream_handler` property resolves to the effective handler
     # directly, rather than the in-flow per-event dispatcher.
     agent = Agent(TestModel(), name='event_stream_handler_property_agent')
-    prefect_agent = PrefectAgent(agent, event_stream_handler=runtime_event_stream_handler)
+    prefect_agent = PrefectAgent(agent, event_stream_handler=runtime_event_stream_handler)  # pyright: ignore[reportDeprecated]
     assert prefect_agent.event_stream_handler is runtime_event_stream_handler
 
 
@@ -700,7 +695,7 @@ async def test_agent_requires_name() -> None:
     agent_without_name = Agent(model)
 
     with pytest.raises(UserError) as exc_info:
-        PrefectAgent(agent_without_name)
+        PrefectAgent(agent_without_name)  # pyright: ignore[reportDeprecated]
 
     assert 'unique' in str(exc_info.value).lower() and 'name' in str(exc_info.value).lower()
 
@@ -710,7 +705,7 @@ async def test_agent_requires_model_at_creation() -> None:
     agent_without_model = Agent(name='test_agent')
 
     with pytest.raises(UserError) as exc_info:
-        PrefectAgent(agent_without_model)
+        PrefectAgent(agent_without_model)  # pyright: ignore[reportDeprecated]
 
     assert 'model' in str(exc_info.value).lower()
 
@@ -718,7 +713,7 @@ async def test_agent_requires_model_at_creation() -> None:
 async def test_toolset_without_id():
     """Test that agents can be created with toolsets without IDs."""
     # This is allowed in Prefect
-    PrefectAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
+    PrefectAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))  # pyright: ignore[reportDeprecated]
 
 
 async def test_prefect_toolset_legacy_constructors() -> None:
@@ -775,7 +770,7 @@ async def test_capability_contributed_toolset_id_from_capability():
             MCP(url='https://mcp.example.com/api'),
         ],
     )
-    prefect_agent = PrefectAgent(agent)
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
 
     leaves: list[AbstractToolset[object]] = []
     for toolset in prefect_agent.toolsets:
@@ -1051,7 +1046,7 @@ async def test_prefect_agent_run_with_runtime_external_toolset() -> None:
         name='runtime_external_toolset_prefect_agent',
         output_type=[str, DeferredToolRequests],
     )
-    prefect_agent = PrefectAgent(agent)
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
 
     result = await prefect_agent.run(
         'Call the runtime external tool.',
@@ -1088,7 +1083,7 @@ async def test_prefect_agent_run_rejects_executing_runtime_toolsets(kind: str) -
     }
     labels = {'function': 'FunctionToolset', 'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
 
-    prefect_agent = PrefectAgent(Agent(TestModel(), name=f'reject_{kind}_prefect_agent'))
+    prefect_agent = PrefectAgent(Agent(TestModel(), name=f'reject_{kind}_prefect_agent'))  # pyright: ignore[reportDeprecated]
     with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
         await prefect_agent.run('Hello', toolsets=[toolset_factories[kind]()])
 
@@ -1142,7 +1137,7 @@ def delete_file(ctx: RunContext, path: str) -> bool:
     return True
 
 
-hitl_prefect_agent = PrefectAgent(hitl_agent)
+hitl_prefect_agent = PrefectAgent(hitl_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_prefect_agent_with_hitl_tool(allow_model_requests: None) -> None:
@@ -1212,7 +1207,7 @@ def get_weather_in_city(city: str) -> str:
     return 'sunny'
 
 
-model_retry_prefect_agent = PrefectAgent(model_retry_agent)
+model_retry_prefect_agent = PrefectAgent(model_retry_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_prefect_agent_with_model_retry(allow_model_requests: None) -> None:
@@ -1278,7 +1273,7 @@ def toggle(ctx: RunContext[ToggleableDeps]):
     ctx.deps.toggle()
 
 
-dynamic_prefect_agent = PrefectAgent(dynamic_agent)
+dynamic_prefect_agent = PrefectAgent(dynamic_agent)  # pyright: ignore[reportDeprecated]
 
 
 def test_dynamic_toolset():
@@ -1580,7 +1575,7 @@ async def test_repeated_run_hits_cache():
         call_count += 1
         return ModelResponse(parts=[TextPart('4')])
 
-    prefect_agent = PrefectAgent(
+    prefect_agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
         Agent(FunctionModel(counting_model), name='cache_test_agent'),
         model_task_config=TaskConfig(cache_policy=PrefectAgentInputs()),
     )
@@ -1653,7 +1648,7 @@ model_settings = CustomModelSettings(max_tokens=123, custom_setting='custom_valu
 function_model = FunctionModel(return_settings, settings=model_settings)
 
 settings_agent = Agent(function_model, name='settings_agent')
-settings_prefect_agent = PrefectAgent(settings_agent)
+settings_prefect_agent = PrefectAgent(settings_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_custom_model_settings(allow_model_requests: None):
@@ -1677,7 +1672,7 @@ async def test_tool_call_outside_flow():
     def simple_tool(ctx: RunContext[SimpleDeps]) -> str:
         return f'Tool called with: {ctx.deps.value}'
 
-    test_prefect_agent = PrefectAgent(test_agent)
+    test_prefect_agent = PrefectAgent(test_agent)  # pyright: ignore[reportDeprecated]
 
     # Call run() outside a flow - tools should still work
     result = await test_prefect_agent.run('Call the tool', deps=SimpleDeps(value='test'))
@@ -1697,7 +1692,7 @@ async def test_disabled_tool():
         return 'Tool executed'
 
     # Create PrefectAgent with the tool disabled
-    test_prefect_agent = PrefectAgent(
+    test_prefect_agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
         test_agent,
         tool_task_config_by_name={
             'my_tool': None,

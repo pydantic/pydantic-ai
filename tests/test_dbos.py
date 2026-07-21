@@ -1,8 +1,3 @@
-# pyright: reportDeprecated=false
-# `DBOSAgent` (the wrapper-agent path) is deprecated in favor of the
-# `DBOSDurability` capability, but this file still exercises both paths in
-# parallel for parity. Silenced at file level rather than annotating every
-# individual usage.
 from __future__ import annotations
 
 import asyncio
@@ -60,7 +55,12 @@ from .conftest import IsDatetime, IsNow, IsStr
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
-    from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSDurability, DBOSModel, StepConfig
+    from pydantic_ai.durable_exec.dbos import (
+        DBOSAgent,  # pyright: ignore[reportDeprecated]
+        DBOSDurability,
+        DBOSModel,
+        StepConfig,
+    )
     from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
 
 except ImportError:  # pragma: lax no cover
@@ -164,7 +164,7 @@ model = OpenAIChatModel(
 
 # Not necessarily need to define it outside of the function. DBOS just requires workflows to be statically defined so recovery would be able to find those workflows. It's nice to reuse it in multiple tests.
 simple_agent = Agent(model, name='simple_agent')
-simple_dbos_agent = DBOSAgent(simple_agent)
+simple_dbos_agent = DBOSAgent(simple_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, openai_api_key: str) -> None:
@@ -252,8 +252,8 @@ complex_agent = Agent(
     capabilities=[Instrumentation(settings=InstrumentationSettings())],  # Enable instrumentation for testing
     name='complex_agent',
 )
-complex_dbos_agent = DBOSAgent(complex_agent, event_stream_handler=event_stream_handler)
-seq_complex_dbos_agent = DBOSAgent(
+complex_dbos_agent = DBOSAgent(complex_agent, event_stream_handler=event_stream_handler)  # pyright: ignore[reportDeprecated]
+seq_complex_dbos_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
     complex_agent,
     event_stream_handler=event_stream_handler,
     parallel_execution_mode='sequential',
@@ -271,7 +271,7 @@ runtime_handler_stream_agent = Agent(
     FunctionModel(stream_function=runtime_handler_stream_function),
     name='runtime_handler_stream_agent',
 )
-runtime_handler_stream_dbos_agent = DBOSAgent(runtime_handler_stream_agent)
+runtime_handler_stream_dbos_agent = DBOSAgent(runtime_handler_stream_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
@@ -698,7 +698,7 @@ async def test_dbos_agent_event_stream_handler_property_outside_workflow(dbos: D
     # Outside a DBOS workflow, the `event_stream_handler` property resolves to the effective handler
     # directly, rather than the in-workflow per-event dispatcher.
     agent = Agent(TestModel(), name='event_stream_handler_property_agent')
-    dbos_agent = DBOSAgent(agent, event_stream_handler=runtime_event_stream_handler)
+    dbos_agent = DBOSAgent(agent, event_stream_handler=runtime_event_stream_handler)  # pyright: ignore[reportDeprecated]
     assert dbos_agent.event_stream_handler is runtime_event_stream_handler
 
 
@@ -804,7 +804,7 @@ async def test_agent_name_collision(allow_model_requests: None, dbos: DBOS):
     with pytest.raises(
         Exception, match="Duplicate instance registration for class 'DBOSAgent' instance 'simple_agent'"
     ):
-        DBOSAgent(simple_agent)
+        DBOSAgent(simple_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_agent_without_name():
@@ -814,7 +814,7 @@ async def test_agent_without_name():
             "An agent needs to have a unique `name` in order to be used with DBOS. The name will be used to identify the agent's workflows and steps."
         ),
     ):
-        DBOSAgent(Agent())
+        DBOSAgent(Agent())  # pyright: ignore[reportDeprecated]
 
 
 async def test_agent_without_model():
@@ -824,12 +824,12 @@ async def test_agent_without_model():
             'An agent needs to have a `model` in order to be used with DBOS, it cannot be set at agent run time.'
         ),
     ):
-        DBOSAgent(Agent(name='test_agent'))
+        DBOSAgent(Agent(name='test_agent'))  # pyright: ignore[reportDeprecated]
 
 
 async def test_toolset_without_id():
     # Note: this is allowed in DBOS because we don't wrap the tools automatically in a workflow. It's up to the user to define the tools as DBOS steps if they want to use them as steps in a workflow.
-    DBOSAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
+    DBOSAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))  # pyright: ignore[reportDeprecated]
 
 
 async def test_mcp_toolset_without_id():
@@ -843,7 +843,7 @@ async def test_mcp_toolset_without_id():
             "The ID will be used to identify the MCP server's steps within the workflow."
         ),
     ):
-        DBOSAgent(Agent(model=model, name='test_agent', toolsets=[MCPToolset('https://example.com/mcp')]))
+        DBOSAgent(Agent(model=model, name='test_agent', toolsets=[MCPToolset('https://example.com/mcp')]))  # pyright: ignore[reportDeprecated]
 
 
 async def test_capability_contributed_toolset_id_from_capability():
@@ -870,7 +870,7 @@ async def test_capability_contributed_toolset_id_from_capability():
     )
     # Previously raised `UserError` from the DBOS id-less-MCP guard because the contributed MCP leaf
     # had `id=None`; it now derives `mcp.example.com-api` from the URL, so construction succeeds.
-    dbos_agent = DBOSAgent(agent)
+    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
 
     leaves: list[AbstractToolset[object]] = []
     for toolset in dbos_agent.toolsets:
@@ -901,7 +901,7 @@ async def test_capability_contributed_toolsets_with_colliding_derived_id():
             'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
         ),
     ):
-        DBOSAgent(
+        DBOSAgent(  # pyright: ignore[reportDeprecated]
             Agent(
                 model,
                 name='colliding_capability_agent',
@@ -1151,7 +1151,7 @@ async def test_dbos_agent_run_in_workflow_with_runtime_external_toolset(dbos: DB
         name='runtime_external_toolset_agent',
         output_type=[str, DeferredToolRequests],
     )
-    dbos_agent = DBOSAgent(agent)
+    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
 
     result = await dbos_agent.run(
         'Call the runtime external tool.',
@@ -1191,7 +1191,7 @@ async def test_dbos_agent_run_in_workflow_with_runtime_function_toolset(dbos: DB
         return ModelResponse(parts=[ToolCallPart('runtime_tool', {}, tool_call_id='call-1')])
 
     agent = Agent(FunctionModel(call_then_answer), name='runtime_function_toolset_agent')
-    dbos_agent = DBOSAgent(agent)
+    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
 
     result = await dbos_agent.run(
         'Call the runtime tool.', toolsets=[FunctionToolset(tools=[runtime_tool], id='runtime_fn')]
@@ -1313,7 +1313,7 @@ async def get_model_name(ctx: RunContext[UnserializableDeps]) -> int:
 
 
 async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: None, dbos: DBOS):
-    unserializable_deps_dbos_agent = DBOSAgent(unserializable_deps_agent)
+    unserializable_deps_dbos_agent = DBOSAgent(unserializable_deps_agent)  # pyright: ignore[reportDeprecated]
     # Test this raises a serialization error because httpx.AsyncClient is not serializable.
     with pytest.raises(Exception) as exc_info:
         async with AsyncClient() as client:
@@ -1388,7 +1388,7 @@ def toggle(ctx: RunContext[ToggleableDeps]):
     ctx.deps.toggle()
 
 
-dynamic_dbos_agent = DBOSAgent(dynamic_agent)
+dynamic_dbos_agent = DBOSAgent(dynamic_agent)  # pyright: ignore[reportDeprecated]
 
 
 def test_dynamic_toolset(dbos: DBOS):
@@ -1426,7 +1426,7 @@ def delete_file(ctx: RunContext, path: str) -> bool:
     return True
 
 
-hitl_dbos_agent = DBOSAgent(hitl_agent)
+hitl_dbos_agent = DBOSAgent(hitl_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS):
@@ -1735,7 +1735,7 @@ def get_weather_in_city(city: str) -> str:
     return 'sunny'
 
 
-model_retry_dbos_agent = DBOSAgent(model_retry_agent)
+model_retry_dbos_agent = DBOSAgent(model_retry_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBOS):
@@ -1884,7 +1884,7 @@ model_settings = CustomModelSettings(max_tokens=123, custom_setting='custom_valu
 return_settings_model = FunctionModel(return_settings, settings=model_settings)
 
 settings_agent = Agent(return_settings_model, name='settings_agent')
-settings_dbos_agent = DBOSAgent(settings_agent)
+settings_dbos_agent = DBOSAgent(settings_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_custom_model_settings(allow_model_requests: None, dbos: DBOS):
@@ -1963,7 +1963,7 @@ mcptoolset_instructions_agent = Agent(
         )
     ],
 )
-mcptoolset_instructions_dbos_agent = DBOSAgent(mcptoolset_instructions_agent)
+mcptoolset_instructions_dbos_agent = DBOSAgent(mcptoolset_instructions_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_dbos_mcptoolset_instructions_propagate(dbos: DBOS):
@@ -1978,7 +1978,7 @@ def test_dbosify_mcptoolset_dispatches_to_dbosmcptoolset():
 
     toolset = MCPToolset('https://example.com/mcp', id='test_dispatch')
     agent = Agent(model=model, name='dispatch_agent', toolsets=[toolset])
-    dbos_agent = DBOSAgent(agent)
+    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
     wrapped = next(ts for ts in dbos_agent._toolsets if isinstance(ts, DBOSMCPToolset))  # pyright: ignore[reportPrivateUsage]
     assert wrapped.wrapped is toolset
 
@@ -2017,7 +2017,7 @@ mcp_replay_agent = Agent(
     name='mcp_replay_agent',
     toolsets=[MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp', init_timeout=20)],
 )
-mcp_replay_dbos_agent = DBOSAgent(mcp_replay_agent)
+mcp_replay_dbos_agent = DBOSAgent(mcp_replay_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_dbos_mcp_get_tools_recorded_independently_per_run(allow_model_requests: None, dbos: DBOS):
