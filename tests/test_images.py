@@ -1525,6 +1525,13 @@ async def test_openai_image_generation_response_mapping():
         settings=OpenAIImageGenerationSettings(openai_background='opaque'),
     )
 
+    await model.generate(
+        'valid transparent background',
+        settings=OpenAIImageGenerationSettings(background='transparent', output_format='webp'),
+    )
+    assert mock_client.images.generate.await_args.kwargs['background'] == 'transparent'
+    assert mock_client.images.generate.await_args.kwargs['output_format'] == 'webp'
+
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 async def test_openai_image_generation_usage_falls_back_to_sdk_totals(monkeypatch: pytest.MonkeyPatch):
@@ -1594,6 +1601,52 @@ async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio():
             settings=OpenAIImageGenerationSettings(dimensions=(1920, 1080), openai_size='1920x1080'),
         )
     mock_client.images.generate.assert_not_awaited()
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize(
+    'model_name,settings',
+    [
+        ('gpt-image-2', OpenAIImageGenerationSettings(background='transparent')),
+        (
+            'gpt-image-2-2026-04-21',
+            OpenAIImageGenerationSettings(background='opaque', openai_background='transparent'),
+        ),
+    ],
+)
+async def test_openai_gpt_image_2_rejects_transparent_background(
+    model_name: str, settings: OpenAIImageGenerationSettings
+):
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    model = OpenAIImageGenerationModel(
+        model_name,
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+    )
+
+    with pytest.raises(UserError, match='does not support `background="transparent"`'):
+        await model.generate('transparent image', settings=settings)
+
+    mock_client.images.generate.assert_not_awaited()
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_rejects_transparent_background_with_jpeg_edit():
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    model = OpenAIImageGenerationModel(
+        'gpt-image-1.5',
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+    )
+
+    with pytest.raises(UserError, match='require `output_format="png"` or `"webp"`'):
+        await model.generate(
+            'transparent edit',
+            images=[BinaryImage(data=b'image', media_type='image/png')],
+            settings=OpenAIImageGenerationSettings(background='transparent', output_format='jpeg'),
+        )
+
+    mock_client.images.edit.assert_not_awaited()
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')

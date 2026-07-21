@@ -90,7 +90,7 @@ class ImageGenerationSettings(TypedDict, total=False):
     background: Literal['transparent', 'opaque', 'auto']
     """The requested image background.
 
-    Supported by: OpenAI. Transparent backgrounds require PNG or WebP output.
+    Supported by: OpenAI. Transparent backgrounds require PNG or WebP output and are not supported by GPT Image 2.
     """
 
     input_fidelity: Literal['high', 'low']

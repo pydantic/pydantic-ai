@@ -11,7 +11,7 @@ from pydantic_ai.models import download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
-from ._openai_geometry import resolve_openai_geometry
+from ._openai_geometry import is_gpt_image_2, resolve_openai_geometry
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
 from .settings import ImageGenerationSettings, warn_image_generation_settings
@@ -52,7 +52,10 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
     """GPT Image quality setting."""
 
     openai_background: Literal['transparent', 'opaque', 'auto']
-    """OpenAI image background setting."""
+    """OpenAI image background setting.
+
+    Transparent backgrounds require PNG or WebP output and are not supported by GPT Image 2.
+    """
 
     openai_input_fidelity: Literal['high', 'low']
     """OpenAI input fidelity setting for image editing."""
@@ -305,6 +308,8 @@ def _resolve_openai_settings(
     elif not is_edit and input_fidelity is not None:
         ignored.append('input_fidelity')
 
+    _validate_openai_background(model_name, background, settings.get('output_format'))
+
     geometry = resolve_openai_geometry(model_name, settings, provider_size=settings.get('openai_size'))
 
     return _OpenAIResolvedSettings(
@@ -317,6 +322,25 @@ def _resolve_openai_settings(
         ignored=ignored + geometry.ignored,
         conflicts=conflicts + geometry.conflicts,
     )
+
+
+def _validate_openai_background(
+    model_name: str,
+    background: Literal['transparent', 'opaque', 'auto'] | None,
+    output_format: Literal['png', 'jpeg', 'webp'] | None,
+) -> None:
+    if background != 'transparent':
+        return
+    if is_gpt_image_2(model_name):
+        raise UserError(
+            f'OpenAI model {model_name!r} does not support `background="transparent"`; '
+            'use `"opaque"` or `"auto"` instead'
+        )
+    if output_format not in (None, 'png', 'webp'):
+        raise UserError(
+            'OpenAI transparent backgrounds require `output_format="png"` or `"webp"`, '
+            f'got {output_format!r}'
+        )
 
 
 def _response_provider_details(response: ImagesResponse) -> dict[str, object]:

@@ -125,6 +125,7 @@ generation/editing and deterministic wire tests cover `UploadedFile` mapping.
 - Routes generate/edit based on reference-image presence.
 - Preserves revised prompts, output metadata, response ID, and multimodal usage details.
 - Rejects provider file IDs because the endpoint does not accept them.
+- Rejects transparent backgrounds on GPT Image 2 and transparent JPEG output before sending a paid request.
 - Requires Base64 image output and does not add an implicit output-URL download path.
 
 ### Google

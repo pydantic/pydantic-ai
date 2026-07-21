@@ -121,7 +121,8 @@ generator = ImageGenerator(
 
 OpenAI accepts [`BinaryImage`][pydantic_ai.messages.BinaryImage] and
 [`ImageUrl`][pydantic_ai.messages.ImageUrl] reference inputs. Its image-edit endpoint requires file content and does not
-accept an [`UploadedFile`][pydantic_ai.messages.UploadedFile] provider file ID. See the
+accept an [`UploadedFile`][pydantic_ai.messages.UploadedFile] provider file ID. Transparent backgrounds require PNG or
+WebP output and are unavailable on GPT Image 2; the adapter rejects invalid combinations before the API call. See the
 [image-generation guide](../image-generation.md) for generation, editing, geometry, and normalized settings.
 
 ## Model settings

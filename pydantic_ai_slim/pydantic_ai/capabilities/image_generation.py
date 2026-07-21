@@ -121,7 +121,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     background: Literal['transparent', 'opaque', 'auto'] | None
     """Background type for the generated image.
 
-    Supported by: OpenAI Responses. `'transparent'` only supported for `'png'` and `'webp'`.
+    Supported by: OpenAI Responses and direct OpenAI image models. `'transparent'` requires `'png'` or `'webp'` and is
+    not supported by GPT Image 2.
     """
 
     input_fidelity: Literal['high', 'low'] | None

@@ -583,6 +583,20 @@ because they explain why the implementation changed.
 - **Validation:** the deterministic wire test asserts `responseModalities: ['IMAGE']`; both real Google recordings are
   re-recorded against the image-only request and replay without credentials.
 
+### DEC-062: Reject invalid OpenAI transparency before the API call
+
+- **Status:** implemented after edge-case review; closes the deferred GPT Image 2 concern from DEC-053.
+- **Provider facts:** the official OpenAI SDK states that GPT Image 2 and its dated snapshot reject transparent
+  backgrounds. It also requires PNG or WebP whenever `background='transparent'` is used on a supporting model.
+- **Decision:** validate the resolved background after provider-specific precedence. Raise `UserError` when GPT Image 2
+  resolves to transparent, or when any supporting OpenAI image model combines transparent output with JPEG.
+- **Reason:** both constraints depend only on the selected model and typed request settings. Local validation gives a
+  clear error and avoids a known-invalid paid request.
+- **Scope:** apply the rule to direct OpenAI generation and editing through their shared settings resolver. Do not add
+  the dated GPT Image 2 snapshot to the public known-model list; custom strings still receive the provider rule.
+- **Validation:** tests cover the base model, dated model string, provider-specific setting precedence, and a JPEG edit;
+  both SDK client methods remain uncalled on failure.
+
 ## Questions to Resolve with Maintainers
 
 The current implementation is strongest where provider contracts are verified and intentionally conservative. Review is
