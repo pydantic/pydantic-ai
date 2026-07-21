@@ -75,12 +75,12 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         return self  # pragma: no cover
 
     async def __aenter__(self) -> Self:
-        if not workflow.in_workflow():  # pragma: no cover
+        if not workflow.in_workflow():
             await self.wrapped.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        if not workflow.in_workflow():  # pragma: no cover
+        if not workflow.in_workflow():
             return await self.wrapped.__aexit__(*args)
         return None
 
@@ -89,31 +89,6 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
 
     def _unwrap_call_tool_result(self, result: CallToolResult) -> Any:
         return unwrap_tool_call_result(result)
-
-    async def _call_tool_in_activity(
-        self,
-        name: str,
-        tool_args: dict[str, Any],
-        ctx: RunContext[AgentDepsT],
-        tool: ToolsetTool[AgentDepsT],
-        *,
-        toolset: AbstractToolset[AgentDepsT] | None = None,
-    ) -> CallToolResult:
-        """Call a tool inside an activity, re-validating args that were deserialized.
-
-        The tool args will already have been validated into their proper types in the `ToolManager`,
-        but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
-
-        Args:
-            name: The name of the tool to call.
-            tool_args: The raw tool arguments to re-validate and pass.
-            ctx: The run context.
-            tool: The tool definition.
-            toolset: The toolset to call the tool on. Defaults to `self.wrapped`.
-        """
-        toolset = toolset or self.wrapped
-        args_dict = tool.args_validator.validate_python(tool_args)
-        return await self._wrap_call_tool_result(toolset.call_tool(name, args_dict, ctx, tool))
 
 
 def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
@@ -208,9 +183,9 @@ def temporalize_toolset(
         )
 
     if isinstance(toolset, DynamicToolset):
-        from ._dynamic_toolset import TemporalDynamicToolset
+        from ._dynamic_toolset import temporalize_dynamic_toolset
 
-        return TemporalDynamicToolset(
+        return temporalize_dynamic_toolset(
             toolset,
             activity_name_prefix=activity_name_prefix,
             activity_config=activity_config,
