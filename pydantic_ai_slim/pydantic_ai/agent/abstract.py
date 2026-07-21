@@ -1506,8 +1506,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
             retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
-                override the output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries]
-                dict for finer control, including the tool-retry budget (e.g. `retries={'tools': 3}`).
+                override both the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries]
+                dict to override just one (e.g. `retries={'tools': 3}`).
                 When set, any per-run `retries` argument is ignored.
             spec: Optional agent spec providing defaults for override.
         """
