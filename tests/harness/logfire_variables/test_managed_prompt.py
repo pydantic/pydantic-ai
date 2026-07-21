@@ -64,12 +64,17 @@ def instructions_seen(result_messages: list[ModelMessage]) -> list[str]:
 # enclosing span attributes dict by name, so the pop targets the inner one.
 # `logfire.metrics` only appears on logfire versions newer than the extra's floor,
 # so keeping it would make the snapshots depend on the resolved logfire version.
+# `model_request_parameters` is pydantic-ai's serialized internal request state; its
+# schema grows with pydantic-ai releases (e.g. 2.14.0 added `ToolDefinition.toolset_id`),
+# so keeping it would break the `test-latest` job on every such release. These tests
+# assert baggage propagation, not the request payload.
 _VOLATILE_SPAN_ATTRIBUTES = (
     'attributes',
     'code.lineno',
     'gen_ai.conversation.id',
     'gen_ai.agent.call.id',
     'logfire.metrics',
+    'model_request_parameters',
 )
 
 
@@ -249,7 +254,6 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'gen_ai.provider.name': 'test',
                     'gen_ai.system': 'test',
                     'gen_ai.request.model': 'test',
-                    'model_request_parameters': '{"function_tools":[{"name":"noop","parameters_json_schema":{"additionalProperties":false,"properties":{},"type":"object"},"description":null,"outer_typed_dict_key":null,"strict":null,"sequential":false,"kind":"function","metadata":null,"timeout":null,"defer_loading":false,"unless_native":null,"with_native":null,"tool_kind":null,"return_schema":null,"include_return_schema":null,"capability_id":null}],"native_tools":[],"output_mode":"text","output_object":null,"output_tools":[],"prompted_output_template":null,"allow_text_output":true,"allow_image_output":false,"instruction_parts":[{"content":"You are a helpful assistant.","dynamic":true,"part_kind":"instruction"}],"thinking":null}',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.tool.definitions': '[{"type":"function","name":"noop","parameters":{"additionalProperties":false,"properties":{},"type":"object"}}]',
                     'logfire.span_type': 'span',
@@ -286,7 +290,6 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'gen_ai.provider.name': 'test',
                     'gen_ai.system': 'test',
                     'gen_ai.request.model': 'test',
-                    'model_request_parameters': '{"function_tools":[{"name":"noop","parameters_json_schema":{"additionalProperties":false,"properties":{},"type":"object"},"description":null,"outer_typed_dict_key":null,"strict":null,"sequential":false,"kind":"function","metadata":null,"timeout":null,"defer_loading":false,"unless_native":null,"with_native":null,"tool_kind":null,"return_schema":null,"include_return_schema":null,"capability_id":null}],"native_tools":[],"output_mode":"text","output_object":null,"output_tools":[],"prompted_output_template":null,"allow_text_output":true,"allow_image_output":false,"instruction_parts":[{"content":"You are a helpful assistant.","dynamic":true,"part_kind":"instruction"}],"thinking":null}',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.tool.definitions': '[{"type":"function","name":"noop","parameters":{"additionalProperties":false,"properties":{},"type":"object"}}]',
                     'logfire.span_type': 'span',

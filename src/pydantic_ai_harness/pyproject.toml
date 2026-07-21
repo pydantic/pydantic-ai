@@ -29,7 +29,7 @@ classifiers = [
 ]
 dependencies = [
     "httpx>=0.28.1",
-    "pydantic-ai-slim>=2.1.0",
+    "pydantic-ai-slim>=2.14.1",
 ]
 
 [project.optional-dependencies]
@@ -48,7 +48,7 @@ dbos = [
 ]
 logfire = [
     'logfire>=4.31.0',
-    "pydantic-ai-slim[spec]>=2.1.0",
+    "pydantic-ai-slim[spec]>=2.14.1",
 ]
 dynamic-workflow = [
     "pydantic-monty>=0.0.16",
@@ -80,7 +80,7 @@ dev = [
     'logfire[httpx]>=4.31.0',
     'dirty-equals>=0.9.0',
     'inline-snapshot>=0.32.5',
-    'pydantic-ai-slim[spec]>=2.1.0',
+    "pydantic-ai-slim[spec]>=2.14.1",
     "pytest-examples>=0.0.18",
     "pytest-recording>=0.13.4",
 ]

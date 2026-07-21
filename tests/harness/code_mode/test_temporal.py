@@ -4,6 +4,13 @@ Verifies that the snapshot-based execution loop (`feed_start`/`resume`)
 works inside a Temporal workflow sandbox, which forbids threads and
 `call_soon_threadsafe`.
 
+Durability is attached via the `TemporalDurability` capability; pydantic-ai
+2.14 deprecated the `TemporalAgent` wrapper in its favor
+(pydantic/pydantic-ai#4977). The workflow calls the plain `Agent` directly and
+`AgentPlugin` finds the bound capability to register its activities on the
+worker. The durability capability goes last in `capabilities=[...]`, after
+CodeMode, matching the convention in pydantic-ai's Temporal docs.
+
 These tests start a local Temporal dev server via
 `WorkflowEnvironment.start_local()` -- the Temporal SDK downloads and
 runs `temporalite` automatically.
@@ -22,7 +29,7 @@ try:
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         PydanticAIPlugin,
-        TemporalAgent,
+        TemporalDurability,
     )
     from temporalio import workflow
     from temporalio.client import Client
@@ -117,12 +124,7 @@ code_mode_agent = Agent(
     FunctionModel(_code_mode_model),
     name='code_mode_temporal_agent',
     toolsets=[FunctionToolset(tools=[add], id='math')],
-    capabilities=[CodeMode()],
-)
-
-temporal_code_mode_agent = TemporalAgent(
-    code_mode_agent,
-    activity_config=BASE_ACTIVITY_CONFIG,
+    capabilities=[CodeMode(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
 
 
@@ -130,7 +132,7 @@ temporal_code_mode_agent = TemporalAgent(
 class CodeModeWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> dict[str, Any]:
-        result = await temporal_code_mode_agent.run(prompt)
+        result = await code_mode_agent.run(prompt)
         return {
             'output': str(result.output),
             'messages': result.all_messages_json().decode(),
@@ -155,7 +157,7 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
         client,
         task_queue=TASK_QUEUE,
         workflows=[CodeModeWorkflow],
-        plugins=[AgentPlugin(temporal_code_mode_agent)],
+        plugins=[AgentPlugin(code_mode_agent)],
     ):
         result = await client.execute_workflow(
             CodeModeWorkflow.run,

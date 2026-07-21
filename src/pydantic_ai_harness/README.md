@@ -35,7 +35,7 @@ uv add "pydantic-ai-harness[acp]"               # ACP (serve an agent to editors
 
 The `code-mode` extra is also supported as an alias.
 
-Requires Python 3.10+ and `pydantic-ai-slim>=2.1.0`.
+Requires Python 3.10+ and `pydantic-ai-slim>=2.14.1`.
 
 ## Quick start
 
