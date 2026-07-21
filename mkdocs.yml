@@ -58,6 +58,7 @@ nav:
           - Building Custom Capabilities: capabilities/custom.md
           - Third-Party Capabilities: capabilities/third-party.md
           - Thinking: capabilities/thinking.md
+          - Instrumentation: capabilities/instrumentation.md
           - Web Search: capabilities/web-search.md
           - Web Fetch: capabilities/web-fetch.md
           - Image Generation: capabilities/image-generation.md
@@ -74,6 +75,9 @@ nav:
           - Set Tool Metadata: capabilities/set-tool-metadata.md
           - Raise Content Filter Error: capabilities/raise-content-filter-error.md
           - Reinject System Prompt: capabilities/reinject-system-prompt.md
+          - Handle Deferred Tool Calls: capabilities/handle-deferred-tool-calls.md
+          - Process History: capabilities/process-history.md
+          - Process Event Stream: capabilities/process-event-stream.md
           - Durable Execution:
               - Overview: durable_execution/overview.md
               - Temporal: durable_execution/temporal.md

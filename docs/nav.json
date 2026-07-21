@@ -102,6 +102,10 @@
         "slug": "capabilities/thinking"
       },
       {
+        "label": "Instrumentation",
+        "slug": "capabilities/instrumentation"
+      },
+      {
         "label": "Web Search",
         "slug": "capabilities/web-search"
       },
@@ -164,6 +168,18 @@
       {
         "label": "Reinject System Prompt",
         "slug": "capabilities/reinject-system-prompt"
+      },
+      {
+        "label": "Handle Deferred Tool Calls",
+        "slug": "capabilities/handle-deferred-tool-calls"
+      },
+      {
+        "label": "Process History",
+        "slug": "capabilities/process-history"
+      },
+      {
+        "label": "Process Event Stream",
+        "slug": "capabilities/process-event-stream"
       },
       {
         "label": "Durable Execution",

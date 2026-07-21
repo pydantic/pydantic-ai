@@ -22,7 +22,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 |---|---|:---:|
 | [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model [thinking/reasoning](thinking.md) at configurable effort | Yes |
 | [`Hooks`][pydantic_ai.capabilities.Hooks] | Decorator-based [lifecycle hook](../hooks.md) registration | — |
-| [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] | OpenTelemetry/Logfire tracing — see [Debugging and Monitoring](../logfire.md) | Yes |
+| [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] | OpenTelemetry/Logfire [tracing](instrumentation.md) of runs, model requests, and tool calls | Yes |
 | [`SelectModel`][pydantic_ai.capabilities.SelectModel] | Selects a static or per-step [model](select-model.md) with a callable | — |
 | [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] | Resolves custom [model IDs](resolve-model-id.md) with a callable | — |
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | [Web search](web-search.md) — native by default, optional [local fallback](../common-tools.md#duckduckgo-search-tool) via `local='duckduckgo'` | Yes |
@@ -41,14 +41,14 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] | [Merges metadata key-value pairs](set-tool-metadata.md) onto selected tools | Yes |
 | [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] | [Raises](raise-content-filter-error.md) [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] whenever a model response has `finish_reason='content_filter'` | Yes |
 | [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] | [Reinjects the configured system prompt](reinject-system-prompt.md) when the incoming message history is missing one | Yes |
-| [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] | Resolves [deferred tool calls](../deferred-tools.md#resolving-deferred-calls-with-a-handler) inline with a handler function | — |
-| [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] | Wraps a [history processor](../message-history.md#processing-message-history) | — |
-| [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] | Forwards agent stream events to a handler function | — |
+| [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] | Resolves [deferred tool calls](handle-deferred-tool-calls.md) inline with a handler function | — |
+| [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] | Wraps a [history processor](process-history.md) | — |
+| [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] | Forwards [agent stream events](process-event-stream.md) to a handler function | — |
 | [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] | Uses a [custom thread executor](thread-executor.md) for [sync functions](../tools-advanced.md#thread-executor-for-long-running-servers) | — |
 
 The **Spec** column indicates whether the capability can be used in [agent specs](../agent-spec.md) (YAML/JSON). Capabilities marked **—** take non-serializable arguments (callables, toolset objects) and can only be used in Python code.
 
-Provider-specific [compaction](compaction.md) capabilities ([`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction], [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction]) live in the corresponding model modules.
+Provider-specific [compaction](compaction.md) capabilities ([`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction], [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction]) live in the corresponding model modules. The [durable execution](../durable_execution/overview.md) integrations also ship as capabilities — [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability], and [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] — in the `pydantic_ai.durable_exec` subpackages.
 
 ```python {title="native_capabilities.py"}
 from pydantic_ai import Agent
