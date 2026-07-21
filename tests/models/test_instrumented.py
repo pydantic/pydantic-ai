@@ -357,6 +357,25 @@ def test_input_messages_json_refreshes_when_message_parts_are_replaced():
     assert len(cache) == 1
 
 
+def test_input_messages_json_evicts_entries_for_dropped_messages():
+    """Entries for messages no longer in the input history are evicted, so a pruning or rebuilding
+    history processor keeps the cache (and the `parts` lists it holds alive) bounded by the current
+    history instead of accumulating every message ever serialized until run end."""
+    settings = InstrumentationSettings()
+    cache: MessageJsonCache = {}
+    first = ModelRequest(parts=[UserPromptPart('first')])
+    second = ModelResponse(parts=[TextPart('second')])
+    third = ModelRequest(parts=[UserPromptPart('third')])
+
+    settings._input_messages_json([first, second], cache)  # pyright: ignore[reportPrivateUsage]
+    assert set(cache) == {id(first), id(second)}
+    second_entry = cache[id(second)]
+
+    settings._input_messages_json([second, third], cache)  # pyright: ignore[reportPrivateUsage]
+    assert set(cache) == {id(second), id(third)}
+    assert cache[id(second)] is second_entry
+
+
 def test_has_stale_message_json_detection_boundaries():
     """`has_stale_message_json` flags only entries that are still valid (same `parts` list) yet
     byte-stale, i.e. a message mutated in place below its `parts` list. Uncached messages are

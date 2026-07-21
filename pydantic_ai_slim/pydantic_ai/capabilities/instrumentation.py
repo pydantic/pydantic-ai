@@ -281,7 +281,7 @@ class Instrumentation(AbstractCapability[Any]):
         # (ctx.messages may be stale because UserPromptNode replaces the list reference).
         self._last_messages = request_context.messages
 
-        with open_model_request_span(self.settings, request_context, self._message_json_cache) as (
+        with open_model_request_span(self.settings, request_context, message_json_cache=self._message_json_cache) as (
             finish,
             prepared_request_context,
         ):

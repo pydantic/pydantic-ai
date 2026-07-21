@@ -94,9 +94,12 @@ doubles as a validity token and a liveness guard:
 
 - An entry is only served while `entry_parts is message.parts`, so a message whose `parts` list is
   reassigned (e.g. dynamic system prompt re-evaluation) is re-serialized rather than served stale.
-- Holding a strong reference to the list keeps it alive, so a message dropped from history mid-run
-  (e.g. by a history processor) can't have both its own and its parts list's `id` recycled by new
-  history objects into a false cache hit.
+- Holding a strong reference to the list keeps it alive, so a message dropped from history and
+  garbage-collected between two requests (e.g. by a history processor) can't have both its own and
+  its parts list's `id` recycled by new history objects into a false cache hit.
+- Entries for messages no longer in the input history are evicted on each request, so the cache
+  (and the `parts` lists it keeps alive) stays bounded by the current history even when a history
+  processor prunes or rebuilds messages.
 
 This caching is what makes the per-request `gen_ai.input.messages` attribute O(new messages) instead
 of O(history). It relies on an invariant that framework code must uphold: never mutate a history
@@ -288,6 +291,7 @@ class _FinishModelRequestSpan(Protocol):
 def open_model_request_span(
     settings: InstrumentationSettings,
     request_context: ModelRequestContext,
+    *,
     message_json_cache: MessageJsonCache | None = None,
 ) -> Generator[tuple[_FinishModelRequestSpan, ModelRequestContext]]:
     """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
@@ -381,7 +385,11 @@ def open_model_request_span(
                     return
 
                 settings.handle_messages(
-                    prepared_request_context.messages, response, span, prepared_parameters, message_json_cache
+                    prepared_request_context.messages,
+                    response,
+                    span,
+                    prepared_parameters,
+                    message_json_cache=message_json_cache,
                 )
 
                 attributes_to_set: dict[str, Any] = {

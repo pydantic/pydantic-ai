@@ -211,22 +211,25 @@ class InstrumentationSettings:
 
         With a `message_json_cache` (agent runs, where the growing history is re-serialized every
         request), each message's fragment is cached and concatenated, keeping the per-request cost
-        proportional to new messages rather than the whole history. Without a cache (one-off
-        requests), the whole history is serialized in a single call.
+        proportional to new messages rather than the whole history. Entries for messages no longer
+        in the input history are evicted, so the cache (and the `parts` lists it keeps alive) stays
+        bounded by the current history even when a history processor prunes or rebuilds messages.
+        Without a cache (one-off requests), the whole history is serialized in a single call.
         """
         if message_json_cache is None:
             return safe_to_json(self.messages_to_otel_messages(input_messages))
 
         fragments: list[bytes] = []
+        fresh_entries: MessageJsonCache = {}
         for message in input_messages:
             entry = message_json_cache.get(id(message))
-            if entry is not None and entry[0] is message.parts:
-                fragment = entry[1]
-            else:
-                fragment = message_json_fragment(self, message)
-                message_json_cache[id(message)] = (message.parts, fragment)
-            if fragment:
-                fragments.append(fragment)
+            if entry is None or entry[0] is not message.parts:
+                entry = (message.parts, message_json_fragment(self, message))
+            fresh_entries[id(message)] = entry
+            if entry[1]:
+                fragments.append(entry[1])
+        message_json_cache.clear()
+        message_json_cache.update(fresh_entries)
         return b'[' + b','.join(fragments) + b']'
 
     def handle_messages(
@@ -235,6 +238,7 @@ class InstrumentationSettings:
         response: ModelResponse,
         span: Span,
         parameters: ModelRequestParameters | None = None,
+        *,
         message_json_cache: MessageJsonCache | None = None,
     ):
         output_messages = self.messages_to_otel_messages([response])
