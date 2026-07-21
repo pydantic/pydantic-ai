@@ -1524,10 +1524,15 @@ async def test_openai_image_generation_connection_error():
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_instrumentation(capfire: CaptureLogfire):
     reference_url = 'https://example.com/private-reference.png'
+    provider_file_id = 'private-provider-file-id'
     generator = ImageGenerator(TestImageGenerationModel(), instrument=True)
     await generator.generate(
         'tiny robot',
-        images=[ImageUrl(reference_url), BinaryImage(data=TINY_PNG, media_type='image/png')],
+        images=[
+            ImageUrl(reference_url),
+            BinaryImage(data=TINY_PNG, media_type='image/png'),
+            UploadedFile(file_id=provider_file_id, provider_name='openai', media_type='image/png'),
+        ],
         settings={'n': 1},
     )
 
@@ -1543,10 +1548,11 @@ async def test_instrumentation(capfire: CaptureLogfire):
             'end_time': IsInt(),
             'attributes': {
                 'gen_ai.operation.name': 'image_generation',
+                'gen_ai.output.type': 'image',
                 'gen_ai.provider.name': 'test',
                 'gen_ai.request.model': 'test',
                 'prompt_length': 10,
-                'input_image_count': 2,
+                'input_image_count': 3,
                 'image_generation_settings': {'n': 1},
                 'prompt': 'tiny robot',
                 'logfire.json_schema': {
@@ -1573,6 +1579,7 @@ async def test_instrumentation(capfire: CaptureLogfire):
     )
     assert 'aGVsbG8=' not in str(span)
     assert reference_url not in str(span)
+    assert provider_file_id not in str(span)
     assert 'operation.cost' not in span['attributes']
 
 
@@ -1597,17 +1604,23 @@ async def test_instrument_all(capfire: CaptureLogfire):
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
-async def test_instrumentation_excludes_generated_image_content_when_include_content_false(capfire: CaptureLogfire):
+async def test_instrumentation_respects_content_and_request_parameter_flags(capfire: CaptureLogfire):
     generator = ImageGenerator(
         TestImageGenerationModel(),
-        instrument=InstrumentationSettings(include_content=False, include_binary_content=False),
+        instrument=InstrumentationSettings(
+            include_content=False,
+            include_binary_content=False,
+            include_model_request_parameters=False,
+        ),
     )
-    await generator.generate('tiny robot')
+    await generator.generate('tiny robot', settings={'n': 1})
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     span = next(span for span in spans if 'image_generation' in span['name'])
     attributes = span['attributes']
 
     assert 'prompt' not in attributes
+    assert 'image_generation_settings' not in attributes
+    assert 'image_generation_settings' not in attributes['logfire.json_schema']['properties']
     assert 'image.0.media_type' in attributes
     assert 'data' not in str(span)

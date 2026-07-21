@@ -81,12 +81,14 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
 
         attributes: dict[str, AttributeValue] = {
             'gen_ai.operation.name': operation,
+            'gen_ai.output.type': 'image',
             **self.model_attributes(self.wrapped),
             'prompt_length': len(prompt),
             'input_image_count': len(images),
         }
 
-        if settings:
+        include_settings = self.instrumentation_settings.include_model_request_parameters
+        if settings and include_settings:
             attributes['image_generation_settings'] = json.dumps(self.serialize_any(settings))
 
         if self.instrumentation_settings.include_content:
@@ -98,8 +100,8 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
                 'properties': {
                     'prompt_length': {'type': 'integer'},
                     'input_image_count': {'type': 'integer'},
-                    'image_generation_settings': {'type': 'object'},
                     'image_count': {'type': 'integer'},
+                    **({'image_generation_settings': {'type': 'object'}} if include_settings else {}),
                     **({'prompt': {'type': 'string'}} if self.instrumentation_settings.include_content else {}),
                 },
             }
