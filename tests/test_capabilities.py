@@ -14695,7 +14695,7 @@ async def test_ordering_survives_dynamic_capability_resolution():
     def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
         return OutermostCap()
 
-    combined = CombinedCapability([PlainCapA(), DynamicCapability(capability_func=factory)])
+    combined = CombinedCapability([PlainCapA(), DynamicCapability(factory)])
     # At construction, the unresolved wrapper has no ordering of its own.
     assert _cap_names(combined) == ['PlainCapA', 'DynamicCapability']
 
@@ -22739,7 +22739,7 @@ async def test_dynamic_capability_returning_none_contributes_nothing() -> None:
     request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
     assert request.instructions is None
 
-    dynamic = DynamicCapability(capability_func=factory)
+    dynamic = DynamicCapability(factory)
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     assert await dynamic.for_run(ctx) is dynamic
 
@@ -22749,14 +22749,14 @@ async def test_dynamic_capability_returning_none_contributes_nothing() -> None:
     async def async_none_factory(ctx: RunContext[Any]) -> AbstractCapability[Any] | None:
         return None
 
-    async_dynamic = DynamicCapability(capability_func=async_none_factory)
+    async_dynamic = DynamicCapability(async_none_factory)
     resolved = async_dynamic.get_toolset().toolset_func(ctx)
     assert inspect.isawaitable(resolved)
     assert await resolved is None
 
 
 def test_dynamic_capability_toolset_is_cached_and_inherits_id() -> None:
-    dynamic = DynamicCapability(capability_func=lambda ctx: None, id='x')
+    dynamic = DynamicCapability(lambda ctx: None, id='x')
     toolset = dynamic.get_toolset()
 
     assert toolset.id == 'x'
@@ -22875,7 +22875,7 @@ async def test_dynamic_capability_contributes_toolset_function() -> None:
     agent = Agent(
         FunctionModel(respond),
         deps_type=bool,
-        capabilities=[DynamicCapability(capability_func=lambda ctx: AsyncToolFuncCap())],
+        capabilities=[DynamicCapability(lambda ctx: AsyncToolFuncCap())],
     )
     await agent.run('hi', deps=True)
     await agent.run('hi', deps=False)
@@ -22883,7 +22883,7 @@ async def test_dynamic_capability_contributes_toolset_function() -> None:
     sync_agent = Agent(
         FunctionModel(respond),
         deps_type=bool,
-        capabilities=[DynamicCapability(capability_func=lambda ctx: SyncToolFuncCap())],
+        capabilities=[DynamicCapability(lambda ctx: SyncToolFuncCap())],
     )
     await sync_agent.run('hi', deps=True)
     assert seen_tools == ['func_tool', '', 'func_tool']
@@ -23189,7 +23189,7 @@ def test_dynamic_capability_rejects_wrapper_fields() -> None:
         return _RecordingCapability(label='x')  # pragma: no cover
 
     with pytest.raises(UserError, match='not supported on `DynamicCapability`'):
-        DynamicCapability(capability_func=factory, defer_loading=True)
+        DynamicCapability(factory, defer_loading=True)
 
 
 # endregion

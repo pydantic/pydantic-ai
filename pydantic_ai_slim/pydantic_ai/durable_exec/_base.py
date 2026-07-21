@@ -195,7 +195,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 "or, when it is contributed by a capability, set the capability's `id` (for example, "
                 "`DynamicCapability(..., id='user-tools')`). A capability function passed directly to "
                 '`capabilities=` cannot carry an `id`; wrap it explicitly: '
-                "`DynamicCapability(capability_func=my_func, id='...')`."
+                "`DynamicCapability(my_func, id='...')`."
             )
         if ts_id is not None and (existing := self._toolsets_by_id.get(ts_id)) is not None:
             if existing.wrapped is ts:

@@ -2840,7 +2840,7 @@ async def test_dbos_durability_dynamic_capability_tool_runs_in_step(dbos: DBOS) 
     agent = Agent(
         TestModel(),
         name='dbos_dynamic_capability',
-        capabilities=[DynamicCapability(capability_func=factory, id='dyn'), DBOSDurability()],
+        capabilities=[DynamicCapability(factory, id='dyn'), DBOSDurability()],
     )
 
     @DBOS.workflow()
@@ -2866,7 +2866,7 @@ def test_dbos_durability_dynamic_capability_requires_id(dbos: DBOS) -> None:
         Agent(
             TestModel(),
             name='dbos_dynamic_capability_no_id',
-            capabilities=[DynamicCapability(capability_func=factory), DBOSDurability()],
+            capabilities=[DynamicCapability(factory), DBOSDurability()],
         )
 
 
@@ -2904,7 +2904,7 @@ async def test_dbos_durability_dynamic_capability_mcp_runs_in_steps(dbos: DBOS) 
     agent = Agent(
         FunctionModel(call_then_answer),
         name='dbos_dynamic_mcp',
-        capabilities=[DynamicCapability(capability_func=factory, id='dyn_mcp'), DBOSDurability()],
+        capabilities=[DynamicCapability(factory, id='dyn_mcp'), DBOSDurability()],
     )
 
     @DBOS.workflow()

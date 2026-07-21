@@ -147,6 +147,4 @@ def wrap_capability_funcs(
     """Wrap any [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] entries in a `DynamicCapability`."""
     if not capabilities:
         return []
-    return [
-        cap if isinstance(cap, AbstractCapability) else DynamicCapability(capability_func=cap) for cap in capabilities
-    ]
+    return [cap if isinstance(cap, AbstractCapability) else DynamicCapability(cap) for cap in capabilities]
