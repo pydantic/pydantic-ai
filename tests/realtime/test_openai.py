@@ -420,7 +420,9 @@ def test_session_config_thinking_maps_to_reasoning_on_reasoning_models() -> None
     # `thinking` maps to reasoning effort on the `gpt-realtime-2*` reasoning models (live-verified
     # that these accept `reasoning.effort` while the GA `gpt-realtime` rejects it).
     def reasoning(thinking: ThinkingLevel) -> object:
-        model = OpenAIRealtimeModel('gpt-realtime-2.1', settings=rt_openai.OpenAIRealtimeModelSettings(thinking=thinking))
+        model = OpenAIRealtimeModel(
+            'gpt-realtime-2.1', settings=rt_openai.OpenAIRealtimeModelSettings(thinking=thinking)
+        )
         return model._session_config('hi', None, None).get('reasoning')  # pyright: ignore[reportPrivateUsage]
 
     assert reasoning('low') == {'effort': 'low'}
