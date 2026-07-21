@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     # Only needed for typing: the provider supplies the concrete client at runtime, so importing the
     # protocol helpers below (e.g. from the xAI realtime provider) doesn't require the `openai` package.
     from openai import AsyncOpenAI
+    from openai.types.realtime.realtime_truncation_param import RealtimeTruncationParam
 
 from .._instrumentation import get_instructions
 from ..exceptions import UserError
@@ -87,24 +88,10 @@ __all__ = (
     'OpenAIRealtimeModel',
     'OpenAIRealtimeModelSettings',
     'OpenAIRealtimeConnection',
-    'RetentionRatioTruncation',
     'ServerVAD',
     'SemanticVAD',
     'map_event',
 )
-
-
-@dataclass
-class RetentionRatioTruncation:
-    """Keep a fixed fraction of the model's context window as the conversation grows.
-
-    Unlike `'auto'` truncation (which drops whole turns and shifts the cached prefix), a fixed
-    retention ratio keeps the truncation boundary stable, so the leading audio stays prompt-cached
-    across turns (cached audio is far cheaper). See [`openai_truncation`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings.openai_truncation].
-    """
-
-    retention_ratio: float
-    """Fraction (0-1) of the context window to retain after truncation."""
 
 
 class OpenAIRealtimeModelSettings(RealtimeModelSettings, total=False):
@@ -122,12 +109,13 @@ class OpenAIRealtimeModelSettings(RealtimeModelSettings, total=False):
 
     When present, this fully overrides the cross-provider `turn_detection` setting.
     """
-    openai_truncation: Literal['auto', 'disabled'] | RetentionRatioTruncation
+    openai_truncation: RealtimeTruncationParam
     """How the session truncates conversation context once it exceeds the model's window.
 
     `'auto'` (the server default) drops the oldest turns; `'disabled'` keeps everything (and errors
-    when the window is full); a [`RetentionRatioTruncation`][pydantic_ai.realtime.openai.RetentionRatioTruncation]
-    keeps a fixed fraction, holding the cached prefix stable across turns.
+    when the window is full); a `retention_ratio` truncation (`{'type': 'retention_ratio',
+    'retention_ratio': 0.8}`) keeps a fixed fraction, holding the prompt-cached prefix stable across
+    turns (cached audio is far cheaper). This is the OpenAI SDK's `truncation` shape, forwarded as-is.
     """
 
 
@@ -493,11 +481,8 @@ class OpenAIRealtimeModel(RealtimeModel):
         if (tool_choice := tool_choice_config(model_settings.get('tool_choice'))) is not None:
             config['tool_choice'] = tool_choice
         if (truncation := model_settings.get('openai_truncation')) is not None:
-            config['truncation'] = (
-                truncation
-                if isinstance(truncation, str)
-                else {'type': 'retention_ratio', 'retention_ratio': truncation.retention_ratio}
-            )
+            # Already the OpenAI `truncation` wire shape (`'auto'`/`'disabled'`/retention-ratio dict).
+            config['truncation'] = truncation
         return config
 
     @asynccontextmanager

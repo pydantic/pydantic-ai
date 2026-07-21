@@ -405,7 +405,7 @@ def test_session_config_truncation_modes() -> None:
 
     ratio = OpenAIRealtimeModel(
         settings=rt_openai.OpenAIRealtimeModelSettings(
-            openai_truncation=rt_openai.RetentionRatioTruncation(retention_ratio=0.8)
+            openai_truncation={'type': 'retention_ratio', 'retention_ratio': 0.8}
         )
     )
     assert ratio._session_config('hi', None, None)['truncation'] == {  # pyright: ignore[reportPrivateUsage]
