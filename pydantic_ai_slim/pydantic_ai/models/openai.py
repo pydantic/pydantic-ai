@@ -648,6 +648,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     for more details.
     """
 
+    # TODO(v3): rename to `openai_send_item_ids`; this gates far more than reasoning IDs (see docstring).
     openai_send_reasoning_ids: bool
     """Whether to send the unique IDs of reasoning, text, and function call parts from the message history to the model. Enabled by default for reasoning models.
 
