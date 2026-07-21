@@ -867,8 +867,8 @@ async def test_tool_manager_retry_count_increments_when_same_tool_fails_and_succ
     toolset = FunctionToolset[TestDeps](max_retries=2)
     calls = 0
 
-    @toolset.tool
-    def flaky_tool(ctx: RunContext[Any], x: int) -> int:
+    @toolset.tool_plain
+    def flaky_tool(x: int) -> int:
         """Fails on its first call in the step, succeeds on the second."""
         nonlocal calls
         calls += 1
