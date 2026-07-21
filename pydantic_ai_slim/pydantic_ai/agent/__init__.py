@@ -3184,6 +3184,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     message_history=message_history,
                     profile=model_profile,
                     conversation_id=conversation_id,
+                    output_modality=(effective_model_settings or {}).get('output_modality', 'audio'),
                 )
                 async with session:
                     yield session

@@ -7,7 +7,7 @@ import dataclasses
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 import pydantic_core
 from anyio import Lock
@@ -224,6 +224,7 @@ class RealtimeSession:
         message_history: Sequence[ModelMessage] | None = None,
         profile: RealtimeModelProfile | None = None,
         conversation_id: str | None = None,
+        output_modality: Literal['audio', 'text'] = 'audio',
     ) -> None:
         self._connection = connection
         self._tool_manager = tool_manager
@@ -234,6 +235,9 @@ class RealtimeSession:
         self._model_name = model_name
         self._agent_name = agent_name
         self._conversation_id = conversation_id
+        # The semconv `gen_ai.output.type` value for the session's configured output modality:
+        # `'speech'` for spoken audio (the enum's term for voice output), `'text'` for text-only.
+        self._otel_output_type = 'speech' if output_modality == 'audio' else 'text'
         self._usage_limits = usage_limits
         self._audio_retention = audio_retention
         self._retain_input = audio_retention in ('input', 'both')
@@ -315,7 +319,10 @@ class RealtimeSession:
 
         settings = self._instrumentation
         if settings is not None:
-            attributes: dict[str, Any] = {'gen_ai.operation.name': 'realtime'}
+            attributes: dict[str, Any] = {
+                'gen_ai.operation.name': 'realtime',
+                'gen_ai.output.type': self._otel_output_type,
+            }
             if self._model_name:
                 attributes['gen_ai.request.model'] = self._model_name
             if self._agent_name:
@@ -606,11 +613,16 @@ class RealtimeSession:
         `model_request_parameters`, `gen_ai.tool.definitions`, and `gen_ai.request.*` settings (no
         per-turn request parameters or settings); `operation.cost` (cost needs the provider). The
         response-side `gen_ai.response.id`/`finish_reasons` are simply absent from realtime responses.
+        Added vs. the classic span: `gen_ai.output.type` (`speech`/`text`), the one semconv attribute
+        specific to voice output.
         """
         settings = self._instrumentation
         if settings is None or self._chat_span is not None:
             return
-        attributes: dict[str, Any] = {'gen_ai.operation.name': 'chat'}
+        attributes: dict[str, Any] = {
+            'gen_ai.operation.name': 'chat',
+            'gen_ai.output.type': self._otel_output_type,
+        }
         if self._model_name:
             attributes['gen_ai.request.model'] = self._model_name
         name = f'chat {self._model_name}' if self._model_name else 'chat'

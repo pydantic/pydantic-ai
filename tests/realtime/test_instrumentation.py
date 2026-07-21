@@ -221,6 +221,9 @@ async def test_session_and_tool_spans_with_usage() -> None:
     assert sess.attributes['gen_ai.operation.name'] == 'realtime'
     assert sess.attributes['gen_ai.request.model'] == 'gpt-realtime'
     assert sess.attributes['gen_ai.agent.name'] == 'assistant'
+    # `gen_ai.output.type` reports the configured output modality; the default is spoken audio,
+    # which the semconv enum calls `speech`. Set on both the session span and the `chat` spans.
+    assert sess.attributes['gen_ai.output.type'] == 'speech'
     # Cumulative usage on the session span uses the aggregated namespace (mirroring the classic
     # agent-run span) so it isn't double-counted against the per-turn `chat` spans' `gen_ai.usage.*`.
     assert sess.attributes['gen_ai.aggregated_usage.input_tokens'] == 10
@@ -237,9 +240,30 @@ async def test_session_and_tool_spans_with_usage() -> None:
     # Both the `chat` span and the `execute_tool` span are children of the session span (siblings),
     # matching the classic agent-run tree where `execute_tool` follows `chat` rather than nesting in it.
     chat = spans['chat gpt-realtime']
+    assert chat.attributes is not None
+    assert chat.attributes['gen_ai.output.type'] == 'speech'
     assert sess.context is not None
     assert chat.parent is not None and chat.parent.span_id == sess.context.span_id
     assert tool.parent is not None and tool.parent.span_id == sess.context.span_id
+
+
+async def test_output_type_reflects_text_modality() -> None:
+    # With `output_modality='text'` the model replies as plain text rather than speech, and the
+    # session and `chat` spans report `gen_ai.output.type='text'` (threaded from the model settings
+    # by `Agent.realtime_session`).
+    settings, exporter = _settings()
+    agent = _weather_agent(name='assistant')
+    agent.instrument = settings
+    conn = _Connection([Transcript(text='hi', is_final=True), TurnCompleteEvent()])
+    async with agent.realtime_session(
+        model=_Model(conn), model_settings=RealtimeModelSettings(output_modality='text')
+    ) as session:
+        _ = [e async for e in session]
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    for name in ('realtime gpt-realtime', 'chat gpt-realtime'):
+        attributes = spans[name].attributes
+        assert attributes is not None
+        assert attributes['gen_ai.output.type'] == 'text'
 
 
 async def test_include_content_false_omits_args_and_result() -> None:
