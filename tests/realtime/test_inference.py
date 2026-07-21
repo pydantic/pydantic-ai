@@ -23,6 +23,8 @@ def test_infer_realtime_models(env: TestEnv) -> None:
     env.set('AZURE_VOICELIVE_ENDPOINT', 'https://resource.services.ai.azure.com')
     env.set('AZURE_VOICELIVE_API_VERSION', '2026-04-10')
     env.set('AZURE_VOICELIVE_API_KEY', 'test')
+    env.set('AZURE_OPENAI_ENDPOINT', 'https://resource.openai.azure.com/openai/v1')
+    env.set('AZURE_OPENAI_API_KEY', 'test')
 
     # Each provider prefix must select its own concrete model class, not just carry the suffix through
     # as `model_name` (which a wrong-class result would also satisfy).
@@ -42,6 +44,10 @@ def test_infer_realtime_models(env: TestEnv) -> None:
     assert type(azure_model).__name__ == 'AzureRealtimeModel'
     assert azure_model.model_name == 'gpt-realtime'
 
+    azure_openai_model = infer_realtime_model('azure:gpt-realtime')
+    assert type(azure_openai_model).__name__ == 'AzureOpenAIRealtimeModel'
+    assert azure_openai_model.model_name == 'gpt-realtime'
+
 
 def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
     # `gateway/openai:...` routes the OpenAI realtime protocol through the Pydantic AI Gateway: an
@@ -60,7 +66,7 @@ def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
 
 
 def test_infer_realtime_model_unknown_provider() -> None:
-    with pytest.raises(UserError, match='Supported providers are `openai`, `azure-voicelive`, `xai`, and `google`'):
+    with pytest.raises(UserError, match='Supported providers are `openai`, `azure`, `azure-voicelive`'):
         infer_realtime_model('anthropic:voice')
 
     with pytest.raises(UserError):

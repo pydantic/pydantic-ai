@@ -69,6 +69,7 @@ from ._session import RealtimeSession
 
 if TYPE_CHECKING:
     from .azure import AzureRealtimeModel
+    from .azure_openai import AzureOpenAIRealtimeModel
 
 KnownRealtimeModelName = TypeAliasType(
     'KnownRealtimeModelName',
@@ -76,6 +77,7 @@ KnownRealtimeModelName = TypeAliasType(
         'openai:gpt-realtime',
         'openai:gpt-realtime-2.1',
         'openai:gpt-realtime-2.1-mini',
+        'azure:gpt-realtime',
         'azure-voicelive:gpt-realtime',
         'azure-voicelive:gpt-realtime-1.5',
         'azure-voicelive:gpt-realtime-mini',
@@ -90,7 +92,7 @@ KnownRealtimeModelName = TypeAliasType(
 def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
     """Infer a realtime model from a `provider:model` identifier.
 
-    Accepts a bare provider (`openai`, `azure-voicelive`, `xai`, `google`) or a
+    Accepts a bare provider (`openai`, `azure`, `azure-voicelive`, `xai`, `google`) or a
     [Pydantic AI Gateway](../gateway.md) route (`gateway/openai:gpt-realtime`), which connects
     through the gateway's built-in provider — the provider string is passed to the realtime model as
     its `provider`, so authentication and the base URL come from
@@ -108,6 +110,10 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
         from .openai import OpenAIRealtimeModel
 
         return OpenAIRealtimeModel(model_name, provider=provider)
+    if provider == 'azure':
+        from .azure_openai import AzureOpenAIRealtimeModel
+
+        return AzureOpenAIRealtimeModel(model_name)
     if provider == 'azure-voicelive':
         from .azure import AzureRealtimeModel
 
@@ -121,13 +127,17 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
 
         return GoogleRealtimeModel(model_name)
     raise UserError(
-        f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, '
+        f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `azure`, '
         '`azure-voicelive`, `xai`, and `google`, or `gateway/openai` to route OpenAI realtime '
         'through the Pydantic AI Gateway.'
     )
 
 
 def __getattr__(name: str) -> object:
+    if name == 'AzureOpenAIRealtimeModel':
+        from .azure_openai import AzureOpenAIRealtimeModel
+
+        return AzureOpenAIRealtimeModel
     if name == 'AzureRealtimeModel':
         from .azure import AzureRealtimeModel
 
@@ -148,6 +158,7 @@ __all__ = (
     'AudioDelta',
     'AudioInput',
     'AudioRetention',
+    'AzureOpenAIRealtimeModel',
     'AzureRealtimeModel',
     'CancelResponse',
     'ClearAudio',

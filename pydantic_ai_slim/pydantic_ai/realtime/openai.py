@@ -453,14 +453,19 @@ class OpenAIRealtimeModel(RealtimeModel):
     settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
+    _gateway: bool = field(init=False, default=False, repr=False)
 
     def __post_init__(self, provider: Provider[AsyncOpenAI] | str) -> None:
         if isinstance(provider, str):
+            # The gateway's base URL points at the OpenAI proxy root: it inserts `/v1` for REST paths
+            # but forwards the realtime WebSocket path verbatim, so realtime must target `/v1` itself.
+            self._gateway = provider == 'gateway/openai'
             provider = cast('Provider[AsyncOpenAI]', infer_provider(provider))
         if provider.name == 'azure':
             raise UserError(
-                'Azure OpenAI is not supported for realtime sessions: its realtime endpoint uses a '
-                'different URL and authentication scheme. Use the `openai` provider instead.'
+                'Azure OpenAI is not supported through `OpenAIRealtimeModel`: its realtime endpoint uses a '
+                'different URL and authentication scheme. Use `AzureOpenAIRealtimeModel` (or the '
+                '`azure:` prefix) for Azure OpenAI realtime, or `AzureRealtimeModel` for Azure AI Voice Live.'
             )
         self._provider = provider
 
@@ -539,6 +544,20 @@ class OpenAIRealtimeModel(RealtimeModel):
                 )
         return config
 
+    def _realtime_url(self) -> str:
+        base_url = self._provider.base_url
+        if self._gateway:
+            base_url = f'{base_url.rstrip("/")}/v1'
+        return f'{realtime_websocket_url(base_url)}?model={self.model}'
+
+    async def _auth_headers(self) -> dict[str, str]:
+        # `AsyncOpenAI` accepts an async `api_key` provider, in which case `client.api_key` is empty
+        # until resolved. The raw WebSocket handshake bypasses the SDK's request path (which resolves
+        # it per request), so resolve it here via the SDK's own refresh — a no-op returning the static
+        # key when no provider is configured, so the handshake stays byte-identical in that case.
+        api_key = await self._provider.client._refresh_api_key()  # pyright: ignore[reportPrivateUsage]
+        return {'Authorization': f'Bearer {api_key}'}
+
     @asynccontextmanager
     async def connect(
         self,
@@ -547,13 +566,8 @@ class OpenAIRealtimeModel(RealtimeModel):
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
-        url = f'{realtime_websocket_url(self._provider.base_url)}?model={self.model}'
-        # `AsyncOpenAI` accepts an async `api_key` provider, in which case `client.api_key` is empty
-        # until resolved. The raw WebSocket handshake bypasses the SDK's request path (which resolves
-        # it per request), so resolve it here via the SDK's own refresh — a no-op returning the static
-        # key when no provider is configured, so the handshake stays byte-identical in that case.
-        api_key = await self._provider.client._refresh_api_key()  # pyright: ignore[reportPrivateUsage]
-        headers = {'Authorization': f'Bearer {api_key}'}
+        url = self._realtime_url()
+        headers = await self._auth_headers()
         # Propagate trace context over the handshake so a proxy (e.g. the Pydantic AI Gateway) can nest
         # its realtime spans under this session's trace; the raw WebSocket bypasses the provider's
         # `httpx` client, which would otherwise inject it.

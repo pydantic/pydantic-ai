@@ -43,8 +43,31 @@ Authentication and the base URL come from the `provider` argument, mirroring
 default, reads `OPENAI_API_KEY`) or an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]
 instance for a custom key or base URL. The realtime transport is opened separately with
 `websockets`, so a custom `OpenAIProvider` `httpx` client is not used for the WebSocket connection.
-OpenAI-compatible endpoints that expose a realtime API work too. Azure OpenAI's separate realtime
-endpoint is not supported through `OpenAIRealtimeModel`; use Azure AI Voice Live below.
+OpenAI-compatible endpoints that expose a realtime API work too.
+
+### Azure OpenAI realtime
+
+Azure OpenAI exposes the same GA realtime protocol through its `/openai/v1/realtime` endpoint. Set
+`AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY`, then use the `azure:` model prefix:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+agent = Agent(instructions='You are a helpful voice assistant.')
+
+
+async def main():
+    async with agent.realtime_session(model='azure:gpt-realtime') as session:
+        await session.send('Say hello.')
+        async for event in session:
+            ...
+```
+
+[`AzureOpenAIRealtimeModel`][pydantic_ai.realtime.azure_openai.AzureOpenAIRealtimeModel] reuses
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] for the resource endpoint and API key,
+and uses the same settings and event protocol as
+[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel]. It supports API-key
+authentication; Microsoft Entra ID authentication is not supported for realtime connections.
 
 ### Azure AI Voice Live
 
@@ -128,7 +151,7 @@ which reads `XAI_API_KEY`) or an [`XaiProvider`][pydantic_ai.providers.xai.XaiPr
 with `api_key=`. Realtime does not support a custom `api_host`, and a provider constructed only with
 `xai_client=` cannot be used because the WebSocket connection needs access to the API key.
 
-All four implement the same [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] interface, so the
+All providers implement the same [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] interface, so the
 rest of this guide applies to any of them — swap `OpenAIRealtimeModel('gpt-realtime')` for
 `AzureRealtimeModel('gpt-realtime')`, `GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')`,
 or `XaiRealtimeModel('grok-voice-latest')`. A few provider differences are worth knowing: send mono
@@ -986,5 +1009,7 @@ A provider implements two ABCs: [`RealtimeModel`][pydantic_ai.realtime.RealtimeM
 [`RealtimeCodecEvent`][pydantic_ai.realtime.RealtimeCodecEvent] vocabulary, which the session
 translates into user-facing [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent]s). The OpenAI
 provider in [`pydantic_ai.realtime.openai`][pydantic_ai.realtime.openai] is a reference
-implementation; the same shape applies to Azure Voice Live, Gemini Live, xAI Grok Voice, and others. Inputs a provider
+implementation; the same shape applies to Azure OpenAI, Azure Voice Live, Gemini Live, xAI Grok Voice, and others. Inputs a provider
 doesn't support (e.g. `ImageInput`, or the manual turn-taking verbs) should raise `NotImplementedError`.
+
+::: pydantic_ai.realtime.azure_openai.AzureOpenAIRealtimeModel

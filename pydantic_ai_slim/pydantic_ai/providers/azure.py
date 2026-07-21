@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import TYPE_CHECKING, overload
 from urllib.parse import urlparse
 
 import httpx
@@ -18,6 +18,10 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider
+from pydantic_ai.providers.openai import OpenAIProvider
+
+if TYPE_CHECKING:
+    from pydantic_ai.realtime import RealtimeModelProfile
 
 try:
     from openai import AsyncAzureOpenAI
@@ -46,6 +50,18 @@ class AzureProvider(Provider[AsyncOpenAI]):
     @property
     def client(self) -> AsyncOpenAI:
         return self._client
+
+    @property
+    def azure_endpoint(self) -> str:
+        """The Azure resource endpoint used to derive service-specific URLs."""
+        return self._azure_endpoint
+
+    @property
+    def api_key(self) -> str:
+        """The Azure resource key used for API-key-authenticated transports."""
+        if self._api_key is None:
+            raise UserError('Azure OpenAI realtime requires API-key authentication.')
+        return self._api_key
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
@@ -78,6 +94,10 @@ class AzureProvider(Provider[AsyncOpenAI]):
 
         # Azure Chat Completions API doesn't support document input.
         return merge_profile(base, OpenAIModelProfile(openai_chat_supports_document_input=False))
+
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+        return OpenAIProvider.realtime_model_profile(model_name)
 
     @overload
     def __init__(self, *, openai_client: AsyncAzureOpenAI) -> None: ...
@@ -125,6 +145,8 @@ class AzureProvider(Provider[AsyncOpenAI]):
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self._base_url = str(openai_client.base_url)
             self._client = openai_client
+            self._azure_endpoint = self._base_url.partition('/openai/')[0].rstrip('/')
+            self._api_key = openai_client.api_key if isinstance(openai_client.api_key, str) else None
         else:
             azure_endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT')
             if not azure_endpoint:
@@ -136,6 +158,9 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 raise UserError(
                     'Must provide one of the `api_key` argument or the `AZURE_OPENAI_API_KEY` environment variable'
                 )
+
+            self._azure_endpoint = azure_endpoint.rstrip('/')
+            self._api_key = api_key or os.getenv('AZURE_OPENAI_API_KEY')
 
             if http_client is None:
                 http_client = create_async_http_client()
