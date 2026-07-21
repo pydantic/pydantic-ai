@@ -118,6 +118,7 @@ _CAPABILITY_PAGE_META = {
     'memory.md': ('memory', 'Memory'),
     'context.md': ('context', 'Context'),
     'pydantic-ai-docs.md': ('docs', 'Pydantic AI Docs'),
+    'exa-search.md': ('exa', 'Exa Search'),
     'compaction.md': ('compaction', 'Compaction'),
     'overflowing-tool-output.md': ('overflowing_tool_output', 'Overflowing Tool Output'),
     'step-persistence.md': ('step_persistence', 'Step Persistence'),

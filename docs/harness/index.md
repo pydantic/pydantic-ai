@@ -36,6 +36,7 @@ Some capabilities need an extra to pull in their optional dependencies:
 uv add "pydantic-ai-harness[codemode]"          # Code Mode (adds the Monty sandbox)
 uv add "pydantic-ai-harness[dynamic-workflow]"  # Dynamic Workflow (adds the Monty sandbox)
 uv add "pydantic-ai-harness[logfire]"           # Managed Prompt (Logfire-managed prompts)
+uv add "pydantic-ai-harness[exa]"               # Exa Search (web research via the Exa API)
 uv add "pydantic-ai-harness[acp]"               # ACP (Agent Client Protocol SDK)
 ```
 
@@ -116,6 +117,7 @@ Each capability is a self-contained battery you drop into an agent's `capabiliti
 | [Shell](shell.md) | Command execution in a subprocess rooted at a working directory, gated by allowlists, denylists, timeouts, and optional environment-variable stripping (including a preset for common LLM provider credentials). | -- |
 | [Context](context.md) | Auto-loads repo context -- `CLAUDE.md`/`AGENTS.md` and repository structure -- so the agent starts a run already oriented in the project. | -- |
 | [Pydantic AI Docs](pydantic-ai-docs.md) | An on-demand `read_pyai_docs` tool that pulls Pydantic AI documentation into the run when the agent needs it, instead of preloading it. | -- |
+| [Exa Search](exa-search.md) | Web research backed by the [Exa](https://exa.ai) search API: `web_search` returns results with their most relevant excerpts, `get_page` reads a specific URL in full, and opt-in `deep_search` synthesizes a cited answer in one call. Output is budgeted per tool. | `exa` |
 | [Compaction](compaction.md) | Keeps a run within token limits: sliding-window trimming, LLM-powered summarization of older messages, and warnings before the context or iteration ceiling is hit. | -- |
 | [Overflowing Tool Output](overflowing-tool-output.md) | Reduces an oversized tool return when it is produced -- truncate, spill to a queryable file, or summarize -- so a large payload does not persist in history and get re-sent every request. | -- |
 | [Step Persistence](step-persistence.md) | Saves and restores full conversation state; snapshot, resume (`continue_run`), and fork (`fork_run`) a run. | -- |

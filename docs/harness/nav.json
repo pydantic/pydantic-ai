@@ -8,6 +8,7 @@
       { "label": "Shell", "slug": "shell" },
       { "label": "Context", "slug": "context" },
       { "label": "Pydantic AI Docs", "slug": "pydantic-ai-docs" },
+      { "label": "Exa Search", "slug": "exa-search" },
       { "label": "Compaction", "slug": "compaction" },
       { "label": "Overflowing Tool Output", "slug": "overflowing-tool-output" },
       { "label": "Step Persistence", "slug": "step-persistence" },
