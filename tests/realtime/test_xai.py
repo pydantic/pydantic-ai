@@ -99,7 +99,7 @@ def test_map_delegates_audio_and_transcript_and_tool_calls() -> None:
     )
     assert map_event(
         {'type': 'response.function_call_arguments.done', 'call_id': 'c1', 'name': 'get_weather', 'arguments': '{}'}
-    ) == ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}')
+    ) == ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}', response_usage_follows=True)
 
 
 def test_connection_map_event_override_matches_module() -> None:
@@ -124,6 +124,8 @@ def test_profile() -> None:
         supports_session_seeding=True,
         supports_seeding_images=False,
         supports_seeding_audio=False,
+        audio_input_sample_rate=24000,
+        audio_output_sample_rate=24000,
         supported_native_tools=frozenset(),
     )
 

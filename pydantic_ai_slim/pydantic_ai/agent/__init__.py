@@ -3002,13 +3002,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage: Optional [`RunUsage`][pydantic_ai.usage.RunUsage] to accumulate token usage into;
                 exposed as `session.usage`. A fresh one is used when omitted.
             usage_limits: Optional [`UsageLimits`][pydantic_ai.usage.UsageLimits]. Token and
-                tool-call limits are enforced as usage accrues; a breach raises
+                request, token, and tool-call limits are enforced as usage accrues; a breach raises
                 [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from the session's
                 event iterator, matching how `run` / `iter` surface a usage limit.
             metadata: Optional metadata set on the [`RunContext`][pydantic_ai.tools.RunContext]
                 available to tools and capabilities.
             conversation_id: Optional conversation id, set on the run context and the telemetry span
-                so a realtime session can be correlated with other runs.
+                so a realtime session can be correlated with other runs. Session-built messages are
+                stamped with it as well, allowing a later standard run to resume the same conversation;
+                seeded messages are left unchanged.
             message_history: Prior conversation to seed the session with. Replayable text, transcripts,
                 thinking, tool rounds, images, and supported retained user audio are projected to the
                 provider's initial conversation items; unrepresentable content raises `UserError`. The
@@ -3185,6 +3187,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     message_history=message_history,
                     profile=model_profile,
                     conversation_id=conversation_id,
+                    instructions=resolved_instructions or None,
+                    metadata=run_context.metadata,
+                    agent_description=(
+                        self.render_description(deps) if session_instrumentation_settings is not None else None
+                    ),
                     output_modality=(effective_model_settings or {}).get('output_modality', 'audio'),
                 )
                 async with session:

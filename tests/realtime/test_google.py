@@ -325,6 +325,8 @@ def test_profile() -> None:
         False,
     )
     assert profile.get('supported_native_tools') == frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
+    assert profile.get('audio_input_sample_rate') == 16000
+    assert profile.get('audio_output_sample_rate') == 24000
 
 
 # --- config ------------------------------------------------------------------

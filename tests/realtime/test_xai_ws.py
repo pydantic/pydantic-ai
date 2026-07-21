@@ -98,7 +98,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
     assert part.speaker == 'assistant'
     assert part.transcript == snapshot('Hello there!')
     assert isinstance(part.audio, BinaryContent)
-    assert part.audio.media_type == 'audio/pcm'
+    assert part.audio.media_type == 'audio/wav'
     assert len(part.audio.data) > 0
 
     # xAI reports usage at the top level of the `response.done` frame (its nested `response.usage` is
@@ -239,6 +239,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
     assert isinstance(tool_response, ModelResponse)
     tool_calls = [p for p in tool_response.parts if isinstance(p, ToolCallPart)]
     assert tool_calls == [ToolCallPart(tool_name='get_weather', args=IsStr(), tool_call_id=IsStr())]
+    assert (tool_response.usage.input_tokens, tool_response.usage.output_tokens) == (7, 82)
     tool_return = messages[2]
     assert isinstance(tool_return, ModelRequest)
     assert tool_return.parts == [
@@ -251,6 +252,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
     ]
     final = messages[3]
     assert isinstance(final, ModelResponse)
+    assert (final.usage.input_tokens, final.usage.output_tokens) == (0, 137)
     final_part = final.parts[0]
     assert isinstance(final_part, SpeechPart)
     assert final_part.transcript is not None and 'fog' in final_part.transcript.lower()

@@ -3,6 +3,8 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import io
+import wave
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
@@ -12,9 +14,16 @@ from inline_snapshot import snapshot
 from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai._agent_graph import resolve_conversation_id
 from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, NativeTool, WebFetch
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.messages import (
     BinaryContent,
     BinaryImage,
@@ -41,6 +50,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
     AudioDelta,
     AudioInput,
@@ -78,6 +88,16 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from ..conftest import IsDatetime, IsStr
 
 pytestmark = pytest.mark.anyio
+
+
+def _wav_content(pcm: bytes, sample_rate: int = 24000) -> BinaryContent:
+    buffer = io.BytesIO()
+    with wave.open(buffer, 'wb') as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(pcm)
+    return BinaryContent(data=buffer.getvalue(), media_type='audio/wav')
 
 
 async def _noop_runner(name: str, args: dict[str, Any], call_id: str) -> str:  # pragma: no cover
@@ -1019,10 +1039,10 @@ async def test_send_rejects_tool_result() -> None:
 
 async def test_send_text_adds_user_prompt_to_history() -> None:
     conn = FakeRealtimeConnection([])
-    session = RealtimeSession(conn, _noop_runner)
+    session = RealtimeSession(conn, _noop_runner, conversation_id='c1')
     await session.send('turn it up')
     assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[UserPromptPart(content='turn it up', timestamp=IsDatetime())])]
+        [ModelRequest(parts=[UserPromptPart(content='turn it up', timestamp=IsDatetime())], conversation_id='c1')]
     )
 
 
@@ -1221,23 +1241,19 @@ async def test_audio_retention_output_keeps_assistant_audio() -> None:
             TurnCompleteEvent(),
         ]
     )
-    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='output')
+    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='both')
     _ = await collect_events(session)
-    assert session.new_messages() == snapshot(
-        [
-            ModelResponse(
-                parts=[
-                    SpeechPart(
-                        speaker='assistant',
-                        transcript='hi',
-                        audio=BinaryContent(data=b'\x00\x01\x02\x03', media_type='audio/pcm'),
-                    )
-                ],
-                model_name='m',
-                timestamp=IsDatetime(),
-            )
-        ]
-    )
+    response = session.new_messages()[0]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, SpeechPart)
+    assert part.transcript == 'hi'
+    assert part.audio is not None
+    assert part.audio.media_type == 'audio/wav'
+    assert part.audio.format == 'wav'
+    with wave.open(io.BytesIO(part.audio.data), 'rb') as wav:
+        assert (wav.getnchannels(), wav.getsampwidth(), wav.getframerate()) == (1, 2, 24000)
+        assert wav.readframes(wav.getnframes()) == b'\x00\x01\x02\x03'
 
 
 async def test_audio_retention_input_keeps_user_audio() -> None:
@@ -1254,12 +1270,37 @@ async def test_audio_retention_input_keeps_user_audio() -> None:
                     SpeechPart(
                         speaker='user',
                         transcript='hello',
-                        audio=BinaryContent(data=b'\xaa\xbb\xcc', media_type='audio/pcm'),
+                        audio=_wav_content(b'\xaa\xbb\xcc'),
                     )
                 ]
             )
         ]
     )
+
+
+async def test_audio_retention_uses_profile_rate_for_each_speaker() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='hello', is_final=True),
+            AudioDelta(data=b'\x01\x02'),
+            Transcript(text='hi', is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
+    profile = RealtimeModelProfile(audio_input_sample_rate=16000, audio_output_sample_rate=24000)
+    session = RealtimeSession(conn, _noop_runner, audio_retention='both', profile=profile)
+    await session.send_audio(b'\xaa\xbb')
+    _ = await collect_events(session)
+
+    request, response = session.new_messages()
+    assert isinstance(request, ModelRequest) and isinstance(response, ModelResponse)
+    user, assistant = request.parts[0], response.parts[0]
+    assert isinstance(user, SpeechPart) and user.audio is not None
+    assert isinstance(assistant, SpeechPart) and assistant.audio is not None
+    with wave.open(io.BytesIO(user.audio.data), 'rb') as user_wav:
+        assert user_wav.getframerate() == 16000
+    with wave.open(io.BytesIO(assistant.audio.data), 'rb') as assistant_wav:
+        assert assistant_wav.getframerate() == 24000
 
 
 async def test_clear_audio_discards_retained_input() -> None:
@@ -1278,7 +1319,7 @@ async def test_clear_audio_discards_retained_input() -> None:
                     SpeechPart(
                         speaker='user',
                         transcript='hello',
-                        audio=BinaryContent(data=b'\xcc', media_type='audio/pcm'),
+                        audio=_wav_content(b'\xcc'),
                     )
                 ]
             )
@@ -1297,7 +1338,7 @@ async def test_audio_only_user_turn_finalized_on_speech_stopped() -> None:
     session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input')
     await session.send_audio(b'\xaa\xbb')
     events = await collect_events(session)
-    user_part = SpeechPart(speaker='user', audio=BinaryContent(data=b'\xaa\xbb', media_type='audio/pcm'))
+    user_part = SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))
     assert events[:3] == [
         PartStartEvent(index=0, part=user_part),
         PartEndEvent(index=0, part=user_part),
@@ -1305,9 +1346,7 @@ async def test_audio_only_user_turn_finalized_on_speech_stopped() -> None:
     ]
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(
-                parts=[SpeechPart(speaker='user', audio=BinaryContent(data=b'\xaa\xbb', media_type='audio/pcm'))]
-            ),
+            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))]),
             ModelResponse(
                 parts=[SpeechPart(speaker='assistant', transcript='Hi')], model_name='m', timestamp=IsDatetime()
             ),
@@ -1327,9 +1366,7 @@ async def test_audio_only_user_turn_finalized_on_turn_complete() -> None:
     _ = await collect_events(session)
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(
-                parts=[SpeechPart(speaker='user', audio=BinaryContent(data=b'\xaa\xbb', media_type='audio/pcm'))]
-            ),
+            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))]),
             ModelResponse(
                 parts=[SpeechPart(speaker='assistant', transcript='Hi')], model_name='m', timestamp=IsDatetime()
             ),
@@ -1355,7 +1392,7 @@ async def test_audio_retained_with_transcription_enabled_waits_for_transcript() 
                     SpeechPart(
                         speaker='user',
                         transcript='hello',
-                        audio=BinaryContent(data=b'\xaa\xbb', media_type='audio/pcm'),
+                        audio=_wav_content(b'\xaa\xbb'),
                     )
                 ]
             )
@@ -1510,6 +1547,23 @@ async def test_handoff_to_standard_agent_run() -> None:
             ),
         ]
     )
+
+
+async def test_retained_audio_prepares_for_audio_capable_classic_model() -> None:
+    conn = FakeRealtimeConnection([InputTranscript(text='hello', is_final=True)])
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    await session.send_audio(b'\xaa\xbb')
+    _ = await collect_events(session)
+
+    prepared = TestModel(profile=ModelProfile(supports_audio_input=True)).prepare_messages(session.all_messages())
+    request = prepared[0]
+    assert isinstance(request, ModelRequest)
+    prompt = request.parts[0]
+    assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, list)
+    audio = prompt.content[0]
+    assert isinstance(audio, BinaryContent)
+    assert audio.media_type == 'audio/wav'
+    assert audio.format == 'wav'
 
 
 def _grounding_parts() -> list[NativeToolCallPart | NativeToolReturnPart]:
@@ -1763,7 +1817,7 @@ async def test_agent_realtime_session_audio_retention_forwarded() -> None:
         response = session.new_messages()[0]
     assert isinstance(response, ModelResponse)
     assert isinstance(response.parts[0], SpeechPart)
-    assert response.parts[0].audio == BinaryContent(data=b'\x07', media_type='audio/pcm')
+    assert response.parts[0].audio == _wav_content(b'\x07')
 
 
 async def test_agent_realtime_session_additional_instructions() -> None:
@@ -1852,36 +1906,34 @@ async def test_agent_realtime_session_invalid_args_return_retry_message() -> Non
     assert 'validation error' in str(result.part.content)
 
 
-class _TurnByTurnToolConnection(FakeRealtimeConnection):
-    """Wait for each tool result before starting the next provider turn."""
+class _ToolRoundConnection(FakeRealtimeConnection):
+    """Wait for the first retry result before yielding the next tool-call round."""
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-        yield ToolCall(tool_call_id='tc1', tool_name='double', args='{"x": "bad"}')
+        yield ToolCall(tool_call_id='tc1', tool_name='double', args='{"x": 1}')
         while len(self.sent) < 1:
             await asyncio.sleep(0)
-        yield TurnCompleteEvent()
-        yield ToolCall(tool_call_id='tc2', tool_name='double', args='{"x": "still bad"}')
-        while len(self.sent) < 2:
-            await asyncio.sleep(0)
-        yield TurnCompleteEvent()
+        yield ToolCall(tool_call_id='tc2', tool_name='double', args='{"x": 2}')
 
 
-async def test_agent_realtime_session_retry_limit_advances_across_turns() -> None:
+async def test_agent_realtime_session_retry_limit_advances_across_tool_rounds() -> None:
     agent: Agent[None, str] = Agent(retries=1)
 
     @agent.tool_plain
-    def double(x: int) -> str:  # pragma: no cover — validation fails before execution
-        return str(x * 2)
+    def double(x: int) -> str:
+        raise ModelRetry(f'{x} is not allowed')
 
-    conn = _TurnByTurnToolConnection([])
+    conn = _ToolRoundConnection([])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
-        events = [e async for e in session]
+        events: list[RealtimeEvent] = []
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'double' exceeded max retries count of 1"):
+            async for event in session:
+                events.append(event)
 
     results = [e.part.content for e in events if isinstance(e, FunctionToolResultEvent)]
-    assert len(results) == 2
-    assert 'validation error' in str(results[0])
-    assert "Tool 'double' exceeded max retries count of 1" in str(results[1])
+    assert len(results) == 1 and str(results[0]).startswith('1 is not allowed')
+    assert conn.sent == [ToolResult(tool_call_id='tc1', output=str(results[0]))]
 
 
 async def test_agent_realtime_session_runs_args_validator() -> None:
@@ -2130,6 +2182,18 @@ async def test_agent_realtime_session_token_limit_raises() -> None:
             _ = [e async for e in session]
 
 
+async def test_agent_realtime_session_request_limit_raises() -> None:
+    conn = FakeRealtimeConnection(
+        [SessionUsageEvent(usage=RequestUsage(input_tokens=1, output_tokens=1)), TurnCompleteEvent()]
+    )
+    model = FakeRealtimeModel(conn)
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime_session(model=model, usage_limits=UsageLimits(request_limit=1)) as session:
+        with pytest.raises(UsageLimitExceeded, match='next request would exceed the request_limit of 1'):
+            _ = [e async for e in session]
+    assert session.usage.requests == 1
+
+
 async def test_agent_realtime_session_tool_call_limit_raises() -> None:
     agent: Agent[None, str] = Agent()
 
@@ -2262,6 +2326,35 @@ async def test_agent_realtime_session_metadata_and_conversation_id() -> None:
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert 'conv-1' in str(result.part.content)
     assert 'gold' in str(result.part.content)
+
+
+async def test_session_stamps_conversation_id_and_classic_resume_resolves_it() -> None:
+    seeded = [ModelRequest(parts=[UserPromptPart(content='seed')])]
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='spoken', is_final=True),
+            ToolCall(tool_call_id='t1', tool_name='f', args='{}'),
+            Transcript(text='answer', is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'done'
+
+    session = RealtimeSession(
+        conn,
+        runner,
+        model_name='m',
+        conversation_id='c1',
+        message_history=seeded,
+    )
+    await session.send('typed')
+    _ = await collect_events(session)
+
+    assert session.all_messages()[0].conversation_id is None
+    assert all(message.conversation_id == 'c1' for message in session.new_messages())
+    assert resolve_conversation_id(None, session.all_messages()) == 'c1'
 
 
 async def test_agent_realtime_session_native_tools_override_honored() -> None:

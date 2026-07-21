@@ -127,7 +127,7 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
     assert part.speaker == 'assistant'
     assert part.transcript == snapshot('Hello there.')
     assert isinstance(part.audio, BinaryContent)
-    assert part.audio.media_type == 'audio/pcm'
+    assert part.audio.media_type == 'audio/wav'
     assert len(part.audio.data) > 0
 
     # Reasoning (`thoughtsTokenCount`) is billed but left out of Gemini's response/total counts, so the
@@ -211,6 +211,9 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     tool_response = messages[1]
     assert isinstance(tool_response, ModelResponse)
     assert tool_response.parts == [ToolCallPart(tool_name='get_weather', args=IsStr(), tool_call_id=IsStr())]
+    # Gemini's tool-call frame carries no usage metadata; the later completed turn owns the only usage
+    # report the provider supplies, so the intermediate response remains honestly empty.
+    assert tool_response.usage == RequestUsage()
     tool_return = messages[2]
     assert isinstance(tool_return, ModelRequest)
     assert tool_return.parts == [
@@ -311,4 +314,6 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_audio=False,
         supports_thinking=True,  # the default native-audio model supports a thinking config
         supported_native_tools=frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
+        audio_input_sample_rate=16000,
+        audio_output_sample_rate=24000,
     )

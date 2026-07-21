@@ -485,6 +485,33 @@ async def test_session_captures_transcript_messages() -> None:
     assert 'pydantic_ai.new_message_index' not in sess.attributes
 
 
+async def test_session_span_includes_resolved_run_attributes() -> None:
+    settings, exporter = _settings()
+    agent: Agent[None, str] = Agent(
+        name='assistant',
+        description='Handles realtime conversations.',
+        instructions='Keep answers concise.',
+    )
+    agent.instrument = settings
+    conn = _Connection([Transcript(text='hello', is_final=True), TurnCompleteEvent()])
+
+    async with agent.realtime_session(model=_Model(conn), metadata={'tier': 'gold'}) as session:
+        _ = [event async for event in session]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.agent.description'] == 'Handles realtime conversations.'
+    assert json.loads(str(sess.attributes['gen_ai.system_instructions'])) == [
+        {'type': 'text', 'content': 'Keep answers concise.'}
+    ]
+    assert json.loads(str(sess.attributes['metadata'])) == {'tier': 'gold'}
+    assert json.loads(str(sess.attributes['logfire.json_schema']))['properties'] == {
+        'gen_ai.system_instructions': {'type': 'array'},
+        'pydantic_ai.all_messages': {'type': 'array'},
+        'metadata': {},
+    }
+
+
 async def test_session_span_marks_seeded_history_boundary() -> None:
     # A session seeded with `message_history=` includes the seeded messages in
     # `pydantic_ai.all_messages` and marks where this session's own messages begin with
@@ -513,7 +540,14 @@ async def test_include_content_false_redacts_transcript_messages() -> None:
     # classic agent-run span); per-part content is redacted by `otel_message_parts`.
     settings, exporter = _settings(include_content=False)
     conn = _Connection([InputTranscript(text='secret', is_final=True), TurnCompleteEvent()])
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        instructions='secret instructions',
+        metadata={'tier': 'gold'},
+    )
     _ = await collect_events(session)
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
     assert sess.attributes is not None
@@ -521,6 +555,8 @@ async def test_include_content_false_redacts_transcript_messages() -> None:
         {'role': 'user', 'parts': [{'type': 'text'}]},
     ]
     assert 'secret' not in str(sess.attributes['pydantic_ai.all_messages'])
+    assert 'gen_ai.system_instructions' not in sess.attributes
+    assert json.loads(str(sess.attributes['metadata'])) == {'tier': 'gold'}
 
 
 async def test_session_span_sets_conversation_id() -> None:
@@ -557,6 +593,9 @@ async def test_session_span_without_model_or_usage() -> None:
     assert sess.attributes['gen_ai.operation.name'] == 'invoke_agent'
     assert 'gen_ai.request.model' not in sess.attributes
     assert 'gen_ai.agent.name' not in sess.attributes
+    assert 'gen_ai.agent.description' not in sess.attributes
+    assert 'gen_ai.system_instructions' not in sess.attributes
+    assert 'metadata' not in sess.attributes
     assert 'gen_ai.usage.input_tokens' not in sess.attributes  # zero usage → no token attribute / metric
     # An empty turn produces no assistant `ModelResponse`, so no `chat` span is opened.
     assert not [s for s in exporter.get_finished_spans() if s.name.startswith('chat')]

@@ -51,6 +51,8 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             'supports_session_seeding': True,
             'supports_seeding_images': True,
             'supports_seeding_audio': True,
+            'audio_input_sample_rate': 24000,
+            'audio_output_sample_rate': 24000,
             # Reasoning effort is only accepted by the `gpt-realtime-2*` reasoning models; the GA
             # `gpt-realtime` rejects it ("Unsupported option for this model").
             'supports_thinking': model_name.startswith('gpt-realtime-2'),

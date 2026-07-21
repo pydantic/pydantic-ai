@@ -100,7 +100,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     assert part.speaker == 'assistant'
     assert part.transcript == snapshot('Hey there! Great to chat with you.')
     assert isinstance(part.audio, BinaryContent)
-    assert part.audio.media_type == 'audio/pcm'
+    assert part.audio.media_type == 'audio/wav'
     assert len(part.audio.data) > 0
 
 
@@ -225,6 +225,7 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     tool_response = messages[1]
     assert isinstance(tool_response, ModelResponse)
     assert tool_response.parts == [ToolCallPart(tool_name='get_weather', args=IsStr(), tool_call_id=IsStr())]
+    assert (tool_response.usage.input_tokens, tool_response.usage.output_tokens) == (63, 22)
     tool_return = messages[2]
     assert isinstance(tool_return, ModelRequest)
     assert tool_return.parts == [
@@ -237,6 +238,7 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     ]
     final = messages[3]
     assert isinstance(final, ModelResponse)
+    assert (final.usage.input_tokens, final.usage.output_tokens) == (96, 13)
     final_part = final.parts[0]
     # The session runs in text-output modality, so the reply is a `TextPart`, not a `SpeechPart`.
     assert isinstance(final_part, TextPart)
@@ -334,4 +336,6 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_audio=True,
         supports_thinking=False,  # GA `gpt-realtime` is not a reasoning model
         supported_native_tools=frozenset(),
+        audio_input_sample_rate=24000,
+        audio_output_sample_rate=24000,
     )

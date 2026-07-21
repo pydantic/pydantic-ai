@@ -72,7 +72,7 @@ provider differences are worth knowing: Gemini expects **16 kHz** PCM input audi
 sent as [`ImageInput`][pydantic_ai.realtime.ImageInput] (stream camera/screen frames with
 [`send`][pydantic_ai.realtime.RealtimeSession.send] for "show me this" interactions). xAI
 Grok Voice supports cancellation-based barge-in but not output truncation (see
-[model profile](#model-profile)), and reports no per-response token usage.
+[model profile](#model-profile)), and Pydantic AI normalizes its per-response usage.
 
 ## Quickstart
 
@@ -201,8 +201,9 @@ support.
 
 By default only transcripts are kept on the history parts. Pass
 `audio_retention=` to [`realtime_session`][pydantic_ai.agent.Agent.realtime_session] to also retain
-the raw PCM audio bytes (as [`BinaryContent`][pydantic_ai.messages.BinaryContent]) on the
-`SpeechPart`s, at the cost of memory:
+the spoken audio as WAV [`BinaryContent`][pydantic_ai.messages.BinaryContent] on the `SpeechPart`s,
+at the cost of memory. Streaming input and `SpeechPartDelta.audio_chunk` output remain raw PCM16;
+only finalized history audio is wrapped in a WAV container.
 
 | [`audio_retention`][pydantic_ai.realtime.AudioRetention] | Retains |
 | --- | --- |
@@ -211,9 +212,9 @@ the raw PCM audio bytes (as [`BinaryContent`][pydantic_ai.messages.BinaryContent
 | `'output'` | The model's spoken audio. |
 | `'both'` | Both sides' audio. |
 
-Retained audio is kept on the history parts, but when you [hand off](#delegating-to-a-text-agent) to a
-standard model it is forwarded as the transcript text, not the audio itself: audio
-forwarding requires the target model's profile to declare audio-input support, which none do.
+When you [hand off](#delegating-to-a-text-agent) to a standard model, retained user audio is forwarded
+to models whose profile declares audio-input support; other models receive the transcript instead.
+Assistant speech is always handed off as transcript text.
 
 ## Configuring the session
 
@@ -239,12 +240,14 @@ async with agent.realtime_session(
     ...
 ```
 
-[`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] contains the settings shared by
-all realtime providers: `tool_choice`, `parallel_tool_calls`, `max_tokens`, `voice`,
+[`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] defines the common settings
+vocabulary for realtime providers: `tool_choice`, `parallel_tool_calls`, `max_tokens`, `voice`,
 `input_transcription_model`, `output_modality`,
 [`turn_detection`][pydantic_ai.realtime.TurnDetection], and
 [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] (see [Reasoning](#reasoning)). You
-can instead set defaults on a model and override individual values for one session:
+can instead set defaults on a model and override individual values for one session. Gemini ignores
+`tool_choice`, `parallel_tool_calls`, and `handshake_timeout`; provider-specific setting docstrings
+document other exceptions.
 
 ```python {test="skip" lint="skip"}
 async with agent.realtime_session(
@@ -456,6 +459,9 @@ aren't universal. Each model reports its support through
 [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile], a
 [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] — the realtime counterpart to the
 [`ModelProfile`][pydantic_ai.profiles.ModelProfile] of a standard [`Model`][pydantic_ai.models.Model]:
+
+The profile also exposes `audio_input_sample_rate` and `audio_output_sample_rate`, in Hz. OpenAI and
+xAI use 24 kHz in both directions; Gemini uses 16 kHz input and 24 kHz output.
 
 | [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] flag | Gates | OpenAI | Gemini | xAI |
 | --- | --- | :---: | :---: | :---: |
@@ -707,11 +713,11 @@ ones that are specific to the request-response graph (faking them would be misle
 | `instructions` | ✅ additive (combined with the agent's); dynamic `@agent.instructions` evaluated once at connect |
 | `toolsets` | ✅ extra toolsets for the session |
 | `capabilities` | ⚠️ **setup + tool hooks only** — see [Capabilities](#capabilities) below |
-| `usage`, `usage_limits` | ✅ accumulate / enforce (token + tool-call limits; see [Usage and cost](#usage-and-cost)) |
-| `metadata`, `conversation_id` | ✅ set on the `RunContext` (and telemetry span) for tools/correlation |
+| `usage`, `usage_limits` | ✅ accumulate / enforce (request, token, and tool-call limits; see [Usage and cost](#usage-and-cost)) |
+| `metadata`, `conversation_id` | ✅ set on the `RunContext` and telemetry span; `conversation_id` is also stamped on session-built history |
 | `message_history` | ✅ seeds replayable text, transcripts, thinking, tool rounds, images, and supported retained user audio; included in `all_messages()` |
 | `output_type` | ❌ no structured output → [delegate](#delegating-to-a-text-agent) |
-| `conversation_id` (as history) | ❌ live conversation state lives on the provider; for Gemini see [session resumption](#reconnecting) |
+| `conversation_id` (provider state) | ❌ live conversation state lives on the provider; for Gemini see [session resumption](#reconnecting) |
 | `user_prompt` | ❌ stream input with `send_audio` / `send` / `send` instead |
 | `retries`, `deferred_tool_results`, `event_stream_handler` | ❌ graph-only (the session *is* the event stream) |
 

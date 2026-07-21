@@ -61,6 +61,7 @@ from ._base import (
     Transcript,
     TurnCompleteEvent,
     TurnDetection,
+    seed_pcm_audio,
     seed_speech_content,
     seed_user_content,
 )
@@ -150,6 +151,7 @@ async def seed_items(
                     provider_name=provider_name,
                     supports_images=supports_images,
                     supports_audio=supports_audio,
+                    audio_input_sample_rate=profile.get('audio_input_sample_rate', 24000),
                     call_ids=call_ids,
                     seeded_calls=seeded_calls,
                 )
@@ -173,6 +175,7 @@ async def _seed_request_items(
     provider_name: str,
     supports_images: bool,
     supports_audio: bool,
+    audio_input_sample_rate: int,
     call_ids: dict[str, str],
     seeded_calls: set[str],
 ) -> list[dict[str, Any]]:
@@ -191,7 +194,12 @@ async def _seed_request_items(
                 if content:
                     items.append(_message_item('user', [_text_content('input_text', content)]))
             else:
-                items.append(_message_item('user', [{'type': 'input_audio', 'audio': content.base64}]))
+                pcm = seed_pcm_audio(
+                    content,
+                    provider_name=provider_name,
+                    sample_rate=audio_input_sample_rate,
+                )
+                items.append(_message_item('user', [{'type': 'input_audio', 'audio': base64.b64encode(pcm).decode()}]))
         elif isinstance(part, ToolReturnPart):
             _require_seeded_call(part.tool_name, part.tool_call_id, seeded_calls)
             output, user_content = part.model_response_str_and_user_content()
@@ -399,6 +407,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
             tool_call_id=_str_field(data, 'call_id'),
             tool_name=_str_field(data, 'name'),
             args=_str_field(data, 'arguments', '{}'),
+            response_usage_follows=True,
         )
 
     if event_type == 'input_audio_buffer.speech_started':

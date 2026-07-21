@@ -4,8 +4,10 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import base64
+import io
 import json
 import re
+import wave
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal
@@ -82,6 +84,16 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
 
 
+def _wav_bytes(pcm: bytes, sample_rate: int = 24000) -> bytes:
+    buffer = io.BytesIO()
+    with wave.open(buffer, 'wb') as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(pcm)
+    return buffer.getvalue()
+
+
 def _connect(
     model: OpenAIRealtimeModel,
     instructions: str,
@@ -149,7 +161,12 @@ def test_map_function_call() -> None:
             'arguments': '{"city": "Paris"}',
         }
     )
-    assert event == ToolCall(tool_call_id='call_1', tool_name='get_weather', args='{"city": "Paris"}')
+    assert event == ToolCall(
+        tool_call_id='call_1',
+        tool_name='get_weather',
+        args='{"city": "Paris"}',
+        response_usage_follows=True,
+    )
 
 
 def test_map_function_call_missing_arguments_defaults_to_empty_object() -> None:
@@ -967,7 +984,14 @@ async def test_connect_seeds_retained_user_audio(monkeypatch: pytest.MonkeyPatch
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     history = [
-        ModelRequest(parts=[SpeechPart(speaker='user', audio=BinaryContent(data=b'pcm-audio', media_type='audio/pcm'))])
+        ModelRequest(
+            parts=[
+                SpeechPart(
+                    speaker='user',
+                    audio=BinaryContent(data=_wav_bytes(b'pcm-audio!'), media_type='audio/wav'),
+                )
+            ]
+        )
     ]
 
     async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
@@ -976,8 +1000,30 @@ async def test_connect_seeds_retained_user_audio(monkeypatch: pytest.MonkeyPatch
     assert json.loads(ws.sent[1])['item'] == {
         'type': 'message',
         'role': 'user',
-        'content': [{'type': 'input_audio', 'audio': 'cGNtLWF1ZGlv'}],
+        'content': [{'type': 'input_audio', 'audio': 'cGNtLWF1ZGlvIQ=='}],
     }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ('audio', 'match'),
+    [
+        (BinaryContent(data=_wav_bytes(b'pcm-audio!', 16000), media_type='audio/wav'), 'recorded at 16000 Hz'),
+        (BinaryContent(data=b'pcm-audio', media_type='audio/pcm'), "media type 'audio/pcm'"),
+    ],
+)
+async def test_connect_rejects_retained_audio_incompatible_with_input_format(
+    monkeypatch: pytest.MonkeyPatch,
+    audio: BinaryContent,
+    match: str,
+) -> None:
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [ModelRequest(parts=[SpeechPart(speaker='user', audio=audio)])]
+
+    with pytest.raises(UserError, match=re.escape(match)):
+        async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
+            pass  # pragma: no cover
 
 
 @pytest.mark.anyio
@@ -1639,6 +1685,8 @@ def test_profile() -> None:
         profile.get('supports_seeding_audio'),
     ) == (True, True, True, True, True, True, True)
     assert profile.get('supported_native_tools') == frozenset()
+    assert profile.get('audio_input_sample_rate') == 24000
+    assert profile.get('audio_output_sample_rate') == 24000
 
 
 def test_provider_driven_profile_merges_defaults_varies_by_model_and_intersects_native_tools() -> None:

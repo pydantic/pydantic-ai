@@ -57,6 +57,8 @@ class BaseGoogleProvider(Provider[Client], ABC):
             'supports_session_seeding': True,
             'supports_seeding_images': True,
             'supports_seeding_audio': False,
+            'audio_input_sample_rate': 16000,
+            'audio_output_sample_rate': 24000,
             'supported_native_tools': frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
             # Native-audio Gemini Live models support a thinking config (verified live).
             'supports_thinking': 'native-audio' in model_name,

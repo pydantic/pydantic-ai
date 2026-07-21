@@ -101,6 +101,8 @@ class XaiProvider(Provider[AsyncClient]):
             'supports_session_seeding': True,
             'supports_seeding_images': False,
             'supports_seeding_audio': False,
+            'audio_input_sample_rate': 24000,
+            'audio_output_sample_rate': 24000,
         }
 
     @overload

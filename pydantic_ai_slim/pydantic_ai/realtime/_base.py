@@ -12,7 +12,9 @@ exchanged over a realtime session.
 from __future__ import annotations as _annotations
 
 import asyncio
+import io
 import random
+import wave
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager
@@ -57,9 +59,9 @@ AudioRetention = TypeAliasType('AudioRetention', Literal['transcript_only', 'inp
 - `'output'`: also retain the model's spoken audio.
 - `'both'`: retain both sides' audio.
 
-Retained audio is stored on the [`SpeechPart`][pydantic_ai.messages.SpeechPart]'s
-`audio` as raw PCM [`BinaryContent`][pydantic_ai.messages.BinaryContent]. Alignment between retained
-audio and its transcript is approximate.
+Retained audio is stored on the [`SpeechPart`][pydantic_ai.messages.SpeechPart]'s `audio` as WAV
+[`BinaryContent`][pydantic_ai.messages.BinaryContent]. Live audio deltas remain raw PCM. Alignment
+between retained audio and its transcript is approximate.
 """
 
 
@@ -97,8 +99,9 @@ class TurnDetection:
 class RealtimeModelSettings(TypedDict, total=False):
     """Settings to configure a realtime model session.
 
-    Includes only settings which are supported by all realtime model providers; providers with
-    additional generation parameters extend it, e.g.
+    Defines the common settings vocabulary used across realtime model providers. Unsupported settings
+    are ignored by a provider; in particular, Gemini ignores `parallel_tool_calls`, `tool_choice`, and
+    `handshake_timeout`. Providers with additional generation parameters extend it, e.g.
     [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings].
     """
 
@@ -106,10 +109,12 @@ class RealtimeModelSettings(TypedDict, total=False):
     """The maximum number of tokens to generate per response before stopping."""
 
     parallel_tool_calls: bool
-    """Whether to allow parallel tool calls."""
+    """Whether to allow parallel tool calls. Gemini ignores this setting."""
 
     tool_choice: ToolChoice
     """Control which function tools the model can use.
+
+    Gemini ignores this setting.
 
     See the [Tool Choice guide](../tools-advanced.md#tool-choice) for detailed documentation.
     Restrictions that realtime providers can't express are dropped: OpenAI and xAI support
@@ -159,7 +164,8 @@ class RealtimeModelSettings(TypedDict, total=False):
     """
 
     handshake_timeout: float
-    """Seconds to wait for a realtime protocol handshake event. Defaults to `30.0`."""
+    """Seconds to wait for a realtime protocol handshake event. Defaults to `30.0`. Gemini ignores
+    this setting."""
 
 
 # Input content types (fed into the connection via `send`).
@@ -336,6 +342,12 @@ class ToolCall:
     """Name of the tool to invoke."""
     args: str
     """Raw JSON-encoded arguments. May be an empty string if the model sent no arguments."""
+    response_usage_follows: bool = False
+    """Whether a per-response [`SessionUsageEvent`][pydantic_ai.realtime.SessionUsageEvent] will follow
+    this call before the provider's response is complete.
+
+    OpenAI-protocol providers report calls before `response.done`, which carries usage; the session
+    uses this signal to keep all calls and their usage on the same `ModelResponse`."""
 
 
 @dataclass
@@ -537,6 +549,10 @@ class RealtimeModelProfile(TypedDict, total=False):
     tools against this set before connecting, raising a [`UserError`][pydantic_ai.exceptions.UserError]
     that names any the model doesn't support — mirroring the classic
     [`Model.supported_native_tools`][pydantic_ai.models.Model.supported_native_tools] check."""
+    audio_input_sample_rate: int
+    """The sample rate, in Hz, expected for raw PCM audio input."""
+    audio_output_sample_rate: int
+    """The sample rate, in Hz, produced in raw PCM audio output deltas."""
 
 
 DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
@@ -548,6 +564,8 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
     'supported_native_tools': frozenset(),
+    'audio_input_sample_rate': 24000,
+    'audio_output_sample_rate': 24000,
 }
 """Fully populated default realtime model profile."""
 
@@ -836,3 +854,38 @@ def seed_speech_content(
             'Enable input transcription so the turn has a transcript, or filter the part from `message_history`.'
         )
     return part.audio
+
+
+def seed_pcm_audio(audio: BinaryContent, *, provider_name: str, sample_rate: int) -> bytes:
+    """Extract mono PCM16 bytes from retained WAV audio for a realtime input stream.
+
+    Realtime wire protocols accept raw PCM rather than a container. The WAV's rate must match the
+    target session because this path deliberately does not resample audio.
+    """
+    if audio.media_type != 'audio/wav':
+        raise UserError(
+            f'`SpeechPart.audio` with media type {audio.media_type!r} cannot be seeded into '
+            f'{provider_name} realtime history. Use WAV audio matching the target session input format.'
+        )
+    try:
+        with wave.open(io.BytesIO(audio.data), 'rb') as wav:
+            source_rate = wav.getframerate()
+            channels = wav.getnchannels()
+            sample_width = wav.getsampwidth()
+            compression = wav.getcomptype()
+            if source_rate != sample_rate:
+                raise UserError(
+                    f'Cannot seed retained audio recorded at {source_rate} Hz into a {provider_name} realtime session '
+                    f'expecting {sample_rate} Hz. Resample it before passing `message_history`.'
+                )
+            if channels != 1 or sample_width != 2 or compression != 'NONE':
+                raise UserError(
+                    f'Cannot seed retained audio into {provider_name} realtime history: expected mono 16-bit PCM WAV, '
+                    f'got {channels} channel(s), {sample_width * 8}-bit samples, compression {compression!r}.'
+                )
+            pcm = wav.readframes(wav.getnframes())
+    except (EOFError, wave.Error) as e:
+        raise UserError(
+            f'`SpeechPart.audio` cannot be seeded into {provider_name} realtime history because it is not valid WAV audio.'
+        ) from e
+    return pcm
