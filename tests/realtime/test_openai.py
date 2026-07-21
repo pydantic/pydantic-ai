@@ -179,24 +179,6 @@ def test_map_error_event_with_type_and_code_is_recoverable() -> None:
     assert event == SessionErrorEvent(message='bad', type='invalid_request_error', code='c1', recoverable=True)
 
 
-def test_map_rate_limits() -> None:
-    event = map_event(
-        {
-            'type': 'rate_limits.updated',
-            'rate_limits': [
-                {'name': 'requests', 'limit': 100, 'remaining': 99, 'reset_seconds': 1.5},
-                {'name': 'tokens', 'reset_seconds': 2},  # int reset → float; limit/remaining missing → None
-                {'limit': 1},  # no name → skipped
-            ],
-        }
-    )
-    assert event is None
-
-
-def test_map_rate_limits_non_list() -> None:
-    assert map_event({'type': 'rate_limits.updated'}) is None
-
-
 def test_map_usage_full_payload() -> None:
     response = {
         'usage': {
@@ -238,8 +220,11 @@ def test_map_speech_stopped() -> None:
     assert map_event({'type': 'input_audio_buffer.speech_stopped'}) == InputSpeechEndEvent()
 
 
-def test_map_unknown_event_returns_none() -> None:
+def test_map_unhandled_event_returns_none() -> None:
+    # Frames we don't surface as user-facing events (lifecycle acks like `session.created`, and
+    # `rate_limits.updated`, which has no `RealtimeEvent` representation) fall through to `None`.
     assert map_event({'type': 'session.created'}) is None
+    assert map_event({'type': 'rate_limits.updated', 'rate_limits': [{'name': 'requests', 'limit': 100}]}) is None
 
 
 def test_model_repr_hides_api_key() -> None:

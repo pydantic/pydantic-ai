@@ -953,11 +953,34 @@ async def test_image_input_guard() -> None:
 
 
 async def test_early_break_cancels_pump() -> None:
-    conn = FakeRealtimeConnection([AudioDelta(data=b'\x00'), AudioDelta(data=b'\x01'), AudioDelta(data=b'\x02')])
-    session = RealtimeSession(conn, _noop_runner)
+    # Breaking out early must cancel the background pump task so it doesn't leak, parked forever
+    # awaiting an upstream event that never comes. A finite connection wouldn't test this — its pump
+    # ends on its own; here the pump blocks mid-iteration and only stops if it is cancelled.
+    parked = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class _BlockAfterFirst(RealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover - never sent to
+            raise AssertionError
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield AudioDelta(data=b'\x00')
+            parked.set()
+            try:
+                await asyncio.Event().wait()  # park until the pump task is cancelled
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            yield AudioDelta(data=b'\x01')  # pragma: no cover - unreachable while parked
+
+    session = RealtimeSession(_BlockAfterFirst(), _noop_runner)
     agen = cast(AsyncGenerator[Any], session.__aiter__())
     assert isinstance(await agen.__anext__(), PartStartEvent)
-    await agen.aclose()  # exits the pump early without draining the rest
+    await parked.wait()  # the pump has consumed the first event and is parked on the next
+    await agen.aclose()
+    # Teardown cancels the pump; the connection observes the cancellation. If the pump leaked instead,
+    # `cancelled` would never be set and this would time out.
+    await asyncio.wait_for(cancelled.wait(), timeout=5)
 
 
 # --- audio retention ----------------------------------------------------------------------------

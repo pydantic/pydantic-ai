@@ -165,9 +165,24 @@ async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], 
                 if isinstance(event, TurnCompleteEvent):
                     break
 
-    # The seeded turns were sent on the wire as inactive context (a `client_content` frame).
-    assert sent_frames_containing(cassette, 'My name is Alice')
-    assert sent_frames_containing(cassette, 'Nice to meet you')
+    # The seeded turns were sent on the wire as inactive context: a single `client_content` frame
+    # carrying both turns with `turnComplete` false (so Gemini doesn't respond to the seed yet). A
+    # wrong role, turn ordering, or completion flag fails here rather than passing on a substring match.
+    seeded = sent_frames_containing(cassette, 'My name is Alice')
+    assert seeded == sent_frames_containing(cassette, 'Nice to meet you')  # one frame carries both turns
+    assert seeded == snapshot(
+        [
+            {
+                'client_content': {
+                    'turns': [
+                        {'parts': [{'text': 'My name is Alice and my favorite color is teal.'}], 'role': 'user'},
+                        {'parts': [{'text': 'Nice to meet you, Alice!'}], 'role': 'model'},
+                    ],
+                    'turnComplete': False,
+                }
+            }
+        ]
+    )
 
     # `all_messages()` carries the seeded history ahead of this session's turns.
     messages = session.all_messages()

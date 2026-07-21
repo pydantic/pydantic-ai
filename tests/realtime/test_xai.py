@@ -436,10 +436,12 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
 
         def __init__(self) -> None:
             self.calls = 0
+            self.closed: list[str] = []
 
         def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> Any:
             self.calls += 1
             first = self.calls == 1
+            recorder = self
 
             class _CM:
                 async def __aenter__(self) -> FakeWebSocket:
@@ -448,16 +450,22 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
                     raise OSError('refused')  # an expected dial failure → reconnect gives up
 
                 async def __aexit__(self, *exc: object) -> bool:
+                    recorder.closed.append('dropped' if first else 'refused')
                     return False
 
             return _CM()
 
-    monkeypatch.setattr(rt_xai.websockets, 'connect', _DropThenFail())
+    connect = _DropThenFail()
+    monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
     model = _model(reconnect=rt_xai.ReconnectPolicy(max_attempts=1, base_delay=0.0, jitter=False))
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
 
     assert any(isinstance(e, SessionErrorEvent) and not e.recoverable for e in events)
+    # The dropped socket is closed as the reconnect nulls `cm` before re-dialing; the refused re-dial
+    # never enters its context manager, so `cm` stays `None` and teardown closes nothing further. A
+    # regression that assigned `cm` before awaiting `__aenter__` would leave `'refused'` here.
+    assert connect.closed == ['dropped']
 
 
 @pytest.mark.anyio

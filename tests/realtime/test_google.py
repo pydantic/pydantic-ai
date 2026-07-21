@@ -2,7 +2,9 @@
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import json
+import random
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
 from contextvars import ContextVar
@@ -217,7 +219,10 @@ def test_ws_trace_context_noop_without_http_options() -> None:
 
     client = SimpleNamespace(_api_client=None)
     with rt_google._ws_trace_context(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        pass
+        # No HTTP options to inject into, so the client is left untouched (no attribute is added).
+        assert client._api_client is None
+        assert not hasattr(client, '_http_options')
+    assert client._api_client is None
 
 
 async def test_connect_serializes_shared_client_header_mutations(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1049,15 +1054,31 @@ async def test_reconnect_resumes_then_gives_up() -> None:
     assert handles == ['h1', 'h1', 'h1']
 
 
-async def test_reconnect_applies_jitter() -> None:
+async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    # With `jitter=True` the backoff delay is scaled by `0.5 + random()*0.5`, so a fixed `random()`
+    # of 0.4 turns the first attempt's 0.5s base delay into 0.5 * 0.7 = 0.35s. Capturing the actual
+    # slept delay proves jitter is applied (and with a real value, not the un-jittered 0.5s) — a
+    # non-zero `base_delay` is required, otherwise the multiply is a no-op and tests nothing.
+    delays: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    # `reconnect_with_backoff` calls `random.random()` and `asyncio.sleep()` from these module
+    # singletons, so patching them here controls the jitter factor and captures the resulting delay.
+    monkeypatch.setattr(random, 'random', lambda: 0.4)
+    monkeypatch.setattr(asyncio, 'sleep', record_sleep)
+
     s1 = _RecordingSession([])
     dial, _ = _dialer(_RecordingSession([[_turn('hi')]]))
     conn = GoogleRealtimeConnection(
-        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=True)
+        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.5, max_attempts=1, jitter=True)
     )
     events = [e async for e in conn]
     assert events[0] == ReconnectedEvent()
-    assert isinstance(events[-1], SessionErrorEvent)
+    # Every backoff delay is the jittered 0.35s, never the un-jittered 0.5s base delay.
+    assert delays
+    assert all(delay == pytest.approx(0.35) for delay in delays)
 
 
 async def test_connect_reconnect_closes_previous_session() -> None:

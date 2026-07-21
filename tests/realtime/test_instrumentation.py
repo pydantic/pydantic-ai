@@ -22,7 +22,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -561,6 +561,19 @@ async def test_direct_session_runs_tool_via_runner() -> None:
     )
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = [e async for e in session]
+
+    # The runner actually ran and its result was inserted into history as a `ToolReturnPart` — the
+    # point of the direct-session tool-runner path, independent of the span assertions below.
+    tool_returns = [
+        part
+        for message in session.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert [(part.tool_name, part.content, part.tool_call_id) for part in tool_returns] == [
+        ('get_weather', 'sunny', 'c1')
+    ]
 
     finished = exporter.get_finished_spans()
     assert not [s for s in finished if s.name.startswith('execute_tool')]  # tool spans are capability-owned

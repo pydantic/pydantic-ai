@@ -183,7 +183,21 @@ async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], 
             }
         ]
     )
-    assert sent_frames_containing(cassette, 'Nice to meet you')
+    # The seeded assistant turn is sent as an `output_text` item (its own serialization path, distinct
+    # from the user seed above), so a wrong role/item/content shape fails here rather than passing on a
+    # mere substring match.
+    assert sent_frames_containing(cassette, 'Nice to meet you') == snapshot(
+        [
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'assistant',
+                    'content': [{'type': 'output_text', 'text': 'Nice to meet you, Alice!'}],
+                },
+            }
+        ]
+    )
 
     # `all_messages()` carries the seeded history ahead of this session's turns.
     messages = session.all_messages()
