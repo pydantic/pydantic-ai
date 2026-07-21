@@ -6515,6 +6515,20 @@ async def test_completed_streamed_response_deprecated_events(
     assert [event async for event in stream]
 
 
+async def test_completed_streamed_response_replay_events_wins_over_deprecated_events(
+    replay_mrp: models.ModelRequestParameters, replay_response: ModelResponse
+) -> None:
+    """An explicit `replay_events` beats the deprecated `events` alias when both are passed."""
+    with pytest.warns(PydanticAIDeprecationWarning, match='`events`'):
+        stream = CompletedStreamedResponse(  # pyright: ignore[reportCallIssue]
+            replay_response,
+            model_request_parameters=replay_mrp,
+            replay_events=True,
+            events=False,
+        )
+    assert [event async for event in stream]
+
+
 def test_completed_streamed_response_deprecated_import_path() -> None:
     """The pre-v3 `pydantic_ai.models.wrapper` import path still works, with a warning.
 

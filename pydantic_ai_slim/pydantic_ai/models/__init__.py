@@ -1088,7 +1088,7 @@ class CompletedStreamedResponse(StreamedResponse):
         response: ModelResponse | ModelRequestParameters,
         model_request_parameters: ModelRequestParameters | ModelResponse | None = None,
         *,
-        replay_events: bool | list[ModelResponseStreamEvent] = False,
+        replay_events: bool | list[ModelResponseStreamEvent] | _utils.Unset = _utils.UNSET,
         events: bool | list[ModelResponseStreamEvent] | None = None,
     ):
         if events is not None:
@@ -1097,7 +1097,11 @@ class CompletedStreamedResponse(StreamedResponse):
                 PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
-            replay_events = events
+            # The deprecated alias only fills the gap: an explicit `replay_events` wins.
+            if isinstance(replay_events, _utils.Unset):
+                replay_events = events
+        if isinstance(replay_events, _utils.Unset):
+            replay_events = False
         if isinstance(response, ModelRequestParameters):
             # The positional `(model_request_parameters, response)` order predates the move
             # from `pydantic_ai.models.wrapper` to `pydantic_ai.models`.
