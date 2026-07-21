@@ -3636,6 +3636,48 @@ async def test_openai_hosted_tool_search_stateless_continuation(
 
 
 @pytest.mark.vcr
+async def test_openai_hosted_tool_search_stateless_continuation_without_item_ids(
+    allow_model_requests: None, openai_api_key: str
+) -> None:
+    """The identity-less replay shape (`openai_send_reasoning_ids=False`) stays callable.
+
+    With ids stripped, the replayed `tool_search_call` and `tool_search_output` carry
+    `call_id: null` and no `id`; the API accepts the pair and the loaded tool remains
+    callable without a fresh search.
+    """
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(pair: str) -> str:
+        """Look up an exchange rate."""
+        return f'{pair}: 0.92'
+
+    first = await agent.run(
+        'Use hosted tool search to load get_exchange_rate. Do not call it yet. Reply only with "loaded".'
+    )
+    assert first.output == 'loaded'
+
+    second = await agent.run(
+        'Call get_exchange_rate with pair="USD/EUR". Do not search again.',
+        message_history=first.all_messages(),
+        model_settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=False),
+    )
+    assert not any(
+        isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
+        for message in second.new_messages()
+        for part in message.parts
+    )
+    rate_returns = [
+        part
+        for part in iter_message_parts(second.new_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'get_exchange_rate'
+    ]
+    assert len(rate_returns) == 1
+    assert rate_returns[0].content == 'USD/EUR: 0.92'
+
+
+@pytest.mark.vcr
 async def test_openai_native_tool_search_gpt_5_6(allow_model_requests: None, openai_api_key: str) -> None:
     """End-to-end against live OpenAI Responses: GPT-5.6 supports the native `tool_search`
     tool with `defer_loading`, backing `supports_tool_search` in its model profile — the
