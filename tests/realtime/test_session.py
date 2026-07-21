@@ -61,6 +61,7 @@ from pydantic_ai.realtime import (
     RealtimeSession as _RealtimeSession,
     SessionUsageEvent,
     ToolCall,
+    ToolCallCancelled,
     ToolResult,
     Transcript,
     TruncateOutput,
@@ -801,6 +802,55 @@ async def test_early_break_with_running_tool_cancels_task() -> None:
     assert tool_task is not None and tool_task.done() and tool_task.cancelled()
     assert conn.iteration_task is not None and conn.iteration_task.done()
     assert cancelled.is_set()
+
+
+async def test_tool_call_cancellation_cancels_running_tool() -> None:
+    # The model cancels an in-flight tool call (e.g. the user barged in mid-call). The running task is
+    # cancelled, no `ToolResult` is sent back to the model, and a cancelled result is recorded so the
+    # call still has a matching return in history.
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    async def slow() -> str:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return 'never'  # pragma: no cover - always cancelled first
+
+    class _CancelAfterStart(RealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            # A cancelled call must not send its result back to the model.
+            raise AssertionError('nothing should be sent for a cancelled tool call')
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='slow', args='{}')
+            await started.wait()  # let the tool task start before the model cancels it
+            yield ToolCallCancelled(tool_call_ids=['c1'])
+
+    events: list[Any] = []
+    async with agent.realtime_session(model=FakeRealtimeModel(_CancelAfterStart())) as session:
+        async for event in session:
+            events.append(event)
+
+    assert cancelled.is_set()  # the running tool observed cancellation
+    results = [e for e in events if isinstance(e, FunctionToolResultEvent)]
+    assert len(results) == 1 and isinstance(results[0].part, ToolReturnPart)
+    # The cancelled call still has exactly one matching return in history (valid for a handoff).
+    returns = [
+        part
+        for message in session.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert [(part.tool_call_id, part.content) for part in returns] == [
+        ('c1', 'Tool call cancelled before it completed.')
+    ]
 
 
 # --- send helpers + history ---------------------------------------------------------------------

@@ -34,6 +34,7 @@ from pydantic_ai.realtime import (
     ReconnectedEvent,
     SessionUsageEvent,
     ToolCall,
+    ToolCallCancelled,
     ToolResult,
     Transcript,
     TurnCompleteEvent,
@@ -518,6 +519,16 @@ def test_map_tool_call_and_usage() -> None:
         ToolCall(tool_call_id='c1', tool_name='calc', args=json.dumps({'x': 1})),
         SessionUsageEvent(usage=RequestUsage(input_tokens=7, output_tokens=2)),
     ]
+
+
+def test_map_tool_call_cancellation() -> None:
+    # Gemini's `toolCallCancellation` (sent when the model abandons in-flight calls, e.g. on barge-in)
+    # maps to a `ToolCallCancelled` carrying the cancelled call ids for the session to act on.
+    conn = _conn(_RecordingSession())
+    message = genai_types.LiveServerMessage(
+        tool_call_cancellation=genai_types.LiveServerToolCallCancellation(ids=['c1', 'c2'])
+    )
+    assert conn._map_message(message) == [ToolCallCancelled(tool_call_ids=['c1', 'c2'])]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_grounding_and_url_context_to_native_tool_part_events() -> None:

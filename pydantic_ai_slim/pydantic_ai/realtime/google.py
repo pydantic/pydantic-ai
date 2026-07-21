@@ -78,6 +78,7 @@ from ._base import (
     SessionUsageEvent,
     TextInput,
     ToolCall,
+    ToolCallCancelled,
     ToolResult,
     Transcript,
     TurnCompleteEvent,
@@ -837,6 +838,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 self._call_index += 1
                 self._tool_calls[call_id] = (name, call.id)
                 events.append(ToolCall(tool_call_id=call_id, tool_name=name, args=json.dumps(call.args or {})))
+        if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
+            # The cancellation carries Gemini's own call ids, which match the `tool_call_id`s emitted
+            # above whenever Gemini assigned them (id-less calls can't be cancelled by id anyway).
+            events.append(ToolCallCancelled(tool_call_ids=list(cancelled_ids)))
         if message.usage_metadata is not None:
             events.append(SessionUsageEvent(usage=_map_usage(message.usage_metadata)))
         # Emit the turn boundary last — after this message's usage — so the session folds the turn's

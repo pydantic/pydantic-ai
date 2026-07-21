@@ -66,6 +66,7 @@ from ._base import (
     SessionUsageEvent,
     TextInput,
     ToolCall,
+    ToolCallCancelled,
     ToolResult,
     Transcript,
     TruncateOutput,
@@ -78,6 +79,9 @@ if TYPE_CHECKING:
 # Realtime providers stream raw PCM audio; there's no container to carry a richer media type, so
 # retained audio is tagged as `audio/pcm`.
 _PCM_MEDIA_TYPE = 'audio/pcm'
+# Recorded as the result of a tool call the model cancelled mid-flight (see `ToolCallCancelled`), so the
+# call still has a matching return in history.
+_CANCELLED_TOOL_RESULT = 'Tool call cancelled before it completed.'
 
 # Fallback for a session created without a model's profile (e.g. directly, in tests): assume
 # everything is supported so no guard fires. Real sessions receive `model.profile`. Native tools are
@@ -287,6 +291,9 @@ class RealtimeSession:
         self._queue: asyncio.Queue[RealtimeEvent | object] = asyncio.Queue()
         self._queue_changed = object()
         self._background_tasks: set[asyncio.Task[None]] = set()
+        # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
+        # calls the model abandoned (e.g. on barge-in) without touching the others.
+        self._pending_tool_calls: dict[str, tuple[asyncio.Task[None], ToolCallPart]] = {}
         self._pump_task: asyncio.Task[None] | None = None
         self._pump_error: Exception | None = None
         self._pump_finished = False
@@ -877,6 +884,9 @@ class RealtimeSession:
             # never arrives.
             await self._queue.put(e)
             return
+        finally:
+            # Settled (completed, failed, or cancelled): no longer cancellable by `ToolCallCancelled`.
+            self._pending_tool_calls.pop(call_part.tool_call_id, None)
         for event in self._complete_tool_call(call_part, result):
             await self._queue.put(event)
 
@@ -899,7 +909,20 @@ class RealtimeSession:
             await self._queue.put(FunctionToolCallEvent(part=call_part))
             task = asyncio.create_task(self._run_tool(event, call_part))
             self._background_tasks.add(task)
+            self._pending_tool_calls[call_part.tool_call_id] = (task, call_part)
             task.add_done_callback(self._tool_task_done)
+            return False
+        if isinstance(event, ToolCallCancelled):
+            for tool_call_id in event.tool_call_ids:
+                if (pending := self._pending_tool_calls.pop(tool_call_id, None)) is None:
+                    continue
+                task, call_part = pending
+                task.cancel()
+                # Record a cancelled result so the call still has a matching return in history (kept
+                # valid for a handoff), and deliberately don't send a `ToolResult` back to the model —
+                # it abandoned the call.
+                for out in self._complete_tool_call(call_part, _CANCELLED_TOOL_RESULT):
+                    await self._queue.put(out)
             return False
         if isinstance(event, SessionUsageEvent):
             self.usage.incr(event.usage)

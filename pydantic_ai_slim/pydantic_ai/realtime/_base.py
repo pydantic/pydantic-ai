@@ -318,6 +318,18 @@ class ToolCall:
 
 
 @dataclass
+class ToolCallCancelled:
+    """The model cancelled in-flight tool calls (e.g. the user barged in before they finished).
+
+    Gemini Live sends this as `toolCallCancellation`; the session cancels the matching running tool
+    tasks so their now-unwanted results are never sent back to the model.
+    """
+
+    tool_call_ids: list[str]
+    """Identifiers of the [`ToolCall`][pydantic_ai.realtime.ToolCall]s that were cancelled."""
+
+
+@dataclass
 class TurnCompleteEvent:
     """The model finished (or was interrupted during) its turn."""
 
@@ -397,6 +409,7 @@ RealtimeCodecEvent = TypeAliasType(
     | Transcript
     | InputTranscript
     | ToolCall
+    | ToolCallCancelled
     | TurnCompleteEvent
     | InputSpeechStartEvent
     | InputSpeechEndEvent
