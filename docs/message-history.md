@@ -516,8 +516,6 @@ Both `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `
 !!! warning "Don't mutate existing messages in place"
     `enqueue` and [history processors](#processing-message-history) change the conversation by adding or building *new* message objects, and are the supported ways to do so. Mutating a message that's already part of the history in place (e.g. `ctx.messages[0].parts[0].content = '...'` from a tool) is not supported: [instrumentation](logfire.md) caches each message's serialized form for the duration of a run, so the `gen_ai.input.messages` attribute recorded on later model request spans may not reflect the mutation. When this is detected at the end of a run, a `MessageHistoryMutatedWarning` is emitted; the run-level `pydantic_ai.all_messages` attribute always reflects the final history.
 
-    Editing a message that was already sent to the model effectively forks the conversation — everything after the edit belongs to a different timeline. Express that fork explicitly: [start a new run](#using-messages-as-input-for-further-agent-runs) with the modified `message_history`, or rebuild the messages for the next request in a history processor.
-
 ### From inside a tool or hook
 
 Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a
