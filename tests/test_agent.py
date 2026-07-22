@@ -103,6 +103,7 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
+    from pydantic_ai.providers.inception import InceptionProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
@@ -123,6 +124,7 @@ else:
         from pydantic_ai.providers.fireworks import FireworksProvider
         from pydantic_ai.providers.github import GitHubProvider
         from pydantic_ai.providers.heroku import HerokuProvider
+        from pydantic_ai.providers.inception import InceptionProvider
         from pydantic_ai.providers.moonshotai import MoonshotAIProvider
         from pydantic_ai.providers.nebius import NebiusProvider
         from pydantic_ai.providers.ollama import OllamaProvider
@@ -134,7 +136,7 @@ else:
         from pydantic_ai.providers.vercel import VercelProvider
     except ImportError:  # pragma: lax no cover
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None  # type: ignore
-        FireworksProvider = GitHubProvider = HerokuProvider = None  # type: ignore
+        FireworksProvider = GitHubProvider = HerokuProvider = InceptionProvider = None  # type: ignore
         MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None  # type: ignore
         OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None  # type: ignore
         TogetherProvider = VercelProvider = None  # type: ignore
@@ -8667,6 +8669,7 @@ async def test_azure_provider_lifecycle_closes_client():
         pytest.param(lambda: FireworksProvider(api_key='t'), marks=[requires_openai], id='fireworks'),
         pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),
         pytest.param(lambda: HerokuProvider(api_key='t'), marks=[requires_openai], id='heroku'),
+        pytest.param(lambda: InceptionProvider(api_key='t'), marks=[requires_openai], id='inception'),
         pytest.param(lambda: LiteLLMProvider(api_key='t'), marks=[requires_litellm], id='litellm'),
         pytest.param(lambda: MoonshotAIProvider(api_key='t'), marks=[requires_openai], id='moonshotai'),
         pytest.param(lambda: NebiusProvider(api_key='t'), marks=[requires_openai], id='nebius'),

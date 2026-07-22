@@ -102,6 +102,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'fireworks',
         'github',
         'heroku',
+        'inception',
         'litellm',
         'moonshotai',
         'nebius',

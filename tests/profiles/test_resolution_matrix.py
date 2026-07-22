@@ -1414,6 +1414,29 @@ def test_ovhcloud_llama():
     assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
 
 
+def test_inception_mercury_2():
+    from pydantic_ai.providers.inception import InceptionProvider
+
+    profile = InceptionProvider.model_profile('mercury-2')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+        }
+    )
+
+
+def test_inception_mercury_coder():
+    from pydantic_ai.providers.inception import InceptionProvider
+
+    profile = InceptionProvider.model_profile('mercury-coder')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'openai_chat_supports_max_completion_tokens': False}
+    )
+
+
 def test_alibaba_qwen():
     from pydantic_ai.providers.alibaba import AlibabaProvider
 

@@ -251,6 +251,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .zai import ZaiProvider
 
         return ZaiProvider
+    elif provider == 'inception':
+        from .inception import InceptionProvider
+
+        return InceptionProvider
     else:
         raise ValueError(f'Unknown provider: {provider}')
 

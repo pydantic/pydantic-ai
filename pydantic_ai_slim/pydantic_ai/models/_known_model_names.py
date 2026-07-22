@@ -383,6 +383,7 @@ KnownModelName = TypeAliasType(
         'huggingface:meta-llama/Llama-3.3-70B-Instruct',
         'huggingface:meta-llama/Llama-4-Maverick-17B-128E-Instruct',
         'huggingface:meta-llama/Llama-4-Scout-17B-16E-Instruct',
+        'inception:mercury-2',
         'mistral:codestral-latest',
         'mistral:mistral-large-latest',
         'mistral:mistral-moderation-latest',
