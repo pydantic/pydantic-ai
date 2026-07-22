@@ -1795,7 +1795,7 @@ class SimpleDeps:
 async def test_prefect_agent_explicit_run_id():
     """A pre-minted `run_id=` is preserved through PrefectAgent inside a flow."""
     agent = Agent(TestModel(custom_output_text='ok'), name='run_id_prefect_agent')
-    prefect_agent = PrefectAgent(agent)
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
 
     @flow(name='test_prefect_agent_explicit_run_id')
     async def run_with_run_id() -> AgentRunResult[str]:

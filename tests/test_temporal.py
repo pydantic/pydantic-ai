@@ -3701,7 +3701,7 @@ def test_temporal_run_context_preserves_run_id():
 
 
 run_id_test_agent = Agent(TestModel(custom_output_text='ok'), name='run_id_test_agent')
-run_id_temporal_agent = TemporalAgent(run_id_test_agent, activity_config=BASE_ACTIVITY_CONFIG)
+run_id_temporal_agent = TemporalAgent(run_id_test_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn
