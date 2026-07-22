@@ -93,7 +93,7 @@ The failure is recorded in message history as a `ToolReturnPart` with `outcome='
 
 ## Validate or Require Approval Before Tool Execution
 
-Use `args_validator=` when arguments are structurally valid but still need business-rule validation before execution or approval. A validator returns `None` on success, raises `ModelRetry` when the model should correct the arguments, or raises `ToolFailed` to produce a failed tool result instead of a retry.
+Use `args_validator=` when arguments are structurally valid but still need business-rule validation before execution or approval. A validator returns `None` on success, raises `ModelRetry` to ask the model to correct the arguments and try again, or raises `ToolFailed` to report a terminal failure the model should adapt to instead of retrying.
 
 ```python
 from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext

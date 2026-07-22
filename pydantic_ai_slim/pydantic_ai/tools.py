@@ -97,9 +97,9 @@ ArgsValidatorFunc: TypeAlias = (
 The validator receives the same typed parameters as the tool function,
 with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument for dependency access.
 
-Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] when the model should correct the arguments,
-or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] when validation should produce a failed tool result.
-Return `None` on success.
+Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the arguments and try
+again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a terminal failure the model should
+adapt to instead of retrying. Return `None` on success.
 """
 ToolPrepareFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT], 'ToolDefinition'],
@@ -384,9 +384,9 @@ class Tool(Generic[ToolAgentDepsT]):
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
-                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] when the model should correct
-                the arguments, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] when validation should
-                produce a failed tool result. Return `None` on success.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the
+                arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
+                terminal failure the model should adapt to instead of retrying. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
@@ -463,9 +463,9 @@ class Tool(Generic[ToolAgentDepsT]):
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
-                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] when the model should correct
-                the arguments, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] when validation should
-                produce a failed tool result. Return `None` on success.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the
+                arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
+                terminal failure the model should adapt to instead of retrying. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
 
         Returns:

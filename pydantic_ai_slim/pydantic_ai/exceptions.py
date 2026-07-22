@@ -80,10 +80,17 @@ class ModelRetry(Exception):
 
 
 class ToolFailed(Exception):
-    """Exception to raise to report a failed tool result to the model.
+    """Exception to raise to report a terminal tool failure to the model.
 
-    Can be raised from tool functions, args validators, and tool validation/execution hooks
-    to send a failed tool result back to the model without consuming the tool's retry budget.
+    Raise this when a tool call is done and has failed — a missing resource, an unsupported
+    operation, a timeout, a definitive upstream error — and you want the model to see the failure
+    and adapt rather than try the same call again. Can be raised from tool functions, args
+    validators, and tool validation/execution hooks.
+
+    Like [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], this produces a failed tool result the
+    model sees; unlike `ModelRetry` it does not prepend retry/correction instructions and does not
+    consume the tool's retry budget. Bound repeated failures with
+    [`UsageLimits`][pydantic_ai.usage.UsageLimits] at the run level instead.
     """
 
     message: str

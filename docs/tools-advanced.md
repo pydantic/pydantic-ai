@@ -578,7 +578,7 @@ When a timeout occurs, the tool is treated as a retryable failure and the model 
 
 The `args_validator` parameter lets you define custom validation that runs after Pydantic schema validation but before the tool executes. This is useful for business logic validation, cross-field validation, or validating arguments before requesting [human approval](deferred-tools.md) for deferred tools.
 
-The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] when the model should correct the arguments, or raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] when validation should produce a failed tool result instead of a retry.
+The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the arguments and try again, or raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a terminal failure the model should adapt to instead of retrying.
 
 ```python {title="args_validator_approval.py"}
 from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
@@ -609,7 +609,7 @@ print(result.output.approvals[0].args)
 
 _(This example is complete, it can be run "as is")_
 
-When schema validation fails, or an `args_validator` raises `ModelRetry`, the error message is sent back to the LLM as a retry prompt and respects the tool's `retries` setting. When an `args_validator` raises `ToolFailed`, the model receives a failed tool result instead. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred.
+When schema validation fails, or an `args_validator` raises `ModelRetry`, the error message is sent back to the LLM as a retry prompt (with instructions to try again) and respects the tool's `retries` setting. When an `args_validator` raises `ToolFailed`, the model instead receives a failed tool result it should adapt to rather than retry, and the retry budget is left untouched. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred.
 
 The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions.
 
