@@ -5406,6 +5406,67 @@ def test_transformer_adds_properties_to_object_schemas():
     assert result['properties'] == {}
 
 
+@pytest.mark.parametrize(
+    'array_schema',
+    [
+        pytest.param({'type': 'array', 'items': {}}, id='empty-items'),
+        pytest.param({'type': 'array'}, id='missing-items'),
+        pytest.param({'type': 'array', 'items': True}, id='boolean-items'),
+        pytest.param({'type': 'array', 'items': {'description': 'values'}}, id='metadata-only-items'),
+    ],
+)
+def test_transformer_untyped_array_not_strict_compatible(array_schema: dict[str, Any]):
+    """An untyped array isn't strict-compatible.
+
+    This covers a bare `list` (`items: {}`), no `items` key at all, a boolean `items: true`
+    (JSON Schema shape for `list[Any]`), and a metadata-only `items` node with no type-bearing
+    keyword. OpenAI strict mode requires the `items` schema to have a `type`, so with `strict=None`
+    we must infer that the schema can't be sent in strict mode.
+    See https://github.com/pydantic/pydantic-ai/issues/4425
+    """
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'items': array_schema},
+        'required': ['items'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is False
+
+
+@pytest.mark.parametrize(
+    'items_schema',
+    [
+        pytest.param({'type': 'string'}, id='type'),
+        pytest.param({'$ref': '#/$defs/Foo'}, id='ref'),
+        pytest.param({'anyOf': [{'type': 'string'}, {'type': 'integer'}]}, id='anyOf'),
+    ],
+)
+def test_transformer_typed_array_strict_compatible(items_schema: dict[str, Any]):
+    """An array whose `items` carries a type-bearing keyword stays strict-compatible."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'values': {'type': 'array', 'items': items_schema}},
+        'required': ['values'],
+        '$defs': {'Foo': {'type': 'object', 'properties': {'x': {'type': 'string'}}, 'required': ['x']}},
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is True
+
+
+def test_transformer_untyped_array_explicit_strict_raises():
+    """With `strict=True` explicitly requested, an untyped array can't be repaired, so we raise a
+    clear error instead of letting OpenAI reject the request with an opaque 400."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'items': {'type': 'array', 'items': {}}},
+        'required': ['items'],
+    }
+    with pytest.raises(UserError, match='OpenAI strict mode requires array items to have a type'):
+        OpenAIJsonSchemaTransformer(schema, strict=True).walk()
+
+
 def chunk_with_usage(
     delta: list[ChoiceDelta],
     finish_reason: FinishReason | None = None,

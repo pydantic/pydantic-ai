@@ -14,7 +14,7 @@ from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -1438,6 +1438,46 @@ Fix the errors and try again.\
                     'gen_ai.agent.call.id': IsStr(),
                 }
             )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_tool_failed_span_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    """A tool raising `ToolFailed` records the failure as the tool result on the span, like `ModelRetry`.
+
+    Parallel to the retry case in `test_include_tool_args_span_attributes`: the model-visible failure
+    message is recorded as `gen_ai.tool.call.result` when content is included (with no "Fix the errors
+    and try again." suffix, since it's a failure rather than a retry), and excluded when content is off.
+    """
+    my_agent = Agent(
+        model=TestModel(seed=42),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=include_content))],
+    )
+
+    @my_agent.tool_plain
+    async def add_numbers(x: int, y: int) -> int:
+        """Add two numbers together."""
+        raise ToolFailed('numbers service unavailable')
+
+    my_agent.run_sync('Add 42 and 42')
+
+    summary = get_logfire_summary()
+    tool_attributes = next(
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'add_numbers'
+    )
+
+    # Guards the documented "traced as an error in telemetry" behavior for `ToolFailed`
+    # (level 17 = error); this goes through a different branch than `ModelRetry`'s, so it
+    # isn't covered by the retry test. `level_num` is fine here — this file inspects the
+    # Logfire-captured view of the spans.
+    assert tool_attributes['logfire.level_num'] == 17
+    if include_content:
+        assert tool_attributes.get('gen_ai.tool.call.result') == 'numbers service unavailable'
+    else:
+        assert 'gen_ai.tool.call.result' not in tool_attributes
 
 
 class WeatherInfo(BaseModel):

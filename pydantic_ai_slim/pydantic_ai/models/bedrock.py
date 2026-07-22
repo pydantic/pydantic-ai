@@ -1078,7 +1078,22 @@ class BedrockConverseModel(Model[BaseClient]):
                         content_mode: Literal['str', 'jsonable'] = (
                             'str' if profile.get('bedrock_tool_result_format', 'text') == 'text' else 'jsonable'
                         )
-                        for item in part.content_items(mode=content_mode):
+
+                        # Two mutually exclusive ways to render a failed return, picked here so the loop
+                        # below stays free of per-item failure guards:
+                        # - No native error status: fold the failure into one wrapped `{'error': ...}` text
+                        #   block, then iterate only the files. Each file still gets its "See file X."
+                        #   reference below so the model can cross-reference the media with the result.
+                        # - Otherwise (success, or failed with `status='error'` set below): send every
+                        #   content item verbatim; the status field carries the failure signal unwrapped.
+                        items: Sequence[Any]
+                        if part.outcome == 'failed' and not supports_tool_result_status:
+                            tool_result_content.append({'text': part.model_response_str()})
+                            items = part.files
+                        else:
+                            items = part.content_items(mode=content_mode, wrap_if_error=False)
+
+                        for item in items:
                             if isinstance(item, UploadedFile):
                                 self._validate_uploaded_file_provider(item)
                                 if not item.file_id.startswith('s3://'):
@@ -1122,10 +1137,8 @@ class BedrockConverseModel(Model[BaseClient]):
                                         # The media can't share the `toolResult`'s turn; defer it to a later user turn.
                                         deferred_media_content.append(media_note)
                                         deferred_media_content.append(file_block)
-                            elif isinstance(item, str):
-                                tool_result_content.append({'text': item})
                             else:
-                                tool_result_content.append({'json': item})
+                                tool_result_content.append({'text': item} if isinstance(item, str) else {'json': item})
                         if not tool_result_content:
                             tool_result_content.append(
                                 {'text': str(part.content)} if content_mode == 'str' else {'json': part.content}
@@ -1136,7 +1149,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             'content': tool_result_content,
                         }
                         if supports_tool_result_status:
-                            success_result['status'] = 'success'
+                            success_result['status'] = 'error' if part.outcome == 'failed' else 'success'
                         bedrock_messages.append(
                             {
                                 'role': 'user',

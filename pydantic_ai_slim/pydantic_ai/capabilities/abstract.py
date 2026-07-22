@@ -300,6 +300,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return self
 
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        """Validate capabilities contributed specifically for this run.
+
+        Deliberately private: whether this becomes part of the public runtime extension
+        surface (and in what shape) will be decided as part of
+        [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
+        """
+
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Return instructions to include in the system prompt, or None.
 
@@ -792,11 +802,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Not called for control flow exceptions
         ([`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution],
         [`CallDeferred`][pydantic_ai.exceptions.CallDeferred],
-        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired])
-        or retry signals ([`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError]
-        from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]).
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired]),
+        retry signals ([`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError]
+        from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]), or failure signals
+        ([`ToolFailedError`][pydantic_ai.exceptions.ToolFailedError]
+        from [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]).
         Use [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]
-        to intercept retries.
+        to intercept retries or failures.
         """
         raise error
 

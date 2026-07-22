@@ -48,7 +48,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 
 The **Spec** column indicates whether the capability can be used in [agent specs](../agent-spec.md) (YAML/JSON). Capabilities marked **—** take non-serializable arguments (callables, toolset objects) and can only be used in Python code.
 
-Provider-specific [compaction](compaction.md) capabilities ([`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction], [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction]) live in the corresponding model modules. The [durable execution](../durable_execution/overview.md) integrations also ship as capabilities — [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability], and [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] — in the `pydantic_ai.durable_exec` subpackages.
+[Compaction](compaction.md) keeps conversations within the context window through several approaches; the provider-native [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] and [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] capabilities live in the corresponding model modules. The [durable execution](../durable_execution/overview.md) integrations also ship as capabilities — [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability], and [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] — in the `pydantic_ai.durable_exec` subpackages.
 
 ```python {title="native_capabilities.py"}
 from pydantic_ai import Agent
