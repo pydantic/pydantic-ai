@@ -40,6 +40,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart
+from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
@@ -2609,6 +2610,43 @@ async def test_prefect_durability_event_stream_handler() -> None:
     assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
     assert any(isinstance(event, PartStartEvent) for event in events)
     assert any(isinstance(event, FinalResultEvent) for event in events)
+
+
+async def test_prefect_durability_event_stream_handler_rejects_enqueue() -> None:
+    """An `event_stream_handler` that enqueues inside a durable task raises, like a tool would.
+
+    The handler runs inside a durable task for both model events (the model-request task) and
+    graph events (the `Handle Stream Event` task); either task's cached result is replayed without
+    re-running it, so an enqueue would be dropped. The handler catches the error on every event so
+    the run still completes, exercising both delivery paths.
+    """
+    enqueue_errors: list[str] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            with pytest.raises(UserError, match='enqueued messages would be dropped') as exc_info:
+                ctx.enqueue('later')
+            # The ambient current context is guarded too, so reading it instead of the argument
+            # doesn't bypass the guard.
+            ambient = get_current_run_context()
+            assert ambient is not None
+            with pytest.raises(UserError, match='enqueued messages would be dropped'):
+                ambient.enqueue('later')
+            enqueue_errors.append(str(exc_info.value))
+
+    async def handled_tool() -> str:
+        return 'handled'
+
+    durability = PrefectDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='durability_handler_enqueue', tools=[handled_tool], capabilities=[durability])
+
+    @flow
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    await run_durable_agent()
+    # Guarded on both the model-event (model-request task) and graph-event (dispatch task) paths.
+    assert len(enqueue_errors) > 1
 
 
 async def test_prefect_durability_identical_events_are_dispatched_twice() -> None:
