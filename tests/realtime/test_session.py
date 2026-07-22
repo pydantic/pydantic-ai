@@ -3162,7 +3162,32 @@ async def test_agent_realtime_session_dynamic_instructions() -> None:
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
         _ = [e async for e in session]
-    assert model.last_instructions == 'Base\nDynamic'
+    # Static literal then dynamic function, double-newline separated — same as `run`/`iter`.
+    assert model.last_instructions == 'Base\n\nDynamic'
+
+
+async def test_agent_realtime_session_dynamic_instructions_see_message_history() -> None:
+    """A dynamic instruction function sees `message_history` via `ctx.messages`, like `run`/`iter`.
+
+    Regression: `realtime_session` used to leave `RunContext.messages` empty, so a dynamic instruction
+    (or a capability `for_run` hook) that read `ctx.messages` saw `[]` even when the caller passed a
+    `message_history`.
+    """
+    agent: Agent[None, str] = Agent()
+
+    @agent.instructions
+    def prior_count(ctx: RunContext[None]) -> str:
+        return f'{len(ctx.messages)} prior messages'
+
+    seed = [
+        ModelRequest(parts=[UserPromptPart(content='earlier question')]),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model, message_history=seed) as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == '2 prior messages'
 
 
 async def test_agent_realtime_session_additional_toolsets() -> None:

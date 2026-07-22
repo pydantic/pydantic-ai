@@ -1116,8 +1116,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Resolve the root capability (override > agent default) up front: it's needed both for the
         # capability-supplied model fallback below and for run-time capability assembly further down.
-        override_cap = self._override_root_capability.get()
-        base_capability = self._effective_root_capability()
+        base_capability, base_is_override = self._base_run_capability()
 
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
@@ -1190,7 +1189,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
-        extra_capabilities = [capability.for_agent(self) for capability in extra_capabilities]
+        extra_capabilities = self._bind_run_capabilities(extra_capabilities)
         model_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
         bootstrap_capability: AbstractCapability[AgentDepsT]
         if len(model_layers) > 1:
@@ -1382,7 +1381,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             extra_capabilities=extra_capabilities,
             instrumentation_cap=instrumentation_cap,
             inject_deferred_loader=True,
-            base_is_override=override_cap is not None,
+            base_is_override=base_is_override,
         )
         run_capability = resolved_caps.run_capability
         capabilities_dict = resolved_caps.capabilities
@@ -2595,6 +2594,28 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         override = self._override_root_capability.get()
         return override.value if override is not None else self._root_capability
 
+    def _base_run_capability(self) -> tuple[CombinedCapability[AgentDepsT], bool]:
+        """The base capability layer for a run, plus whether it came from `override(root_capability=...)`.
+
+        `iter` and `realtime_session` both resolve the base layer through this so the override is honored
+        identically — KEEP the two call sites in sync (a realtime session that ignored the override would
+        silently drop a `with agent.override(root_capability=...):` block).
+        """
+        override_cap = self._override_root_capability.get()
+        return self._effective_root_capability(), override_cap is not None
+
+    def _bind_run_capabilities(
+        self, extra_capabilities: list[AbstractCapability[AgentDepsT]]
+    ) -> list[AbstractCapability[AgentDepsT]]:
+        """Bind per-run capabilities to this agent via `for_agent` before capability resolution.
+
+        `_resolve_run_capabilities` only ever calls `for_run`, so binding the per-run layer via
+        `for_agent` is the caller's responsibility. `iter` and `realtime_session` both MUST call this —
+        skipping it uses a capability that overrides `for_agent` (e.g. the durability capabilities)
+        unbound, a silent divergence. KEEP the two call sites in sync.
+        """
+        return [capability.for_agent(self) for capability in extra_capabilities]
+
     async def _resolve_model_selection(
         self,
         selection: ModelSelection,
@@ -3093,6 +3114,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage if usage is not None else _usage.RunUsage(),
             model_settings=None,
             conversation_id=conversation_id,
+            # Seed `ctx.messages` from `message_history` like `iter` does, so dynamic `@agent.instructions`
+            # functions and capability `for_run` hooks see the prior conversation. KEEP IN SYNC with `iter`.
+            messages=list(message_history) if message_history else [],
             # A realtime session has no run identity yet (`run_id` stays unset); it gains one once
             # exchange-level hooks land and each exchange becomes an addressable unit.
             max_retries=self._max_tool_retries,
@@ -3104,7 +3128,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # a `RealtimeModel`, never an `InstrumentedModel`, so there's no wrapped model to unwrap; the
         # settings come straight from `_resolve_instrumentation_settings()`. The helper skips injection if
         # the user already supplied an `Instrumentation` capability (agent- or call-level).
-        extra_capabilities = wrap_capability_funcs(capabilities)
+        extra_capabilities = self._bind_run_capabilities(wrap_capability_funcs(capabilities))
         instrumentation_settings = self._resolve_instrumentation_settings()
         instrumentation_cap = (
             InstrumentationCap(settings=instrumentation_settings) if instrumentation_settings is not None else None
@@ -3116,7 +3140,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # will actually win: an explicit `Instrumentation` capability's (agent- or call-level) over the
         # `instrument=`-derived ones, matching the precedence `_resolve_run_capabilities` applies to the
         # tool spans.
-        explicit_instrumentation = find_capability([self._root_capability, *extra_capabilities], InstrumentationCap)
+        explicit_instrumentation = find_capability(
+            [self._effective_root_capability(), *extra_capabilities], InstrumentationCap
+        )
         session_instrumentation_settings = (
             explicit_instrumentation.settings if explicit_instrumentation is not None else instrumentation_settings
         )
@@ -3134,17 +3160,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_context.metadata = self._get_metadata(run_context, metadata)
 
         # Resolve the capability layers and extract their contributions, exactly as `run`/`iter` do via
-        # the shared helper. Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, no
-        # deferred loader (`inject_deferred_loader=False`), no root-capability override, once-only model
-        # settings (below), and the `_keep_native` / `supported_native_tools` gate (below). Keep this in
-        # sync with the `iter` call site.
+        # the shared helpers (`_base_run_capability` honors `override(root_capability=...)` the same way).
+        # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, no deferred loader
+        # (`inject_deferred_loader=False`), once-only model settings (below), and the `_keep_native` /
+        # `supported_native_tools` gate (below). Keep this in sync with the `iter` call site.
+        base_capability, base_is_override = self._base_run_capability()
         resolved_caps = await self._resolve_run_capabilities(
             run_context,
-            base_capability=self._root_capability,
+            base_capability=base_capability,
             extra_capabilities=extra_capabilities,
             instrumentation_cap=instrumentation_cap,
             inject_deferred_loader=False,
-            base_is_override=False,
+            base_is_override=base_is_override,
         )
         run_capability = resolved_caps.run_capability
         # `_resolve_run_capabilities` already registered `run_context.capabilities` for the toolset/connect
@@ -3207,14 +3234,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             literal, instruction_functions = self._get_instructions(
                 additional_instructions=instructions, cap_instructions=resolved_caps.instructions
             )
-            instruction_parts = [literal, *[await fn.run(run_context) for fn in instruction_functions]]
+            # Build `InstructionPart`s (static literal first, then dynamic functions, then dynamic toolset
+            # instructions) and join with the canonical `InstructionPart.join` — same double-newline
+            # separator and static-before-dynamic ordering as the graph run. KEEP IN SYNC with the graph's
+            # `_get_instructions` / `ModelRequestNode`.
+            instruction_parts: list[_messages.InstructionPart] = []
+            if literal:
+                instruction_parts.append(_messages.InstructionPart(content=literal, dynamic=False))
+            for fn in instruction_functions:
+                if text := await fn.run(run_context):
+                    instruction_parts.append(_messages.InstructionPart(content=text, dynamic=True))
             instruction_parts.extend(
-                part.content
-                for part in _instructions.normalize_toolset_instructions(
-                    await tool_manager.toolset.get_instructions(run_context)
-                )
+                _instructions.normalize_toolset_instructions(await tool_manager.toolset.get_instructions(run_context))
             )
-            resolved_instructions = '\n'.join(part for part in instruction_parts if part).strip()
+            resolved_instructions = _messages.InstructionPart.join(instruction_parts)
             request_messages = [
                 *(message_history or ()),
                 _messages.ModelRequest(parts=[], instructions=resolved_instructions or None),
