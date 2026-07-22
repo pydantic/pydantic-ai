@@ -404,6 +404,7 @@ class RealtimeSession:
         self._user_transcripts_by_id: dict[str, str] = {}
         self._user_item_order: deque[str] = deque()
         self._finalized_users_by_id: dict[str, SpeechPart] = {}
+        self._finalized_user_item_ids: set[str] = set()
         self._input_audio = bytearray()
 
         # The session context is the single owner of the receive pump and background tool tasks.
@@ -1021,6 +1022,8 @@ class RealtimeSession:
 
     def _handle_input_transcript(self, text: str, is_final: bool, *, item_id: str | None = None) -> list[RealtimeEvent]:
         if item_id is not None:
+            if is_final and item_id in self._finalized_user_item_ids:
+                return []
             events: list[RealtimeEvent] = []
             if item_id not in self._active_users_by_id:
                 part = SpeechPart(
@@ -1067,6 +1070,7 @@ class RealtimeSession:
         else:
             part = self._active_users_by_id.pop(item_id)
             self._user_transcripts_by_id.pop(item_id)
+            self._finalized_user_item_ids.add(item_id)
         if part.transcript == '':
             part = replace(part, transcript=None)
         if self._retain_input and self._input_audio:

@@ -1831,6 +1831,19 @@ async def test_empty_input_transcript_produces_no_request() -> None:
     assert session.new_messages() == []
 
 
+async def test_duplicate_final_input_transcript_is_idempotent() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='hello', is_final=True, item_id='user-1'),
+            InputTranscript(text='hello', is_final=True, item_id='user-1'),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='m')
+    _ = await collect_events(session)
+
+    assert session.all_messages() == [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello', id='user-1')])]
+
+
 async def test_transcript_only_default_drops_audio() -> None:
     conn = FakeRealtimeConnection([AudioDelta(data=b'\x00'), Transcript(text='hi', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
