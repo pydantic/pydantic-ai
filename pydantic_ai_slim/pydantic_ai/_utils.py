@@ -435,12 +435,15 @@ def sanitize_tool_name(name: str) -> str:
     return TOOL_NAME_SANITIZER.sub('_', name)
 
 
+TOOL_CALL_ID_PREFIX = 'pyd_ai_'
+
+
 def generate_tool_call_id() -> str:
     """Generate a tool call id.
 
     Ensure that the tool call id is unique.
     """
-    return f'pyd_ai_{uuid.uuid4().hex}'
+    return f'{TOOL_CALL_ID_PREFIX}{uuid.uuid4().hex}'
 
 
 SourceT = TypeVar('SourceT', bound=AsyncIterable[Any], default=AsyncIterable[T])

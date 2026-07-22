@@ -147,6 +147,28 @@ Caching requires a prefix of at least 1024 tokens; shorter prefixes are not cach
 
 When OpenAI reports prompt cache writes, Pydantic AI exposes them as [`result.usage.cache_write_tokens`][pydantic_ai.usage.RunUsage.cache_write_tokens]. Cache reads are available as [`result.usage.cache_read_tokens`][pydantic_ai.usage.RunUsage.cache_read_tokens]. For GPT-5.6 and later model families, OpenAI bills cache writes at 1.25 times the uncached input token rate.
 
+### Moderation
+
+Both the Responses and Chat Completions APIs can run [moderation](https://platform.openai.com/docs/guides/moderation) on the input and output of a request. Moderation is off by default; enable it with [`openai_moderation`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_moderation]:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-5.2')
+settings = OpenAIResponsesModelSettings(
+    openai_moderation={'model': 'omni-moderation-latest'}
+)
+agent = Agent(model, model_settings=settings)
+
+result = agent.run_sync('Your prompt here')
+moderation = result.response.provider_details.get('moderation')
+```
+
+When the response includes moderation results, they are stored under the `'moderation'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], with `input` and `output` entries each carrying the flagged status, per-category flags, and category scores.
+
+With [`OpenAIChatModel`](#chat-completions-api), use [`OpenAIChatModelSettings`][pydantic_ai.models.openai.OpenAIChatModelSettings] instead. The results are surfaced the same way on both the non-streaming and streaming paths, except that the Chat Completions API nests each entry one level deeper, under a `results` list.
+
 ## Responses API features
 
 The features below are specific to the Responses API and only available on [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (the default). For background on how the Responses API differs from Chat Completions, see the [OpenAI API docs](https://platform.openai.com/docs/guides/migrate-to-responses).
@@ -362,26 +384,6 @@ Because the request is queued server-side, the time to the first token is higher
 
 !!! note
     If a run is suspended mid-request (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) and persisted in message history, passing that history back resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling the run cancels the server-side background job.
-
-### Moderation
-
-The Responses API can run [moderation](https://platform.openai.com/docs/guides/moderation) on the input and output of a request. Moderation is off by default; enable it with [`openai_moderation`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_moderation]:
-
-```python {test="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-
-model = OpenAIResponsesModel('gpt-5.2')
-settings = OpenAIResponsesModelSettings(
-    openai_moderation={'model': 'omni-moderation-latest'}
-)
-agent = Agent(model, model_settings=settings)
-
-result = agent.run_sync('Your prompt here')
-moderation = result.response.provider_details.get('moderation')
-```
-
-When the response includes moderation results, they are stored under the `'moderation'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], with `input` and `output` entries each containing the flagged status, per-category flags, and category scores.
 
 ## Chat Completions API
 

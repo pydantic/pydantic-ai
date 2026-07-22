@@ -33,6 +33,10 @@ AGENTS.override.md
 !.agents/skills/adding-a-provider-api-feature/SKILL.md
 !.agents/skills/add-new-model/
 !.agents/skills/add-new-model/SKILL.md
+!.agents/skills/i-have-adhd/
+!.agents/skills/i-have-adhd/SKILL.md
+!.agents/skills/poweruser-feature-audit/
+!.agents/skills/poweruser-feature-audit/SKILL.md
 .claude/*
 !.claude/plans/
 !.claude/skills/
@@ -41,6 +45,8 @@ AGENTS.override.md
 !.claude/skills/address-feedback
 !.claude/skills/pre-push-review
 !.claude/skills/testing-skill
+!.claude/skills/i-have-adhd
+!.claude/skills/poweruser-feature-audit
 .github/.review-context/
 /.cursor/
 /.devcontainer/

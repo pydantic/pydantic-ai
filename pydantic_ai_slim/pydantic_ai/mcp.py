@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, Protocol, TypeAlias, cast, overload
 
 import anyio
 import httpx
@@ -716,11 +716,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     """The underlying FastMCP `Client`. Always normalized to a `fastmcp.Client` regardless of how
     the toolset was constructed."""
 
-    tool_error_behavior: Literal['retry', 'error']
+    tool_error_behavior: Literal['retry', 'error', 'failed']
     """How to handle tool errors raised by the server.
 
     `'retry'` (default) raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] so the model can
     self-correct; `'error'` propagates the underlying `fastmcp.exceptions.ToolError` to the caller.
+    `'failed'` raises [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] so the model can see the error.
     """
 
     max_retries: int | None
@@ -815,7 +816,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # Pydantic AI-layer config
         id: str | None = None,
         max_retries: int | None = None,
-        tool_error_behavior: Literal['retry', 'error'] = 'retry',
+        tool_error_behavior: Literal['retry', 'error', 'failed'] = 'retry',
         process_tool_call: ProcessToolCallback | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
@@ -852,7 +853,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 `None` inherits the agent's retry count at runtime.
             tool_error_behavior: `'retry'` (default) raises
                 [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on tool errors so the model can
-                self-correct; `'error'` propagates the underlying exception.
+                self-correct; `'error'` propagates the underlying exception; `'failed'` raises
+                [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] so the model can see the error.
             process_tool_call: Hook to wrap tool calls. See
                 [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
             cache_tools: Whether to cache the list of tools. See
@@ -1188,20 +1190,30 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             ModelRetry: If the tool errors and `tool_error_behavior='retry'` (the default).
             fastmcp.exceptions.ToolError: If the tool errors and `tool_error_behavior='error'`.
+            ToolFailed: If the tool errors and `tool_error_behavior='failed'`.
         """
         async with self:
             try:
                 if use_task:
                     tool_task: ToolTask = await self.client.call_tool(
-                        name=name, arguments=args, task=True, meta=metadata
+                        name=name,
+                        arguments=args,
+                        task=True,
+                        meta=metadata,
+                        raise_on_error=self.tool_error_behavior == 'error',
                     )
                     result: CallToolResult = await tool_task.result()
                 else:
-                    result = await self.client.call_tool(name=name, arguments=args, meta=metadata)
+                    result = await self.client.call_tool(
+                        name=name,
+                        arguments=args,
+                        meta=metadata,
+                        raise_on_error=self.tool_error_behavior == 'error',
+                    )
             except ToolError as e:
-                if self.tool_error_behavior == 'retry':
-                    raise exceptions.ModelRetry(message=str(e)) from e
-                raise
+                if self.tool_error_behavior == 'error':
+                    raise
+                _raise_mcp_tool_error(str(e), self.tool_error_behavior, cause=e)
             except _utils.BaseExceptionGroup as eg:
                 # The FastMCP client runs the MCP session in an anyio task group, so a tool/protocol
                 # error can surface wrapped in an `ExceptionGroup` rather than as a bare
@@ -1210,30 +1222,40 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 # unwinds from is not pinned down — so this is a best-effort guard: when the group
                 # contains only tool/protocol errors, treat it like the bare case above; otherwise
                 # re-raise unchanged so a concurrent cancellation grouped alongside is never swallowed.
-                if self.tool_error_behavior != 'retry':
+                if self.tool_error_behavior == 'error':
                     raise
                 matched, rest = eg.split((ToolError, mcp_exceptions.McpError))
                 if matched is None or rest is not None:
                     raise
-                # `matched` holds only tool/protocol errors; descend through any nesting to a leaf.
-                error: BaseException = matched
+                # A protocol error remains retryable even when completed tool errors are configured
+                # as failed results. Prefer it over a concurrent ToolError when both are present.
+                error_group = matched
+                behavior = self.tool_error_behavior
+                if behavior == 'failed':
+                    protocol_errors, _ = matched.split(mcp_exceptions.McpError)
+                    if protocol_errors is not None:
+                        error_group = protocol_errors
+                        behavior = 'retry'
+
+                # Descend through any nesting to a representative leaf.
+                error: BaseException = error_group
                 while isinstance(error, _utils.BaseExceptionGroup):
                     error = error.exceptions[0]
-                raise exceptions.ModelRetry(message=str(error)) from eg
+                _raise_mcp_tool_error(str(error), behavior, cause=eg)
 
-        # Prefer structured content if all parts are text (per the docs they contain the JSON-encoded
-        # structured content for backward compatibility).
-        # See https://github.com/modelcontextprotocol/python-sdk#structured-output
-        if (structured := result.structured_content) and all(
-            isinstance(part, mcp_types.TextContent) for part in result.content
-        ):
-            # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want
-            # the raw value returned by the tool function.
-            if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
-                return structured['result']
-            return structured
+        mapped_result = _map_mcp_call_tool_result(result, prefer_structured=result.is_error)
+        if result.is_error:
+            if result.structured_content is None and not result.content:
+                message = f'Tool {name!r} returned an error'
+            else:
+                message = messages.ToolReturnPart(tool_name=name, content=mapped_result).model_response_str(
+                    wrap_if_error=False
+                )
+                if not message:
+                    message = f'Tool {name!r} returned an error'
+            _raise_mcp_tool_error(message, self.tool_error_behavior)
 
-        return _map_mcp_tool_results(result.content)
+        return mapped_result
 
     async def call_tool(
         self,
@@ -1509,6 +1531,41 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
         )
 
     return handler
+
+
+def _raise_mcp_tool_error(
+    message: str,
+    behavior: Literal['retry', 'error', 'failed'],
+    *,
+    cause: BaseException | None = None,
+) -> NoReturn:
+    if behavior == 'retry':
+        raise exceptions.ModelRetry(message=message) from cause
+    elif behavior == 'failed':
+        raise exceptions.ToolFailed(message=message) from cause
+    elif behavior == 'error':  # pragma: no cover
+        # FastMCP normally raises before returning when `raise_on_error=True`.
+        raise ToolError(message) from cause
+    else:
+        assert_never(behavior)
+
+
+def _map_mcp_call_tool_result(result: CallToolResult, *, prefer_structured: bool = False) -> Any:
+    """Map a FastMCP result without discarding structured content on the error path."""
+    # Prefer structured content if all parts are text (per the docs they contain the JSON-encoded
+    # structured content for backward compatibility).
+    # See https://github.com/modelcontextprotocol/python-sdk#structured-output
+    structured = result.structured_content
+    if structured is not None and (
+        prefer_structured or all(isinstance(part, mcp_types.TextContent) for part in result.content)
+    ):
+        # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want
+        # the raw value returned by the tool function.
+        if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
+            return structured['result']
+        return structured
+
+    return _map_mcp_tool_results(result.content)
 
 
 def _map_mcp_tool_results(

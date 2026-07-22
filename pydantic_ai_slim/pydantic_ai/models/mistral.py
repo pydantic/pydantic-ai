@@ -72,7 +72,9 @@ try:
         AudioChunk as MistralAudioChunk,
         ChatCompletionChoiceFinishReason as MistralFinishReason,
         ChatCompletionRequestMessage as MistralMessages,
+        ChatCompletionRequestTool as MistralChatCompletionRequestTool,
         ChatCompletionResponse as MistralChatCompletionResponse,
+        ChatCompletionStreamRequestTool as MistralChatCompletionStreamRequestTool,
         CompletionChunk as MistralCompletionChunk,
         CompletionEvent as MistralCompletionEvent,
         ContentChunk as MistralContentChunk,
@@ -162,7 +164,12 @@ class MistralModelSettings(ModelSettings, total=False):
 
     # ALL FIELDS MUST BE `mistral_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    # This class is a placeholder for any future mistral-specific settings
+    mistral_prompt_cache_key: str
+    """Used by Mistral to improve cache hit rates for similar requests, mirroring `openai_prompt_cache_key`.
+
+    See the [Mistral prompt caching documentation](https://docs.mistral.ai/studio-api/conversations/advanced/prompt-caching)
+    for more information.
+    """
 
 
 @dataclass(init=False)
@@ -281,7 +288,7 @@ class MistralModel(Model[Mistral]):
                 model=str(self._model_name),
                 messages=await self._map_messages(messages, model_request_parameters),
                 n=1,
-                tools=tools or UNSET,
+                tools=cast(list[MistralChatCompletionRequestTool], tools) if tools else UNSET,
                 tool_choice=tool_choice,
                 stream=False,
                 max_tokens=model_settings.get('max_tokens', UNSET),
@@ -293,6 +300,8 @@ class MistralModel(Model[Mistral]):
                 frequency_penalty=model_settings.get('frequency_penalty'),
                 stop=model_settings.get('stop_sequences', None),
                 reasoning_effort=self._translate_thinking(model_request_parameters),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls'),
+                prompt_cache_key=model_settings.get('mistral_prompt_cache_key', UNSET),
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -329,7 +338,7 @@ class MistralModel(Model[Mistral]):
             model=str(self._model_name),
             messages=mistral_messages,
             n=1 if tools else UNSET,
-            tools=tools or UNSET,
+            tools=cast(list[MistralChatCompletionStreamRequestTool], tools) if tools else UNSET,
             tool_choice=tool_choice,
             response_format=response_format,
             stream=True,
@@ -342,6 +351,8 @@ class MistralModel(Model[Mistral]):
             frequency_penalty=model_settings.get('frequency_penalty'),
             stop=model_settings.get('stop_sequences', None),
             reasoning_effort=reasoning_effort,
+            parallel_tool_calls=model_settings.get('parallel_tool_calls'),
+            prompt_cache_key=model_settings.get('mistral_prompt_cache_key', UNSET),
             http_headers={'User-Agent': get_user_agent()},
         )
         assert response, 'An unexpected empty response from Mistral.'
@@ -400,6 +411,8 @@ class MistralModel(Model[Mistral]):
         assert response.choices, 'Unexpected empty response choice.'
 
         choice = response.choices[0]
+        if choice.message is None:  # pragma: no cover
+            raise UnexpectedModelBehavior('Unexpected empty response message from Mistral')
         content = choice.message.content
         tool_calls = choice.message.tool_calls
 
