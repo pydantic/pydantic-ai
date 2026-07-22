@@ -2642,6 +2642,11 @@ async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest
     with pytest.raises(UserError, match='task-cache replay would drop the enqueued messages'):
         await run_tool()
 
+    # Outside a flow the call runs inline and enqueueing keeps working.
+    outside_context = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=[])
+    assert await durable.call_tool('hook', {}, outside_context, tool) == 'done'
+    assert len(outside_context.pending_messages or []) == 1
+
 
 async def test_prefect_tool_model_retry_is_not_retried_by_task_engine() -> None:
     calls = 0
