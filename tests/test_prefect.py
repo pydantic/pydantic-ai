@@ -2611,6 +2611,33 @@ async def test_prefect_durability_event_stream_handler() -> None:
     assert any(isinstance(event, FinalResultEvent) for event in events)
 
 
+async def test_prefect_durability_event_stream_handler_rejects_enqueue() -> None:
+    """An `event_stream_handler` that enqueues inside a durable task raises, like a tool would.
+
+    The handler runs inside a durable task for both model events (the model-request task) and
+    graph events (the `Handle Stream Event` task); either task's cached result is replayed without
+    re-running it, so an enqueue would be dropped. This exercises the graph-event path.
+    """
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, FunctionToolCallEvent):
+                ctx.enqueue('later')
+
+    async def handled_tool() -> str:
+        return 'handled'
+
+    durability = PrefectDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='durability_handler_enqueue', tools=[handled_tool], capabilities=[durability])
+
+    @flow
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
+        await run_durable_agent()
+
+
 async def test_prefect_durability_identical_events_are_dispatched_twice() -> None:
     calls = 0
 

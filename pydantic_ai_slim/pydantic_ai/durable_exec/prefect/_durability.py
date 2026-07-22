@@ -155,7 +155,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
                     messages, model_settings, model_request_parameters, run_context
                 ) as streamed_response:
                     events = await capture_event_stream(
-                        run_context=run_context,
+                        run_context=self._durable_run_context(run_context),
                         stream=streamed_response,
                         handler=self._event_stream_handler,
                     )
@@ -185,10 +185,11 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         assert self._event_stream_handler is not None
         handler = self._event_stream_handler
+        task_ctx = self._durable_run_context(ctx)
 
         @task(name='Handle Stream Event', **self._event_stream_handler_task_config)
         async def event_stream_handler_task(stream_event: AgentStreamEvent, sequence: int) -> None:
-            await handler(ctx, self._single_event_stream(stream_event))
+            await handler(task_ctx, self._single_event_stream(stream_event))
 
         # The sequence number makes content-identical events within one flow run each fire
         # (distinct task-cache keys) while a flow retry that re-executes the same run

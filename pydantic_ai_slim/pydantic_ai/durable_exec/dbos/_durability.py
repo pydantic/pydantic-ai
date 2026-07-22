@@ -28,7 +28,7 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._agent import DBOSParallelExecutionMode
-from ._utils import StepConfig
+from ._utils import StepConfig, guard_enqueue_in_workflow
 
 
 @dataclass(init=False)
@@ -169,7 +169,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                     messages, model_settings, model_request_parameters, run_context
                 ) as streamed_response:
                     events = await capture_event_stream(
-                        run_context=run_context,
+                        run_context=self._durable_run_context(run_context),
                         stream=streamed_response,
                         handler=self._effective_event_stream_handler(),
                     )
@@ -195,7 +195,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             ) -> None:
                 handler = self._effective_event_stream_handler()
                 assert handler is not None
-                await handler(run_context, self._single_event_stream(event))
+                await handler(self._durable_run_context(run_context), self._single_event_stream(event))
 
             self._event_stream_handler_step = event_stream_handler_step
 
@@ -243,11 +243,17 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return DBOS.workflow_id is not None and DBOS.step_id is None
 
+    def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        # A DBOS step degrades to a plain inline call outside a workflow, where enqueueing is
+        # safe, so only guard once actually inside a workflow.
+        return guard_enqueue_in_workflow(ctx)
+
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         if self._in_legacy_workflow.get():
             # Wrapper-era recordings contain no `__event_stream_handler` steps (the wrapper called
             # the handler directly in workflow code), so a legacy run must do the same to keep the
-            # recorded step sequence replayable.
+            # recorded step sequence replayable. The handler runs at workflow level here, not inside
+            # a step, so the enqueue guard doesn't apply — matching how the wrapper delivered it.
             handler = self._effective_event_stream_handler()
             assert handler is not None
             await handler(ctx, self._single_event_stream(event))
