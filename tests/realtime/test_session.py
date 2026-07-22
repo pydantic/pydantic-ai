@@ -1226,6 +1226,43 @@ async def test_tool_call_cancellation_cancels_running_tool() -> None:
     ]
 
 
+async def test_interrupt_does_not_cancel_in_flight_tool() -> None:
+    # A user barge-in via `interrupt()` cancels the *model's* response server-side (`CancelResponse`),
+    # but deliberately does NOT cancel a local tool that's already running: the work was dispatched, so it
+    # runs to completion and its `ToolResult` is still sent back to the model. This is the intended design
+    # (matching the OpenAI Agents SDK) and contrasts with a provider-driven `ToolCallCancelled` (above),
+    # which *does* cancel the local task. On OpenAI/xAI, sending the result then auto-triggers a fresh
+    # response server-side; suppressing that is the model's concern, not ours to second-guess here.
+    started = asyncio.Event()
+    release = asyncio.Event()
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    async def slow() -> str:
+        started.set()
+        await release.wait()
+        return 'done'
+
+    class _IdleAfterCall(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='slow', args='{}')
+            await asyncio.Event().wait()  # stay open; the consumer breaks out on the tool result
+
+    conn = _IdleAfterCall([])
+    async with agent.realtime_session(model=FakeRealtimeModel(conn)) as session:
+        async for event in session:
+            if isinstance(event, FunctionToolCallEvent):
+                await started.wait()
+                await session.interrupt()
+                release.set()
+            elif isinstance(event, FunctionToolResultEvent):
+                break
+
+    # The barge-in reached the model, and the tool still completed and reported its result afterwards.
+    assert CancelResponse() in conn.sent
+    assert ToolResult(tool_call_id='c1', output='done') in conn.sent
+
+
 # --- send helpers + history ---------------------------------------------------------------------
 
 
