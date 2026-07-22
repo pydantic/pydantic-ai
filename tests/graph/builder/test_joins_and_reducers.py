@@ -400,9 +400,9 @@ async def test_reduce_first_value_keeps_completed_siblings_side_effects():
     @g.step
     async def process(ctx: StepContext[CountingState, None, int]) -> str:
         if ctx.inputs == 3:
-            await blocked.wait()  # suspended before its side effect -> cancelled, never records
-            ctx.state.completed.append('slow')
-            return 'result-slow'
+            await blocked.wait()  # suspended before its side effect -> cancelled here, so the lines below never run
+            ctx.state.completed.append('slow')  # pragma: no cover
+            return 'result-slow'  # pragma: no cover
         ctx.state.completed.append(f'fast-{ctx.inputs}')
         return f'result-{ctx.inputs}'
 
