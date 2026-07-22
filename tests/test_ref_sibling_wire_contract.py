@@ -16,6 +16,14 @@ The two triggers of the changed branch are both covered:
 - The Qwen profile's `InlineDefsJsonSchemaTransformer` inlines a nested model's pydantic-emitted
   `$ref` siblings directly as the provider transformer (the real issue #6591 scenario end-to-end).
 
+The coverage axis is trigger x transformer-class, not provider headcount. The `default`-sensitive logic
+lives ONLY in `pydantic_ai.profiles.openai.OpenAIJsonSchemaTransformer.transform` (represented by the
+OpenAI case); Google contributes its own picky validator + transformer; Qwen contributes the `InlineDefs`
+trigger. The remaining class is providers with no `json_schema_transformer` at all, which send the schema
+untouched — Anthropic represents that class here. xAI is the same class (`profiles/grok.py` likewise sets
+no transformer, and `Model.customize_request_parameters` no-ops when the profile has none), so a live xAI
+recording would add no information and is intentionally omitted.
+
 This is a VCR test rather than a unit test because the whole point is what a provider does with the
 preserved keywords on the wire; a unit test would only re-pin the internal walk shape already covered
 in `test_json_schema.py::test_inline_defs_preserves_ref_sibling_keywords`.
