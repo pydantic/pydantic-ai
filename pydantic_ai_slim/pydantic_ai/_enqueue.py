@@ -7,9 +7,10 @@ state for the pending message queue, not part of the wire-serializable message h
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
+from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
     ModelMessage,
@@ -112,8 +113,7 @@ class PendingMessage:
 
     Enqueued via [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] or
     [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] and automatically drained
-    at the appropriate time during the agent run by
-    [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+    at the appropriate time during the agent run by the internal `PendingMessageDrainCapability`.
     """
 
     messages: list[ModelMessage]
@@ -127,6 +127,11 @@ class PendingMessage:
         would otherwise terminate).
     - `'when_idle'`: only when the agent would otherwise terminate, after `'asap'` messages.
     """
+
+    enqueue_id: str = field(default_factory=lambda: str(uuid7()))
+    """Unique identifier for this enqueue call, surfaced on the
+    [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when the messages
+    are delivered, and returned by [`enqueue`][pydantic_ai.tools.RunContext.enqueue]."""
 
     @classmethod
     def from_content(cls, *content: EnqueueContent, priority: PendingMessagePriority = 'asap') -> PendingMessage | None:

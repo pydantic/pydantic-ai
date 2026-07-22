@@ -78,11 +78,12 @@ Use the durable execution integrations when the run must survive crashes, retrie
 
 Temporal entry points:
 
-- `TemporalAgent`
+- `Agent(..., capabilities=[TemporalDurability(...)])`
 - `PydanticAIWorkflow`
 - `PydanticAIPlugin`
+- `AgentPlugin`
 
-There are parallel integrations for DBOS and Prefect.
+`TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
 ## Use Embeddings for RAG
 

@@ -50,6 +50,19 @@ No findings → `APPROVE`. **Cap inline comments at 30 per run** — if
 more findings survive, keep the highest-severity 30 inline and list
 the rest briefly in the review body.
 
+## Targeted checks
+
+Beyond free-form review, run this check proactively on every model-touching PR:
+
+- **Profile-flag test pinning.** When the diff adds or modifies a
+  `profile.get(...)` read under `pydantic_ai_slim/pydantic_ai/models/`, verify
+  the tests and cassettes added by the same diff exercise a model on *each*
+  side of that flag, not just one. The mechanical trigger, how to evaluate the
+  flag per pinned model, and the "flag this / do not flag this" calibration
+  pair are in `/tmp/gh-aw/.review-context/review-instructions.md` (Example 4).
+  Cap this finding at **MEDIUM**: it is advisory and must never drive
+  `REQUEST_CHANGES`.
+
 ## Review process
 
 ### Step 1 — Orient

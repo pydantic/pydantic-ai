@@ -14,6 +14,7 @@ with try_import() as imports_successful:
     from google.genai.types import HttpRetryOptions
     from google.oauth2 import service_account
 
+    from pydantic_ai.exceptions import UserError
     from pydantic_ai.models import infer_model
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
@@ -41,6 +42,19 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai n
 # `retry_options` only changes behavior on transient 429/5xx responses, which a recorded cassette
 # can't reliably reproduce, so these unit tests assert the resolved HTTP config directly via the
 # SDK's `get_read_only_http_options()` accessor rather than running an agent against a cassette.
+
+
+def test_google_provider_without_api_key_raises_error(env: TestEnv):
+    env.remove('GOOGLE_API_KEY')
+    env.remove('GEMINI_API_KEY')
+    with pytest.raises(
+        UserError,
+        match=(
+            r'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider\(api_key=\.\.\.\)`'
+            r" to use the Gemini API\. To try Pydantic AI without an API key, use the built-in test model: `Agent\('test'\)`\."
+        ),
+    ):
+        GoogleProvider()  # pyright: ignore[reportCallIssue]  # deliberately no api_key, to test the missing-key error
 
 
 def test_google_provider_retry_options(env: TestEnv):
