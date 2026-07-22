@@ -364,14 +364,49 @@ async def test_multiple_assistant_items_fold_into_one_response() -> None:
 
 
 @pytest.mark.parametrize(
-    ('finish_reason', 'provider_details'),
+    ('finish_reason', 'provider_details', 'expected_messages'),
     [
-        ('length', {'status': 'incomplete', 'finish_reason': 'max_output_tokens'}),
-        ('error', {'status': 'failed'}),
+        (
+            'length',
+            {'status': 'incomplete', 'finish_reason': 'max_output_tokens'},
+            # Each case carries its own `snapshot(...)` call site: `inline-snapshot` keys snapshots by
+            # source location, so a single shared `snapshot()` in the test body would raise `UsageError`
+            # when the two parametrized cases evaluate it to different values.
+            snapshot(
+                [
+                    ModelResponse(
+                        parts=[],
+                        provider_details={'status': 'incomplete', 'finish_reason': 'max_output_tokens'},
+                        provider_response_id='response-empty',
+                        timestamp=IsDatetime(),
+                        finish_reason='length',
+                        conversation_id='conversation-1',
+                    )
+                ]
+            ),
+        ),
+        (
+            'error',
+            {'status': 'failed'},
+            snapshot(
+                [
+                    ModelResponse(
+                        parts=[],
+                        provider_details={'status': 'failed'},
+                        provider_response_id='response-empty',
+                        timestamp=IsDatetime(),
+                        finish_reason='error',
+                        conversation_id='conversation-1',
+                    )
+                ]
+            ),
+        ),
     ],
 )
 async def test_empty_terminal_response_is_recorded(
-    finish_reason: Literal['length', 'error'], provider_details: dict[str, Any]
+    finish_reason: Literal['length', 'error'],
+    provider_details: dict[str, Any],
+    expected_messages: list[ModelResponse],
 ) -> None:
     conn = FakeRealtimeConnection(
         [
@@ -386,18 +421,7 @@ async def test_empty_terminal_response_is_recorded(
 
     _ = await collect_events(session)
 
-    assert session.new_messages() == snapshot(
-        [
-            ModelResponse(
-                parts=[],
-                provider_details=provider_details,
-                provider_response_id='response-empty',
-                timestamp=IsDatetime(),
-                finish_reason=finish_reason,
-                conversation_id='conversation-1',
-            )
-        ]
-    )
+    assert session.new_messages() == expected_messages
     assert session.usage.requests == 1
 
 
