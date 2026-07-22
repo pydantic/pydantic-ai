@@ -587,16 +587,12 @@ class RealtimeSession:
             )
         elif isinstance(content, ImageInput):
             await self._send_image(BinaryContent(data=content.data, media_type=content.mime_type))
-        elif isinstance(content, CommitAudio):
-            await self.commit_audio()
-        elif isinstance(content, ClearAudio):
-            await self.clear_audio()
-        elif isinstance(content, CreateResponse):
-            await self.create_response()
-        elif isinstance(content, TruncateOutput):
-            await self.interrupt(audio_end_ms=content.audio_end_ms)
-        elif isinstance(content, CancelResponse):
-            await self.interrupt()
+        elif isinstance(content, (CommitAudio, ClearAudio, CreateResponse, TruncateOutput, CancelResponse)):
+            await self._send_control(content)
+        elif isinstance(content, (bytes, bytearray)):
+            # `bytes` is a `Sequence[int]`, so guard it before the sequence branch below — otherwise it
+            # iterates into a confusing per-byte error. Raw input audio goes through `send_audio()`.
+            raise UserError('Raw audio bytes cannot be sent via `session.send()`; use `session.send_audio(...)`.')
         elif isinstance(content, Sequence):
             for item in content:
                 await self.send(item)
@@ -607,6 +603,21 @@ class RealtimeSession:
             raise UserError(
                 'Tool results are sent automatically by the realtime session and cannot be sent via `session.send()`.'
             )
+
+    async def _send_control(
+        self, content: CommitAudio | ClearAudio | CreateResponse | TruncateOutput | CancelResponse
+    ) -> None:
+        """Dispatch a manual turn-control / interrupt verb to its session method."""
+        if isinstance(content, CommitAudio):
+            await self.commit_audio()
+        elif isinstance(content, ClearAudio):
+            await self.clear_audio()
+        elif isinstance(content, CreateResponse):
+            await self.create_response()
+        elif isinstance(content, TruncateOutput):
+            await self.interrupt(audio_end_ms=content.audio_end_ms)
+        else:
+            await self.interrupt()  # CancelResponse
 
     async def _send_image(self, content: BinaryContent) -> None:
         """Forward an image and retain it according to the session's sampling policy."""
@@ -1028,7 +1039,9 @@ class RealtimeSession:
 
     def _handle_input_transcript(self, text: str, is_final: bool, *, item_id: str | None = None) -> list[RealtimeEvent]:
         if item_id is not None:
-            if is_final and item_id in self._finalized_user_item_ids:
+            # Once an item is closed (finalized or its transcription failed), ignore any stray later event
+            # for it — re-creating it would duplicate the turn or resurrect a discarded failed one.
+            if item_id in self._finalized_user_item_ids:
                 return []
             events: list[RealtimeEvent] = []
             if item_id not in self._active_users_by_id:
@@ -1104,12 +1117,21 @@ class RealtimeSession:
                 self._history.append(ModelRequest(parts=[part], conversation_id=self._conversation_id))
         else:
             self._finalized_users_by_id[item_id] = part
-            while self._user_item_order and self._user_item_order[0] in self._finalized_users_by_id:
-                finalized_id = self._user_item_order.popleft()
-                finalized = self._finalized_users_by_id.pop(finalized_id)
-                if finalized.has_content():
-                    self._history.append(ModelRequest(parts=[finalized], conversation_id=self._conversation_id))
+            self._flush_finalized_user_prefix()
         return [PartEndEvent(index=0, part=part)]
+
+    def _flush_finalized_user_prefix(self) -> None:
+        """Append finalized user items in provider order, up to the first item still awaiting its final.
+
+        Item-ID transcripts finalize in any order, but history must keep provider order (call/return
+        adjacency etc.), so a finalized item waits in `_finalized_users_by_id` until every earlier item
+        has resolved (finalized or discarded).
+        """
+        while self._user_item_order and self._user_item_order[0] in self._finalized_users_by_id:
+            finalized_id = self._user_item_order.popleft()
+            finalized = self._finalized_users_by_id.pop(finalized_id)
+            if finalized.has_content():
+                self._history.append(ModelRequest(parts=[finalized], conversation_id=self._conversation_id))
 
     def _segment_input_audio(self, item_id: str | None) -> None:
         """Cut the rolling input-audio buffer into `item_id`'s own segment at its speech-stopped boundary.
@@ -1127,6 +1149,25 @@ class RealtimeSession:
         """Discard a retained input-audio segment whose transcript will never arrive (e.g. on failure)."""
         if item_id is not None:
             self._input_audio_by_id.pop(item_id, None)
+
+    def _discard_failed_user_item(self, item_id: str | None) -> None:
+        """Drop all state for a user item whose transcription failed.
+
+        A failed transcription never becomes a user turn (its partial text is unreliable), and — crucially —
+        it must not sit at the head of `_user_item_order` blocking later finalized turns from reaching
+        history until the session closes. Drop its retained audio, partial transcript, and ordering entry,
+        mark it closed so stray late events are ignored, then flush any turns it was blocking.
+        """
+        self._drop_input_audio_segment(item_id)
+        if item_id is None:
+            return
+        self._active_users_by_id.pop(item_id, None)
+        self._user_transcripts_by_id.pop(item_id, None)
+        self._finalized_users_by_id.pop(item_id, None)
+        if item_id in self._user_item_order:
+            self._user_item_order.remove(item_id)
+        self._finalized_user_item_ids.add(item_id)
+        self._flush_finalized_user_prefix()
 
     def _flush_pending_users(self) -> None:
         """Preserve transcript-bearing user items that never received an explicit final event."""
@@ -1239,9 +1280,10 @@ class RealtimeSession:
         if isinstance(event, PartEndEvent):
             return [event]
         if isinstance(event, InputTranscriptionFailedEvent):
-            # This item's transcript won't arrive, so drop any input-audio segment captured for it (with
-            # `audio_retention='input'`/`'both'`) rather than leak it, then surface the failure.
-            self._drop_input_audio_segment(event.item_id)
+            # This item's transcript won't arrive: discard its state (retained audio, any partial transcript,
+            # ordering entry) so it never becomes a turn and doesn't block later turns, then surface the
+            # failure.
+            self._discard_failed_user_item(event.item_id)
             return [event]
         # The remaining control-plane events pass through unchanged. `assert_never` makes pyright flag
         # any new non-pump `RealtimeEvent` variant that isn't handled here.

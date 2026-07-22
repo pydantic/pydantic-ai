@@ -614,6 +614,26 @@ async def test_input_transcription_failure_passes_through_and_session_continues(
     assert await collect_events(session) == [identified, anonymous, TurnCompleteEvent()]
 
 
+async def test_input_transcription_failure_after_partial_does_not_block_later_turns() -> None:
+    # Item A streams a partial transcript then its transcription fails; item B then finalizes. A must be
+    # discarded (never a turn) and must NOT sit at the head of the order blocking B — otherwise B only
+    # reaches history at session close, and a mid-session `all_messages()` silently omits it.
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='partial A', is_final=False, item_id='A'),
+            InputTranscriptionFailedEvent(message='transcription failed', item_id='A'),
+            InputTranscript(text='hello from B', is_final=True, item_id='B'),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+    _ = await collect_events(session)
+    # Only B is recorded, and it's present immediately (not parked behind the failed A until teardown).
+    assert session.new_messages() == snapshot(
+        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello from B', id='B')])]
+    )
+
+
 async def test_fatal_session_error_raises() -> None:
     conn = FakeRealtimeConnection([SessionErrorEvent(message='provider failed', recoverable=False)])
     session = RealtimeSession(conn, _noop_runner)
@@ -1399,6 +1419,16 @@ async def test_send_rejects_unsupported_binary_content() -> None:
     with pytest.raises(UserError, match=r"Unsupported binary media type 'application/pdf'.*image and audio"):
         await session.send(BinaryContent(data=b'document', media_type='application/pdf'))
 
+    assert conn.sent == []
+
+
+async def test_send_rejects_raw_bytes_with_audio_hint() -> None:
+    # `bytes` is a `Sequence[int]`; sending it must give a clear "use `send_audio`" error, not iterate into
+    # a confusing per-byte failure.
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    with pytest.raises(UserError, match=r'Raw audio bytes cannot be sent.*send_audio'):
+        await session.send(b'\x00\x01')  # type: ignore[arg-type]
     assert conn.sent == []
 
 
