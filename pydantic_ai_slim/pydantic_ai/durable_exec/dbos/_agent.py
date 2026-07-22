@@ -1119,6 +1119,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         conversation_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session; see [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] for the parameters.
 
@@ -1144,6 +1145,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             conversation_id=conversation_id,
             message_history=message_history,
             audio_retention=audio_retention,
+            retain_images_every_n=retain_images_every_n,
         ) as session:
             yield session
 

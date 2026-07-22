@@ -3365,11 +3365,20 @@ async def test_wrapper_agent_realtime_session_proxies() -> None:
 
     inner: Agent[None, str] = Agent(instructions='Inner')
     wrapper = WrapperAgent(inner)
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([])
     model = FakeRealtimeModel(conn)
-    async with wrapper.realtime_session(model=model) as session:
-        _ = [e async for e in session]
+    images = [BinaryImage(data=bytes([index]), media_type='image/png') for index in range(3)]
+    # The wrapped agent's session is used, and per-session options like `retain_images_every_n` forward
+    # through the wrapper (and the durable-exec subclasses that extend it) rather than being dropped.
+    async with wrapper.realtime_session(model=model, retain_images_every_n=2) as session:
+        for image in images:
+            await session.send(image)
+        retained = session.new_messages()
     assert model.last_instructions == 'Inner'  # the wrapped agent's session was used
+    assert retained == [
+        ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())]),
+        ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())]),
+    ]
 
 
 async def test_agent_realtime_session_drops_auto_injected_tool_search() -> None:

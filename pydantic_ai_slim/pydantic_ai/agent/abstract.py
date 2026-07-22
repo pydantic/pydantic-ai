@@ -1537,6 +1537,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         conversation_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session backed by the agent's tools.
 
