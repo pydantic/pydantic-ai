@@ -55,10 +55,12 @@ AdvisorModelName = (
     ]
     | str
 )
-"""Known Anthropic advisor model names, or another Anthropic model ID.
+"""Known Anthropic advisor model names, or any other model ID string.
 
 These are the models Anthropic currently accepts as the *advisor* — the stronger model an
 executor consults mid-generation. The executor/advisor pairing is validated by the API, not here.
+The literals are Anthropic model IDs; on OpenRouter, pass a catalog slug string instead
+(e.g. `anthropic/claude-opus-4.8` or the `~anthropic/claude-opus-latest` alias).
 """
 
 
@@ -629,17 +631,27 @@ class FileSearchTool(AbstractNativeTool):
 class AdvisorTool(AbstractNativeTool):
     """A native tool that lets a faster executor model consult a stronger advisor model mid-generation.
 
-    The fields map 1:1 to the parameters of Anthropic's advisor tool definition.
+    The fields map 1:1 to the parameters of Anthropic's advisor tool definition. OpenRouter exposes
+    the advisor as a gateway server tool that honors a subset (`model`, `max_tokens`); see the
+    per-field docstrings for which provider supports each.
 
     Supported by:
 
     * Anthropic
+    * OpenRouter
     """
 
     model: AdvisorModelName
-    """The advisor model to consult, i.e. the `model` field of Anthropic's advisor tool definition.
+    """The advisor model to consult, i.e. the `model` field of the provider's advisor tool definition.
 
-    The executor/advisor pairing is validated by the Anthropic API, not here.
+    The executor/advisor pairing is validated by the provider's API, not here. The accepted namespace
+    depends on the executing provider: Anthropic model IDs (e.g. `claude-opus-4-8`) on Anthropic,
+    OpenRouter catalog slugs (e.g. `anthropic/claude-opus-4.8`) on OpenRouter.
+
+    Supported by:
+
+    * Anthropic
+    * OpenRouter
     """
 
     max_uses: int | None = None
@@ -648,16 +660,21 @@ class AdvisorTool(AbstractNativeTool):
     Supported by:
 
     * Anthropic
+
+    OpenRouter caps advisor consultations per request with a fixed gateway limit that `max_uses`
+    cannot lower, so setting it on an OpenRouter model raises a `UserError` rather than being ignored.
     """
 
     max_tokens: int | None = None
-    """If provided, caps the advisor's output tokens (minimum 1024). Maps to `max_tokens`.
+    """If provided, caps the advisor's output tokens (minimum 1024). Maps to `max_tokens` on Anthropic
+    and `max_completion_tokens` on OpenRouter.
 
-    When set, the advisor result carries a `stop_reason`.
+    When set, the Anthropic advisor result carries a `stop_reason`.
 
     Supported by:
 
     * Anthropic
+    * OpenRouter
     """
 
     caching: Literal['5m', '1h'] | None = None
@@ -667,6 +684,9 @@ class AdvisorTool(AbstractNativeTool):
     Supported by:
 
     * Anthropic
+
+    OpenRouter's advisor tool has no equivalent knob, so setting it on an OpenRouter model raises a
+    `UserError` rather than being ignored.
     """
 
     kind: str = 'advisor'

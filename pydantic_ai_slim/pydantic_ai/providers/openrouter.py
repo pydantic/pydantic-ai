@@ -10,6 +10,7 @@ from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
@@ -181,6 +182,12 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 openai_chat_supports_web_search=True,
                 openai_chat_supports_max_completion_tokens=False,
                 supports_thinking=True,
+                # OpenRouter's native tools (web search plugin, advisor) are gateway features that
+                # work with any underlying model, so the upstream profile's vendor-specific tool
+                # gating (e.g. Anthropic's valid-executor list) doesn't apply. Neutralize it here;
+                # `OpenRouterModel.supported_native_tools()` caps the effective set via the
+                # intersection in `Model.profile`.
+                supported_native_tools=SUPPORTED_NATIVE_TOOLS,
                 openrouter_supports_cache_control=supports_cache_control,
                 openrouter_supports_cache_ttl=supports_anthropic_cache,
                 openrouter_supports_tool_cache=supports_anthropic_cache,

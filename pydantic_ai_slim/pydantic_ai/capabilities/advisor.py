@@ -17,9 +17,10 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
 
     Lets a faster executor model consult a stronger advisor model mid-generation via the model's
     native advisor tool, and raises `UserError` on models that don't support it natively.
+    Supported by Anthropic and OpenRouter.
 
     There is no local fallback: consulting a stronger model mid-generation is a provider-native
-    feature with no cross-provider equivalent. A subagent-based fallback is explicitly deferred.
+    feature, so a subagent-based fallback is explicitly deferred.
     """
 
     model: AdvisorModelName | None
