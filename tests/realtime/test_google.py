@@ -443,7 +443,7 @@ async def test_send_text() -> None:
 
 async def test_send_image_as_video_frame() -> None:
     session = _RecordingSession()
-    await _conn(session).send(ImageInput(data=b'\xff\xd8', mime_type='image/jpeg'))
+    await _conn(session).send(ImageInput(data=b'\xff\xd8', media_type='image/jpeg'))
     blob = session.realtime[0]['video']
     assert blob.data == b'\xff\xd8'
     assert blob.mime_type == 'image/jpeg'

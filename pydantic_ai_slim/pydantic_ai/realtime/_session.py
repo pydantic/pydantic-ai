@@ -586,7 +586,7 @@ class RealtimeSession:
                 ModelRequest(parts=[UserPromptPart(content=content.text)], conversation_id=self._conversation_id)
             )
         elif isinstance(content, ImageInput):
-            await self._send_image(BinaryContent(data=content.data, media_type=content.mime_type))
+            await self._send_image(BinaryContent(data=content.data, media_type=content.media_type))
         elif isinstance(content, (CommitAudio, ClearAudio, CreateResponse, TruncateOutput, CancelResponse)):
             await self._send_control(content)
         elif isinstance(content, (bytes, bytearray)):
@@ -622,7 +622,7 @@ class RealtimeSession:
     async def _send_image(self, content: BinaryContent) -> None:
         """Forward an image and retain it according to the session's sampling policy."""
         self._require_capability(self._profile.get('supports_image_input', False), 'send', 'image input')
-        await self._connection.send(ImageInput(data=content.data, mime_type=content.media_type))
+        await self._connection.send(ImageInput(data=content.data, media_type=content.media_type))
         if self._sent_image_count % self._retain_images_every_n == 0:
             self._record_sent_request(
                 ModelRequest(parts=[UserPromptPart(content=[content])], conversation_id=self._conversation_id)
@@ -1370,6 +1370,10 @@ class RealtimeSession:
                     self._tool_manager = await self._tool_manager.for_run_step(
                         replace(ctx, run_step=self._tool_run_step)
                     )
+                # Pin the step-synchronized manager for this call: a concurrent tool task can swap
+                # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
+                # so re-reading the attribute there could run against a different run-step's manager.
+                tool_manager = self._tool_manager
             tool_call = ToolCallPart(tool_name=call.tool_name, args=args, tool_call_id=call.tool_call_id)
 
             async def on_validate(args_valid: bool) -> None:
@@ -1384,7 +1388,7 @@ class RealtimeSession:
                 await self._queue.put(DeferredToolResultsEvent(results))
 
             try:
-                tool_result = await self._tool_manager.handle_call(
+                tool_result = await tool_manager.handle_call(
                     tool_call,
                     on_validate=on_validate,
                     on_inline_deferred=on_inline_deferred,
@@ -1411,7 +1415,7 @@ class RealtimeSession:
                 )
                 user_content = None
             else:
-                tool_def = self._tool_manager.get_tool_def(call.tool_name)
+                tool_def = tool_manager.get_tool_def(call.tool_name)
                 result_part, user_content = build_tool_return_part(
                     tool_result,
                     call=tool_call,
@@ -1528,6 +1532,12 @@ class RealtimeSession:
 
     def _tool_task_done(self, task: asyncio.Task[None]) -> None:
         self._background_tasks.discard(task)
+        # Surface any exception raised outside `_run_tool`'s own try/except — notably the post-`finally`
+        # `asap` drain, whose `connection.send` can fail if the socket just dropped — mirroring
+        # `_pending_message_task_done`. Otherwise it vanishes with only an "exception was never
+        # retrieved" warning at GC, silently losing the enqueued message with no signal to the consumer.
+        if not task.cancelled() and (error := task.exception()) is not None:
+            self._queue.put_nowait(error)
         # Wake the queue reader so it can finish once both the pump and the last tool are done.
         self._queue.put_nowait(self._queue_changed)
 

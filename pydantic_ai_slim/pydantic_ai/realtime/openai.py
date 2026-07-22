@@ -230,7 +230,12 @@ def _map_transcription_usage(usage: RealtimeTranscriptionUsage | None) -> Reques
     if usage is None or not usage.model_fields_set:
         return None
     details: dict[str, int] = {}
-    if usage.type == 'tokens':
+    if isinstance(usage, UsageTranscriptTextUsageTokens):
+        # Branch on the variant, not `usage.type`: a protocol clone (xAI/Azure) may omit the `type`
+        # discriminator, which `_validate_usage_shape` deliberately tolerates, and the SDK's lenient
+        # `.construct` then builds this tokens variant with `type=None`. A type-less payload must be read
+        # as tokens rather than reaching the duration branch, whose `usage.seconds` this variant lacks —
+        # previously an `AttributeError` that escaped the recoverable path and tore the session down.
         token_details = usage.input_token_details or None
         if token_details is not None and not isinstance(token_details, UsageTranscriptTextUsageTokensInputTokenDetails):
             raise ValueError('`usage.input_token_details` must be an object')
@@ -344,7 +349,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         elif isinstance(content, ImageInput):
             # An image is added as conversation context (like a video frame), not a turn of its own,
             # so it doesn't trigger a response — drive that with audio (VAD) or `CreateResponse`.
-            data_uri = f'data:{content.mime_type};base64,{base64.b64encode(content.data).decode("ascii")}'
+            data_uri = f'data:{content.media_type};base64,{base64.b64encode(content.data).decode("ascii")}'
             await self._send_event(
                 {
                     'type': 'conversation.item.create',

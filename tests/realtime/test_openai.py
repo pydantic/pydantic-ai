@@ -131,6 +131,15 @@ def test_map_transcription_usage() -> None:
             type='tokens', input_tokens=5, output_tokens=2, total_tokens=7, input_token_details=None
         )
     ) == RequestUsage(details={'input_transcription_tokens': 7})
+    # A protocol clone (xAI/Azure) may omit the `type` discriminator, which `_validate_usage_shape`
+    # tolerates; the SDK's lenient `.construct` then builds the tokens variant with `type=None`. It must
+    # be read as tokens rather than falling through to the duration branch, whose `.seconds` this variant
+    # lacks — previously an `AttributeError` that escaped the recoverable path and tore the session down.
+    assert rt_openai._map_transcription_usage(
+        UsageTranscriptTextUsageTokens.construct(total_tokens=12)
+    ) == RequestUsage(details={'input_transcription_tokens': 12})
+    # A type-less payload carrying only a duration is a graceful no-op, not a crash.
+    assert rt_openai._map_transcription_usage(UsageTranscriptTextUsageTokens.construct(seconds=1.5)) is None
 
 
 @pytest.mark.parametrize(
@@ -960,7 +969,11 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
         # A `duration` transcription usage with no numeric `seconds` (the SDK's lenient union fallback would
         # otherwise construct the wrong variant and crash on `usage.seconds`).
         json.dumps(
-            {'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'hi', 'usage': {'type': 'duration'}}
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'transcript': 'hi',
+                'usage': {'type': 'duration'},
+            }
         ),
         json.dumps(
             {
@@ -970,7 +983,11 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
             }
         ),
         json.dumps(
-            {'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'hi', 'usage': {'type': 'mystery'}}
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'transcript': 'hi',
+                'usage': {'type': 'mystery'},
+            }
         ),
     ]
     good = json.dumps({'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'\x09').decode('ascii')})
@@ -1550,7 +1567,7 @@ async def test_connection_send_tool_result_with_follow_up_user_content() -> None
 async def test_connection_send_image() -> None:
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
-    await conn.send(ImageInput(data=b'\x01\x02', mime_type='image/png'))
+    await conn.send(ImageInput(data=b'\x01\x02', media_type='image/png'))
     item = json.loads(ws.sent[0])
     assert item['type'] == 'conversation.item.create'
     content = item['item']['content'][0]
@@ -1703,7 +1720,11 @@ async def test_transcription_completed_token_usage_emits_run_level_usage() -> No
             'type': 'conversation.item.input_audio_transcription.completed',
             'item_id': 'u1',
             'transcript': 'hi',
-            'usage': {'type': 'tokens', 'total_tokens': 5, 'input_token_details': {'audio_tokens': 4, 'text_tokens': 1}},
+            'usage': {
+                'type': 'tokens',
+                'total_tokens': 5,
+                'input_token_details': {'audio_tokens': 4, 'text_tokens': 1},
+            },
         }
     )
     ws = FakeWebSocket([frame])

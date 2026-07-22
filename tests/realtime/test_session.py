@@ -1334,7 +1334,7 @@ async def test_send_helpers_forward_to_connection() -> None:
     assert conn.sent == [
         AudioInput(data=b'\x01\x02'),
         TextInput(text='hello'),
-        ImageInput(data=b'\xff\xd8', mime_type='image/jpeg'),
+        ImageInput(data=b'\xff\xd8', media_type='image/jpeg'),
         AudioInput(data=b'\x03'),
     ]
 
@@ -1362,7 +1362,7 @@ async def test_send_accepts_plain_content() -> None:
     assert conn.sent == snapshot(
         [
             TextInput(text='hello'),
-            ImageInput(data=b'image', mime_type='image/png'),
+            ImageInput(data=b'image', media_type='image/png'),
             AudioInput(data=b'audio'),
         ]
     )
@@ -1387,7 +1387,7 @@ async def test_send_accepts_sequence() -> None:
 
     await session.send(['look at this', BinaryImage(data=b'image', media_type='image/png')])
 
-    assert conn.sent == [TextInput(text='look at this'), ImageInput(data=b'image', mime_type='image/png')]
+    assert conn.sent == [TextInput(text='look at this'), ImageInput(data=b'image', media_type='image/png')]
 
 
 async def test_image_history_retention_samples_and_round_trips() -> None:
@@ -1398,7 +1398,7 @@ async def test_image_history_retention_samples_and_round_trips() -> None:
     for image in images:
         await session.send(image)
 
-    assert conn.sent == [ImageInput(data=image.data, mime_type='image/png') for image in images]
+    assert conn.sent == [ImageInput(data=image.data, media_type='image/png') for image in images]
     assert session.all_messages() == [
         ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())]),
         ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())]),
@@ -1437,7 +1437,7 @@ async def test_send_enforces_model_profile_guard() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_image_input=False))
     with pytest.raises(UserError, match='does not support image input'):
-        await session.send(ImageInput(data=b'\xff', mime_type='image/jpeg'))
+        await session.send(ImageInput(data=b'\xff', media_type='image/jpeg'))
     assert conn.sent == []
 
 
@@ -2785,6 +2785,51 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
     )
 
     assert TextInput('after tool') in conn.sent
+
+
+async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The post-`finally` deferred `asap` drain in `_run_tool` runs OUTSIDE its try/except. If its
+    # `connection.send` fails (e.g. the socket just dropped), `_tool_task_done` must forward the error to
+    # the consumer — mirroring `_pending_message_task_done` — instead of letting it vanish as an
+    # unretrieved-task-exception warning at GC, silently losing the enqueued follow-up.
+    class _FailingDrain(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            if isinstance(content, TextInput):
+                raise RuntimeError('drain send failed')
+            await super().send(content)
+
+    conn = _FailingDrain([])
+    session = RealtimeSession(conn)
+    session._asap_drain_deferred = True  # pyright: ignore[reportPrivateUsage]
+    session._pending_messages.append(  # pyright: ignore[reportPrivateUsage]
+        PendingMessage(messages=[ModelRequest(parts=[UserPromptPart(content='after tool')])], priority='asap')
+    )
+
+    async def complete_after_usage(
+        call: ToolCall, call_part: ToolCallPart, validation_done: asyncio.Event
+    ) -> tuple[ToolReturnPart, None]:
+        del call, validation_done
+        session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
+        return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
+
+    session._tool_calls_awaiting_usage.add('call')  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(session, '_execute_tool', complete_after_usage)
+
+    task = asyncio.create_task(
+        session._run_tool(  # pyright: ignore[reportPrivateUsage]
+            ToolCall(tool_call_id='call', tool_name='noop', args='{}'),
+            ToolCallPart(tool_name='noop', args={}, tool_call_id='call'),
+            asyncio.Event(),
+        )
+    )
+    task.add_done_callback(session._tool_task_done)  # pyright: ignore[reportPrivateUsage]
+    await asyncio.gather(task, return_exceptions=True)
+    await asyncio.sleep(0)  # let the done-callback run
+
+    queued: list[Any] = []
+    while not session._queue.empty():  # pyright: ignore[reportPrivateUsage]
+        queued.append(session._queue.get_nowait())  # pyright: ignore[reportPrivateUsage]
+    assert any(isinstance(item, RuntimeError) and str(item) == 'drain send failed' for item in queued)
 
 
 async def test_tool_call_limit_stops_pump_before_later_events() -> None:

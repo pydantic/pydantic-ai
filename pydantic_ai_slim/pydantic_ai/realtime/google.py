@@ -880,7 +880,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
             )
         elif isinstance(content, ImageInput):
             await self._session.send_realtime_input(  # pyright: ignore[reportUnknownMemberType]
-                video=genai_types.Blob(data=content.data, mime_type=content.mime_type)
+                video=genai_types.Blob(data=content.data, mime_type=content.media_type)
             )
         elif isinstance(content, ToolResult):
             name, gemini_id = self._tool_calls.pop(content.tool_call_id, ('', None))

@@ -197,8 +197,8 @@ class ImageInput:
 
     data: bytes
     """Raw image bytes."""
-    mime_type: str = 'image/jpeg'
-    """The image media type."""
+    media_type: str = 'image/jpeg'
+    """The image media type. Named to match [`BinaryContent.media_type`][pydantic_ai.messages.BinaryContent]."""
 
 
 @dataclass
