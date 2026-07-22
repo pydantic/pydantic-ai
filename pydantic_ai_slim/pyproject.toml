@@ -77,11 +77,10 @@ anthropic = ["anthropic>=0.108.0"]
 xai = ["xai-sdk>=1.14.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai>=2.45.0"]
-# `mistralai>=2.5.0` is required for the `prompt_cache_key` parameter on `chat.complete_async`
-# (also covers the `reasoning_effort` parameter, which needed >=2.0.5). The floor is now above
-# the `2.4.6` release quarantined on PyPI for a supply-chain attack (see #5382), so that exclusion
-# is no longer needed.
-mistral = ["mistralai>=2.5.0"]
+# `mistralai>=2.4.2` is required for the `prompt_cache_key` parameter on `chat.complete_async`
+# and `chat.stream_async` (also covers the `reasoning_effort` parameter, which needed >=2.0.5).
+# `mistralai==2.4.6` was quarantined on PyPI due to a supply-chain attack (see #5382).
+mistral = ["mistralai>=2.4.2,!=2.4.6"]
 bedrock = ["boto3>=1.42.63"]
 zai = ["openai>=2.45.0"]
 huggingface = [
