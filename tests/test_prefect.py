@@ -51,7 +51,14 @@ from pydantic_ai.capabilities import (
     Toolset,
 )
 from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    ToolFailed,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext, create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -1233,6 +1240,29 @@ async def test_prefect_agent_with_model_retry(allow_model_requests: None) -> Non
     assert 'sunny' in result.output.lower() or 'mexico city' in result.output.lower()
 
 
+tool_failed_agent = Agent(TestModel(call_tools=['failing_tool']), name='tool_failed_agent')
+
+
+@tool_failed_agent.tool_plain
+def failing_tool() -> str:
+    raise ToolFailed('Disk full')
+
+
+tool_failed_prefect_agent = PrefectAgent(tool_failed_agent)  # pyright: ignore[reportDeprecated]
+
+
+async def test_prefect_agent_with_tool_failed() -> None:
+    result = await tool_failed_prefect_agent.run('Call the failing tool')
+
+    tool_returns = [
+        (part.tool_name, part.content, part.outcome)
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert tool_returns == [('failing_tool', 'Disk full', 'failed')]
+
+
 # Test dynamic toolsets
 @dataclass
 class ToggleableDeps:
@@ -1760,6 +1790,20 @@ async def test_custom_model_settings(allow_model_requests: None):
 @dataclass
 class SimpleDeps:
     value: str
+
+
+async def test_prefect_agent_explicit_run_id():
+    """A pre-minted `run_id=` is preserved through PrefectAgent inside a flow."""
+    agent = Agent(TestModel(custom_output_text='ok'), name='run_id_prefect_agent')
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    @flow(name='test_prefect_agent_explicit_run_id')
+    async def run_with_run_id() -> AgentRunResult[str]:
+        return await prefect_agent.run('Hello', run_id='run-from-prefect')
+
+    result = await run_with_run_id()
+    assert result.run_id == 'run-from-prefect'
+    assert all(m.run_id == 'run-from-prefect' for m in result.all_messages())
 
 
 async def test_tool_call_outside_flow():

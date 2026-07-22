@@ -98,6 +98,8 @@ Important hook families:
 - tool-execution hooks
 - event-stream hooks
 
+From tool-validation and tool-execution hooks you can raise `ModelRetry` (the model should retry the call) or `ToolFailed` (the call is done and failed — the model sees the result and adapts, without consuming the retry budget) to redirect a tool call in one place instead of per tool.
+
 Use hooks when the user wants observability, auditing, or light interception without adding a new abstraction.
 
 ## Build a Custom Capability
