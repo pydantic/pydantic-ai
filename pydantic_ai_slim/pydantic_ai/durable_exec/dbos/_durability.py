@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
@@ -116,6 +117,14 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._event_stream_handler_step: Any = None
         self._legacy_run_workflow: Any = None
         self._legacy_run_sync_workflow: Any = None
+        # A wrapper-era workflow recorded `event_stream_handler=` as a workflow input; the legacy
+        # workflows stash it here so it's delivered through the same steps as a constructor handler.
+        self._legacy_run_event_stream_handler: ContextVar[EventStreamHandler[AgentDepsT] | None] = ContextVar(
+            '_legacy_run_event_stream_handler', default=None
+        )
+
+    def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        return self._legacy_run_event_stream_handler.get() or self._event_stream_handler
 
     def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         # --- Model request steps ---
@@ -150,7 +159,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                     events = await capture_event_stream(
                         run_context=run_context,
                         stream=streamed_response,
-                        handler=self._event_stream_handler,
+                        handler=self._effective_event_stream_handler(),
                     )
             return StreamedActivityResult(response=streamed_response.get(), events=events)
 
@@ -166,13 +175,17 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
         self._cancel_suspended_response_step = cancel_suspended_response_step
 
-        if self._event_stream_handler is not None:
-            handler = self._event_stream_handler
+        # Also registered under `register_legacy_workflows`: a recovered wrapper-era workflow's
+        # recorded inputs may carry a per-run handler, which must run inside this step for the
+        # recorded step sequence to replay.
+        if self._event_stream_handler is not None or self._register_legacy_workflows:
 
             @DBOS.step(name=f'{self.name}__event_stream_handler', **self._event_stream_handler_step_config)
             async def event_stream_handler_step(
                 event: _messages.AgentStreamEvent, run_context: RunContext[Any]
             ) -> None:
+                handler = self._effective_event_stream_handler()
+                assert handler is not None
                 await handler(run_context, self._single_event_stream(event))
 
             self._event_stream_handler_step = event_stream_handler_step
@@ -181,16 +194,32 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._register_toolsets(agent)
 
         if self._register_legacy_workflows:
+            # `DBOSAgent.run` recorded `event_stream_handler=` as a workflow input and ran it inside
+            # the `__event_stream_handler` step; a recorded handler is routed the same way so
+            # recovery replays the recorded step sequence instead of re-running the handler (and its
+            # side effects) at graph level.
 
             @DBOS.workflow(name=f'{self.name}.run')
             async def legacy_run_workflow(*args: Any, **kwargs: Any) -> AgentRunResult[Any]:
-                return await agent.run(*args, **kwargs)
+                handler = kwargs.pop('event_stream_handler', None)
+                token = self._legacy_run_event_stream_handler.set(handler) if handler is not None else None
+                try:
+                    return await agent.run(*args, **kwargs)
+                finally:
+                    if token is not None:
+                        self._legacy_run_event_stream_handler.reset(token)
 
             self._legacy_run_workflow = legacy_run_workflow
 
             @DBOS.workflow(name=f'{self.name}.run_sync')
             def legacy_run_sync_workflow(*args: Any, **kwargs: Any) -> AgentRunResult[Any]:
-                return agent.run_sync(*args, **kwargs)
+                handler = kwargs.pop('event_stream_handler', None)
+                token = self._legacy_run_event_stream_handler.set(handler) if handler is not None else None
+                try:
+                    return agent.run_sync(*args, **kwargs)
+                finally:
+                    if token is not None:
+                        self._legacy_run_event_stream_handler.reset(token)
 
             self._legacy_run_sync_workflow = legacy_run_sync_workflow
 

@@ -2157,17 +2157,66 @@ async def test_dbos_durability_accepts_legacy_stream_step_shape(dbos: DBOS) -> N
     assert await run_agent() == ('legacy stream', ['legacy stream'])
 
 
+# Module-level like real wrapper-era handlers: `DBOSAgent.run` recorded the handler as a
+# workflow input, so it had to be picklable by reference.
+_legacy_handler_events: list[tuple[AgentStreamEvent, bool]] = []
+
+
+async def _legacy_workflow_event_handler(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _legacy_handler_events.append((event, DBOS.step_id is not None))
+
+
 def test_dbos_durability_legacy_run_sync_workflow(dbos: DBOS) -> None:
-    """The opt-in legacy `run_sync` workflow executes the agent like `DBOSAgent.run_sync` did."""
+    """The opt-in legacy `run_sync` workflow executes the agent like `DBOSAgent.run_sync` did,
+    including routing a recorded per-run `event_stream_handler` input through steps."""
+    _legacy_handler_events.clear()
     agent = Agent(
-        _durability_fn_model,
+        TestModel(custom_output_text='legacy sync'),
         name='legacy_workflow_sync_compat',
         capabilities=[DBOSDurability(register_legacy_workflows=True)],
     )
     durability = DBOSDurability.from_agent(agent)
     assert durability is not None
-    result = durability._legacy_run_sync_workflow('legacy')  # pyright: ignore[reportPrivateUsage]
-    assert result.output == 'Echo: legacy'
+    result = durability._legacy_run_sync_workflow('legacy', event_stream_handler=_legacy_workflow_event_handler)  # pyright: ignore[reportPrivateUsage]
+    assert result.output == 'legacy sync'
+    assert _legacy_handler_events
+
+
+async def test_dbos_durability_legacy_workflow_routes_event_stream_handler_through_steps(dbos: DBOS) -> None:
+    """A per-run `event_stream_handler` recorded in a wrapper-era workflow's inputs runs inside steps.
+
+    `DBOSAgent.run` recorded the handler as a workflow input and invoked it inside the
+    `__event_stream_handler` step; the compat workflow must replay that recorded step
+    sequence rather than re-running the handler (and its side effects) at graph level.
+    """
+    _legacy_handler_events.clear()
+
+    async def handled_tool() -> str:
+        return 'handled'
+
+    agent = Agent(
+        TestModel(),
+        name='legacy_workflow_handler',
+        tools=[handled_tool],
+        capabilities=[DBOSDurability(register_legacy_workflows=True)],
+    )
+    durability = DBOSDurability.from_agent(agent)
+    assert durability is not None
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        result = await durability._legacy_run_workflow('Hello', event_stream_handler=_legacy_workflow_event_handler)  # pyright: ignore[reportPrivateUsage]
+    assert result.output
+
+    events = [event for event, _ in _legacy_handler_events]
+    assert events
+    assert all(in_step for _, in_step in _legacy_handler_events)
+    assert sum(isinstance(event, FunctionToolCallEvent) for event in events) == 1
+
+    steps = await dbos.list_workflow_steps_async(wfid)
+    step_names = [step['function_name'] for step in steps]
+    assert 'legacy_workflow_handler__event_stream_handler' in step_names
 
 
 async def test_unwrap_recorded_tool_call_result_handles_both_generations() -> None:

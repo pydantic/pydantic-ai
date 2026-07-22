@@ -182,9 +182,9 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
 def unwrap_recorded_tool_call_result(result: Any) -> Any:
     """Unwrap a durably-recorded tool result, passing raw pre-wrapper values through.
 
-    Engines that replay recorded step outputs on recovery (DBOS) may hold outputs recorded
-    before the step wrapped control-flow exceptions as values; those recordings are the raw
-    tool result and are returned unchanged.
+    Engines that replay recorded durable-unit outputs (DBOS step recovery, Prefect task
+    caches) may hold outputs recorded before the unit wrapped control-flow exceptions as
+    values; those recordings are the raw tool result and are returned unchanged.
     """
     if isinstance(result, _ToolReturn | _ToolContentResult | _ApprovalRequired | _CallDeferred | _ModelRetry):
         return unwrap_tool_call_result(result)

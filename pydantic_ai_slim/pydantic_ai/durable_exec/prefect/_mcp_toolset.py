@@ -12,7 +12,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.durable_exec._toolset import (
     CallToolOperation,
     DurableMCPToolset,
-    unwrap_tool_call_result,
+    unwrap_recorded_tool_call_result,
     wrap_tool_call_result,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -45,7 +45,9 @@ def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfi
         result = await call_tool_task.with_options(name=f'Call MCP Tool: {name}', **task_config)(
             name, tool_args, ctx, tool
         )
-        return unwrap_tool_call_result(result)
+        # A persisted cache entry written before this task wrapped control-flow exceptions (still
+        # reachable under a custom `cache_policy` that omits `TASK_SOURCE`) holds the raw result.
+        return unwrap_recorded_tool_call_result(result)
 
     return call_tool_operation
 
