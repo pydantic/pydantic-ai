@@ -331,8 +331,6 @@ async def main():
 
     print(result)
     #> Result from task 1
-    print(f'Tasks completed: {state.tasks_completed}')
-    #> Tasks completed: 1
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
