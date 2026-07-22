@@ -1357,13 +1357,17 @@ async def test_send_accepts_plain_content() -> None:
 
     await session.send('hello')
     await session.send(BinaryImage(data=b'image', media_type='image/png'))
-    await session.send(BinaryContent(data=b'audio', media_type='audio/wav'))
+    # A WAV container (e.g. retained `SpeechPart.audio`) is unwrapped to the raw PCM the wire expects.
+    await session.send(_wav_content(b'\x01\x02\x03\x04'))
+    # Raw PCM `BinaryContent` passes through verbatim.
+    await session.send(BinaryContent(data=b'\xaa\xbb', media_type='audio/pcm'))
 
     assert conn.sent == snapshot(
         [
             TextInput(text='hello'),
             ImageInput(data=b'image', media_type='image/png'),
-            AudioInput(data=b'audio'),
+            AudioInput(data=b'\x01\x02\x03\x04'),
+            AudioInput(data=b'\xaa\xbb'),
         ]
     )
     assert session.new_messages() == snapshot(
@@ -1416,8 +1420,12 @@ async def test_send_rejects_unsupported_binary_content() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
 
-    with pytest.raises(UserError, match=r"Unsupported binary media type 'application/pdf'.*image and audio"):
+    with pytest.raises(UserError, match=r"Unsupported binary media type 'application/pdf'.*WAV audio, or raw PCM"):
         await session.send(BinaryContent(data=b'document', media_type='application/pdf'))
+
+    # A non-WAV audio container can't be unwrapped, so it's rejected rather than streamed as noise.
+    with pytest.raises(UserError, match=r"Unsupported binary media type 'audio/mpeg'.*WAV audio, or raw PCM"):
+        await session.send(BinaryContent(data=b'\x00mp3', media_type='audio/mpeg'))
 
     assert conn.sent == []
 
@@ -1727,7 +1735,7 @@ async def test_audio_retention_output_keeps_assistant_audio() -> None:
             TurnCompleteEvent(),
         ]
     )
-    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='both')
+    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='all')
     _ = await collect_events(session)
     response = session.new_messages()[0]
     assert isinstance(response, ModelResponse)
@@ -1744,7 +1752,7 @@ async def test_audio_retention_output_keeps_assistant_audio() -> None:
 
 async def test_audio_retention_input_keeps_user_audio() -> None:
     conn = FakeRealtimeConnection([InputTranscript(text='hello', is_final=True)])
-    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
     # send_audio before the transcript finalizes buffers into the user part.
     await session.send_audio(b'\xaa\xbb')
     await session.send_audio(b'\xcc')
@@ -1774,7 +1782,7 @@ async def test_audio_retention_uses_profile_rate_for_each_speaker() -> None:
         ]
     )
     profile = RealtimeModelProfile(audio_input_sample_rate=16000, audio_output_sample_rate=24000)
-    session = RealtimeSession(conn, _noop_runner, audio_retention='both', profile=profile)
+    session = RealtimeSession(conn, _noop_runner, audio_retention='all', profile=profile)
     await session.send_audio(b'\xaa\xbb')
     _ = await collect_events(session)
 
@@ -1791,9 +1799,9 @@ async def test_audio_retention_uses_profile_rate_for_each_speaker() -> None:
 
 async def test_clear_audio_discards_retained_input() -> None:
     # `clear_audio()` must drop the locally retained buffer too, or discarded audio would still attach
-    # to the next finalized user turn (with `audio_retention='input'`/`'both'`).
+    # to the next finalized user turn (with `audio_retention='input_audio'`/`'both'`).
     conn = FakeRealtimeConnection([InputTranscript(text='hello', is_final=True)])
-    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')
     await session.clear_audio()  # discards the buffered chunk
     await session.send_audio(b'\xcc')  # only this survives into the finalized user turn
@@ -1821,7 +1829,7 @@ async def test_audio_only_user_turn_finalized_on_speech_stopped() -> None:
         [InputSpeechEndEvent(), Transcript(text='Hi', is_final=True), TurnCompleteEvent()],
         input_transcription_enabled=False,
     )
-    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')
     events = await collect_events(session)
     user_part = SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))
@@ -1850,7 +1858,7 @@ async def test_audio_only_user_turn_finalized_on_turn_complete() -> None:
         [Transcript(text='Hi', is_final=True), TurnCompleteEvent()],
         input_transcription_enabled=False,
     )
-    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')
     _ = await collect_events(session)
     assert session.new_messages() == snapshot(
@@ -1874,7 +1882,7 @@ async def test_audio_retained_with_transcription_enabled_waits_for_transcript() 
         [InputSpeechEndEvent(), InputTranscript(text='hello', is_final=True), TurnCompleteEvent()],
         input_transcription_enabled=True,
     )
-    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')
     _ = await collect_events(session)
     assert session.new_messages() == snapshot(
@@ -1912,7 +1920,7 @@ async def test_input_audio_segmented_by_item_id_across_overlapping_turns() -> No
             yield TurnCompleteEvent()
 
     conn = _Overlapping([])
-    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
     await session.send_audio(b'\xaa')  # turn A's audio, buffered before its boundary fires
     gate_a.set()
     async with session:
@@ -1942,7 +1950,7 @@ async def test_retained_input_audio_dropped_when_transcription_fails() -> None:
             TurnCompleteEvent(),
         ]
     )
-    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
     await session.send_audio(b'\xaa')
     _ = await collect_events(session)
     # Only turn B is recorded (A never finalized), and it carries no audio: A's boundary already consumed
@@ -1963,7 +1971,7 @@ async def test_no_transcription_and_no_input_retention_raises() -> None:
 async def test_no_transcription_with_input_retention_is_allowed() -> None:
     # Disabling transcription is fine as long as input audio is retained (audio-only user turns).
     conn = FakeRealtimeConnection([], input_transcription_enabled=False)
-    RealtimeSession(conn, _noop_runner, audio_retention='input')  # no error
+    RealtimeSession(conn, _noop_runner, audio_retention='input_audio')  # no error
 
 
 async def test_text_output_modality_produces_text_part() -> None:
@@ -2119,7 +2127,7 @@ async def test_handoff_to_standard_agent_run() -> None:
 
 async def test_retained_audio_prepares_for_audio_capable_classic_model() -> None:
     conn = FakeRealtimeConnection([InputTranscript(text='hello', is_final=True)])
-    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')
     _ = await collect_events(session)
 
@@ -2383,7 +2391,7 @@ async def test_agent_realtime_session_audio_retention_forwarded() -> None:
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection([AudioDelta(data=b'\x07'), Transcript(text='hi', is_final=True), TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
-    async with agent.realtime_session(model=model, audio_retention='output') as session:
+    async with agent.realtime_session(model=model, audio_retention='output_audio') as session:
         _ = [e async for e in session]
         response = session.new_messages()[0]
     assert isinstance(response, ModelResponse)

@@ -91,6 +91,7 @@ from ._base import (
     Transcript,
     TruncateOutput,
     TurnCompleteEvent,
+    seed_pcm_audio,
 )
 
 if TYPE_CHECKING:
@@ -341,8 +342,8 @@ class RealtimeSession:
         self._otel_output_type = 'speech' if output_modality == 'audio' else 'text'
         self._usage_limits = usage_limits
         self._audio_retention = audio_retention
-        self._retain_input = audio_retention in ('input', 'both')
-        self._retain_output = audio_retention in ('output', 'both')
+        self._retain_input = audio_retention in ('input_audio', 'all')
+        self._retain_output = audio_retention in ('output_audio', 'all')
         if retain_images_every_n < 1:
             raise UserError('`retain_images_every_n` must be at least 1.')
         self._retain_images_every_n = retain_images_every_n
@@ -358,7 +359,7 @@ class RealtimeSession:
             raise UserError(
                 "This realtime session can't capture the user's turns: input transcription is disabled "
                 "and `audio_retention` doesn't retain input audio. Enable transcription in the model settings, "
-                "or pass `audio_retention='input'` or `'both'` to keep the "
+                "or pass `audio_retention='input_audio'` or `'both'` to keep the "
                 'raw audio instead.'
             )
         self.usage = usage if usage is not None else RunUsage()
@@ -405,7 +406,7 @@ class RealtimeSession:
         self._user_item_order: deque[str] = deque()
         self._finalized_users_by_id: dict[str, SpeechPart] = {}
         self._finalized_user_item_ids: set[str] = set()
-        # Retained input audio (`audio_retention='input'`/`'both'`). `_input_audio` is the rolling buffer
+        # Retained input audio (`audio_retention='input_audio'`/`'both'`). `_input_audio` is the rolling buffer
         # of audio sent since the last turn boundary; on providers that report a per-item speech-stopped
         # boundary, each segment is cut into `_input_audio_by_id` keyed by its input item id, so overlapping
         # turns whose transcripts finalize out of order still attach their own audio (not a later turn's).
@@ -571,12 +572,23 @@ class RealtimeSession:
         elif isinstance(content, BinaryContent):
             if content.is_image:
                 await self._send_image(content)
-            elif content.is_audio:
+            elif content.media_type == _WAV_MEDIA_TYPE:
+                # Retained `SpeechPart.audio` (from `audio_retention`) is a WAV container; unwrap it to
+                # raw PCM — matching the seeding path — so a natural round-trip (retain a turn's audio,
+                # then `send()` it back) doesn't stream the WAV header into the buffer as noise.
+                await self.send_audio(
+                    seed_pcm_audio(
+                        content,
+                        provider_name=self._provider_name or 'realtime',
+                        sample_rate=self._profile.get('audio_input_sample_rate', 24000),
+                    )
+                )
+            elif content.media_type == 'audio/pcm':
                 await self.send_audio(content.data)
             else:
                 raise UserError(
                     f'Unsupported binary media type {content.media_type!r} for `session.send()`. '
-                    'Only image and audio content are supported.'
+                    'Send an image, WAV audio, or raw PCM (`audio/pcm`); for a raw PCM byte stream use `send_audio()`.'
                 )
         elif isinstance(content, AudioInput):
             await self.send_audio(content.data)
@@ -666,7 +678,7 @@ class RealtimeSession:
             self._profile.get('supports_manual_turn_control', False), 'clear_audio', 'manual turn-taking'
         )
         await self._connection.send(ClearAudio())
-        # Drop the locally retained copy too (with `audio_retention='input'`/`'both'`), or the discarded
+        # Drop the locally retained copy too (with `audio_retention='input_audio'`/`'both'`), or the discarded
         # audio would still be attached to the next finalized user turn.
         self._input_audio.clear()
 
@@ -1191,7 +1203,7 @@ class RealtimeSession:
     def _finalize_audio_only_user(self) -> list[RealtimeEvent]:
         """Finalize a user turn from retained input audio when no transcript will arrive.
 
-        With input transcription disabled but input audio retained (`audio_retention='input'`/`'both'`),
+        With input transcription disabled but input audio retained (`audio_retention='input_audio'`/`'both'`),
         the user's turn produces no [`InputTranscript`][pydantic_ai.realtime.InputTranscript], so the
         transcript-driven `_finalize_user` never runs. This is called at each user-turn boundary (speech
         stopped / commit / turn complete) to finalize an audio-only user

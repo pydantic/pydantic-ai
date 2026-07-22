@@ -54,13 +54,16 @@ from ..usage import RequestUsage
 if TYPE_CHECKING:
     from ..providers import Provider
 
-AudioRetention = TypeAliasType('AudioRetention', Literal['transcript_only', 'input', 'output', 'both'])
+AudioRetention = TypeAliasType('AudioRetention', Literal['transcript_only', 'input_audio', 'output_audio', 'all'])
 """How much audio a [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] retains in its history.
 
+Values other than `'transcript_only'` are additive: transcripts are always kept, and the named audio is
+retained alongside them.
+
 - `'transcript_only'` (default): keep only transcripts; drop all audio bytes.
-- `'input'`: also retain the user's spoken audio.
-- `'output'`: also retain the model's spoken audio.
-- `'both'`: retain both sides' audio.
+- `'input_audio'`: also retain the user's spoken audio.
+- `'output_audio'`: also retain the model's spoken audio.
+- `'all'`: retain both sides' audio.
 
 Retained audio is stored on the [`SpeechPart`][pydantic_ai.messages.SpeechPart]'s `audio` as WAV
 [`BinaryContent`][pydantic_ai.messages.BinaryContent]. Live audio deltas remain raw PCM. Retained
@@ -424,7 +427,7 @@ class InputSpeechEndEvent:
     item_id: str | None = None
     """Provider id of the user input item this speech segment belongs to, when reported.
 
-    Used to attach retained input audio (`audio_retention='input'`/`'both'`) to the right user turn
+    Used to attach retained input audio (`audio_retention='input_audio'`/`'both'`) to the right user turn
     when turns overlap, since transcripts for different items can finalize out of order.
     """
 

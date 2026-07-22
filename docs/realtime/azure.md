@@ -59,7 +59,7 @@ realtime does not expose `temperature`. Input transcription defaults to `'auto'`
     `input_transcription_model` on
     [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]. If you don't
     need transcripts, disable transcription with `input_transcription_model=None` and pass
-    `audio_retention='input'` so the spoken turn is still kept as audio.
+    `audio_retention='input_audio'` so the spoken turn is still kept as audio.
 
 ## Azure AI Voice Live support is coming soon
 
