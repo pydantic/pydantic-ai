@@ -75,6 +75,15 @@ def test_bedrock_mantle_custom_base_url() -> None:
     assert str(provider._client_for_interface('responses').base_url) == 'https://example.com/bedrock/v1/'  # pyright: ignore[reportPrivateUsage]
     assert str(provider._client_for_interface('chat').base_url) == 'https://example.com/bedrock/v1/'  # pyright: ignore[reportPrivateUsage]
 
+    # A base_url without a recognized `/openai/v1` or `/v1` suffix (e.g. a bare proxy origin) is used as
+    # the origin as-is, with both endpoint families derived from it.
+    proxy = BedrockMantleProvider(base_url='https://proxy.internal/mantle')
+    assert (
+        str(proxy._client_for_interface('openai-responses').base_url)  # pyright: ignore[reportPrivateUsage]
+        == 'https://proxy.internal/mantle/openai/v1/'
+    )
+    assert str(proxy._client_for_interface('responses').base_url) == 'https://proxy.internal/mantle/v1/'  # pyright: ignore[reportPrivateUsage]
+
 
 def test_bedrock_mantle_injected_client() -> None:
     client = AsyncBedrockOpenAI(api_key='test-api-key', aws_region='us-west-2')
