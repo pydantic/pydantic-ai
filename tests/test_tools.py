@@ -2959,6 +2959,11 @@ def test_deferred_tool_results_non_colliding_arbitrary_dict_stays_unchanged():
     """A dict that is not an exact control shape needs no wire escape."""
     calls: dict[str, Any] = {
         'extra-field': {'kind': 'tool-failed', 'message': 'ordinary', 'data': 123},
+        'envelope-extra-field': {
+            '__pydantic_ai_deferred_tool_result__': 'arbitrary',
+            'value': {'foo': 'bar'},
+            'kind': 'whatever',
+        },
         'ordinary': {'foo': 'bar'},
         'scalar': 123,
         'list': ['one', 'two'],
