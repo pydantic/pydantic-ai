@@ -72,7 +72,7 @@ The model name determines the endpoint family:
 
 The `bedrock:` prefix stays on the Converse API; requesting a GPT-5.4+ model through it raises an error pointing you to `bedrock-mantle:`, since those models are not served by Converse.
 
-To use a custom Mantle origin (for example a proxy), pass a complete `base_url` to [`BedrockMantleProvider`][pydantic_ai.providers.bedrock_mantle.BedrockMantleProvider]; that endpoint is then used for every model:
+To use a custom Mantle origin (for example a proxy), pass a `base_url` to [`BedrockMantleProvider`][pydantic_ai.providers.bedrock_mantle.BedrockMantleProvider]; its origin (with any `/openai/v1` or `/v1` suffix stripped) is used to route between the two endpoint families per model, just like `region_name`:
 
 ```python {test="skip"}
 from pydantic_ai import Agent

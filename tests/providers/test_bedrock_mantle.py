@@ -48,35 +48,63 @@ def test_bedrock_mantle_uses_bedrock_mantle_provider() -> None:
 def test_bedrock_mantle_endpoint_families() -> None:
     provider = BedrockMantleProvider()
 
-    openai_responses = provider._openai_client('openai-responses')  # pyright: ignore[reportPrivateUsage]
-    responses = provider._openai_client('responses')  # pyright: ignore[reportPrivateUsage]
-    chat = provider._openai_client('chat')  # pyright: ignore[reportPrivateUsage]
+    openai_responses = provider._client_for_interface('openai-responses')  # pyright: ignore[reportPrivateUsage]
+    responses = provider._client_for_interface('responses')  # pyright: ignore[reportPrivateUsage]
+    chat = provider._client_for_interface('chat')  # pyright: ignore[reportPrivateUsage]
 
     assert isinstance(openai_responses, AsyncBedrockOpenAI)
+    # `openai-responses` (GPT-5.x) is served at `/openai/v1` and is the provider's default client.
+    assert openai_responses is provider.client
     assert str(openai_responses.base_url) == 'https://bedrock-mantle.us-east-1.api.aws/openai/v1/'
-    # GPT-OSS Responses and Chat both use the `/v1` endpoint.
+    # GPT-OSS Responses and Chat share the one `/v1` client.
+    assert responses is chat
     assert str(responses.base_url) == 'https://bedrock-mantle.us-east-1.api.aws/v1/'
-    assert str(chat.base_url) == 'https://bedrock-mantle.us-east-1.api.aws/v1/'
-    # The two clients share transport (and auth) via `with_options`.
+    # The two clients are distinct instances but share transport (and auth) via `with_options`.
+    assert openai_responses is not responses
     assert openai_responses._client is responses._client  # pyright: ignore[reportPrivateUsage]
 
 
 def test_bedrock_mantle_custom_base_url() -> None:
-    # An explicit `base_url` is used for every interface (no per-model endpoint routing).
+    # A custom `base_url` is normalized to its origin, so both endpoint families still route correctly.
     provider = BedrockMantleProvider(base_url='https://example.com/bedrock/v1')
 
-    assert str(provider._openai_client('openai-responses').base_url) == 'https://example.com/bedrock/v1/'  # pyright: ignore[reportPrivateUsage]
-    assert str(provider._openai_client('responses').base_url) == 'https://example.com/bedrock/v1/'  # pyright: ignore[reportPrivateUsage]
-    assert provider._openai_client('openai-responses') is provider._openai_client('chat')  # pyright: ignore[reportPrivateUsage]
+    assert (
+        str(provider._client_for_interface('openai-responses').base_url)  # pyright: ignore[reportPrivateUsage]
+        == 'https://example.com/bedrock/openai/v1/'
+    )
+    assert str(provider._client_for_interface('responses').base_url) == 'https://example.com/bedrock/v1/'  # pyright: ignore[reportPrivateUsage]
+    assert str(provider._client_for_interface('chat').base_url) == 'https://example.com/bedrock/v1/'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_bedrock_mantle_injected_client() -> None:
     client = AsyncBedrockOpenAI(api_key='test-api-key', aws_region='us-west-2')
     provider = BedrockMantleProvider(openai_client=client)
 
-    assert provider.client is client
-    assert provider._openai_client('openai-responses') is client  # pyright: ignore[reportPrivateUsage]
-    assert provider._openai_client('responses') is client  # pyright: ignore[reportPrivateUsage]
+    # Both endpoint families are derived from the injected client's origin (sharing its transport + auth),
+    # so routing works even when the user supplies their own client.
+    assert (
+        str(provider._client_for_interface('openai-responses').base_url)  # pyright: ignore[reportPrivateUsage]
+        == 'https://bedrock-mantle.us-west-2.api.aws/openai/v1/'
+    )
+    assert (
+        str(provider._client_for_interface('responses').base_url)  # pyright: ignore[reportPrivateUsage]
+        == 'https://bedrock-mantle.us-west-2.api.aws/v1/'
+    )
+    assert provider._client_for_interface('openai-responses')._client is client._client  # pyright: ignore[reportPrivateUsage]
+
+
+def test_bedrock_mantle_model_uses_interface_client() -> None:
+    # Each model class routes to the provider client for its interface, so requests hit the right endpoint.
+    provider = BedrockMantleProvider()
+    responses_model = BedrockMantleResponsesModel('openai.gpt-5.6-luna', provider=provider)
+    gpt_oss_model = BedrockMantleResponsesModel('openai.gpt-oss-120b', provider=provider)
+    chat_model = BedrockMantleChatModel('openai.gpt-oss-safeguard-20b', provider=provider)
+
+    assert responses_model.client is provider._client_for_interface('openai-responses')  # pyright: ignore[reportPrivateUsage]
+    assert gpt_oss_model.client is provider._client_for_interface('responses')  # pyright: ignore[reportPrivateUsage]
+    assert chat_model.client is provider._client_for_interface('chat')  # pyright: ignore[reportPrivateUsage]
+    assert responses_model.client is not gpt_oss_model.client
+    assert gpt_oss_model.client is chat_model.client
 
 
 def test_bedrock_mantle_accepts_http_client() -> None:
@@ -171,14 +199,16 @@ def test_bedrock_mantle_model_rejects_wrong_endpoint_family() -> None:
 
 
 def test_bedrock_converse_rejects_proprietary_openai() -> None:
-    # Proprietary GPT models are not served by the Converse API; the profile points users at
-    # `bedrock-mantle:`. This is family-based (not GPT-OSS), so it survives future GPT generations.
+    # Proprietary GPT models are not served by the Converse API: the profile flags them
+    # (`bedrock_supported_on_converse=False`) and `BedrockConverseModel` raises at construction with a
+    # pointer to `BedrockMantleProvider`. Family-based (not GPT-OSS), so it survives future GPT generations.
     for model_name in ('openai.gpt-5.6-luna', 'openai.gpt-6', 'openai.gpt-8-turbo'):
-        with pytest.raises(UserError, match='bedrock-mantle'):
-            BedrockProvider.model_profile(model_name)
+        assert BedrockProvider.model_profile(model_name) == snapshot({'bedrock_supported_on_converse': False})
+        with pytest.raises(UserError, match='BedrockMantleProvider'):
+            infer_model(f'bedrock:{model_name}')
     # The open-weight GPT-OSS family remains available on Converse.
-    assert BedrockProvider.model_profile('openai.gpt-oss-120b') is not None
-    assert BedrockProvider.model_profile('openai.gpt-oss-safeguard-20b') is not None
+    assert isinstance(infer_model('bedrock:openai.gpt-oss-120b'), BedrockConverseModel)
+    assert isinstance(infer_model('bedrock:openai.gpt-oss-safeguard-20b'), BedrockConverseModel)
 
 
 def test_gateway_bedrock_remains_on_converse() -> None:

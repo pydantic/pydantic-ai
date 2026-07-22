@@ -75,6 +75,19 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
     )
 
 
+def _mantle_origin(base_url: str) -> str:
+    """Return the scheme+host origin of a Mantle base URL, stripping a trailing `/openai/v1` or `/v1`.
+
+    Mantle serves its two OpenAI-compatible endpoint families as siblings under one origin, so the origin
+    is enough to derive both `{origin}/v1` and `{origin}/openai/v1` regardless of which one a caller passed.
+    """
+    origin = base_url.rstrip('/')
+    for suffix in ('/openai/v1', '/v1'):
+        if origin.endswith(suffix):
+            return origin[: -len(suffix)]
+    return origin
+
+
 class BedrockMantleProvider(Provider[AsyncOpenAI]):
     """Provider for the Amazon Bedrock Mantle OpenAI-compatible API."""
 
@@ -94,18 +107,14 @@ class BedrockMantleProvider(Provider[AsyncOpenAI]):
     def model_profile(model_name: str) -> ModelProfile | None:
         return bedrock_mantle_model_profile(model_name)
 
-    def _openai_client(self, interface: BedrockMantleInterface) -> AsyncOpenAI:
-        """Return the OpenAI client for a Mantle endpoint family.
+    def _client_for_interface(self, interface: BedrockMantleInterface) -> AsyncOpenAI:
+        """Return the client for a Mantle interface.
 
-        GPT-5.x models are served on `/openai/v1`; GPT-OSS models on `/v1`. When the provider was
-        configured with an explicit `base_url` (or `openai_client`), that endpoint is used for every
-        interface.
+        The `openai-responses` interface (GPT-5.x) is served at `/openai/v1`; `chat` and `responses`
+        (GPT-OSS) are served at `/v1`. Both clients are built eagerly in `__init__` and share transport
+        and auth, so this is a pure lookup.
         """
-        if self._origin is None or interface == 'openai-responses':
-            return self._client
-        if self._standard_client is None:
-            self._standard_client = self._client.with_options(base_url=f'{self._origin}/v1')
-        return self._standard_client
+        return self._client if interface == 'openai-responses' else self._v1_client
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
@@ -142,21 +151,19 @@ class BedrockMantleProvider(Provider[AsyncOpenAI]):
         Args:
             region_name: The AWS region used to construct the default `bedrock-mantle.{region}.api.aws`
                 origin. If not set, the `AWS_DEFAULT_REGION` or `AWS_REGION` environment variable is used.
-            base_url: A complete Mantle base URL, used for every model on this provider. Prefer
-                `region_name` for automatic per-model endpoint routing between `/v1` and `/openai/v1`.
+            base_url: A Mantle base URL. Its origin (scheme + host, with any `/openai/v1` or `/v1` suffix
+                stripped) is used to route between `/v1` and `/openai/v1` per model, the same as `region_name`.
             api_key: A Bedrock API key. If omitted, `AWS_BEARER_TOKEN_BEDROCK` is used. Use this or the
                 `aws_*` credentials, not both.
             aws_access_key_id: The AWS access key ID for SigV4 authentication.
             aws_secret_access_key: The AWS secret access key for SigV4 authentication.
             aws_session_token: The AWS session token for SigV4 authentication.
             profile_name: The AWS profile name for SigV4 authentication.
-            openai_client: An existing OpenAI client. If provided, no other argument may be set, and its
-                endpoint is used for every model.
+            openai_client: An existing OpenAI client. If provided, no other argument may be set; its base
+                URL's origin is used to derive both the `/v1` and `/openai/v1` endpoints (preserving its
+                auth and transport) so every interface routes correctly.
             http_client: An existing `httpx.AsyncClient` used to make requests.
         """
-        self._origin: str | None = None
-        self._standard_client: AsyncOpenAI | None = None
-
         if openai_client is not None:
             assert region_name is None, 'Cannot provide both `openai_client` and `region_name`'
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
@@ -168,40 +175,46 @@ class BedrockMantleProvider(Provider[AsyncOpenAI]):
                 None,
                 None,
             ), 'Cannot provide both `openai_client` and AWS credentials'
-            self._client = openai_client
-            return
-
-        api_key = api_key or os.getenv('AWS_BEARER_TOKEN_BEDROCK')
-        region_name = region_name or os.getenv('AWS_DEFAULT_REGION') or os.getenv('AWS_REGION')
-
-        if base_url is not None:
-            base_url = base_url.rstrip('/')
+            base_client = openai_client
+            origin = _mantle_origin(str(openai_client.base_url))
         else:
-            if not region_name:
+            api_key = api_key or os.getenv('AWS_BEARER_TOKEN_BEDROCK')
+            region_name = region_name or os.getenv('AWS_DEFAULT_REGION') or os.getenv('AWS_REGION')
+
+            if base_url is not None:
+                origin = _mantle_origin(base_url)
+            elif region_name:
+                origin = f'https://bedrock-mantle.{region_name}.api.aws'
+            else:
                 raise UserError(
                     'Set the `AWS_DEFAULT_REGION` or `AWS_REGION` environment variable, pass `region_name`, '
                     'or pass `base_url` to use a Bedrock Mantle model.'
                 )
-            self._origin = f'https://bedrock-mantle.{region_name}.api.aws'
-            base_url = f'{self._origin}/openai/v1'
 
-        if http_client is None:
-            http_client = create_async_http_client()
-            self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
+            if http_client is None:
+                http_client = create_async_http_client()
+                self._own_http_client = http_client
+                self._http_client_factory = create_async_http_client
 
-        self._client = AsyncBedrockOpenAI(
-            api_key=api_key,
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
-            aws_session_token=aws_session_token,
-            aws_profile=profile_name,
-            aws_region=region_name,
-            base_url=base_url,
-            http_client=http_client,
-        )
+            base_client = AsyncBedrockOpenAI(
+                api_key=api_key,
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
+                aws_session_token=aws_session_token,
+                aws_profile=profile_name,
+                aws_region=region_name,
+                base_url=f'{origin}/openai/v1',
+                http_client=http_client,
+            )
+
+        # `_client` (the default `.client`/`.base_url`) serves the `openai-responses` interface at
+        # `/openai/v1` — the endpoint for GPT-5.x, the primary Mantle models. `_v1_client` serves `chat`
+        # and `responses` (GPT-OSS) at `/v1`. Both derive from one base client via `with_options`, so they
+        # share transport and auth; deriving from the origin means a user-supplied `base_url`/`openai_client`
+        # still routes both interfaces correctly regardless of which sibling endpoint it named.
+        self._client = base_client.with_options(base_url=f'{origin}/openai/v1')
+        self._v1_client = base_client.with_options(base_url=f'{origin}/v1')
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        for client in (self._client, self._standard_client):
-            if client is not None:
-                client._client = http_client  # pyright: ignore[reportPrivateUsage]
+        for client in (self._client, self._v1_client):
+            client._client = http_client  # pyright: ignore[reportPrivateUsage]

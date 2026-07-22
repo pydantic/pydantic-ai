@@ -75,7 +75,7 @@ class BedrockMantleResponsesModel(OpenAIResponsesModel):
                 f'Model {model_name!r} is served on the Bedrock Mantle Chat Completions API; '
                 'construct it with `BedrockMantleChatModel` instead.'
             )
-        self._mantle_client = provider._openai_client(interface)  # pyright: ignore[reportPrivateUsage]
+        self._mantle_client = provider._client_for_interface(interface)  # pyright: ignore[reportPrivateUsage]
 
     @cached_property
     def profile(self) -> BedrockMantleModelProfile:
@@ -123,7 +123,7 @@ class BedrockMantleChatModel(OpenAIChatModel):
                 f'Model {model_name!r} is served on the Bedrock Mantle Responses API; '
                 'construct it with `BedrockMantleResponsesModel` instead.'
             )
-        self._mantle_client = provider._openai_client(interface)  # pyright: ignore[reportPrivateUsage]
+        self._mantle_client = provider._client_for_interface(interface)  # pyright: ignore[reportPrivateUsage]
 
     @cached_property
     def profile(self) -> BedrockMantleModelProfile:

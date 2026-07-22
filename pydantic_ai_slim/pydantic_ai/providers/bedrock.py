@@ -236,6 +236,14 @@ class BedrockModelProfile(ModelProfile, total=False):
       Converse; Cohere's `k` and Qwen's key are unverified on Converse, so they stay here too).
     """
 
+    bedrock_supported_on_converse: bool
+    """Whether this model is served by the Bedrock Converse API. Default: `True`.
+
+    Set to `False` for models that Bedrock serves only through the Mantle OpenAI-compatible API (today,
+    the proprietary OpenAI GPT models); `BedrockConverseModel` raises at construction so the user gets an
+    actionable pointer to `BedrockMantleProvider` instead of an opaque Converse error at request time.
+    """
+
 
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
@@ -483,13 +491,11 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
 def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an OpenAI model used via Bedrock Converse."""
     # Only the open-weight GPT-OSS family is served on Converse; every proprietary GPT model (GPT-5.4+
-    # today, and future GPT-6/7/… tomorrow) is Bedrock Mantle-only, so anything that isn't GPT-OSS is
-    # steered to `bedrock-mantle:` rather than failing later with an opaque Converse error.
+    # today, and future GPT-6/7/… tomorrow) is Bedrock Mantle-only. Flag those as unsupported so
+    # `BedrockConverseModel` raises an actionable error at construction rather than failing later with an
+    # opaque Converse error.
     if not model_name.startswith('gpt-oss'):
-        raise UserError(
-            f'Model {model_name!r} is not served by the Bedrock Converse API. '
-            "Use the `bedrock-mantle:` prefix to access it through Bedrock Mantle's OpenAI-compatible API."
-        )
+        return BedrockModelProfile(bedrock_supported_on_converse=False)
     # TODO(v3): default `bedrock:` to Bedrock Mantle (with a deprecation warning steering users who want
     # Converse to a `bedrock-converse:` prefix), mirroring the OpenAI Responses transition.
     # Converse rejects `reasoning_effort='none'` — mark always-on.
