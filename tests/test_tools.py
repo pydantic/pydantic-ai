@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal
 
 import pydantic_core
 import pytest
-from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, WithJsonSchema
+from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, ValidationError, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
@@ -3024,6 +3024,13 @@ def test_deferred_tool_results_legacy_exact_control_dicts_decode_typed():
     assert isinstance(loaded.calls['model-retry'], ModelRetry)
     assert isinstance(loaded.calls['tool-return'], ToolReturn)
     assert isinstance(loaded.calls['retry-prompt'], RetryPromptPart)
+
+
+def test_deferred_tool_results_rejects_non_mapping_calls():
+    adapter = TypeAdapter(DeferredToolResults)
+
+    with pytest.raises(ValidationError, match='Input should be a valid dictionary'):
+        adapter.validate_python({'calls': ['not', 'a', 'mapping']})
 
 
 def test_deferred_tool_call_result_tool_failed():

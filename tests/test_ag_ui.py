@@ -4678,7 +4678,7 @@ async def test_stream_tool_return_files_roundtrip_to_history() -> None:
 
 
 def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Message]:
-    """Build the tool history produced by the AG-UI client's default event reducer.
+    """Build the client tool history needed to round-trip tool-result metadata.
 
     The pinned reducer creates a content-only `ToolMessage` for `TOOL_CALL_RESULT`, then attaches
     `REASONING_ENCRYPTED_VALUE(subtype='message')` by message ID:
@@ -4702,11 +4702,11 @@ def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Mess
     )
 
     for event in events:
-        if event['type'] != 'REASONING_ENCRYPTED_VALUE':
-            continue
-        if event['subtype'] == 'tool-call' and event['entityId'] == tool_call.id:
-            tool_call.encrypted_value = event['encryptedValue']
-        elif event['subtype'] == 'message' and event['entityId'] == tool_message.id:
+        if (
+            event['type'] == 'REASONING_ENCRYPTED_VALUE'
+            and event['subtype'] == 'message'
+            and event['entityId'] == tool_message.id
+        ):
             tool_message.encrypted_value = event['encryptedValue']
 
     return [AssistantMessage(id=start['parentMessageId'], tool_calls=[tool_call]), tool_message]

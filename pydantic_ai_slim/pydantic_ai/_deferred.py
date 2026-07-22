@@ -158,11 +158,6 @@ def _deferred_tool_call_result_discriminator(x: Any) -> str | None:
             and x_dict.keys() <= {'content', 'tool_name', 'tool_call_id', 'timestamp', 'part_kind'}
         ):
             return 'retry-prompt'
-    else:
-        if hasattr(x, 'kind'):
-            return cast(str, x.kind)
-        elif hasattr(x, 'part_kind'):
-            return cast(str, x.part_kind)
     return None
 
 

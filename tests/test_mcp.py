@@ -516,14 +516,22 @@ class TestMCPToolsetIntegration:
                 await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
 
     @pytest.mark.parametrize('use_task', [False, True], ids=['direct', 'task'])
-    @pytest.mark.parametrize('tool_error_behavior', ['retry', 'failed'])
-    async def test_direct_mcp_error_remains_model_retry(
+    @pytest.mark.parametrize(
+        ('tool_error_behavior', 'expected_exception'),
+        [
+            pytest.param('retry', ModelRetry, id='retry'),
+            pytest.param('failed', ModelRetry, id='failed'),
+            pytest.param('error', McpError, id='error'),
+        ],
+    )
+    async def test_direct_mcp_error_respects_error_behavior(
         self,
         fastmcp_server: FastMCP[None],
-        tool_error_behavior: Literal['retry', 'failed'],
+        tool_error_behavior: Literal['retry', 'failed', 'error'],
+        expected_exception: type[ModelRetry] | type[McpError],
         use_task: bool,
     ):
-        """A bare protocol error remains retryable, matching grouped-error behavior.
+        """A bare protocol error remains retryable unless raw errors are requested.
 
         Regression test for https://github.com/pydantic/pydantic-ai/issues/5217.
         """
@@ -537,7 +545,7 @@ class TestMCPToolsetIntegration:
                 toolset.client.call_tool = AsyncMock(return_value=tool_task)
             else:
                 toolset.client.call_tool = AsyncMock(side_effect=protocol_error)
-            with pytest.raises(ModelRetry, match='direct protocol error'):
+            with pytest.raises(expected_exception, match='direct protocol error'):
                 await toolset.direct_call_tool('echo', {'message': 'hi'}, use_task=use_task)
 
     async def test_tool_failed_preserves_structured_error_content(

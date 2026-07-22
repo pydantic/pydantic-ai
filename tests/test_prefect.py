@@ -1500,8 +1500,8 @@ async def test_prefect_tool_validation_precedes_task_cache_lookup() -> None:
         return value
 
     async def run_rejected(value: Annotated[int, AfterValidator(_prefect_reject)]) -> int:
-        executed_args.append(value)
-        return value
+        executed_args.append(value)  # pragma: no cover
+        return value  # pragma: no cover
 
     async def run_three(value: Annotated[int, AfterValidator(_prefect_transform_to_three)]) -> int:
         executed_args.append(value)
