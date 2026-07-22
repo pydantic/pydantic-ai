@@ -93,9 +93,6 @@ from ..conftest import (
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
-with try_import() as botocore_available:
-    import botocore  # pyright: ignore[reportUnusedImport]  # noqa: F401
-
 with try_import() as imports_successful:
     from anthropic import (
         NOT_GIVEN,
@@ -10871,8 +10868,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
     """
     # `AsyncAnthropicBedrock`'s SigV4 signer imports `botocore` at request-prep time, which only
     # ships under the `bedrock` extra (not in the default `pydantic-ai` install on v2).
-    if not botocore_available():
-        pytest.skip('botocore not installed')
+    pytest.importorskip('botocore')
 
     from anthropic import AsyncAnthropicBedrock
 
