@@ -138,7 +138,7 @@ def get_mock_chat_completion_kwargs(hf_client: AsyncInferenceClient) -> list[dic
 def completion_message(
     message: ChatCompletionInputMessage | ChatCompletionOutputMessage, *, usage: ChatCompletionOutputUsage | None = None
 ) -> ChatCompletionOutput:
-    choices = [ChatCompletionOutputComplete(finish_reason='stop', index=0, message=message)]  # pyright: ignore[reportCallIssue]
+    choices = [ChatCompletionOutputComplete(finish_reason='stop', index=0, message=message)]  # pyright: ignore[reportArgumentType]
     return ChatCompletionOutput.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
             'id': '123',
@@ -305,9 +305,9 @@ async def test_multiple_stream_calls(allow_model_requests: None):
 
 
 async def test_request_tool_call(allow_model_requests: None):
-    tool_call_1 = ChatCompletionOutputToolCall.parse_obj_as_instance(  # pyright: ignore[reportCallIssue]
+    tool_call_1 = ChatCompletionOutputToolCall.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
-            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # pyright: ignore[reportCallIssue]
+            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'name': 'get_location',
                     'arguments': '{"loc_name": "San Fransisco"}',
@@ -317,16 +317,16 @@ async def test_request_tool_call(allow_model_requests: None):
             'type': 'function',
         }
     )
-    usage_1 = ChatCompletionOutputUsage.parse_obj_as_instance(  # pyright: ignore[reportCallIssue]
+    usage_1 = ChatCompletionOutputUsage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
             'prompt_tokens': 1,
             'completion_tokens': 1,
             'total_tokens': 2,
         }
     )
-    tool_call_2 = ChatCompletionOutputToolCall.parse_obj_as_instance(  # pyright: ignore[reportCallIssue]
+    tool_call_2 = ChatCompletionOutputToolCall.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
-            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # pyright: ignore[reportCallIssue]
+            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'name': 'get_location',
                     'arguments': '{"loc_name": "London"}',
@@ -336,7 +336,7 @@ async def test_request_tool_call(allow_model_requests: None):
             'type': 'function',
         }
     )
-    usage_2 = ChatCompletionOutputUsage.parse_obj_as_instance(  # pyright: ignore[reportCallIssue]
+    usage_2 = ChatCompletionOutputUsage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
             'prompt_tokens': 2,
             'completion_tokens': 1,
@@ -345,7 +345,7 @@ async def test_request_tool_call(allow_model_requests: None):
     )
     responses = [
         completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportCallIssue]
+            ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'content': None,
                     'role': 'assistant',
@@ -355,7 +355,7 @@ async def test_request_tool_call(allow_model_requests: None):
             usage=usage_1,
         ),
         completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportCallIssue]
+            ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'content': None,
                     'role': 'assistant',
@@ -365,7 +365,7 @@ async def test_request_tool_call(allow_model_requests: None):
             usage=usage_2,
         ),
         completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportCallIssue]
+            ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'content': 'final response',
                     'role': 'assistant',

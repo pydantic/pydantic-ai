@@ -462,9 +462,7 @@ def test_support_tool_forcing_thinking_detection(settings: Any, expected: bool):
 @pytest.mark.parametrize(
     'provider_name',
     [
-        pytest.param(
-            'anthropic', marks=skip_if_no_anthropic
-        ),
+        pytest.param('anthropic', marks=skip_if_no_anthropic),
         pytest.param('bedrock', marks=skip_if_no_bedrock),
     ],
 )

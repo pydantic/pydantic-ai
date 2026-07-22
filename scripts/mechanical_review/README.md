@@ -70,4 +70,3 @@ cd mechanical && python3 -m unittest test_checks.py -v
 
 - `run_stream_sync` — **not a dual-path gap**. Inherited from `AbstractAgent`; calls `self.run_stream` (wrapper overrides apply). Inside workflows, `SyncStreamBridge` rejects a running event loop. Documented under durable Streaming sections.
 - `description` — property surface not mirrored on wrappers by design.
-
