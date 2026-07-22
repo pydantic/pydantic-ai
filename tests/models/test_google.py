@@ -4452,7 +4452,8 @@ async def test_google_stream_usage_limit_stops_stream_early(
 
     async def counting_stream() -> AsyncIterator[GenerateContentResponse]:
         nonlocal chunks_yielded
-        for chunk in chunks:
+        # The limit abandons the stream on the third chunk, so this loop never runs to completion.
+        for chunk in chunks:  # pragma: no branch
             chunks_yielded += 1
             yield chunk
 
