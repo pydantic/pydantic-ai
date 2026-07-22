@@ -3528,13 +3528,13 @@ run_id_temporal_agent = TemporalAgent(run_id_test_agent, activity_config=BASE_AC
 @workflow.defn
 class RunIdAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str, run_id: str) -> str:
+    async def run(self, prompt: str, run_id: str) -> list[str]:
         result = await run_id_temporal_agent.run(prompt, run_id=run_id)
-        return result.run_id
+        return [result.run_id, *[m.run_id or '<unset>' for m in result.all_messages()]]
 
 
 async def test_temporal_agent_explicit_run_id(client: Client):
-    """A pre-minted `run_id=` survives Temporal activity serialization."""
+    """A pre-minted `run_id=` survives Temporal activity serialization and stamps all new messages."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -3547,7 +3547,7 @@ async def test_temporal_agent_explicit_run_id(client: Client):
             id=RunIdAgentWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
-        assert output == 'run-from-temporal'
+        assert output == ['run-from-temporal', 'run-from-temporal', 'run-from-temporal']
 
 
 def test_temporal_run_context_serializes_metadata():
