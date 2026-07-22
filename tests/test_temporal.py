@@ -7637,8 +7637,7 @@ async def test_durability_mcptoolset_in_workflow(allow_model_requests: None, cli
             id=DurabilityMCPToolsetAgentWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
-        # deepwiki MCP should return info about the pydantic-ai repo (test is skipped until sandbox issue is fixed)
-        assert 'pydantic' in output.lower() or 'agent' in output.lower()
+        assert output == snapshot()
 
 
 # --- @agent.toolset returning a FunctionToolset ---

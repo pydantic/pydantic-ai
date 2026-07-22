@@ -1,5 +1,0 @@
-# Intentional non-overrides on durable wrapper agents (see durable Streaming docs).
-# run_stream_sync inherits AbstractAgent → self.run_stream (virtual); blocked in workflows by SyncStreamBridge.
-run_stream_sync
-# property-like surface not mirrored on wrappers
-description

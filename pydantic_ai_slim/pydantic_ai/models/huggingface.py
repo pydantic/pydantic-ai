@@ -258,9 +258,9 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         hf_messages = await self._map_messages(messages, model_request_parameters)
 
         with _map_api_errors(self.model_name):
-            return await self.client.chat.completions.create(  # type: ignore[reportUnknownVariableType, reportUnknownMemberType, reportCallIssue]
+            return await self.client.chat.completions.create(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType, reportCallIssue]
                 model=self._model_name,
-                messages=hf_messages,  # type: ignore[reportArgumentType]
+                messages=hf_messages,  # pyright: ignore[reportArgumentType]
                 tools=tools,
                 tool_choice=tool_choice or None,
                 stream=stream,
@@ -271,10 +271,10 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                 seed=model_settings.get('seed', None),
                 presence_penalty=model_settings.get('presence_penalty', None),
                 frequency_penalty=model_settings.get('frequency_penalty', None),
-                logit_bias=model_settings.get('logit_bias', None),  # type: ignore[reportArgumentType]
+                logit_bias=model_settings.get('logit_bias', None),  # pyright: ignore[reportArgumentType]
                 logprobs=model_settings.get('logprobs', None),
                 top_logprobs=model_settings.get('top_logprobs', None),
-                extra_body=model_settings.get('extra_body'),  # type: ignore[reportArgumentType]
+                extra_body=model_settings.get('extra_body'),  # pyright: ignore[reportArgumentType]
             )
 
     def _process_response(self, response: ChatCompletionOutput) -> ModelResponse:
@@ -429,7 +429,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ChatCompletionInputToolCall:
-        return ChatCompletionInputToolCall.parse_obj_as_instance(  # type: ignore[reportUnknownMemberType]
+        return ChatCompletionInputToolCall.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
             {
                 'id': _guard_tool_call_id(t=t),
                 'type': 'function',
@@ -442,7 +442,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ChatCompletionInputTool:
-        tool_param: ChatCompletionInputTool = ChatCompletionInputTool.parse_obj_as_instance(  # type: ignore[reportUnknownMemberType]
+        tool_param: ChatCompletionInputTool = ChatCompletionInputTool.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
             {
                 'type': 'function',
                 'function': {
@@ -460,13 +460,13 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         file_content: list[UserContent] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
-                yield ChatCompletionInputMessage.parse_obj_as_instance({'role': 'system', 'content': part.content})  # type: ignore[reportUnknownMemberType]
+                yield ChatCompletionInputMessage.parse_obj_as_instance({'role': 'system', 'content': part.content})  # pyright: ignore[reportUnknownMemberType]
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 tool_text, tool_file_content = part.model_response_str_and_user_content()
                 file_content.extend(tool_file_content)
-                yield ChatCompletionOutputMessage.parse_obj_as_instance(  # type: ignore[reportUnknownMemberType]
+                yield ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                     {
                         'role': 'tool',
                         'tool_call_id': _guard_tool_call_id(t=part),
@@ -475,11 +475,11 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield ChatCompletionInputMessage.parse_obj_as_instance(  # type: ignore[reportUnknownMemberType]
+                    yield ChatCompletionInputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                         {'role': 'user', 'content': part.model_response()}
                     )
                 else:
-                    yield ChatCompletionInputMessage.parse_obj_as_instance(  # type: ignore[reportUnknownMemberType]
+                    yield ChatCompletionInputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                         {
                             'role': 'tool',
                             'tool_call_id': _guard_tool_call_id(t=part),
@@ -543,7 +543,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
         try:
             # huggingface_hub types this as AsyncIterable, but at runtime it's an
             # async generator that exposes aclose().
-            await self._response.source.aclose()  # type: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
         except RuntimeError as exc:
             if not _utils.is_async_generator_already_running(exc):
                 raise
@@ -581,7 +581,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
                 for dtc in choice.delta.tool_calls or []:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=dtc.index,
-                        tool_name=dtc.function and dtc.function.name,  # type: ignore[reportArgumentType]
+                        tool_name=dtc.function and dtc.function.name,  # pyright: ignore[reportArgumentType]
                         args=dtc.function and dtc.function.arguments,
                         tool_call_id=dtc.id,
                     )

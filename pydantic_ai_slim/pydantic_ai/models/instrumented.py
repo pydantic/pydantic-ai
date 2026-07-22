@@ -159,7 +159,7 @@ class InstrumentationSettings:
         except TypeError:  # pragma: lax no cover
             # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
             self.tokens_histogram = self.meter.create_histogram(
-                **tokens_histogram_kwargs,  # type: ignore[reportArgumentType]
+                **tokens_histogram_kwargs,  # pyright: ignore[reportArgumentType]
             )
         self.cost_histogram = self.meter.create_histogram(
             'operation.cost',
@@ -179,7 +179,7 @@ class InstrumentationSettings:
         except TypeError:  # pragma: lax no cover
             # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
             self.time_to_first_chunk_histogram = self.meter.create_histogram(
-                **time_to_first_chunk_histogram_kwargs,  # type: ignore[reportArgumentType]
+                **time_to_first_chunk_histogram_kwargs,  # pyright: ignore[reportArgumentType]
             )
 
     def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:

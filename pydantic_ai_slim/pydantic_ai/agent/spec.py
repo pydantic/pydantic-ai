@@ -205,7 +205,7 @@ class AgentSpec(BaseModel):
             tool_timeout: float | None = None
             metadata: dict[str, Any] | None = None
             if capability_schema_types:  # pragma: no branch
-                capabilities: list[Union[tuple(capability_schema_types)]] = []  # type: ignore[reportUnknownVariableType, reportInvalidTypeArguments, reportInvalidTypeForm]  # noqa: UP007
+                capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore[reportUnknownVariableType, reportInvalidTypeArguments, reportInvalidTypeForm]  # noqa: UP007
 
         json_schema = _AgentSpecSchema.model_json_schema()
         json_schema['title'] = 'AgentSpec'
@@ -367,7 +367,7 @@ def _replace_capability_spec_refs(schema: dict[str, Any], cap_items_schema: dict
         if isinstance(value, dict):
             _replace_capability_spec_refs(cast(dict[str, Any], value), cap_items_schema)
         elif isinstance(value, list):
-            for item in value:  # type: ignore[reportUnknownVariableType]
+            for item in value:  # pyright: ignore[reportUnknownVariableType]
                 if isinstance(item, dict):
                     _replace_capability_spec_refs(cast(dict[str, Any], item), cap_items_schema)
 
