@@ -9,17 +9,31 @@ from dirty_equals import IsJson, IsList
 from pydantic import BaseModel
 from typing_extensions import NotRequired, Self, TypedDict
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Hooks,
+    ValidatedToolArgs,
+    WrapToolExecuteHandler,
+)
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
-from pydantic_ai.tools import DeferredToolRequests, RunContext
+from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
@@ -1459,6 +1473,53 @@ Fix the errors and try again.\
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_invalid_tool_arguments_produce_one_error_span(capfire: CaptureLogfire) -> None:
+    """Schema-invalid arguments produce exactly one error tool span.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/6555.
+    """
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'count': []}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    agent = Agent(FunctionModel(model_function), capabilities=[Instrumentation()])
+
+    @agent.tool_plain
+    def my_tool(count: int) -> str:
+        pytest.fail('A tool with invalid arguments must not execute')
+
+    await agent.run('Call the tool')
+
+    tool_spans = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.tool.name') == 'my_tool'
+    ]
+    assert len(tool_spans) == 1
+    assert tool_spans[0]['attributes']['logfire.level_num'] == 17
+    assert tool_spans[0]['attributes']['gen_ai.tool.call.result'] == snapshot("""\
+1 validation error:
+```json
+[
+  {
+    "type": "int_type",
+    "loc": [
+      "count"
+    ],
+    "msg": "Input should be a valid integer",
+    "input": []
+  }
+]
+```
+
+Fix the errors and try again.\
+""")
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize('include_content', [True, False])
 def test_tool_failed_span_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
@@ -1496,6 +1557,92 @@ def test_tool_failed_span_attributes(
         assert tool_attributes.get('gen_ai.tool.call.result') == 'numbers service unavailable'
     else:
         assert 'gen_ai.tool.call.result' not in tool_attributes
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('failure_stage', ['args_validator', 'before', 'wrap', 'after'])
+@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.anyio
+async def test_tool_failed_outside_tool_body_span_attributes(
+    capfire: CaptureLogfire,
+    failure_stage: Literal['args_validator', 'before', 'wrap', 'after'],
+    include_content: bool,
+) -> None:
+    """Failures from every PR #5585 tool boundary remain error spans with the result from issue #2586."""
+    failure_message = f'failed from {failure_stage}'
+    hooks = Hooks[Any]()
+
+    if failure_stage == 'before':
+
+        @hooks.on.before_tool_execute
+        async def fail_before(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+        ) -> ValidatedToolArgs:
+            raise ToolFailed(failure_message)
+
+    elif failure_stage == 'wrap':
+
+        @hooks.on.tool_execute
+        async def fail_wrap(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            handler: WrapToolExecuteHandler,
+        ) -> Any:
+            raise ToolFailed(failure_message)
+
+    elif failure_stage == 'after':
+
+        @hooks.on.after_tool_execute
+        async def fail_after(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: Any,
+        ) -> Any:
+            raise ToolFailed(failure_message)
+
+    def validate_args(ctx: RunContext[Any]) -> None:
+        if failure_stage == 'args_validator':
+            raise ToolFailed(failure_message)
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    agent = Agent(
+        FunctionModel(model_function),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=include_content)), hooks],
+    )
+
+    @agent.tool_plain(args_validator=validate_args)
+    async def my_tool() -> str:
+        return 'tool result'
+
+    result = await agent.run('Call the tool')
+    tool_return = next(
+        part for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+    )
+    assert tool_return.outcome == 'failed'
+    assert tool_return.content == failure_message
+
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
+    tool_spans = [span for span in spans if span['attributes'].get('gen_ai.tool.name') == 'my_tool']
+    assert len(tool_spans) == 1
+    assert tool_spans[0]['attributes']['logfire.level_num'] == 17
+    if include_content:
+        assert tool_spans[0]['attributes']['gen_ai.tool.call.result'] == failure_message
+    else:
+        assert 'gen_ai.tool.call.result' not in tool_spans[0]['attributes']
 
 
 class WeatherInfo(BaseModel):

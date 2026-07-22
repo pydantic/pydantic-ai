@@ -503,35 +503,55 @@ class ToolManager(Generic[AgentDepsT]):
     ) -> Any:
         """Execute a validated tool call via capability hooks.
 
-        The Instrumentation capability (if present) creates trace spans via its
-        wrap_tool_execute hook.
+        The capability chain can wrap the settled call, including validation failures
+        and the complete execution-hook lifecycle, via `wrap_tool_call`.
 
         Args:
             validated: The validation result from validate_tool_call().
             wrap_validation_errors: If True (default), `ModelRetry` raised by the tool
                 body or by execute-stage capability hooks (`before_tool_execute`,
-                `after_tool_execute`, `wrap_tool_execute`) is wrapped as `ToolRetryError`
-                after counting against the retry budget. If False, the raw
-                `ModelRetry` / `ValidationError` propagates and retry-budget state is
-                left untouched.
+                `after_tool_execute`, `wrap_tool_execute`, `wrap_tool_call`) is wrapped
+                as `ToolRetryError` after counting against the retry budget. If False,
+                the raw `ModelRetry` / `ValidationError` propagates and retry-budget
+                state is left untouched.
 
         Returns:
             The tool result if validation passed and execution succeeded.
 
         Raises:
-            ToolRetryError: If validation failed with a retry prompt or the tool raised
-                `ModelRetry`. Only when `wrap_validation_errors=True`.
-            ToolFailedError: If validation failed with `ToolFailed`, or the tool raised
-                `ToolFailed`. Only when `wrap_validation_errors=True`.
+            ToolRetryError: If validation failed with a retry prompt, or the tool or
+                whole-call wrapper raised `ModelRetry`. Only when
+                `wrap_validation_errors=True`.
+            ToolFailedError: If validation failed with `ToolFailed`, or the tool or
+                whole-call wrapper raised `ToolFailed`. Only when
+                `wrap_validation_errors=True`.
             ModelRetry / ValidationError / ToolFailed: When `wrap_validation_errors=False`.
             RuntimeError: If trying to execute an external tool.
         """
         if self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+        ctx = self.ctx
 
-        return await self._execute_tool_call_impl(
-            validated, usage=self.ctx.usage, wrap_validation_errors=wrap_validation_errors
-        )
+        async def execute() -> Any:
+            return await self._execute_tool_call_impl(
+                validated, usage=ctx.usage, wrap_validation_errors=wrap_validation_errors
+            )
+
+        if self.root_capability is not None:
+            try:
+                return await self.root_capability.wrap_tool_call(validated.ctx, call=validated.call, handler=execute)
+            except (ValidationError, ModelRetry) as e:
+                if not wrap_validation_errors:
+                    raise
+                max_retries = validated.tool.max_retries if validated.tool is not None else self.default_max_retries
+                self._check_max_retries(validated.call.tool_name, max_retries, e)
+                self.failed_tools.add(validated.call.tool_name)
+                raise self._wrap_error_as_retry(validated.call.tool_name, validated.call, e) from e
+            except ToolFailed as e:
+                if not wrap_validation_errors:
+                    raise
+                raise self._wrap_error_as_failed(validated.call.tool_name, validated.call, e) from e
+        return await execute()
 
     # --- Output tool methods (output hooks, no tool hooks) ---
 
@@ -738,7 +758,7 @@ class ToolManager(Generic[AgentDepsT]):
         usage: RunUsage,
         wrap_validation_errors: bool = True,
     ) -> Any:
-        """Execute a validated tool call without tracing, with capability hooks.
+        """Execute a validated tool call with capability hooks.
 
         `wrap_validation_errors` here only governs errors raised *during* execution
         (tool body or execute-stage hooks). A `ValidatedToolCall` that already failed

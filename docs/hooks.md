@@ -168,12 +168,15 @@ To skip validation, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.Sk
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
 |---|---|---|
+| `tool_call` | `tool_call=` | `wrap_tool_call` |
 | `before_tool_execute` | `before_tool_execute=` | `before_tool_execute` |
 | `after_tool_execute` | `after_tool_execute=` | `after_tool_execute` |
 | `tool_execute` | `tool_execute=` | `wrap_tool_execute` |
 | `tool_execute_error` | `tool_execute_error=` | `on_tool_execute_error` |
 
-Execution hooks fire when the tool function runs. `args` is always the validated `dict[str, Any]`.
+`tool_call` wraps an already-classified function tool call, including argument-validation failures and the full execution-hook lifecycle. Its `handler` takes no arguments because validation has already settled; use `tool_execute` when the wrapper needs to receive or modify validated `args`. Raising `ModelRetry` or `ToolFailed` from this wrapper follows the normal tool retry or failed-result behavior.
+
+The remaining execution hooks fire when the tool function runs. `args` is always the validated `dict[str, Any]`.
 
 To skip execution, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `tool_execute` (wrap).
 
@@ -416,7 +419,7 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 - For tool output, retries count against the tool's `max_retries` limit
 - For text output, retries count against the output side of the agent's retry budget
 
-`ModelRetry` (and `ToolFailed`) from `wrap_model_request`, `wrap_tool_execute`, and `wrap_output_process` is treated as control flow — it bypasses the corresponding `on_*_error` hook.
+[`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from `wrap_model_request`, `wrap_tool_execute`, or `wrap_output_process` is control flow and bypasses the corresponding `on_*_error` hook. [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] is control flow only at the tool boundary, so it bypasses `on_tool_execute_error`. From model-request and output-process hooks, `ToolFailed` is an ordinary exception and is passed to `on_model_request_error` or `on_output_process_error`.
 
 Tool validation and execution hooks can also raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a failed tool result without consuming the tool's retry budget. This has the same model-visible outcome and retry-budget behavior as raising `ToolFailed` from the tool function itself, and is useful when an error hook converts a third-party exception into a failure the model can see.
 

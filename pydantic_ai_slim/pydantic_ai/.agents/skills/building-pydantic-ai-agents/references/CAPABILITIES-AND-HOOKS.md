@@ -95,10 +95,15 @@ Important hook families:
 - node-level hooks
 - model-request hooks
 - tool-validation hooks
+- whole-tool-call hooks
 - tool-execution hooks
 - event-stream hooks
 
+`wrap_tool_call` (or `hooks.on.tool_call`) wraps an already-classified function tool call, including argument-validation failures and the full execution-hook lifecycle. Its handler takes no arguments; use `wrap_tool_execute` (or `hooks.on.tool_execute`) to receive or modify validated arguments. Raising `ModelRetry` or `ToolFailed` from this wrapper follows the normal tool retry or failed-result behavior.
+
 From tool-validation and tool-execution hooks you can raise `ModelRetry` (the model should retry the call) or `ToolFailed` (the call is done and failed — the model sees the result and adapts, without consuming the retry budget) to redirect a tool call in one place instead of per tool.
+
+At wrap boundaries, `ModelRetry` is control flow and bypasses `on_model_request_error`, `on_tool_execute_error`, and `on_output_process_error`. `ToolFailed` bypasses only `on_tool_execute_error`; from model-request or output-process hooks it is an ordinary exception passed to the corresponding error hook.
 
 Use hooks when the user wants observability, auditing, or light interception without adding a new abstraction.
 

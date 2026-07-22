@@ -1,6 +1,7 @@
+import asyncio
 import json
 import re
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, Literal
 
@@ -14,8 +15,11 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    AgentRunResultEvent,
+    AgentStreamEvent,
     EndStrategy,
     ExternalToolset,
+    FunctionToolResultEvent,
     FunctionToolset,
     ModelMessage,
     ModelRequest,
@@ -33,7 +37,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UnexpectedModelBehavior
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import (
@@ -1609,6 +1613,56 @@ def test_tool_failed_parallel():
     assert tool_returns['call_fail'].content == 'Disk full'
 
 
+@pytest.mark.anyio
+async def test_tool_failed_stream_event_preserves_parallel_tool_lifecycle():
+    """PR #5585 preserves issue #2586's streamed parallel-tool lifecycle.
+
+    https://github.com/pydantic/pydantic-ai/pull/5585
+    https://github.com/pydantic/pydantic-ai/issues/2586
+    """
+    sibling_started = asyncio.Event()
+    sibling_may_finish = asyncio.Event()
+    sibling_side_effects: list[str] = []
+
+    async def llm(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='slow_tool', tool_call_id='call_slow')}
+            yield {1: DeltaToolCall(name='failing_tool', tool_call_id='call_fail')}
+        else:
+            yield 'Done.'
+
+    agent = Agent(FunctionModel(stream_function=llm))
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        sibling_started.set()
+        await sibling_may_finish.wait()
+        sibling_side_effects.append('completed')
+        return 'slow success'
+
+    @agent.tool_plain
+    async def failing_tool() -> str:
+        await sibling_started.wait()
+        raise ToolFailed('fast failure')
+
+    events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+    async with agent.run_stream_events('Run both tools') as event_stream:
+        async for event in event_stream:
+            events.append(event)
+            if isinstance(event, FunctionToolResultEvent) and event.tool_call_id == 'call_fail':
+                sibling_may_finish.set()
+
+    result_events = [event for event in events if isinstance(event, FunctionToolResultEvent)]
+    assert [event.tool_call_id for event in result_events] == ['call_fail', 'call_slow']
+    tool_returns = [event.part for event in result_events if isinstance(event.part, ToolReturnPart)]
+    assert [(part.tool_call_id, part.outcome, part.content) for part in tool_returns] == [
+        ('call_fail', 'failed', 'fast failure'),
+        ('call_slow', 'success', 'slow success'),
+    ]
+    assert [event.result.output for event in events if isinstance(event, AgentRunResultEvent)] == ['Done.']
+    assert sibling_side_effects == ['completed']
+
+
 def test_tool_failed_does_not_consume_retry_budget():
     """`ToolFailed` is a result, not a correction request — repeated failures must not trigger `UnexpectedModelBehavior` from the per-tool retry counter."""
     call_count = 0
@@ -2861,9 +2915,115 @@ def test_deferred_tool_results_serializable():
     )
     deserialized = results_ta.validate_python(serialized)
     assert deserialized == results
+    assert results_ta.validate_json(results_ta.dump_json(results)) == results
     assert TypeAdapter(DeferredToolCallResult).validate_python(results.calls['tool-failed']) == ToolFailed(
         'The tool failed.'
     )
+
+
+def test_deferred_tool_results_exact_control_dicts_round_trip_as_arbitrary():
+    """Exact control-shaped dicts use an escape envelope in Python and JSON round trips.
+
+    A bare exact control dict must keep decoding as its historical typed result, so only values
+    dumped through `DeferredToolResults` can be disambiguated. Regression for the collision class
+    described in https://github.com/pydantic/pydantic-ai/pull/6631.
+    """
+    calls: dict[str, Any] = {
+        'tool-failed': {'message': 'ordinary failure', 'kind': 'tool-failed'},
+        'model-retry': {'message': 'ordinary retry', 'kind': 'model-retry'},
+        'tool-return': {'return_value': 1, 'content': None, 'metadata': None, 'kind': 'tool-return'},
+        'retry-prompt': {
+            'content': 'ordinary prompt',
+            'tool_name': 'tool',
+            'tool_call_id': 'call-1',
+            'timestamp': '2026-01-01T00:00:00Z',
+            'part_kind': 'retry-prompt',
+        },
+    }
+    result = DeferredToolResults(calls=calls)
+    adapter = TypeAdapter(DeferredToolResults)
+    expected_calls = {
+        key: {'__pydantic_ai_deferred_tool_result__': 'arbitrary', 'value': value} for key, value in calls.items()
+    }
+
+    dumped_python = adapter.dump_python(result, mode='json')
+    assert dumped_python['calls'] == expected_calls
+    assert adapter.validate_python(dumped_python) == result
+
+    dumped_json = adapter.dump_json(result)
+    assert json.loads(dumped_json)['calls'] == expected_calls
+    assert adapter.validate_json(dumped_json) == result
+
+
+def test_deferred_tool_results_non_colliding_arbitrary_dict_stays_unchanged():
+    """A dict that is not an exact control shape needs no wire escape."""
+    calls: dict[str, Any] = {
+        'extra-field': {'kind': 'tool-failed', 'message': 'ordinary', 'data': 123},
+        'ordinary': {'foo': 'bar'},
+        'scalar': 123,
+        'list': ['one', 'two'],
+    }
+    result = DeferredToolResults(calls=calls)
+    adapter = TypeAdapter(DeferredToolResults)
+
+    dumped_python = adapter.dump_python(result, mode='json')
+    assert dumped_python['calls'] == calls
+    assert adapter.validate_python(dumped_python) == result
+
+    dumped_json = adapter.dump_json(result)
+    assert json.loads(dumped_json)['calls'] == calls
+    assert adapter.validate_json(dumped_json) == result
+
+
+def test_deferred_tool_results_arbitrary_escape_envelope_is_double_escaped():
+    """An arbitrary dict equal to the reserved envelope survives one-level unwrapping."""
+    envelope: dict[str, Any] = {
+        '__pydantic_ai_deferred_tool_result__': 'arbitrary',
+        'value': {'message': 'ordinary failure', 'kind': 'tool-failed'},
+    }
+    result = DeferredToolResults(calls={'arbitrary': envelope})
+    adapter = TypeAdapter(DeferredToolResults)
+    expected = {
+        '__pydantic_ai_deferred_tool_result__': 'arbitrary',
+        'value': envelope,
+    }
+
+    dumped_python = adapter.dump_python(result, mode='json')
+    assert dumped_python['calls']['arbitrary'] == expected
+    assert adapter.validate_python(dumped_python) == result
+
+    dumped_json = adapter.dump_json(result)
+    assert json.loads(dumped_json)['calls']['arbitrary'] == expected
+    assert adapter.validate_json(dumped_json) == result
+
+
+def test_deferred_tool_results_legacy_exact_control_dicts_decode_typed():
+    """Bare legacy control dicts remain typed for backwards-compatible persisted histories."""
+    adapter = TypeAdapter(DeferredToolResults)
+    retry_prompt = RetryPromptPart(content='prompt', tool_name='tool', tool_call_id='call-1')
+    serialized = {
+        'calls': {
+            'tool-failed': {'message': 'failure', 'kind': 'tool-failed'},
+            'model-retry': {'message': 'retry', 'kind': 'model-retry'},
+            'tool-return': {'return_value': 1, 'content': None, 'metadata': None, 'kind': 'tool-return'},
+            'retry-prompt': {
+                'content': 'prompt',
+                'tool_name': 'tool',
+                'tool_call_id': 'call-1',
+                'timestamp': retry_prompt.timestamp,
+                'part_kind': 'retry-prompt',
+            },
+        },
+        'approvals': {},
+        'metadata': {},
+    }
+
+    loaded = adapter.validate_python(serialized)
+
+    assert isinstance(loaded.calls['tool-failed'], ToolFailed)
+    assert isinstance(loaded.calls['model-retry'], ModelRetry)
+    assert isinstance(loaded.calls['tool-return'], ToolReturn)
+    assert isinstance(loaded.calls['retry-prompt'], RetryPromptPart)
 
 
 def test_deferred_tool_call_result_tool_failed():

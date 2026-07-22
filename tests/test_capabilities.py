@@ -58,6 +58,7 @@ from pydantic_ai.capabilities import (
     WebFetch,
     WebSearch,
     WrapperCapability,
+    WrapToolCallHandler,
     XSearch,
 )
 from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
@@ -5866,6 +5867,37 @@ class TestToolExecuteHooks:
 
 
 class TestCompositionOrder:
+    async def test_multiple_capabilities_tool_call_wrapper_order(self):
+        """Whole-call middleware composes outer-to-inner around settled tool execution."""
+        log: list[str] = []
+
+        @dataclass
+        class ToolCallCap(AbstractCapability[Any]):
+            name: str
+
+            async def wrap_tool_call(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                handler: WrapToolCallHandler,
+            ) -> Any:
+                log.append(f'{self.name}:before')
+                result = await handler()
+                log.append(f'{self.name}:after')
+                return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[ToolCallCap('first'), ToolCallCap('second')])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            log.append('tool')
+            return 'result'
+
+        await agent.run('call tool')
+
+        assert log == ['first:before', 'second:before', 'tool', 'second:after', 'first:after']
+
     async def test_multiple_capabilities_model_request_order(self):
         """Test that multiple capabilities compose in the correct order."""
         log: list[str] = []
@@ -11001,6 +11033,40 @@ class TestHooksCapability:
         await agent.run('hello')
         assert call_log == ['before_model_request']
 
+    async def test_tool_call_hook(self):
+        call_log: list[str] = []
+
+        async def outer(ctx: RunContext[Any], *, call: ToolCallPart, handler: WrapToolCallHandler) -> Any:
+            call_log.append(f'outer_before:{call.tool_name}')
+            result = await handler()
+            call_log.append(f'outer_after:{call.tool_name}')
+            return result
+
+        hooks = Hooks(tool_call=outer)
+
+        @hooks.on.tool_call(tools=['target_tool'])
+        async def inner(ctx: RunContext[Any], *, call: ToolCallPart, handler: WrapToolCallHandler) -> Any:
+            call_log.append(f'inner_before:{call.tool_name}')
+            result = await handler()
+            call_log.append(f'inner_after:{call.tool_name}')
+            return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def target_tool() -> str:
+            call_log.append('tool')
+            return 'result'
+
+        await agent.run('call tool')
+        assert call_log == [
+            'outer_before:target_tool',
+            'inner_before:target_tool',
+            'tool',
+            'inner_after:target_tool',
+            'outer_after:target_tool',
+        ]
+
     async def test_multiple_hooks_same_event(self):
         hooks = Hooks()
         call_log: list[str] = []
@@ -12277,6 +12343,36 @@ async def test_wrapper_capability_delegates_hooks():
     assert 'after_run' in hook_calls
 
 
+async def test_wrapper_capability_delegates_wrap_tool_call():
+    """WrapperCapability preserves whole-call middleware introduced for #6555."""
+    hook_calls: list[str] = []
+
+    @dataclass
+    class ToolCallCap(AbstractCapability[Any]):
+        async def wrap_tool_call(
+            self,
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            handler: WrapToolCallHandler,
+        ) -> Any:
+            hook_calls.append('before')
+            result = await handler()
+            hook_calls.append('after')
+            return result
+
+    agent = Agent(FunctionModel(tool_calling_model), capabilities=[WrapperCapability(wrapped=ToolCallCap())])
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        hook_calls.append('tool')
+        return 'result'
+
+    await agent.run('call tool')
+
+    assert hook_calls == ['before', 'tool', 'after']
+
+
 def test_wrapper_capability_for_agent_replaces():
     """WrapperCapability.for_agent replaces wrapped when its for_agent rebinds.
 
@@ -12889,6 +12985,33 @@ def _assert_failed_tool_result(result: AgentRunResult[Any], expected_message: st
 class TestToolFailedFromHooks:
     """Tests for raising ToolFailed from capability tool hooks."""
 
+    async def test_tool_call_hook_tool_failed(self):
+        """A whole-call hook can return a failed result without consuming the retry budget."""
+        tool_call_count = 0
+        hooks = Hooks[Any]()
+
+        @hooks.on.tool_call
+        async def fail_call(ctx: RunContext[Any], *, call: ToolCallPart, handler: WrapToolCallHandler) -> Any:
+            assert ctx.retry == 0
+            raise ToolFailed('failed around tool call')
+
+        agent = Agent(
+            FunctionModel(_tool_failed_roundtrip_model('{}')),
+            capabilities=[hooks],
+            retries={'tools': 0, 'output': 2},
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1  # pragma: no cover
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, 'failed around tool call')
+        assert tool_call_count == 0
+
     @pytest.mark.parametrize('hook_name', ['before', 'wrap', 'after', 'on_error'])
     async def test_tool_execute_hook_tool_failed(self, hook_name: str):
         tool_call_count = 0
@@ -13003,6 +13126,53 @@ class TestToolFailedFromHooks:
 
 class TestModelRetryFromHooks:
     """Tests for raising ModelRetry from capability hooks."""
+
+    async def test_tool_call_hook_model_retry(self):
+        """A whole-call hook retry uses the normal tool retry budget and prompt."""
+        retries_seen: list[int] = []
+        tool_call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+                return make_text_response('done')
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call-1')])
+
+        hooks = Hooks[Any]()
+
+        @hooks.on.tool_call
+        async def retry_call(ctx: RunContext[Any], *, call: ToolCallPart, handler: WrapToolCallHandler) -> Any:
+            retries_seen.append(ctx.retry)
+            if ctx.retry == 0:
+                raise ModelRetry('retry around tool call')
+            return await handler()
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            capabilities=[hooks],
+            retries={'tools': 1, 'output': 2},
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1
+            return 'tool result'
+
+        result = await agent.run('call tool')
+
+        assert result.output == 'done'
+        assert retries_seen == [0, 1]
+        assert tool_call_count == 1
+        parts = [part for message in result.all_messages() for part in message.parts]
+        retry_prompt = next(part for part in parts if isinstance(part, RetryPromptPart))
+        assert retry_prompt == snapshot(
+            RetryPromptPart(
+                content='retry around tool call',
+                tool_name='my_tool',
+                tool_call_id='call-1',
+                timestamp=IsDatetime(),
+            )
+        )
 
     async def test_after_model_request_model_retry(self):
         """after_model_request raises ModelRetry — model is called again with retry prompt."""

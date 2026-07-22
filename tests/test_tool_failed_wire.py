@@ -347,6 +347,18 @@ async def test_anthropic_tool_return_native_error_channel(
             id='framed-fallback',
         ),
         pytest.param(
+            'meta.llama3-70b-instruct-v1:0',
+            'failed',
+            {'toolUseId': 'call_1', 'content': [{'text': _FAILED_WIRE_CONTENT}]},
+            id='framed-unsupported-family-failed',
+        ),
+        pytest.param(
+            'meta.llama3-70b-instruct-v1:0',
+            'success',
+            {'toolUseId': 'call_1', 'content': [{'text': _TOOL_CONTENT}]},
+            id='framed-unsupported-family-success',
+        ),
+        pytest.param(
             'us.writer.palmyra-x4-v1:0',
             'success',
             {'toolUseId': 'call_1', 'content': [{'text': _TOOL_CONTENT}]},
@@ -366,7 +378,11 @@ async def test_bedrock_failed_tool_return_signal(
     outcome: Literal['success', 'failed', 'denied'],
     expected_tool_result: object,
 ) -> None:
-    """Direct mapping distinguishes native status from the no-status fallback despite VCR matching."""
+    """Direct mapping distinguishes native status from the no-status fallback despite VCR matching.
+
+    AWS limits `status` support to specific model families:
+    https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultBlock.html.
+    """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     part = ToolReturnPart(
         tool_name='tool',

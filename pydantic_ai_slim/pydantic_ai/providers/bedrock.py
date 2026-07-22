@@ -172,11 +172,10 @@ class BedrockModelProfile(ModelProfile, total=False):
     bedrock_supports_tool_result_status: bool
     """Whether this model accepts the `status` field on a `toolResult` block in Bedrock's Converse API.
 
-    Most families accept (and pydantic-ai emits) `status: 'success'`/`'error'` on `toolResult` blocks, but
-    Writer Palmyra rejects it (`"This model doesn't support the status field. Remove status and try again."`),
-    so the field is omitted for it. Verified against Bedrock `us-east-1`.
+    AWS documents this field as supported only by Amazon Nova and Anthropic Claude 3 and 4 models:
+    https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultBlock.html.
 
-    Default: `True`.
+    Default: `False`.
     """
     bedrock_supports_strict_tool_definition: bool
     """Whether this model accepts `strict: true` on `toolSpec` in Bedrock's Converse API.
@@ -248,6 +247,9 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # Bedrock only honors effort inside the adaptive branch of `_build_additional_model_request_fields`, so don't claim
     # support for non-adaptive models (e.g. Opus 4.5) even when the direct Anthropic API supports it.
     supports_effort = supports_adaptive and bool((downstream or {}).get('anthropic_supports_effort', False))
+    supports_tool_result_status = model_name.startswith(
+        ('claude-3', 'claude-haiku-4', 'claude-opus-4', 'claude-sonnet-4')
+    )
     profile = merge_profile(
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,
@@ -259,6 +261,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             # accepts text and images alongside it. See https://github.com/pydantic/pydantic-ai/issues/6081.
             bedrock_tool_result_colocatable_content=frozenset({'text', 'image'}),
             bedrock_supports_leading_assistant_message=True,
+            bedrock_supports_tool_result_status=supports_tool_result_status,
             bedrock_thinking_variant='anthropic',
             bedrock_supports_adaptive_thinking=supports_adaptive,
             bedrock_supports_effort=supports_effort,
@@ -293,6 +296,7 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
             BedrockModelProfile(
                 bedrock_supports_tool_choice=True,
                 bedrock_supports_prompt_caching=True,
+                bedrock_supports_tool_result_status=True,
                 bedrock_top_k_variant='nova',
             ),
         )
@@ -451,8 +455,6 @@ def bedrock_writer_model_profile(model_name: str) -> ModelProfile | None:
         # any co-located text or attachment block (like Llama and Mistral). Verified live against
         # `writer.palmyra-x4-v1:0` and `writer.palmyra-x5-v1:0`. See https://github.com/pydantic/pydantic-ai/issues/6081.
         bedrock_tool_result_colocatable_content=frozenset(),
-        # Writer Palmyra also rejects the `status` field on a `toolResult` block, unlike every other family.
-        bedrock_supports_tool_result_status=False,
     )
 
 

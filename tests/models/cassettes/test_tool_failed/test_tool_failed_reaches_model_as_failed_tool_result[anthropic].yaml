@@ -1,0 +1,182 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '480'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Call lookup exactly once with item "missing". If it fails, reply with exactly RECOVERED and nothing else.
+          type: text
+        role: user
+      model: claude-haiku-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: Look up an item.
+        input_schema:
+          additionalProperties: false
+          properties:
+            item:
+              type: string
+          required:
+          - item
+          type: object
+        name: lookup
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '604'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-be8b8b6ea22712efa288c3f67afd8e3f-93b4ffd9c5344a62-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - caller:
+          type: direct
+        id: toolu_01TPSnLV2mMXtrhmUcLnz8LV
+        input:
+          item: missing
+        name: lookup
+        type: tool_use
+      id: msg_011CdHM1nznKadD37u5djEZL
+      model: claude-haiku-4-5-20251001
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 582
+        output_tokens: 52
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '814'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Call lookup exactly once with item "missing". If it fails, reply with exactly RECOVERED and nothing else.
+          type: text
+        role: user
+      - content:
+        - id: toolu_01TPSnLV2mMXtrhmUcLnz8LV
+          input:
+            item: missing
+          name: lookup
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: missing is unavailable
+            type: text
+          is_error: true
+          tool_use_id: toolu_01TPSnLV2mMXtrhmUcLnz8LV
+          type: tool_result
+        role: user
+      model: claude-haiku-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: Look up an item.
+        input_schema:
+          additionalProperties: false
+          properties:
+            item:
+              type: string
+          required:
+          - item
+          type: object
+        name: lookup
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '502'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-e75ce501e73f3e9689082017da655963-a6aa54d1a48c88a0-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: RECOVERED
+        type: text
+      id: msg_011CdHM1sWPpHzhgaQ5HDEp3
+      model: claude-haiku-4-5-20251001
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 658
+        output_tokens: 5
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

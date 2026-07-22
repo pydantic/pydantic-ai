@@ -286,13 +286,16 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # Use a one-off message ID instead of `self.new_message_id()` to avoid
         # mutating `self.message_id`, which is used as `parent_message_id` for
         # subsequent tool calls in the same response.
+        message_id = str(uuid4())
         yield ToolCallResultEvent(
-            message_id=str(uuid4()),
+            message_id=message_id,
             type=EventType.TOOL_CALL_RESULT,
             role='tool',
             tool_call_id=tool_call_id,
             content=_tool_return_content(part),
         )
+        async for event in self._handle_tool_return_outcome(part, message_id):
+            yield event
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):
@@ -308,8 +311,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         else:
             output = _tool_return_content(result)
 
+        message_id = self.new_message_id()
         yield ToolCallResultEvent(
-            message_id=self.new_message_id(),
+            message_id=message_id,
             type=EventType.TOOL_CALL_RESULT,
             role='tool',
             tool_call_id=result.tool_call_id,
@@ -319,6 +323,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # ToolCallResultEvent.content may hold user parts (e.g. text, images) that AG-UI does not currently have events for
 
         if isinstance(result, ToolReturnPart):
+            async for event in self._handle_tool_return_outcome(result, message_id):
+                yield event
+
             # Check for AG-UI events returned by tool calls.
             possible_event = result.metadata or result.content
             if isinstance(possible_event, BaseEvent):
@@ -330,6 +337,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 for item in possible_event:  # type: ignore[reportUnknownMemberType]
                     if isinstance(item, BaseEvent):  # pragma: no branch
                         yield item
+
+    async def _handle_tool_return_outcome(
+        self, part: NativeToolReturnPart | ToolReturnPart, message_id: str
+    ) -> AsyncIterator[BaseEvent]:
+        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(None, part.outcome)):
+            from ag_ui.core import ReasoningEncryptedValueEvent
+
+            yield ReasoningEncryptedValueEvent(subtype='message', entity_id=message_id, encrypted_value=encrypted_value)
 
 
 def _tool_return_content(part: NativeToolReturnPart | ToolReturnPart) -> str:

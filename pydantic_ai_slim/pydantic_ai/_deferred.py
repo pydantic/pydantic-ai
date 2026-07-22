@@ -16,7 +16,15 @@ from __future__ import annotations as _annotations
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import Discriminator, Tag
+from pydantic import (
+    Discriminator,
+    SerializerFunctionWrapHandler,
+    Tag,
+    TypeAdapter,
+    ValidatorFunctionWrapHandler,
+    WrapSerializer,
+    WrapValidator,
+)
 
 from . import _utils
 from .exceptions import ModelRetry, ToolFailed
@@ -123,12 +131,33 @@ def _deferred_tool_call_result_discriminator(x: Any) -> str | None:
         return 'tool-failed'
     elif isinstance(x, ModelRetry):
         return 'model-retry'
+    elif isinstance(x, ToolReturn):
+        return 'tool-return'
+    elif isinstance(x, RetryPromptPart):
+        return 'retry-prompt'
     elif isinstance(x, dict):
         x_dict = cast(dict[str, Any], x)
-        if 'kind' in x_dict:
-            return cast(str, x_dict['kind'])
-        elif 'part_kind' in x_dict:
-            return cast(str, x_dict['part_kind'])
+        kind = x_dict.get('kind')
+        if kind in ('tool-failed', 'model-retry') and 'message' in x_dict and x_dict.keys() <= {'kind', 'message'}:
+            return kind
+        elif (
+            kind == 'tool-return'
+            and 'return_value' in x_dict
+            and x_dict.keys()
+            <= {
+                'return_value',
+                'content',
+                'metadata',
+                'kind',
+            }
+        ):
+            return 'tool-return'
+        elif (
+            x_dict.get('part_kind') == 'retry-prompt'
+            and 'content' in x_dict
+            and x_dict.keys() <= {'content', 'tool_name', 'tool_call_id', 'timestamp', 'part_kind'}
+        ):
+            return 'retry-prompt'
     else:
         if hasattr(x, 'kind'):
             return cast(str, x.kind)
@@ -147,8 +176,59 @@ DeferredToolCallResult: TypeAlias = Annotated[
     Discriminator(_deferred_tool_call_result_discriminator),
 ]
 """Result for a tool call that required external execution."""
+_deferred_tool_call_result_adapter: TypeAdapter[DeferredToolCallResult] = TypeAdapter(DeferredToolCallResult)
 DeferredToolResult = DeferredToolApprovalResult | DeferredToolCallResult
 """Result for a tool call that required approval or external execution."""
+
+
+_DEFERRED_TOOL_RESULT_ESCAPE_KEY = '__pydantic_ai_deferred_tool_result__'
+
+
+def _is_deferred_tool_result_escape(value: Any) -> bool:
+    return (
+        _utils.is_str_dict(value)
+        and value.keys() == {_DEFERRED_TOOL_RESULT_ESCAPE_KEY, 'value'}
+        and value[_DEFERRED_TOOL_RESULT_ESCAPE_KEY] == 'arbitrary'
+    )
+
+
+def _serialize_deferred_tool_calls(
+    value: dict[str, DeferredToolCallResult | Any], handler: SerializerFunctionWrapHandler
+) -> dict[str, Any]:
+    escaped: dict[str, DeferredToolCallResult | Any] = {}
+    for tool_call_id, result in value.items():
+        if _utils.is_str_dict(result) and (
+            _deferred_tool_call_result_discriminator(result) is not None or _is_deferred_tool_result_escape(result)
+        ):
+            result = {_DEFERRED_TOOL_RESULT_ESCAPE_KEY: 'arbitrary', 'value': result}
+        escaped[tool_call_id] = result
+    serialized = handler(escaped)
+    assert _utils.is_str_dict(serialized)
+    return serialized
+
+
+def _validate_deferred_tool_calls(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
+    if not _utils.is_str_dict(value):
+        return handler(value)
+
+    to_validate = value.copy()
+    escaped: dict[str, Any] = {}
+    control_results: dict[str, dict[str, Any]] = {}
+    for tool_call_id, result in value.items():
+        if _is_deferred_tool_result_escape(result):
+            # A bare exact control dict must keep its historical typed meaning. The escape envelope
+            # is therefore the only unambiguous wire form for an arbitrary dict with the same shape.
+            escaped[tool_call_id] = result['value']
+            to_validate[tool_call_id] = None
+        elif _utils.is_str_dict(result) and _deferred_tool_call_result_discriminator(result) is not None:
+            control_results[tool_call_id] = result
+
+    validated = handler(to_validate)
+    assert _utils.is_str_dict(validated)
+    for tool_call_id, result in control_results.items():
+        validated[tool_call_id] = _deferred_tool_call_result_adapter.validate_python(result)
+    validated.update(escaped)
+    return validated
 
 
 @dataclass(kw_only=True)
@@ -160,7 +240,11 @@ class DeferredToolResults:
     See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.
     """
 
-    calls: dict[str, DeferredToolCallResult | Any] = field(default_factory=dict[str, DeferredToolCallResult | Any])
+    calls: Annotated[
+        dict[str, DeferredToolCallResult | Any],
+        WrapValidator(_validate_deferred_tool_calls),
+        WrapSerializer(_serialize_deferred_tool_calls),
+    ] = field(default_factory=dict[str, DeferredToolCallResult | Any])
     """Map of tool call IDs to results for tool calls that required external execution."""
     approvals: dict[str, bool | DeferredToolApprovalResult] = field(
         default_factory=dict[str, bool | DeferredToolApprovalResult]

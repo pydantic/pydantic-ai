@@ -46,6 +46,7 @@ from .abstract import (
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
     WrapRunHandler,
+    WrapToolCallHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
@@ -174,6 +175,10 @@ class WrapToolValidateHookFunc(Protocol):
 class OnToolValidateErrorHookFunc(Protocol):
     """Protocol for [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs, error: ValidationError | ModelRetry) -> ValidatedToolArgs | Awaitable[ValidatedToolArgs]: ...
+
+class WrapToolCallHookFunc(Protocol):
+    """Protocol for [`wrap_tool_call`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_call] hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, handler: WrapToolCallHandler) -> Any | Awaitable[Any]: ...
 
 class BeforeToolExecuteHookFunc(Protocol):
     """Protocol for [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute] hook functions."""
@@ -546,6 +551,21 @@ class _HookRegistration(Generic[AgentDepsT]):
     # --- Tool execution ---
 
     @overload
+    def tool_call(self, func: WrapToolCallHookFunc, /) -> WrapToolCallHookFunc: ...
+    @overload
+    def tool_call(
+        self, *, tools: Sequence[str] | None = None, timeout: float | None = None
+    ) -> Callable[[WrapToolCallHookFunc], WrapToolCallHookFunc]: ...
+    def tool_call(
+        self,
+        func: WrapToolCallHookFunc | None = None,
+        *,
+        tools: Sequence[str] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return _tool_bare_or_parameterized(self._r, 'wrap_tool_call', func, tools=tools, timeout=timeout)
+
+    @overload
     def before_tool_execute(self, func: BeforeToolExecuteHookFunc, /) -> BeforeToolExecuteHookFunc: ...
     @overload
     def before_tool_execute(
@@ -773,6 +793,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         tool_validate: WrapToolValidateHookFunc | None = None,
         tool_validate_error: OnToolValidateErrorHookFunc | None = None,
         # Tool execution
+        tool_call: WrapToolCallHookFunc | None = None,
         before_tool_execute: BeforeToolExecuteHookFunc | None = None,
         after_tool_execute: AfterToolExecuteHookFunc | None = None,
         tool_execute: WrapToolExecuteHookFunc | None = None,
@@ -822,6 +843,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'after_tool_validate': after_tool_validate,
             'wrap_tool_validate': tool_validate,
             'on_tool_validate_error': tool_validate_error,
+            'wrap_tool_call': tool_call,
             'before_tool_execute': before_tool_execute,
             'after_tool_execute': after_tool_execute,
             'wrap_tool_execute': tool_execute,
@@ -1068,6 +1090,17 @@ class Hooks(AbstractCapability[AgentDepsT]):
         for entry in _filter_tool_entries(self._get('before_tool_execute'), call=call):
             args = await _call_entry(entry, 'before_tool_execute', ctx, call=call, tool_def=tool_def, args=args)
         return args
+
+    async def wrap_tool_call(
+        self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, handler: WrapToolCallHandler
+    ) -> Any:
+        entries = _filter_tool_entries(self._get('wrap_tool_call'), call=call)
+        if not entries:
+            return await handler()
+        chain: Callable[..., Any] = handler
+        for entry in reversed(entries):
+            chain = _make_wrap_link(entry, 'wrap_tool_call', ctx, {'call': call}, chain, None)
+        return await chain()
 
     async def after_tool_execute(
         self,

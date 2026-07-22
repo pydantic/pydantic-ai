@@ -55,7 +55,7 @@ from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.capabilities import Capability, PrepareTools
-from pydantic_ai.exceptions import ApprovalRequired, UserError
+from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UserError
 from pydantic_ai.messages import (
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
@@ -4675,6 +4675,128 @@ async def test_stream_tool_return_files_roundtrip_to_history() -> None:
             )
         ]
     )
+
+
+def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Message]:
+    """Build the tool history produced by the AG-UI client's default event reducer.
+
+    The pinned reducer creates a content-only `ToolMessage` for `TOOL_CALL_RESULT`, then attaches
+    `REASONING_ENCRYPTED_VALUE(subtype='message')` by message ID:
+    https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts#L439-L464
+    """
+    start = next(event for event in events if event['type'] == 'TOOL_CALL_START')
+    result = next(event for event in events if event['type'] == 'TOOL_CALL_RESULT')
+    arguments = ''.join(
+        event['delta']
+        for event in events
+        if event['type'] == 'TOOL_CALL_ARGS' and event['toolCallId'] == start['toolCallId']
+    )
+    tool_call = ToolCall(
+        id=start['toolCallId'],
+        function=FunctionCall(name=start['toolCallName'], arguments=arguments),
+    )
+    tool_message = ToolMessage(
+        id=result['messageId'],
+        tool_call_id=result['toolCallId'],
+        content=result['content'],
+    )
+
+    for event in events:
+        if event['type'] != 'REASONING_ENCRYPTED_VALUE':
+            continue
+        if event['subtype'] == 'tool-call' and event['entityId'] == tool_call.id:
+            tool_call.encrypted_value = event['encryptedValue']
+        elif event['subtype'] == 'message' and event['entityId'] == tool_message.id:
+            tool_message.encrypted_value = event['encryptedValue']
+
+    return [AssistantMessage(id=start['parentMessageId'], tool_calls=[tool_call]), tool_message]
+
+
+@pytest.mark.parametrize(
+    'ag_ui_version,expected_outcome',
+    [('0.1.10', 'success'), ('0.1.13', 'failed')],
+)
+async def test_stream_tool_failed_outcome_roundtrip(
+    ag_ui_version: Literal['0.1.10', '0.1.13'], expected_outcome: Literal['success', 'failed']
+) -> None:
+    """A live function `ToolFailed` survives the event -> client history -> load round-trip on 0.1.13.
+
+    Regression for https://github.com/pydantic/pydantic-ai/pull/5585 and
+    https://github.com/pydantic/pydantic-ai/issues/5870. The legacy protocol has no message metadata
+    carrier, so its content-only `ToolMessage` explicitly degrades to `outcome='success'`.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='failing_tool', json_args='{}', tool_call_id='call-1')}
+        else:
+            yield 'acknowledged'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def failing_tool() -> str:
+        raise ToolFailed('Disk full')
+
+    events = await run_and_collect_events(
+        agent,
+        create_input(UserMessage(id='msg-1', content='Run the tool')),
+        ag_ui_version=ag_ui_version,
+    )
+    reloaded = AGUIAdapter.load_messages(_client_messages_from_tool_events(events))
+
+    tool_return = next(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
+    assert tool_return.content == 'Disk full'
+    assert tool_return.outcome == expected_outcome
+
+
+@pytest.mark.parametrize(
+    'ag_ui_version,expected_outcome',
+    [('0.1.10', 'success'), ('0.1.13', 'failed')],
+)
+async def test_stream_failed_builtin_tool_return_outcome_roundtrip(
+    ag_ui_version: Literal['0.1.10', '0.1.13'], expected_outcome: Literal['success', 'failed']
+) -> None:
+    """A streamed failed builtin return uses the same 0.1.13 message metadata carrier as #5585.
+
+    This covers the provider-executed path from https://github.com/pydantic/pydantic-ai/issues/5870;
+    the legacy content-only result intentionally reloads as `outcome='success'`.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns | str]:
+        yield {
+            0: NativeToolCallPart(
+                tool_name='web_search',
+                args='{"query": "Pydantic AI"}',
+                tool_call_id='search-1',
+                provider_name='function',
+            )
+        }
+        yield {
+            1: NativeToolReturnPart(
+                tool_name='web_search',
+                content='Search unavailable',
+                tool_call_id='search-1',
+                provider_name='function',
+                outcome='failed',
+            )
+        }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+    events = await run_and_collect_events(
+        agent,
+        create_input(UserMessage(id='msg-1', content='Search')),
+        ag_ui_version=ag_ui_version,
+    )
+    reloaded = AGUIAdapter.load_messages(_client_messages_from_tool_events(events))
+
+    tool_return = next(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
+    assert tool_return.content == 'Search unavailable'
+    assert tool_return.outcome == expected_outcome
 
 
 # region: Coverage — event_stream thinking version branches

@@ -136,12 +136,18 @@ def _strip_cache_excluded_fields(
 
 def _replace_toolsets(
     inputs: dict[str, Any],
-) -> Any:
-    """Replace Toolset objects with a dict containing only hashable fields."""
+) -> dict[str, Any]:
+    """Project tool inputs to stable fields that determine the advertised tool contract.
+
+    Validators and callables can carry mutable runtime state, so hashing them makes a task
+    invalidate its own cache key after it executes. The default policy includes `RUN_ID`,
+    limiting reuse to retries of the same flow run. Custom policies that omit `RUN_ID` accept
+    the corresponding risk of reusing a result after the underlying implementation changes.
+    """
     inputs = inputs.copy()
     for key, value in inputs.items():
         if _is_toolset_tool(value):
-            inputs[key] = {field.name: getattr(value, field.name) for field in fields(value) if field.name != 'toolset'}
+            inputs[key] = {'tool_def': value.tool_def, 'max_retries': value.max_retries}
     return inputs
 
 

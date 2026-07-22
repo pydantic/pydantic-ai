@@ -2831,7 +2831,7 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
             {
                 'role': 'user',
                 'content': [
-                    {'toolResult': {'toolUseId': 'id1', 'content': [{'json': {'foo': 'bar'}}], 'status': 'success'}},
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'json': {'foo': 'bar'}}]}},
                 ],
             },
         ]
@@ -2871,7 +2871,7 @@ async def test_bedrock_empty_list_tool_result_uses_non_empty_content_block(bedro
             {
                 'role': 'user',
                 'content': [
-                    {'toolResult': {'toolUseId': 'id1', 'content': [{'json': []}], 'status': 'success'}},
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'json': []}]}},
                 ],
             },
         ]
@@ -5414,7 +5414,7 @@ async def test_bedrock_llama_tool_result_isolated_from_text(bedrock_provider: Be
             {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 't1', 'name': 'get', 'input': {}}}]},
             {
                 'role': 'user',
-                'content': [{'toolResult': {'toolUseId': 't1', 'content': [{'text': 'ok'}], 'status': 'success'}}],
+                'content': [{'toolResult': {'toolUseId': 't1', 'content': [{'text': 'ok'}]}}],
             },
             {'role': 'assistant', 'content': [{'text': '.'}]},
             {'role': 'user', 'content': [{'text': 'what accounts are in this?'}]},
@@ -5661,7 +5661,6 @@ async def test_bedrock_mistral_tool_return_image_deferred_to_separate_turn(bedro
                         'toolResult': {
                             'toolUseId': 'getphoto1',
                             'content': [{'text': 'Here it is:'}, {'text': 'See file d003ad.'}],
-                            'status': 'success',
                         }
                     }
                 ],
@@ -5710,14 +5709,12 @@ async def test_bedrock_mistral_two_tool_returns_images_grouped_then_deferred(bed
                         'toolResult': {
                             'toolUseId': 'getphoto1',
                             'content': [{'text': 'Here it is:'}, {'text': 'See file d003ad.'}],
-                            'status': 'success',
                         }
                     },
                     {
                         'toolResult': {
                             'toolUseId': 'getphoto2',
                             'content': [{'text': 'Here it is:'}, {'text': 'See file d003ad.'}],
-                            'status': 'success',
                         }
                     },
                 ],

@@ -1,0 +1,321 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '491'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Call lookup exactly once with item "missing". If it fails, reply with exactly RECOVERED and nothing else.
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Look up an item.
+        name: lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            item:
+              type: string
+          required:
+          - item
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3568'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '2635'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1784734716
+      created_at: 1784734713
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0f0af95c58c48de7006a60e3f9a7e8819eb53df6f998700cf1
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqYOP8x3V-Wfx9Qrv2jLUCTFabnnyNUvVuyZhbIeLRRFGOzeSRCRSrT-BBAFQuE8n9jvwbi-e1MLNLK_vaHCcpN2X4ueBTJeY4uU1tF_wRVNUU7dv_wjTDgXTD8tO12jvZrgIGaGzFG6_YGBx-HxpOH4rwcQjL9IBwIaPER1pUUPQ8KDpV_Bz2Hn-ERQxo9zg95ZR_cyRmod5VtMkMrd2UQ-Ct-SYll4w7ggNqBW7EqA47eqC9o183nrp4UyBa6g2G60t3AWJRJlMKJisfgwIiXrtb44Raf8o0-SwlxED_Bel2htkHT46mx7fnT_LMuE9ApQWn2cZx-y0YHv3FTZgwvkzEjb8lWJDpxLPLMiFmGVcdB8ZDUBfTzGDMYvTkJEqftHLQWd7kZdPNM5PaaDmbv-c3dvioyLLwx_fDU70bsy8JwrKyYSbiwr_ZNeiLZR83CXQzeTc6HfONhWUbpBtW2zPM0EefJgRx7sg0O6sqXnivX6OMArmqg92UdlP5uYjSdEb42pMr8buhPx7f52DvVIoHl2lvCbINiPJX3VFcEIfvnlOu2aHJE22J_JfBdt_6SzyA2D_-kmhaoRPGgdlsGhYgZVZ0QXFBekbNyZ12riz10LEKSym1VNxZ8HQ9ELTxsn2RNMTutJdQIaxfuNjSKtymvTHHUjOUVFSluvaRxs0nsjkS-lPKKOf9ErD1cM_oCv16UC0SNca__MpJFBLicn6_6_O1fUyCOAoyUAEAHwzoeTsaXWB2LNCeqizpRQagHCWrUzl-dvrQxzWrJow7DUE-bMssn_Da_yOahcQMz4xYsj4qVtCyefcQzf92XwiZ1j6clHcQqmOj9wanjqu5mo3Fq8j3mpuupR5jSoQGpEC5ZjMz0LtuprCpXAC_QlDIAnYHP-xOtCmq7QFxWQ32tF4XhzD_7U5jtwZYSTv4EZzGGDbk2Pe58NZiS35GVp7EQOWt1RcO44AJQ9wuU-9mCH6T240E4BYlJ_pHUntFAf4VM2HfeRuHhoEKefh35JWSjmmyZBShCWTQ1t64xXLOtyoa5Uc67P0QkC8s-s5XRoTIFsCtJjhRcMFpFEwyXZXz8w9D0i3Qovh9uDpOCealgZNOW5IeSxyL2RHXjLIZrfGIOlHBFUMlz6KLBhg2aHKsYgbZDOWx1koNiCcYpjP8xPvGWDXu3amffMfV19r7Z8tF3BK-zOvOhS5oI5Ru7RTD4SjCBhn1DwEgMyi3tq4Eh0DsW1k0piXbisNbLZs0s-WBoW8tR__KtUYmJcc8-KTWxbuwFDPxiDAGCt-C91NcaAIZ-uN8Jkz-5UD4bnGmVLxx_zkXzd4xBagbpC2kViL5eTq9kI2-cEN6kaTGFoVpk9qmeCgHTermBJmZ7s0oAQmO7nt8l9p4Al17nyq72gF13iRtmvaC0Ix9wmQBOBlsvFRZ8wnO6VSLjG_C95Hde917_up1_ddWLXweWTszQb7rrlxXUstguTnG42Xb2ELp0lRdGNiH09l360tr7Fii2i1IbeX5wH8hKyjXF1DQ6mpmCT-CktY4GttbBei2g0QWcCJhLg==
+        id: rs_0f0af95c58c48de7006a60e3fa671c819ebc28eadee029f01f
+        summary: []
+        type: reasoning
+      - arguments: '{"item":"missing"}'
+        call_id: call_mh1NrXDAcVVM82dXOBnHXULj
+        id: fc_0f0af95c58c48de7006a60e3fbd5e8819e841f8c8c54f6b9ea
+        name: lookup
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: current_turn
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Look up an item.
+        name: lookup
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            item:
+              type: string
+          required:
+          - item
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 63
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 120
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 183
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2510'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Call lookup exactly once with item "missing". If it fails, reply with exactly RECOVERED and nothing else.
+        role: user
+      - encrypted_content: gAAAAABqYOP8x3V-Wfx9Qrv2jLUCTFabnnyNUvVuyZhbIeLRRFGOzeSRCRSrT-BBAFQuE8n9jvwbi-e1MLNLK_vaHCcpN2X4ueBTJeY4uU1tF_wRVNUU7dv_wjTDgXTD8tO12jvZrgIGaGzFG6_YGBx-HxpOH4rwcQjL9IBwIaPER1pUUPQ8KDpV_Bz2Hn-ERQxo9zg95ZR_cyRmod5VtMkMrd2UQ-Ct-SYll4w7ggNqBW7EqA47eqC9o183nrp4UyBa6g2G60t3AWJRJlMKJisfgwIiXrtb44Raf8o0-SwlxED_Bel2htkHT46mx7fnT_LMuE9ApQWn2cZx-y0YHv3FTZgwvkzEjb8lWJDpxLPLMiFmGVcdB8ZDUBfTzGDMYvTkJEqftHLQWd7kZdPNM5PaaDmbv-c3dvioyLLwx_fDU70bsy8JwrKyYSbiwr_ZNeiLZR83CXQzeTc6HfONhWUbpBtW2zPM0EefJgRx7sg0O6sqXnivX6OMArmqg92UdlP5uYjSdEb42pMr8buhPx7f52DvVIoHl2lvCbINiPJX3VFcEIfvnlOu2aHJE22J_JfBdt_6SzyA2D_-kmhaoRPGgdlsGhYgZVZ0QXFBekbNyZ12riz10LEKSym1VNxZ8HQ9ELTxsn2RNMTutJdQIaxfuNjSKtymvTHHUjOUVFSluvaRxs0nsjkS-lPKKOf9ErD1cM_oCv16UC0SNca__MpJFBLicn6_6_O1fUyCOAoyUAEAHwzoeTsaXWB2LNCeqizpRQagHCWrUzl-dvrQxzWrJow7DUE-bMssn_Da_yOahcQMz4xYsj4qVtCyefcQzf92XwiZ1j6clHcQqmOj9wanjqu5mo3Fq8j3mpuupR5jSoQGpEC5ZjMz0LtuprCpXAC_QlDIAnYHP-xOtCmq7QFxWQ32tF4XhzD_7U5jtwZYSTv4EZzGGDbk2Pe58NZiS35GVp7EQOWt1RcO44AJQ9wuU-9mCH6T240E4BYlJ_pHUntFAf4VM2HfeRuHhoEKefh35JWSjmmyZBShCWTQ1t64xXLOtyoa5Uc67P0QkC8s-s5XRoTIFsCtJjhRcMFpFEwyXZXz8w9D0i3Qovh9uDpOCealgZNOW5IeSxyL2RHXjLIZrfGIOlHBFUMlz6KLBhg2aHKsYgbZDOWx1koNiCcYpjP8xPvGWDXu3amffMfV19r7Z8tF3BK-zOvOhS5oI5Ru7RTD4SjCBhn1DwEgMyi3tq4Eh0DsW1k0piXbisNbLZs0s-WBoW8tR__KtUYmJcc8-KTWxbuwFDPxiDAGCt-C91NcaAIZ-uN8Jkz-5UD4bnGmVLxx_zkXzd4xBagbpC2kViL5eTq9kI2-cEN6kaTGFoVpk9qmeCgHTermBJmZ7s0oAQmO7nt8l9p4Al17nyq72gF13iRtmvaC0Ix9wmQBOBlsvFRZ8wnO6VSLjG_C95Hde917_up1_ddWLXweWTszQb7rrlxXUstguTnG42Xb2ELp0lRdGNiH09l360tr7Fii2i1IbeX5wH8hKyjXF1DQ6mpmCT-CktY4GttbBei2g0QWcCJhLg==
+        id: rs_0f0af95c58c48de7006a60e3fa671c819ebc28eadee029f01f
+        summary: []
+        type: reasoning
+      - arguments: '{"item":"missing"}'
+        call_id: call_mh1NrXDAcVVM82dXOBnHXULj
+        id: fc_0f0af95c58c48de7006a60e3fbd5e8819e841f8c8c54f6b9ea
+        name: lookup
+        type: function_call
+      - call_id: call_mh1NrXDAcVVM82dXOBnHXULj
+        output: '{"error":"missing is unavailable"}'
+        type: function_call_output
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Look up an item.
+        name: lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            item:
+              type: string
+          required:
+          - item
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3534'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1951'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1784734718
+      created_at: 1784734716
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0f0af95c58c48de7006a60e3fc8a38819ea599e8166ac59fd6
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqYOP-rh4g76e1VOFJPnTxK2tCjd8QSYEzNWvj_LvSfMqHMGy_pVYGHrlhmZT7LoTXiNkCoWPg5mXqpMDMNldshir9Qtg4Jyp-WMCU2INU2gFi3feMKsB5wlxtR9uUcwKMr_aJ6X7_4ttjwrA_vg8DU5dHkFrlgFF3VoJBKyv-AYileNJy0p-SXiMQeHeCWvPJvtB2_vdRAi0HK6YbyvPKhX-LbwPQNz-vG2zvTE_mxZw6_5fSQUSzm_crmoPs86L06sxSSF5Siz3FqAs8ARkPpzP9Tj1mH-pUPggGFgonnEnzk3hQuF2AOXkhJyVOwiIUC4D4dupRU7v7eeDQx2HaRwABEzserwBGgbBXzdKzuZ-Y6PLjc1M_u0X8ROo3MVIWkWAoD_wLamqNBYF2HkbYTcXo9S_jqCIFajcrT4Bb71mkjz6RryIF_uBvwyHSaEjz8OrBguuFX0Dd_zqfVHBVNU_1Peg6_x9AB4NNMiCVJf4BhEucErZGC_99BsgrZcl5JXfnFXULrclDVkHrmppwXRDUV79B9f0p7j71P764sax8NjKN01vaZNO8H2IkomSd8jJWi9iqDCKFA0bTfRvSJmeVVpjg4S5Q0dotrSKFbjS8Z7L3R05nRM3rbSEPPZJT4WbnFUphsu0ozWHNCy5qIp_7xN4Zgn0xcgimeuR-FJCVku-qwguhXtd356e6BVg2qGQ9u8F8YaUOtlBgjm2ALFygSxg-ygepajd-fIoBkT7m9PmYmJUI0ySaEh9wOdLbuVqEOzVdxWE1-1DIFGwu4GQIJ4t9HUuIvWSmWGlaJZcmwDReLviyRltRGnJqVrF7PzkQOemxoSoD3GzmuHoOIGQXPRpGOs3vzPWd5pZ39JAM3Og4zOmSxbY3NmAlQ6-kTnItzgHBdH3PNqdZjfDEiNP49sCw0oFfJ6i5DhNUMqnJDWU2CiG8JWWbS_Re5bV-K0VDZEnmKm49kLplzLJw1lZVUyuTd-BYP3EeIOphs1BmajKw2Tc4hXMJ14XMaJj10YLrEO__Y4PRyRiegj2q1_LwFqcx8yGK-ke7jkC3vvk3k_MNo_3tjeJNzXOpYt_7H5YnHk3ONVWssDw7Swi86trvV0_eYYPJuPuri1i-XdRLRKi9NTbaQN7lfzdRYPrpS2j04XAzKUTjq5vmat9V3UaiPJX1W7Tipml5KB4DRk2sDbJGAooK43h2PGB0tn9Tv3C49SMufUP4WifWWIckETgeUbp7PitfwsNh-bmwDDzNCM81aZfmd46hPvOopKwHQFtTokdvQh0yEsh0_dBzQBsJXIOZO5fk7EQNKFoGQvObtdL5-AdEOwZ_6gs7XWoeFpux4VyGNiCJoiGhAgyXKMYUg0biMls7JpzRcgUhnqa3dQ6ZasDU2mBdZ8fT1XVATZ_da9C5dH7F4lmAo6CKJAATRWDgEKS19k0Gz16jQaiJXqzkFEqTWGSgeDCHu8v76ugXjObRw_kbpK-obA7_Ph_VmOf8Ytc6NdxCjeXN_-mmzY8=
+        id: rs_0f0af95c58c48de7006a60e3fd190c819eb6950fd2713aeadf
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: RECOVERED
+          type: output_text
+        id: msg_0f0af95c58c48de7006a60e3fe1914819e86c5c966f40bb1a9
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: current_turn
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Look up an item.
+        name: lookup
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            item:
+              type: string
+          required:
+          - item
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 200
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 101
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 301
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1240,19 +1240,37 @@ async def test_prefect_agent_with_model_retry(allow_model_requests: None) -> Non
     assert 'sunny' in result.output.lower() or 'mexico city' in result.output.lower()
 
 
-tool_failed_agent = Agent(TestModel(call_tools=['failing_tool']), name='tool_failed_agent')
-
-
-@tool_failed_agent.tool_plain
-def failing_tool() -> str:
-    raise ToolFailed('Disk full')
-
-
-tool_failed_prefect_agent = PrefectAgent(tool_failed_agent)  # pyright: ignore[reportDeprecated]
-
-
 async def test_prefect_agent_with_tool_failed() -> None:
-    result = await tool_failed_prefect_agent.run('Call the failing tool')
+    """A flow retry restores a persisted failed tool result instead of re-running the tool.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/pull/5585 and
+    https://github.com/pydantic/pydantic-ai/pull/6640, using Prefect's persisted task-result
+    caching: https://docs.prefect.io/v3/advanced/results.
+    """
+    flow_attempts = 0
+    tool_calls = 0
+    agent = Agent(
+        TestModel(call_tools=['failing_tool']),
+        name='tool_failed_agent',
+        capabilities=[PrefectDurability()],
+    )
+
+    @agent.tool_plain
+    def failing_tool() -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        raise ToolFailed('Disk full')
+
+    @flow(retries=1, retry_delay_seconds=0)
+    async def run_agent() -> AgentRunResult[str]:
+        nonlocal flow_attempts
+        flow_attempts += 1
+        result = await agent.run('Call the failing tool')
+        if flow_attempts == 1:
+            raise RuntimeError('fail after agent.run completed')
+        return result
+
+    result = await run_agent()
 
     tool_returns = [
         (part.tool_name, part.content, part.outcome)
@@ -1261,6 +1279,8 @@ async def test_prefect_agent_with_tool_failed() -> None:
         if isinstance(part, ToolReturnPart)
     ]
     assert tool_returns == [('failing_tool', 'Disk full', 'failed')]
+    assert flow_attempts == 2
+    assert tool_calls == 1
 
 
 # Test dynamic toolsets
@@ -1419,6 +1439,37 @@ async def test_cache_policy_custom():
 
     # This hash should be different from the others
     assert hash3 != hash1
+
+
+async def test_cache_policy_tool_key_stable_after_callable_state_changes() -> None:
+    """A tool call cannot invalidate its own retry cache key by mutating closure state.
+
+    Focused cache-key regression for https://github.com/pydantic/pydantic-ai/pull/5585.
+    """
+    calls = 0
+
+    def stateful_tool() -> str:
+        nonlocal calls
+        calls += 1
+        return 'done'
+
+    toolset = FunctionToolset([stateful_tool])
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = (await toolset.get_tools(ctx))['stateful_tool']
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    inputs: dict[str, Any] = {'tool_name': 'stateful_tool', 'tool_args': {}, 'ctx': ctx, 'tool': tool}
+    key_before = cache_policy.compute_key(task_ctx=mock_task_ctx, inputs=inputs, flow_parameters={})
+    assert await toolset.call_tool('stateful_tool', {}, ctx, tool) == 'done'
+    key_after = cache_policy.compute_key(task_ctx=mock_task_ctx, inputs=inputs, flow_parameters={})
+
+    assert calls == 1
+    assert key_after == key_before
+
+    tool.tool_def.description = 'changed contract'
+    changed_contract_key = cache_policy.compute_key(task_ctx=mock_task_ctx, inputs=inputs, flow_parameters={})
+    assert changed_contract_key != key_before
 
 
 async def test_cache_policy_per_run_ids_excluded_but_dict_keys_kept():

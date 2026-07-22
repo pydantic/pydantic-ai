@@ -31,6 +31,7 @@ from .abstract import (
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
     WrapRunHandler,
+    WrapToolCallHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
@@ -116,6 +117,7 @@ __all__ = [
     'WrapModelRequestHandler',
     'WrapNodeRunHandler',
     'WrapRunHandler',
+    'WrapToolCallHandler',
     'WrapToolExecuteHandler',
     'WrapToolValidateHandler',
     'RawOutput',

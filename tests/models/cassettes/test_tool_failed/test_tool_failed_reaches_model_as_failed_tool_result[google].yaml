@@ -1,0 +1,175 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '514'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Call lookup exactly once with item "missing". If it fails, reply with exactly RECOVERED and nothing else.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: AUTO
+      tools:
+      - functionDeclarations:
+        - description: Look up an item.
+          name: lookup
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              item:
+                type: string
+            required:
+            - item
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1475'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1506
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                item: missing
+              name: lookup
+            thoughtSignature: CsEFARFNMg9Zk0Z+4QmuzqI3uiQy0PnVFMKwRvkbOD8aIs5vg5cW6WQaIp88ACE/S4+KCabACMKOsjb0aMQri2sinA1/q/ZCsOP7HMLFCU3xdo7GLeyeBVRdba1kdZ/lli86HXTz4W2o3TUHF1YVqZQvNn3yJZvzRgZe236J92f96AXiXed2c9Gx9YVFnks0vr+4I1Yhgii3TY1KU2oRi6cIvq/Cg83MGyXoTeLN+Jn0VDQdr67JsB8Ta61rLxv6qBHHGvruTkXluEOny+48JYULDKarfpEyyVkPLhWXBtbahe4Zf8z71yhEUNmRJ3aTuyhEm8Pnwr++YYXmwDqJTlYMMTfkiaCMdKHno4AUKaIhdt6lIF1VNpZdD/8mRcPGBsQW1jz2pjVD1dBjgs929mMzD6AoymunJ1q6t79YhN7uFx6wwZGWi8iKTUNGeNxHODrf7ZvnGm3+4XM0brOrx+srOjIBYQR/WgEeMSZy7VNThPZGirtLri7URQJdJd6bvhEUkCkxi2QGI1THdnS7nZMcwRI3lIUNTx1inJxdTThASnS5sWCw2xRZAQnSBqfxsrQEVbm1uMgoqO5g6CbeDRChRUat0+yolQaM8/XDxOd7Ki8CgFjBIcTlpTUqQUzOQztPnyy/WGFX5RY7/mnqdc2Td2DAkPJ7H69c7UMjey75/rVNBS30SLX5NOXkBEqSoBPihAlPJln/IUxzkQAojznkyNuew3teqNbrw5gjz48s8TvyT8Yhbz9GkHUh8d6iAqTQZ4EHv3PrSBwOx1xQAMxjyKKwKqCdp7MTsJw+apVzmeNvuAX3Su9ICFEAF1MDTZkfqVX8ZRcNQv0RolxypyeKR44elwJumpKT5p7gefhkSi4GbkCkmG+4eMjt7A0Vt951Dl/GeXp+FPOJrxd3R8demr3P1agtVoAITjAEW84h8X18
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: 9eNgasrZM8brz7IP8LPckA4
+      usageMetadata:
+        candidatesTokenCount: 13
+        promptTokenCount: 59
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 59
+        serviceTier: standard
+        thoughtsTokenCount: 145
+        totalTokenCount: 217
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1797'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Call lookup exactly once with item "missing". If it fails, reply with exactly RECOVERED and nothing else.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              item: missing
+            id: pyd_ai_c6fb2c3e541f401dbb2236e0188b18a9
+            name: lookup
+          thoughtSignature: CsEFARFNMg9Zk0Z-4QmuzqI3uiQy0PnVFMKwRvkbOD8aIs5vg5cW6WQaIp88ACE_S4-KCabACMKOsjb0aMQri2sinA1_q_ZCsOP7HMLFCU3xdo7GLeyeBVRdba1kdZ_lli86HXTz4W2o3TUHF1YVqZQvNn3yJZvzRgZe236J92f96AXiXed2c9Gx9YVFnks0vr-4I1Yhgii3TY1KU2oRi6cIvq_Cg83MGyXoTeLN-Jn0VDQdr67JsB8Ta61rLxv6qBHHGvruTkXluEOny-48JYULDKarfpEyyVkPLhWXBtbahe4Zf8z71yhEUNmRJ3aTuyhEm8Pnwr--YYXmwDqJTlYMMTfkiaCMdKHno4AUKaIhdt6lIF1VNpZdD_8mRcPGBsQW1jz2pjVD1dBjgs929mMzD6AoymunJ1q6t79YhN7uFx6wwZGWi8iKTUNGeNxHODrf7ZvnGm3-4XM0brOrx-srOjIBYQR_WgEeMSZy7VNThPZGirtLri7URQJdJd6bvhEUkCkxi2QGI1THdnS7nZMcwRI3lIUNTx1inJxdTThASnS5sWCw2xRZAQnSBqfxsrQEVbm1uMgoqO5g6CbeDRChRUat0-yolQaM8_XDxOd7Ki8CgFjBIcTlpTUqQUzOQztPnyy_WGFX5RY7_mnqdc2Td2DAkPJ7H69c7UMjey75_rVNBS30SLX5NOXkBEqSoBPihAlPJln_IUxzkQAojznkyNuew3teqNbrw5gjz48s8TvyT8Yhbz9GkHUh8d6iAqTQZ4EHv3PrSBwOx1xQAMxjyKKwKqCdp7MTsJw-apVzmeNvuAX3Su9ICFEAF1MDTZkfqVX8ZRcNQv0RolxypyeKR44elwJumpKT5p7gefhkSi4GbkCkmG-4eMjt7A0Vt951Dl_GeXp-FPOJrxd3R8demr3P1agtVoAITjAEW84h8X18
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_c6fb2c3e541f401dbb2236e0188b18a9
+            name: lookup
+            response:
+              error: missing is unavailable
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: AUTO
+      tools:
+      - functionDeclarations:
+        - description: Look up an item.
+          name: lookup
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              item:
+                type: string
+            required:
+            - item
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '446'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=519
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: 'The lookup for "missing" returned an error: "missing is unavailable".'
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: 9-NgarCLEt6gz7IPjezZ2Ag
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 87
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 87
+        serviceTier: standard
+        totalTokenCount: 102
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -117,6 +117,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
     assert anthropic_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
     assert anthropic_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    assert anthropic_profile.get('bedrock_supports_tool_result_status', False) is True
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
@@ -128,6 +129,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.get('bedrock_supports_leading_assistant_message', False) is True
     assert anthropic_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
     assert anthropic_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    assert anthropic_profile.get('bedrock_supports_tool_result_status', False) is True
     # Anthropic rejects documents/video co-located with a `toolResult`, but accepts text and images.
     assert anthropic_profile.get('bedrock_tool_result_colocatable_content') == frozenset({'text', 'image'})
     # Anthropic accepts images and documents inside a `toolResult`; no video support.
@@ -141,6 +143,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
     assert anthropic_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
     assert anthropic_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    assert anthropic_profile.get('bedrock_supports_tool_result_status', False) is False
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-1-20250805-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-opus-4-1-20250805')
@@ -221,6 +224,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert meta_profile.get('bedrock_tool_result_colocatable_content') == frozenset()
     # Meta Llama accepts images and documents inside a `toolResult`; no video support.
     assert meta_profile.get('bedrock_supported_media_kinds_in_tool_returns') == frozenset({'image', 'document'})
+    assert meta_profile.get('bedrock_supports_tool_result_status', False) is False
 
     cohere_profile = provider.model_profile('cohere.command-text-v14')
     cohere_model_profile_mock.assert_called_with('command-text')
@@ -314,8 +318,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert writer_profile.get('bedrock_supports_tool_choice', False) is False
     assert writer_profile.get('bedrock_supports_leading_assistant_message', False) is False
     assert writer_profile.get('supports_json_schema_output', False) is False
-    # Writer also rejects the `status` field on a `toolResult` block.
-    assert writer_profile.get('bedrock_supports_tool_result_status', True) is False
+    assert writer_profile.get('bedrock_supports_tool_result_status', False) is False
 
     amazon_profile = provider.model_profile('us.amazon.nova-pro-v1:0')
     amazon_model_profile_mock.assert_called_with('nova-pro')
@@ -323,6 +326,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert amazon_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
     assert amazon_profile.get('bedrock_supports_tool_choice', False) is True
     assert amazon_profile.get('bedrock_supports_prompt_caching', False) is True
+    assert amazon_profile.get('bedrock_supports_tool_result_status', False) is True
     # Nova rejects a leading assistant turn, so the strict default (synthesize a user prepend) applies.
     assert amazon_profile.get('bedrock_supports_leading_assistant_message', False) is False
     assert amazon_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()

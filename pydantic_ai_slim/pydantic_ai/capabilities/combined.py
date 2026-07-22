@@ -31,6 +31,7 @@ from .abstract import (
     RawOutput,
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
+    WrapToolCallHandler,
 )
 
 if TYPE_CHECKING:
@@ -508,6 +509,19 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     # --- Tool execute lifecycle hooks ---
 
+    async def wrap_tool_call(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        handler: WrapToolCallHandler,
+    ) -> Any:
+        chain = handler
+        for capability in reversed(self.capabilities):
+            if _ctx_for_available_cap(capability, ctx) is not None:
+                chain = _make_tool_call_wrap(capability, ctx, call, chain)
+        return await chain()
+
     async def before_tool_execute(
         self,
         ctx: RunContext[AgentDepsT],
@@ -796,6 +810,18 @@ def _make_tool_execute_wrap(
         return await cap.wrap_tool_execute(
             _ctx_for_cap(cap, ctx), call=call, tool_def=tool_def, args=args, handler=inner
         )
+
+    return wrapped
+
+
+def _make_tool_call_wrap(
+    cap: AbstractCapability[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    call: ToolCallPart,
+    inner: WrapToolCallHandler,
+) -> WrapToolCallHandler:
+    async def wrapped() -> Any:
+        return await cap.wrap_tool_call(_ctx_for_cap(cap, ctx), call=call, handler=inner)
 
     return wrapped
 

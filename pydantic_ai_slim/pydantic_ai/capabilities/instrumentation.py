@@ -24,16 +24,14 @@ from pydantic_ai._instrumentation import (
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
-from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
     AbstractCapability,
     CapabilityOrdering,
-    ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapOutputProcessHandler,
     WrapRunHandler,
-    WrapToolExecuteHandler,
+    WrapToolCallHandler,
 )
 
 if TYPE_CHECKING:
@@ -285,7 +283,7 @@ class Instrumentation(AbstractCapability[Any]):
             return response
 
     # ------------------------------------------------------------------
-    # wrap_tool_execute — tool execution span
+    # wrap_tool_call — tool execution span
     # ------------------------------------------------------------------
 
     def _tool_span_attributes(self, call: ToolCallPart) -> dict[str, Any]:
@@ -403,19 +401,17 @@ class Instrumentation(AbstractCapability[Any]):
 
         return result
 
-    async def wrap_tool_execute(
+    async def wrap_tool_call(
         self,
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        tool_def: ToolDefinition,
-        args: ValidatedToolArgs,
-        handler: WrapToolExecuteHandler,
+        handler: WrapToolCallHandler,
     ) -> Any:
         return await self._run_tool_span(
             span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=self._tool_span_attributes(call),
-            action=lambda: handler(args),
+            action=handler,
             serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
             handle_tool_control_flow=True,
         )
