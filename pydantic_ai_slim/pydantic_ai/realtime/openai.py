@@ -166,6 +166,18 @@ def _validate_usage_shape(usage: object, *, transcription: bool = False) -> None
         cached_details = input_details.get('cached_tokens_details')
         if cached_details and not is_str_dict(cached_details):
             raise ValueError('`usage.input_token_details.cached_tokens_details` must be an object')
+    if transcription:
+        # The transcription-usage union (`tokens` | `duration`) is discriminated by `type`. The SDK's
+        # lenient `construct` can build the wrong variant for a malformed payload (e.g. a `duration` type
+        # with no numeric `seconds`), so validate the raw shape here to keep such frames on the recoverable
+        # path rather than crashing on a later `usage.seconds` read.
+        usage_type = usage.get('type')
+        if usage_type == 'duration':
+            seconds = usage.get('seconds')
+            if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
+                raise ValueError('`usage.seconds` must be a number for a `duration` transcription usage')
+        elif usage_type not in ('tokens', None):
+            raise ValueError(f'unknown transcription usage type {usage_type!r}')
 
 
 def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
@@ -215,7 +227,7 @@ RealtimeTranscriptionUsage = UsageTranscriptTextUsageTokens | UsageTranscriptTex
 
 def _map_transcription_usage(usage: RealtimeTranscriptionUsage | None) -> RequestUsage | None:
     """Map input-transcription usage into separate [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details]."""
-    if usage is None:
+    if usage is None or not usage.model_fields_set:
         return None
     details: dict[str, int] = {}
     if usage.type == 'tokens':
@@ -356,6 +368,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 await self._send_event({'type': 'response.cancel'})
                 # Suppress the cancelled response's trailing deltas until its `response.done` arrives.
                 self._cancelled_response_id = self._active_response_id
+                # The cancelled response's output item is gone; forget it so a following
+                # `interrupt(audio_end_ms=...)` before the next turn's first audio doesn't truncate a stale
+                # item (server-initiated cancels clear it via `response.done`, but a client cancel doesn't).
+                self._current_item_id = None
             self._response_active = False
             self._active_response_id = None
             self._pending_response = False
@@ -453,6 +469,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if self._is_cancelled_straggler(event_type, data):
             return []
         events: list[RealtimeCodecEvent] = []
+        superseded = False
         if event_type == 'response.created':
             response_data = data.get('response')
             if response_data is not None and not is_str_dict(response_data):
@@ -467,58 +484,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 self._current_item_id = audio.item_id
                 self._current_content_index = audio.content_index or 0
         elif event_type == 'response.done':
-            response_data = validate_response_data(data)
-            _validate_usage_shape(response_data.get('usage'))
-            done = ResponseDoneEvent.construct(**data)
-            response = done.response
-            response_id = response.id
-            # The cancelled response is now closed; stop suppressing its stragglers (its own usage still
-            # emits below). A no-op for any other response.
-            self._close_cancelled_response(response_id)
-            # OpenAI response events always carry an ID. Keep the ID-less fallback for compatible
-            # protocol implementations and defensive unit inputs that predate response tracking.
-            matches_active_response = not isinstance(response_id, str) or (
-                self._response_active and response_id == self._active_response_id
-            )
-            if matches_active_response:
-                self._response_active = False
-                self._active_response_id = None
-                self._current_item_id = None
-            # Emit usage for every response (including intermediate function-call-only ones)
-            # so the session accounts for all tokens. Only the active response may replay a pending
-            # request; a late completion for a superseded response must not change current state.
-            # OpenAI nests usage under `response.usage`; xAI Grok Voice reports the same shape at the
-            # top level of the `response.done` frame (its `response.usage` is empty), so fall back to it.
-            top_level_usage = (done.model_extra or {}).get('usage')  # xAI frame-level provider extra.
-            _validate_usage_shape(top_level_usage)
-            usage = _map_usage(response.usage) or _map_usage(
-                RealtimeResponseUsage.construct(**top_level_usage) if is_str_dict(top_level_usage) else None
-            )
-            if usage is not None:
-                events.append(
-                    SessionUsageEvent(
-                        usage=usage,
-                        provider_response_id=response_id or None,
-                        finish_reason=response_finish_reason(response),
-                    )
-                )
-            elif matches_active_response and response_finish_reason(response) == 'tool_call':
-                events.append(
-                    SessionUsageEvent(
-                        usage=RequestUsage(),
-                        provider_response_id=response_id or None,
-                        finish_reason='tool_call',
-                    )
-                )
-            if matches_active_response and self._pending_response:
-                self._pending_response = False
-                # A cancelled response means the user barged in: a new turn is starting, so
-                # don't replay the deferred response over it.
-                if response.status != 'cancelled':
-                    self._response_active = True
-                    self._active_response_id = None
-                    await self._send_event({'type': 'response.create'})
-        if (event := self._map_event(data)) is not None:
+            done_events, superseded = await self._handle_response_done(data)
+            events.extend(done_events)
+        if (event := self._map_event(data)) is not None and not (event_type == 'response.done' and superseded):
             events.append(event)
             if isinstance(event, InputTranscript) and event.is_final and event_type in INPUT_TRANSCRIPT_DONE_TYPES:
                 _validate_usage_shape(data.get('usage'), transcription=True)
@@ -526,6 +494,79 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 if (asr := _map_transcription_usage(completed.usage)) is not None:
                     events.append(SessionUsageEvent(usage=asr, response_scoped=False))
         return events
+
+    async def _handle_response_done(self, data: dict[str, Any]) -> tuple[list[RealtimeCodecEvent], bool]:
+        """Update response state and emit usage for a `response.done`.
+
+        Returns `(events, superseded)`. `superseded` is `True` when a *different* response is still
+        active — a late/cancelled completion arriving after a new turn began — so the caller suppresses
+        its user-facing `TurnCompleteEvent` (which would otherwise finalize the current response's output
+        under this old boundary). A frame with no `response` object is malformed/empty; `map_event`
+        handles it gracefully, so return early here.
+        """
+        events: list[RealtimeCodecEvent] = []
+        response_data = validate_response_data(data)
+        if not response_data:
+            return events, False
+        _validate_usage_shape(response_data.get('usage'))
+        done = ResponseDoneEvent.construct(**data)
+        response = done.response
+        response_id = response.id
+        # The cancelled response is now closed; stop suppressing its stragglers (its own usage still emits
+        # below). A no-op for any other response.
+        self._close_cancelled_response(response_id)
+        # OpenAI response events always carry an ID. Keep the ID-less fallback for compatible protocol
+        # implementations and defensive unit inputs that predate response tracking.
+        matches_active_response = not isinstance(response_id, str) or (
+            self._response_active and response_id == self._active_response_id
+        )
+        # Superseded only when a *different, known* response is active — a late/cancelled completion after
+        # a new turn began. When the active id is unknown (`None`, e.g. an id-less `response.created`), this
+        # done can't be proven stale, so don't suppress its turn-completion.
+        superseded = (
+            isinstance(response_id, str)
+            and self._active_response_id is not None
+            and response_id != self._active_response_id
+        )
+        if matches_active_response:
+            self._response_active = False
+            self._active_response_id = None
+            self._current_item_id = None
+        # Emit usage for every response (including intermediate function-call-only ones) so the session
+        # accounts for all tokens. Only the active response may replay a pending request; a late completion
+        # for a superseded response must not change current state. OpenAI nests usage under
+        # `response.usage`; xAI Grok Voice reports the same shape at the top level of the `response.done`
+        # frame (its `response.usage` is empty), so fall back to it.
+        top_level_usage = (done.model_extra or {}).get('usage')  # xAI frame-level provider extra.
+        _validate_usage_shape(top_level_usage)
+        usage = _map_usage(response.usage) or _map_usage(
+            RealtimeResponseUsage.construct(**top_level_usage) if is_str_dict(top_level_usage) else None
+        )
+        if usage is not None:
+            events.append(
+                SessionUsageEvent(
+                    usage=usage,
+                    provider_response_id=response_id or None,
+                    finish_reason=response_finish_reason(response),
+                )
+            )
+        elif matches_active_response and response_finish_reason(response) == 'tool_call':
+            events.append(
+                SessionUsageEvent(
+                    usage=RequestUsage(),
+                    provider_response_id=response_id or None,
+                    finish_reason='tool_call',
+                )
+            )
+        if matches_active_response and self._pending_response:
+            self._pending_response = False
+            # A cancelled response means the user barged in: a new turn is starting, so don't replay the
+            # deferred response over it.
+            if response.status != 'cancelled':
+                self._response_active = True
+                self._active_response_id = None
+                await self._send_event({'type': 'response.create'})
+        return events, superseded
 
     async def _try_reconnect(self) -> bool:
         """Re-dial with exponential backoff; return whether a new connection was established."""
@@ -545,6 +586,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._active_response_id = None
         self._pending_response = False
         self._current_item_id = None
+        self._cancelled_response_id = None
         return True
 
 
