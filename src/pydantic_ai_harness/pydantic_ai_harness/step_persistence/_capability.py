@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from pydantic_ai import CallToolsNode
+from pydantic_ai import CallToolsNode, ModelRequestNode
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
@@ -210,7 +210,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     ) -> AgentRunResult[Any]:
         """Push this run's id onto the contextvar so nested delegates can read it."""
         token = current_run_id.set(self._effective_run_id(ctx))
-        saved_token = snapshot_saved.set(False)
+        saved_token = snapshot_saved.set(0)
         history_token = latest_node_history.set(None)
         try:
             return await handler()
@@ -255,15 +255,19 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     ) -> AgentRunResult[Any]:
         """Emit `run_completed`, saving a final snapshot only as a fallback.
 
-        The terminal `CallToolsNode` already saved the final provider-valid
-        snapshot via `after_node_run`, carrying the correct `step_index`. By
-        `after_run`, `ctx.run_step` is reset to 0, so re-saving here would both
-        duplicate the tail and stamp a misleading `step_index`. We only save
-        when the run produced no snapshot at all (no provider-valid node
-        boundary was reached), as a last-resort capture of the final state.
+        When a terminal `CallToolsNode` already saved the final history via
+        `after_node_run` it carries the correct `step_index`, whereas by
+        `after_run` `ctx.run_step` is reset to 0 -- so re-saving would both
+        duplicate the tail and stamp a misleading `step_index`. We save only
+        when the run ended past the newest boundary snapshot.
+
+        That covers a run which reached no provider-valid boundary at all, and
+        `Agent.run_stream`, which ends through `SetFinalResult` rather than a
+        terminal `CallToolsNode` and appends its closing response after the last
+        boundary -- leaving `after_run` the only hook that sees the full run.
         """
-        if not snapshot_saved.get():
-            messages = result.all_messages()
+        messages = result.all_messages()
+        if len(messages) > snapshot_saved.get():
             if is_provider_valid(messages):
                 await self.store.save_snapshot(
                     ContinuableSnapshot(
@@ -375,12 +379,16 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     ) -> ModelResponse:
         """Rescue the request payload as a resume point when a model request fails.
 
-        The payload is the provider-valid history the run was about to send --
-        e.g. a resolved tool cycle after a clean `CallToolsNode`, which is
-        never a completed-node boundary (the tool return only enters the
-        history as this request is built). It is saved here, directly to the
-        store, because the contextvar path used by `on_run_error` cannot carry
-        a value out of a model request that raises.
+        The payload is the provider-valid history the run was about to send,
+        which can be further along than any completed node boundary -- a
+        request built from processors or an injected history has no boundary
+        behind it. It is saved here, directly to the store, because the
+        contextvar path used by `on_run_error` cannot carry a value out of a
+        model request that raises.
+
+        For a plain resolved tool cycle this repeats what `after_node_run`
+        already saved at the `CallToolsNode` boundary, which folds the pending
+        request in.
         """
         messages = list(request_context.messages)
         if _is_resumable_history(messages):
@@ -494,16 +502,22 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
 
         At that boundary every tool call from the preceding `ModelRequestNode`
         has a matching tool return, so the history is provider-valid.
+        The returned `ModelRequestNode` holds the tool returns but is not yet in
+        `ctx.messages`, so its request must be included before validation.
         Snapshots are filtered through `is_provider_valid` defensively in case
         a custom node reshapes history.
 
         Every node boundary also refreshes `latest_node_history` so that
         `on_run_error` can rescue the last provider-valid tail when a later
-        node raises before its own `after_node_run` fires.
+        node raises before its own `after_node_run` fires. The stash keeps the
+        history as `ctx.messages` had it, so the snapshot candidate rebinds to a
+        new list rather than appending to the stashed one.
         """
         messages = list(ctx.messages)
         self._stash_provider_valid_history(ctx, messages)
         if isinstance(node, CallToolsNode):
+            if isinstance(result, ModelRequestNode):
+                messages = [*messages, result.request]
             if is_provider_valid(messages):
                 await self.store.save_snapshot(
                     ContinuableSnapshot(
@@ -515,5 +529,5 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
                         agent_name=self.agent_name,
                     )
                 )
-                snapshot_saved.set(True)
+                snapshot_saved.set(len(messages))
         return result

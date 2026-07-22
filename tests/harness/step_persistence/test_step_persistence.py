@@ -8,12 +8,14 @@ agent run (e.g. the path-traversal guard on `FileStepStore`).
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai import Agent, CallToolsNode, ModelRequestNode, ModelRetry, RunContext
 from pydantic_ai._agent_graph import GraphAgentState  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -62,6 +64,7 @@ def build_run_context(
     run_id: str | None = None,
     run_step: int = 0,
     conversation_id: str | None = None,
+    messages: list[ModelMessage] | None = None,
 ) -> RunContext[Any]:
     """Fabricate a minimal `RunContext` for direct hook invocation."""
     return RunContext[Any](
@@ -69,7 +72,7 @@ def build_run_context(
         model=TestModel(),
         usage=RunUsage(),
         prompt=None,
-        messages=[],
+        messages=messages if messages is not None else [],
         run_step=run_step,
         run_id=run_id,
         conversation_id=conversation_id,
@@ -84,6 +87,26 @@ def make_simple_agent(capabilities: list[Any]) -> Agent[object, str]:
         return a + b
 
     return agent
+
+
+class WorkerInterruptedError(RuntimeError):
+    """Simulate a worker stopping before its second model request."""
+
+
+@dataclass
+class InterruptBeforeSecondModelRequest(AbstractCapability[object]):
+    requests: int = 0
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[object],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        del ctx
+        self.requests += 1
+        if self.requests == 2:
+            raise WorkerInterruptedError('worker stopped after the completed tool call')
+        return request_context
 
 
 async def first_run_id(store: StepStore) -> str:
@@ -659,6 +682,55 @@ class TestFileStepStore:
 
 
 class TestStepPersistenceCapability:
+    async def test_interrupted_run_resumes_from_completed_tool_boundary(self) -> None:
+        store = InMemoryStepStore()
+        interrupt = InterruptBeforeSecondModelRequest()
+        agent = make_simple_agent(
+            [
+                StepPersistence(store=store, run_id='interrupted-read'),
+                interrupt,
+            ]
+        )
+
+        with pytest.raises(WorkerInterruptedError, match='completed tool call'):
+            await agent.run('add 1 and 2')
+
+        history = await continue_run(store, run_id='interrupted-read')
+        effect = await store.get_tool_effect(
+            run_id='interrupted-read',
+            tool_call_id='pyd_ai_tool_call_id__add',
+        )
+
+        assert is_provider_valid(history) is True
+        assert any(
+            isinstance(part, ToolReturnPart)
+            for message in history
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        assert effect is not None
+        assert effect.status == 'completed'
+
+    async def test_run_stream_snapshot_keeps_the_final_response(self) -> None:
+        """A completed `run_stream` resumes from its final assistant turn, not the tool boundary.
+
+        `run_stream` ends through `SetFinalResult`, not a terminal
+        `CallToolsNode`, and its final response reaches the history only after
+        that boundary -- so no `after_node_run` save can carry it and the
+        `after_run` fallback is the only writer that sees the whole run.
+        """
+        store = InMemoryStepStore()
+        agent = make_simple_agent([StepPersistence(store=store, run_id='streamed')])
+
+        async with agent.run_stream('add 1 and 2') as result:
+            await result.get_output()
+
+        snapshot = await store.latest_snapshot(run_id='streamed')
+        assert snapshot is not None
+        assert is_provider_valid(snapshot.messages) is True
+        assert isinstance(snapshot.messages[-1], ModelResponse)
+        assert snapshot.messages == result.all_messages()
+
     async def test_basic_run_records_lifecycle_and_snapshot(self) -> None:
         store = InMemoryStepStore()
         agent = make_simple_agent([StepPersistence(store=store, agent_name='librarian')])
@@ -1019,22 +1091,28 @@ class TestCrashMidToolCallContract:
 class TestOnRunErrorSnapshot:
     """`on_run_error` rescues a provider-valid resume point no snapshot captured (#253).
 
-    A provider-valid history can exist at a boundary that no snapshot records:
-    the model request after a clean tool cycle (the resolved tool return only
-    enters the history as that request is built) or the `CallToolsNode` after a
-    text response (output validation raising there skips its `after_node_run`).
-    `on_run_error` persists the last such history, and skips when the crash left
-    a dangling tool call -- so `latest_snapshot` never regresses to an
-    unsendable point.
+    A provider-valid history can exist at a boundary that no snapshot records --
+    for instance the `CallToolsNode` after a text response, where output
+    validation raising skips its own `after_node_run`. `on_run_error` persists
+    the last such history, and skips when the crash left a dangling tool call --
+    so `latest_snapshot` never regresses to an unsendable point.
+
+    These run-level tests assert the resume point a failed run ends up with.
+    Since `after_node_run` folds the pending request into its `CallToolsNode`
+    snapshot (#373), the error paths are no longer the only writer of these
+    histories; `TestCapabilityHookBranches` pins each error hook's own save
+    directly.
     """
 
     async def test_rescues_provider_valid_history_when_next_model_request_raises(self) -> None:
         """Issue #253 acceptance test: request 1 tool call, request 2 raises.
 
-        The resolved tool cycle `[prompt, response, tool-return]` is
-        provider-valid with no open tool calls, but it is never a completed
-        node boundary, so without this behavior the run leaves no snapshot.
-        `on_run_error` rescues it from the `before_model_request` boundary.
+        The run must end with the resolved tool cycle
+        `[prompt, response, tool-return]` as its resume point -- provider-valid,
+        no open tool calls. Since #373 the `CallToolsNode` boundary also saves
+        that history, so this asserts the outcome rather than which hook wrote
+        it; `test_on_model_request_error_saves_resumable_payload` pins the
+        error-path save on its own.
         """
         store = InMemoryStepStore()
 
@@ -1250,6 +1328,25 @@ class TestCapabilityHookBranches:
         events = await store.list_events(run_id='configured')
         assert [e.kind for e in events] == ['run_started']
 
+    async def test_after_node_run_skips_snapshot_when_appended_request_leaves_history_invalid(self) -> None:
+        """The `CallToolsNode` candidate is still filtered through `is_provider_valid`.
+
+        Folding in `result.request` is what makes the ordinary boundary
+        provider-valid, but it is not assumed to: a request that does not carry
+        the pending tool return leaves an orphan `ToolCallPart`, so no snapshot
+        is saved.
+        """
+        store = InMemoryStepStore()
+        cap: StepPersistence[object] = StepPersistence(store=store)
+        response = ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='orphan')])
+        unmatched: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='hi')]), response]
+        ctx = build_run_context(deps=None, run_id='r1', messages=unmatched)
+        node_result = ModelRequestNode[Any, Any](ModelRequest(parts=[UserPromptPart(content='next')]))
+
+        assert await cap.after_node_run(ctx, node=CallToolsNode(response), result=node_result) is node_result
+
+        assert await store.latest_snapshot(run_id='r1') is None
+
     async def test_after_run_skips_snapshot_when_history_not_provider_valid(self) -> None:
         """`after_run` only persists a snapshot when the history is provider-valid."""
         store = InMemoryStepStore()
@@ -1311,6 +1408,38 @@ class TestCapabilityHookBranches:
         events = await store.list_events(run_id='r1')
         assert [e.kind for e in events] == ['model_request_failed']
         assert events[0].error is not None and 'nope' in events[0].error
+        assert await store.latest_snapshot(run_id='r1') is None
+
+    async def test_on_model_request_error_saves_resumable_payload(self) -> None:
+        """The failing request's payload is itself persisted as a resume point.
+
+        Pinned directly because the run-level `TestOnRunErrorSnapshot` cases no
+        longer isolate this hook: since #373 the `CallToolsNode` boundary saves
+        the same resolved-cycle history, so those assertions hold even with this
+        save removed.
+        """
+        store = InMemoryStepStore()
+        cap: StepPersistence[object] = StepPersistence(store=store)
+        ctx = build_run_context(deps=None, run_id='r1', run_step=4)
+        resumable: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='hi')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='add-1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='add', content=3, tool_call_id='add-1')]),
+        ]
+        request_context = ModelRequestContext(
+            model=ctx.model,
+            messages=resumable,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+        with pytest.raises(RuntimeError, match='nope'):
+            await cap.on_model_request_error(ctx, request_context=request_context, error=RuntimeError('nope'))
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert snap.step_index == 4
+        assert snap.messages == resumable
 
     async def test_for_run_returns_self_when_resolution_is_no_op(self) -> None:
         """When `run_id` is explicit and no contextvar is set, `for_run` returns `self`."""

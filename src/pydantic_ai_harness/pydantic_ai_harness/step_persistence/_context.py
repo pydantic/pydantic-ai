@@ -21,18 +21,24 @@ and the capability in `_capability.py` can share it without a circular
 import.
 """
 
-snapshot_saved: ContextVar[bool] = ContextVar(
+snapshot_saved: ContextVar[int] = ContextVar(
     'pydantic_ai_harness.step_persistence.snapshot_saved',
-    default=False,
+    default=0,
 )
-"""Async-context-local flag: did `after_node_run` already save a snapshot this run?
+"""Async-context-local message count of the newest snapshot `after_node_run` saved this run.
 
-Set `False` in `wrap_run`, flipped `True` whenever `after_node_run` saves a
-`CallToolsNode` snapshot. `after_run` reads it to skip a redundant terminal
-snapshot -- the final `CallToolsNode` already captured the provider-valid tail
-with the correct `step_index`, whereas `after_run` runs with `ctx.run_step`
-reset to 0. Task-isolated like `current_run_id`, so concurrent runs don't
-interfere.
+Set to `0` in `wrap_run` and to `len(messages)` whenever `after_node_run` saves
+a `CallToolsNode` snapshot. `after_run` compares its final history against it
+and saves only when the run ended past that boundary, which keeps the common
+case free of a redundant terminal snapshot: the final `CallToolsNode` already
+captured the tail with the correct `step_index`, whereas `after_run` runs with
+`ctx.run_step` reset to 0.
+
+A count rather than a boolean because a `CallToolsNode` snapshot is no longer
+evidence that the *final* history was captured. `Agent.run_stream` ends through
+`SetFinalResult`, and its closing response lands in the history after the last
+node boundary, so only `after_run` ever sees the whole run. Task-isolated like
+`current_run_id`, so concurrent runs don't interfere.
 """
 
 latest_node_history: ContextVar[tuple[list[ModelMessage], int] | None] = ContextVar(
