@@ -124,6 +124,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_responses_supports_reasoning_mode': False,
     'openai_responses_requires_function_call_status_none': False,
     'openai_supports_phase': False,
+    'openai_supports_prompt_cache_breakpoints': False,
     'openai_chat_supports_document_input': True,
     # AnthropicModelProfile subclass defaults
     'anthropic_supports_fast_speed': False,
@@ -309,6 +310,7 @@ def test_openai_gpt_5_6():
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_mode': True,
             'openai_supports_phase': True,
+            'openai_supports_prompt_cache_breakpoints': True,
         }
     )
 
@@ -453,6 +455,13 @@ def test_xai_grok_3_mini():
 def test_mistral_mistral_large():
     profile = MistralProvider.model_profile('mistral-large-latest')
     assert _normalize(profile) == snapshot({'supports_inline_system_prompts': True})
+
+
+@pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
+def test_mistral_small_latest():
+    """Small 4 / Medium 3.5 advertise adjustable (opt-in) reasoning, unlike always-on magistral."""
+    profile = MistralProvider.model_profile('mistral-small-latest')
+    assert _normalize(profile) == snapshot({'supports_thinking': True, 'supports_inline_system_prompts': True})
 
 
 @pytest.mark.skipif(not cohere_imports(), reason='cohere not installed')
@@ -1068,6 +1077,19 @@ def test_azure_mistral_prefix():
     )
 
 
+def test_azure_mistral_small_latest():
+    """Azure reuses the shared Mistral profile, so `thinking` is ignored: adjustable reasoning is native-provider-only."""
+    from pydantic_ai.providers.azure import AzureProvider
+
+    profile = AzureProvider.model_profile('mistral-small-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+        }
+    )
+
+
 def test_azure_cohere_prefix():
     from pydantic_ai.providers.azure import AzureProvider
 
@@ -1325,6 +1347,40 @@ def test_litellm_openai_gpt():
             'openai_supports_reasoning': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+        }
+    )
+
+
+def test_litellm_magistral():
+    """Magistral's always-on flags survive the LiteLLM route. The sparse family profile skips the
+    OpenAI baseline (structured output), a pre-existing gap shared with deepseek and cohere."""
+    from pydantic_ai.providers.litellm import LiteLLMProvider
+
+    profile = LiteLLMProvider.model_profile('mistral/magistral-medium-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+        }
+    )
+
+
+def test_litellm_mistral_small_latest():
+    """LiteLLM must not advertise thinking for adjustable Mistral ids (it rejects `reasoning_effort`
+    for them); the route falls back to the plain OpenAI profile."""
+    from pydantic_ai.providers.litellm import LiteLLMProvider
+
+    profile = LiteLLMProvider.model_profile('mistral/mistral-small-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
         }
     )
 

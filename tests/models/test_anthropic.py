@@ -46,6 +46,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolDefinition,
+    ToolFailed,
     ToolReturnPart,
     UsageLimitExceeded,
     UserPromptPart,
@@ -2216,6 +2217,38 @@ async def test_request_tool_call(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
         ]
+    )
+
+
+async def test_tool_failed_maps_to_anthropic_error_tool_result(allow_model_requests: None):
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='1', input={'city': 'London'}, name='get_weather', type='tool_use')],
+            usage=BetaUsage(input_tokens=2, output_tokens=1),
+        ),
+        completion_message(
+            [BetaTextBlock(text='weather unavailable', type='text')],
+            usage=BetaUsage(input_tokens=3, output_tokens=5),
+        ),
+    ]
+
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        raise ToolFailed(f'Weather service is unavailable for {city}.')
+
+    await agent.run('hello')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[1]['messages'][2]['content'][0] == snapshot(
+        {
+            'tool_use_id': '1',
+            'type': 'tool_result',
+            'content': [{'text': 'Weather service is unavailable for London.', 'type': 'text'}],
+            'is_error': True,
+        }
     )
 
 

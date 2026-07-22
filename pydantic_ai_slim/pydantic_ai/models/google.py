@@ -96,6 +96,7 @@ try:
         ImageConfigDict,
         MediaResolution,
         Modality,
+        ModelArmorConfigDict,
         Part,
         PartDict,
         SafetySettingDict,
@@ -138,13 +139,12 @@ LatestGoogleModelNames = Literal[
     'gemini-2.5-flash-preview-09-2025',
     'gemini-2.5-flash-image',
     'gemini-2.5-flash-lite',
-    'gemini-2.5-flash-lite-preview-09-2025',
     'gemini-2.5-pro',
     'gemini-3-flash-preview',
     'gemini-3-pro-image-preview',
     'gemini-3-pro-preview',
     'gemini-3.1-flash-image-preview',
-    'gemini-3.1-flash-lite-preview',
+    'gemini-3.1-flash-lite',
     'gemini-3.1-pro-preview',
     'gemini-3.5-flash',
 ]
@@ -289,6 +289,18 @@ class GoogleModelSettings(ModelSettings, total=False):
 
     See [`GoogleCloudServiceTier`][pydantic_ai.models.google.GoogleCloudServiceTier] for all values,
     headers sent, and links to Google docs.
+    """
+
+    google_model_armor_config: ModelArmorConfigDict
+    """Model Armor configuration for screening prompts and responses. Only supported by the Vertex AI API.
+
+    Specifies the Model Armor templates to use for sanitizing user prompts and model responses.
+    Both fields are optional — omit either to skip screening for that direction.
+
+    Mutually exclusive with `google_safety_settings`: Vertex AI rejects a request that sets both,
+    since Model Armor replaces the built-in safety filters for that request.
+
+    See the [Model Armor docs](https://cloud.google.com/security-command-center/docs/model-armor-overview) for use cases and limitations.
     """
 
 
@@ -896,6 +908,7 @@ class GoogleModel(Model[Client]):
             response_json_schema=response_schema,
             response_modalities=modalities,
             image_config=image_config,
+            model_armor_config=model_settings.get('google_model_armor_config'),
         )
 
         if gla_service_tier is not None:
@@ -1099,9 +1112,18 @@ class GoogleModel(Model[Client]):
                 file_part = await self._map_file_to_part(file)
                 fallback_parts.append(file_part)
 
-        response = part.model_response_object()
-        if fallback_refs:
-            response = {'output': [response, *fallback_refs]}
+        if part.outcome == 'failed':
+            # Google's function-response schema prescribes an `error` key (mirroring the `output` key
+            # used for success) for reporting a failed tool call, so this is Gemini's native error
+            # channel, not the generic `{"error": ...}` wrapper other providers fall back to — hence
+            # `wrap_if_error=False` and the hand-built dict. Gemini surfaces the value as the failure
+            # message, so it stays a plain string: file references are sent as the file parts below
+            # rather than folded into the error text (the success branch nests them under `output`).
+            response = {'error': part.model_response_str(wrap_if_error=False)}
+        else:
+            response = part.model_response_object(wrap_if_error=False)
+            if fallback_refs:
+                response = {'output': [response, *fallback_refs]}
 
         function_response_dict: FunctionResponseDict = {
             'name': part.tool_name,

@@ -24,7 +24,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._ordering import collect_leaves, sort_capabilities
+from ._ordering import collect_leaves, is_innermost, sort_capabilities
 from .abstract import (
     AbstractCapability,
     AgentModel,
@@ -87,6 +87,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return replace(self, capabilities=list(new_caps))
+
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        for capability in self.capabilities:
+            capability._validate_runtime_capabilities(ctx, capabilities)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         instructions: list[str | SystemPromptFunc[AgentDepsT]] = []
@@ -496,9 +502,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 )
             except (ValidationError, ModelRetry) as new_error:
                 error = new_error
-            except (
-                Exception
-            ):  # pragma: no cover — defensive; on_tool_validate_error shouldn't raise non-validation errors
+            except Exception:
                 raise
         raise error
 
@@ -822,6 +826,25 @@ def _make_output_process_wrap(
         )
 
     return wrapped
+
+
+def bind_capabilities_tier(
+    combined: CombinedCapability[AgentDepsT],
+    agent: AbstractAgent[AgentDepsT, Any],
+    *,
+    innermost: bool,
+) -> CombinedCapability[AgentDepsT]:
+    """Bind one ordering tier of the combined capability to the agent via `for_agent`.
+
+    `Agent.__init__` binds capabilities in two phases: everything outside the `innermost`
+    tier first, then — once the toolsets contributed by those capabilities are visible on
+    `agent.toolsets` — the `innermost` tier (durability capabilities), whose `for_agent`
+    wraps the agent's toolsets and must see all of them.
+    """
+    new_caps = [c.for_agent(agent) if is_innermost(c) == innermost else c for c in combined.capabilities]
+    if all(new is old for new, old in zip(new_caps, combined.capabilities, strict=True)):
+        return combined
+    return replace(combined, capabilities=new_caps)
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:

@@ -3802,6 +3802,59 @@ async def test_adapter_dispatch_request():
     )
 
 
+async def test_adapter_dispatch_request_explicit_run_id():
+    """`run_id=` passed to `dispatch_request` stamps the run result and agent messages.
+
+    Not a VCR test: adapter kwarg forwarding and id stamping are in-memory framework
+    behavior, no provider request shape is involved.
+    """
+    captured_results: list[AgentRunResult[Any]] = []
+
+    agent = Agent(model=TestModel())
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': request.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [
+                (b'content-type', b'application/json'),
+            ],
+        },
+        receive=receive,
+    )
+
+    response = await VercelAIAdapter.dispatch_request(
+        starlette_request,
+        agent=agent,
+        run_id='run-from-dispatch',
+        on_complete=captured_results.append,
+    )
+    assert isinstance(response, StreamingResponse)
+
+    async def send(data: MutableMapping[str, Any]) -> None:
+        pass
+
+    await response.stream_response(send)
+
+    assert captured_results[0].run_id == 'run-from-dispatch'
+    messages = captured_results[0].all_messages()
+    assert len(messages) == 2
+    assert all(m.run_id == 'run-from-dispatch' for m in messages)
+
+
 def test_manage_system_prompt_visible_in_vercel_adapter_signatures():
     from_request_parameters = inspect.signature(VercelAIAdapter.from_request).parameters
     dispatch_request_parameters = inspect.signature(VercelAIAdapter.dispatch_request).parameters

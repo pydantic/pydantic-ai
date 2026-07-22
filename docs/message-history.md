@@ -239,12 +239,14 @@ Tool calls that can still receive a real result are left alone: when the history
 
 This pipeline handles regular, locally-executed tool calls only. Builtin (server-side) tool parts — produced and resulted by the provider inline — are left untouched and repaired by each model's own serializer instead. Some other provider-invalid shapes are also out of scope and may be rejected: duplicate tool results for one call, and provider-specific ordering rules beyond call/result pairing.
 
-### Correlating runs with `conversation_id`
+### Correlating runs with `run_id` and `conversation_id`
 
 Each `ModelRequest` and `ModelResponse` carries two identifiers:
 
-- [`run_id`][pydantic_ai.messages.ModelRequest.run_id] — unique per agent run; emitted on the OpenTelemetry agent run span as `gen_ai.agent.call.id`.
-- [`conversation_id`][pydantic_ai.messages.ModelRequest.conversation_id] — shared across all runs that build on the same `message_history`; emitted as `gen_ai.conversation.id`.
+- [`run_id`][pydantic_ai.messages.ModelRequest.run_id] — unique per agent run. Also available as [`RunContext.run_id`][pydantic_ai.tools.RunContext.run_id] and [`AgentRunResult.run_id`][pydantic_ai.agent.AgentRunResult.run_id], and emitted on the OpenTelemetry agent run span as `gen_ai.agent.call.id`.
+- [`conversation_id`][pydantic_ai.messages.ModelRequest.conversation_id] — shared across all runs that build on the same `message_history`. Also available as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id], and emitted as `gen_ai.conversation.id`.
+
+A fresh `run_id` is generated for every agent run (or you can pass `run_id='<your-id>'` to use an ID minted by your application — e.g. one created, stored, or handed out to a client before the run starts). Unlike `conversation_id`, `run_id` is **never** inherited from `message_history`. Each [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] call — including a [deferred-tool resume](deferred-tools.md) — is a separate run with its own `run_id`. Passing an empty `run_id=''`, or a `run_id` that already appears on `message_history`, raises [`UserError`][pydantic_ai.exceptions.UserError], because both break [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] boundary detection. Correlate pause/resume or multi-turn work with `conversation_id` instead. When retrying a failed run with the same `run_id`, rebuild `message_history` without the failed attempt's messages.
 
 A fresh `conversation_id` is generated on the first run, stamped onto every message produced by that run, and inherited by subsequent runs that pass the messages back via `message_history`. This means you can correlate traces from a multi-turn conversation in [Logfire](logfire.md) (or any OpenTelemetry backend) without tracking anything yourself — as long as the message history round-trips, the conversation ID does too.
 
@@ -257,12 +259,26 @@ result1 = agent.run_sync('Tell me a joke.')
 result2 = agent.run_sync('Explain?', message_history=result1.all_messages())
 
 assert result1.conversation_id == result2.conversation_id
+assert result1.run_id != result2.run_id
 ```
 
-To override or fork:
+```python {title="pass a pre-minted run_id"}
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+
+agent = Agent(TestModel())
+
+result = agent.run_sync('Tell me a joke.', run_id='run-from-api-42')
+assert result.run_id == 'run-from-api-42'
+```
+
+To override or fork `conversation_id`:
 
 - Pass `conversation_id='<your-id>'` to use an ID from your own application (e.g. a chat thread ID stored in your database).
 - Pass `conversation_id='new'` to start a fresh conversation that ignores any `conversation_id` already on `message_history` — useful for branching off an existing thread without making the caller generate an ID.
+
+!!! note "`'new'` is not a `run_id` sentinel"
+    `'new'` is a sentinel for `conversation_id` only. Passing `run_id='new'` uses the literal string `"new"` as that run's id.
 
 ```python {title="forking a conversation"}
 from pydantic_ai import Agent
@@ -279,7 +295,7 @@ forked = agent.run_sync(
 assert forked.conversation_id != result1.conversation_id
 ```
 
-The [UI adapters](ui/overview.md) auto-populate `conversation_id` from the protocol's own thread/chat ID, so frontends using these protocols get correlation for free.
+The [UI adapters](ui/overview.md) auto-populate `conversation_id` from the protocol's own thread/chat ID, so frontends using these protocols get conversation correlation for free. Protocol-level run IDs (for example AG-UI's `runId`) are **not** mapped into the agent's `run_id` — pass `run_id=` explicitly on [`AGUIAdapter.run_stream`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] / [`dispatch_request`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] (or a plain `Agent.run`) if you need them to match.
 
 ## Storing and loading messages (to JSON)
 
@@ -478,7 +494,7 @@ _(This example is complete, it can be run "as is")_
     `system_prompt` is different: system prompt parts are part of the message
     history. If the receiving agent has its own `system_prompt` and you need to
     ensure it is present when reusing history, see
-    [`ReinjectSystemPrompt`](capabilities.md#reinjectsystemprompt). Use
+    [`ReinjectSystemPrompt`](capabilities/reinject-system-prompt.md). Use
     `replace_existing=True` when a system prompt from another agent should not
     remain authoritative.
 
@@ -727,7 +743,7 @@ This allows for more sophisticated message processing based on the current state
 
 #### Summarize Old Messages
 
-Use an LLM to summarize older messages to preserve context while reducing tokens.
+Use an LLM to summarize older messages to preserve context while reducing tokens. This is one of several ways to keep a conversation within the context window — see [Compaction](capabilities/compaction.md) for the full picture, including provider-native compaction and ready-made strategies from [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/compaction/).
 
 ```python {title="summarize_old_messages.py"}
 from pydantic_ai import Agent, ModelMessage
