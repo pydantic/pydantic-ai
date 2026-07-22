@@ -437,6 +437,9 @@ def pytest_recording_configure(config: Any, vcr: VCR):
         """Match URL paths after scrubbing AWS account IDs from ARNs."""
         path1 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r1.path)
         path2 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r2.path)
+        # Normalize Vertex AI paths by replacing region
+        path1 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path1)
+        path2 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path2)
         if path1 != path2:
             raise AssertionError(f'{path1} != {path2}')
 
@@ -461,6 +464,10 @@ def pytest_recording_configure(config: Any, vcr: VCR):
         # Normalize Bedrock hosts by removing region
         host1_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host1)
         host2_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host2)
+        # Normalize Vertex AI hosts by removing region prefix
+        vertex_host_pattern = re.compile(r'^[a-z0-9-]+-aiplatform\.googleapis\.com$')
+        host1_normalized = vertex_host_pattern.sub('aiplatform.googleapis.com', host1_normalized)
+        host2_normalized = vertex_host_pattern.sub('aiplatform.googleapis.com', host2_normalized)
         if host1_normalized != host2_normalized:
             raise AssertionError(f'{host1} != {host2}')
 

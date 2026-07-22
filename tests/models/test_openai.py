@@ -2129,6 +2129,269 @@ async def test_user_id(allow_model_requests: None, openai_api_key: str):
     await agent.run('hello')
 
 
+async def test_openai_moderation(allow_model_requests: None, openai_api_key: str):
+    """Moderation results requested via `openai_moderation` are surfaced in `provider_details['moderation']`."""
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIChatModelSettings(openai_moderation={'model': 'omni-moderation-latest'})
+    agent = Agent(model=model, model_settings=settings)
+
+    result = await agent.run('What is the capital of France?')
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'stop',
+            'moderation': {
+                'input': {
+                    'model': 'omni-moderation-latest',
+                    'results': [
+                        {
+                            'categories': {
+                                'harassment': False,
+                                'harassment/threatening': False,
+                                'sexual': False,
+                                'hate': False,
+                                'hate/threatening': False,
+                                'illicit': False,
+                                'illicit/violent': False,
+                                'self-harm/intent': False,
+                                'self-harm/instructions': False,
+                                'self-harm': False,
+                                'sexual/minors': False,
+                                'violence': False,
+                                'violence/graphic': False,
+                            },
+                            'category_applied_input_types': {
+                                'harassment': ['text'],
+                                'harassment/threatening': ['text'],
+                                'sexual': ['text'],
+                                'hate': ['text'],
+                                'hate/threatening': ['text'],
+                                'illicit': ['text'],
+                                'illicit/violent': ['text'],
+                                'self-harm/intent': ['text'],
+                                'self-harm/instructions': ['text'],
+                                'self-harm': ['text'],
+                                'sexual/minors': ['text'],
+                                'violence': ['text'],
+                                'violence/graphic': ['text'],
+                            },
+                            'category_scores': {
+                                'harassment': 1.5598027633743823e-05,
+                                'harassment/threatening': 2.212566909570261e-06,
+                                'sexual': 9.818326983657703e-07,
+                                'hate': 2.7803096387751555e-05,
+                                'hate/threatening': 1.0783312222985275e-06,
+                                'illicit': 0.005284363395662242,
+                                'illicit/violent': 3.514382632807918e-05,
+                                'self-harm/intent': 2.627477314480822e-06,
+                                'self-harm/instructions': 5.955139348629957e-07,
+                                'self-harm': 2.4682904407607285e-06,
+                                'sexual/minors': 1.9333584585546466e-07,
+                                'violence': 6.814872211615988e-06,
+                                'violence/graphic': 7.889262586245034e-07,
+                            },
+                            'flagged': False,
+                            'model': 'omni-moderation-latest',
+                            'type': 'moderation_result',
+                        }
+                    ],
+                    'type': 'moderation_results',
+                },
+                'output': {
+                    'model': 'omni-moderation-latest',
+                    'results': [
+                        {
+                            'categories': {
+                                'harassment': False,
+                                'harassment/threatening': False,
+                                'sexual': False,
+                                'hate': False,
+                                'hate/threatening': False,
+                                'illicit': False,
+                                'illicit/violent': False,
+                                'self-harm/intent': False,
+                                'self-harm/instructions': False,
+                                'self-harm': False,
+                                'sexual/minors': False,
+                                'violence': False,
+                                'violence/graphic': False,
+                            },
+                            'category_applied_input_types': {
+                                'harassment': ['text'],
+                                'harassment/threatening': ['text'],
+                                'sexual': ['text'],
+                                'hate': ['text'],
+                                'hate/threatening': ['text'],
+                                'illicit': ['text'],
+                                'illicit/violent': ['text'],
+                                'self-harm/intent': ['text'],
+                                'self-harm/instructions': ['text'],
+                                'self-harm': ['text'],
+                                'sexual/minors': ['text'],
+                                'violence': ['text'],
+                                'violence/graphic': ['text'],
+                            },
+                            'category_scores': {
+                                'harassment': 5.0333557545281144e-05,
+                                'harassment/threatening': 1.2533751425646102e-05,
+                                'sexual': 0.00012448433020883747,
+                                'hate': 3.740956047302422e-05,
+                                'hate/threatening': 1.6187581436151335e-06,
+                                'illicit': 3.077430764601415e-05,
+                                'illicit/violent': 1.442598644847886e-05,
+                                'self-harm/intent': 1.6442494559854523e-06,
+                                'self-harm/instructions': 1.2805474213228684e-06,
+                                'self-harm': 1.0391067562761452e-05,
+                                'sexual/minors': 3.120191139396651e-06,
+                                'violence': 0.0005852836038915696,
+                                'violence/graphic': 1.2339457598623173e-05,
+                            },
+                            'flagged': False,
+                            'model': 'omni-moderation-latest',
+                            'type': 'moderation_result',
+                        }
+                    ],
+                    'type': 'moderation_results',
+                },
+            },
+            'timestamp': IsDatetime(),
+        }
+    )
+
+
+async def test_openai_moderation_stream(allow_model_requests: None, openai_api_key: str):
+    """The streaming moderation chunk carries no choices, so it's read before the choice guard."""
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIChatModelSettings(openai_moderation={'model': 'omni-moderation-latest'})
+    agent = Agent(model=model, model_settings=settings)
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        await result.get_output()
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'timestamp': IsDatetime(),
+            'finish_reason': 'stop',
+            'moderation': {
+                'input': {
+                    'model': 'omni-moderation-latest',
+                    'results': [
+                        {
+                            'categories': {
+                                'harassment': False,
+                                'harassment/threatening': False,
+                                'sexual': False,
+                                'hate': False,
+                                'hate/threatening': False,
+                                'illicit': False,
+                                'illicit/violent': False,
+                                'self-harm/intent': False,
+                                'self-harm/instructions': False,
+                                'self-harm': False,
+                                'sexual/minors': False,
+                                'violence': False,
+                                'violence/graphic': False,
+                            },
+                            'category_applied_input_types': {
+                                'harassment': ['text'],
+                                'harassment/threatening': ['text'],
+                                'sexual': ['text'],
+                                'hate': ['text'],
+                                'hate/threatening': ['text'],
+                                'illicit': ['text'],
+                                'illicit/violent': ['text'],
+                                'self-harm/intent': ['text'],
+                                'self-harm/instructions': ['text'],
+                                'self-harm': ['text'],
+                                'sexual/minors': ['text'],
+                                'violence': ['text'],
+                                'violence/graphic': ['text'],
+                            },
+                            'category_scores': {
+                                'harassment': 1.5598027633743823e-05,
+                                'harassment/threatening': 2.212566909570261e-06,
+                                'sexual': 9.818326983657703e-07,
+                                'hate': 2.7803096387751555e-05,
+                                'hate/threatening': 1.0783312222985275e-06,
+                                'illicit': 0.005284363395662242,
+                                'illicit/violent': 3.514382632807918e-05,
+                                'self-harm/intent': 2.627477314480822e-06,
+                                'self-harm/instructions': 5.955139348629957e-07,
+                                'self-harm': 2.4682904407607285e-06,
+                                'sexual/minors': 1.9333584585546466e-07,
+                                'violence': 6.814872211615988e-06,
+                                'violence/graphic': 7.889262586245034e-07,
+                            },
+                            'flagged': False,
+                            'model': 'omni-moderation-latest',
+                            'type': 'moderation_result',
+                        }
+                    ],
+                    'type': 'moderation_results',
+                },
+                'output': {
+                    'model': 'omni-moderation-latest',
+                    'results': [
+                        {
+                            'categories': {
+                                'harassment': False,
+                                'harassment/threatening': False,
+                                'sexual': False,
+                                'hate': False,
+                                'hate/threatening': False,
+                                'illicit': False,
+                                'illicit/violent': False,
+                                'self-harm/intent': False,
+                                'self-harm/instructions': False,
+                                'self-harm': False,
+                                'sexual/minors': False,
+                                'violence': False,
+                                'violence/graphic': False,
+                            },
+                            'category_applied_input_types': {
+                                'harassment': ['text'],
+                                'harassment/threatening': ['text'],
+                                'sexual': ['text'],
+                                'hate': ['text'],
+                                'hate/threatening': ['text'],
+                                'illicit': ['text'],
+                                'illicit/violent': ['text'],
+                                'self-harm/intent': ['text'],
+                                'self-harm/instructions': ['text'],
+                                'self-harm': ['text'],
+                                'sexual/minors': ['text'],
+                                'violence': ['text'],
+                                'violence/graphic': ['text'],
+                            },
+                            'category_scores': {
+                                'harassment': 7.096703991005882e-05,
+                                'harassment/threatening': 5.829126566113866e-06,
+                                'sexual': 3.0061635882429376e-05,
+                                'hate': 2.3413582477639402e-05,
+                                'hate/threatening': 6.240930669504435e-07,
+                                'illicit': 1.15919343186331e-05,
+                                'illicit/violent': 6.922183404468203e-06,
+                                'self-harm/intent': 9.818326983657703e-07,
+                                'self-harm/instructions': 6.339210403977636e-07,
+                                'self-harm': 7.602479448313689e-06,
+                                'sexual/minors': 1.1843139025979655e-06,
+                                'violence': 0.0005185157653543439,
+                                'violence/graphic': 5.307507822667365e-06,
+                            },
+                            'flagged': False,
+                            'model': 'omni-moderation-latest',
+                            'type': 'moderation_result',
+                        }
+                    ],
+                    'type': 'moderation_results',
+                },
+            },
+        }
+    )
+
+
 @dataclass
 class MyDefaultDc:
     x: int = 1
