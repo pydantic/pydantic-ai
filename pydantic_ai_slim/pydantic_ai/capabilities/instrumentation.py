@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
@@ -12,12 +12,14 @@ from opentelemetry.trace import StatusCode
 from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
+    DEFAULT_INSTRUMENTATION_VERSION,
     InstrumentationNames,
-    event_to_dict,
     get_agent_run_baggage_attributes,
     get_instructions,
     open_model_request_span,
+    safe_to_json,
     serialize_any,
+    time_to_first_chunk_ctx,
 )
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
@@ -61,10 +63,15 @@ class Instrumentation(AbstractCapability[Any]):
     (`opentelemetry.trace.get_current_span().set_attribute(key, value)`).
     """
 
+    _safe_at_runtime: ClassVar[bool] = True
+    """Workflow-side only — no toolsets, native tools, or model wrapping introduced — so safe
+    to attach per-run even when a durability capability is bound. Internal flag read by the
+    bundled durable-execution integrations.
+    """
+
     settings: InstrumentationSettings = field(default_factory=lambda: _default_settings())
     """OTel/Logfire instrumentation settings. Defaults to `InstrumentationSettings()`,
-    which uses the global `TracerProvider`/`LoggerProvider` (typically configured by
-    `logfire.configure()`)."""
+    which uses the global `TracerProvider` (typically configured by `logfire.configure()`)."""
 
     # Per-run state (set in `for_run`, mutated by `wrap_model_request`). `for_run`
     # returns a shallow copy via `replace(self)` for per-run isolation. These fields
@@ -82,7 +89,9 @@ class Instrumentation(AbstractCapability[Any]):
     # Resolved once from `self.settings.version` in `__post_init__` and preserved across
     # `dataclasses.replace` calls in `for_run` (which only touches init=True fields).
     _instrumentation_names: InstrumentationNames = field(
-        default_factory=lambda: InstrumentationNames.for_version(2), repr=False, init=False
+        default_factory=lambda: InstrumentationNames.for_version(DEFAULT_INSTRUMENTATION_VERSION),
+        repr=False,
+        init=False,
     )
 
     def __post_init__(self) -> None:
@@ -96,10 +105,10 @@ class Instrumentation(AbstractCapability[Any]):
         """Build an `Instrumentation` capability from a YAML/JSON spec.
 
         Accepts the serializable subset of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
-        kwargs (`include_binary_content`, `include_content`, `version`, `event_mode`,
-        `use_aggregated_usage_attribute_names`). The OTel `tracer_provider`, `meter_provider`,
-        and `logger_provider` fields can't be expressed in YAML and default to the global
-        providers (typically configured via `logfire.configure()`).
+        kwargs (`include_binary_content`, `include_content`, `version`,
+        `use_aggregated_usage_attribute_names`). The OTel `tracer_provider` and `meter_provider`
+        fields can't be expressed in YAML and default to the global providers (typically configured
+        via `logfire.configure()`).
 
         YAML form:
 
@@ -167,7 +176,7 @@ class Instrumentation(AbstractCapability[Any]):
                         (
                             result.output
                             if isinstance(result.output, str)
-                            else to_json(serialize_any(result.output)).decode()
+                            else safe_to_json(serialize_any(result.output)).decode()
                         ),
                     )
 
@@ -196,27 +205,22 @@ class Instrumentation(AbstractCapability[Any]):
         settings = self.settings
         new_message_index = self._new_message_index
 
-        if settings.version == 1:
-            attrs: dict[str, Any] = {
-                'all_messages_events': to_json(
-                    [event_to_dict(e) for e in settings.messages_to_otel_events(message_history)]
-                ).decode()
-            }
-        else:
-            last_instructions = get_instructions(message_history, self._last_model_request_parameters)
-            attrs = {
-                'pydantic_ai.all_messages': to_json(settings.messages_to_otel_messages(list(message_history))).decode(),
-                **settings.system_instructions_attributes(last_instructions),
-            }
+        last_instructions = get_instructions(message_history, self._last_model_request_parameters)
+        attrs: dict[str, Any] = {
+            'pydantic_ai.all_messages': safe_to_json(
+                settings.messages_to_otel_messages(list(message_history))
+            ).decode(),
+            **settings.system_instructions_attributes(last_instructions),
+        }
 
-            if new_message_index > 0:
-                attrs['pydantic_ai.new_message_index'] = new_message_index
+        if new_message_index > 0:
+            attrs['pydantic_ai.new_message_index'] = new_message_index
 
-            if self._variable_instructions:
-                attrs['pydantic_ai.variable_instructions'] = True
+        if self._variable_instructions:
+            attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
-            attrs['metadata'] = to_json(serialize_any(metadata)).decode()
+            attrs['metadata'] = safe_to_json(serialize_any(metadata)).decode()
 
         usage_attrs = (
             {
@@ -274,7 +278,10 @@ class Instrumentation(AbstractCapability[Any]):
             self._last_formatted_instructions = current_instructions
 
             response = await handler(request_context)
-            finish(response)
+            # For streaming requests, the agent graph's handler reports TTFT through
+            # `time_to_first_chunk_ctx` (set in the same task, so the value is visible here);
+            # for non-streaming requests this reads the `None` default.
+            finish(response, time_to_first_chunk=time_to_first_chunk_ctx.get())
             return response
 
     # ------------------------------------------------------------------
@@ -447,7 +454,7 @@ class Instrumentation(AbstractCapability[Any]):
         if tool_call is not None and tool_call.tool_call_id:
             attributes['gen_ai.tool.call.id'] = tool_call.tool_call_id
         if include_content:
-            attributes[names.tool_arguments_attr] = to_json(output).decode()
+            attributes[names.tool_arguments_attr] = safe_to_json(output).decode()
 
         attributes['logfire.json_schema'] = to_json(
             {
@@ -471,5 +478,5 @@ class Instrumentation(AbstractCapability[Any]):
             span_name=names.get_output_tool_span_name(span_target),
             attributes=attributes,
             action=lambda: handler(output),
-            serialize_result=lambda value: to_json(serialize_any(value)).decode(),
+            serialize_result=lambda value: safe_to_json(serialize_any(value)).decode(),
         )

@@ -8,9 +8,6 @@ Two providers wrap those endpoints:
 - [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] — the Gemini API (Google AI Studio), surfaced under the `'google:'` prefix.
 - [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] — Google Cloud (formerly known as Vertex AI), surfaced under the `'google-cloud:'` prefix.
 
-!!! note "Renamed prefixes (1.x → v2)"
-    The `'google-gla:'` and `'google-vertex:'` prefixes still work in 1.x but emit a `DeprecationWarning`. Use `'google:'` and `'google-cloud:'` instead. Likewise `GoogleProvider(...)` with any Google Cloud-only argument (`vertexai=True`, `location`, `project`, or `credentials`) is deprecated in favor of `GoogleCloudProvider(...)`.
-
 ## Install
 
 To use `GoogleModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `google` optional group:
@@ -214,8 +211,6 @@ result = agent.run_sync(
 
 Swap `'pt_then_flex'` for any [`GoogleCloudServiceTier`][pydantic_ai.models.google.GoogleCloudServiceTier] value — e.g. `'pt_then_priority'` for [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) spillover, or `'flex_only'` / `'priority_only'` to bypass PT entirely.
 
-The [`google_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_service_tier] field is deprecated in favor of these more specific fields.
-
 After the request, inspect [`ModelResponse`][pydantic_ai.messages.ModelResponse] `provider_details.get('traffic_type')` (e.g. `ON_DEMAND_FLEX`, `ON_DEMAND_PRIORITY`) to see which tier served it, when the API returns it.
 
 #### Model Garden
@@ -261,6 +256,35 @@ agent = Agent(model)
 ...
 ```
 
+## HTTP Retries
+
+!!! note
+    For most use cases, the model-agnostic [HTTP request retries](http-request-retries.md) approach is preferable, as it works the same way across all providers. The `retry_options` argument below is a Google-specific alternative that delegates retrying to the `google-genai` SDK's own HTTP layer.
+
+By default, the `google-genai` SDK does not retry requests that fail with a transient HTTP error. You can enable retries by passing a [`HttpRetryOptions`](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpRetryOptions) instance to the `retry_options` argument of `GoogleProvider` or `GoogleCloudProvider`:
+
+```python
+from google.genai.types import HttpRetryOptions
+
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.providers.google import GoogleProvider
+
+retry_options = HttpRetryOptions(
+    attempts=4,
+    initial_delay=1.0,
+    max_delay=60.0,
+    http_status_codes=[408, 429, 500, 502, 503, 504],
+)
+model = GoogleModel(
+    'gemini-3-pro-preview',
+    provider=GoogleProvider(api_key='your-api-key', retry_options=retry_options),
+)
+agent = Agent(model)
+...
+```
+
+This passes the options through to the SDK's [`HttpOptions.retry_options`](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpOptions.retry_options). See the [Vertex AI retry strategy documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/retry-strategy) for guidance on choosing values.
 
 ## Document, Image, Audio, and Video Input
 
@@ -318,6 +342,7 @@ from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 settings = GoogleModelSettings(
     temperature=0.2,
     max_tokens=1024,
+    top_k=40,
     google_safety_settings=[
         {
             'category': HarmCategory.HARM_CATEGORY_HATE_SPEECH,
@@ -354,7 +379,7 @@ agent = Agent(model, model_settings=model_settings)
 ...
 ```
 
-See [Thinking](../thinking.md) for the unified API and [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for Google's native thinking configuration.
+See [Thinking](../capabilities/thinking.md) for the unified API and [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for Google's native thinking configuration.
 
 ### Safety settings
 
@@ -440,6 +465,49 @@ agent = Agent(model, model_settings=model_settings)
 Templates must be created in advance in the [Google Cloud Console](https://console.cloud.google.com/security/modelarmor) and must reside in the same region as the model endpoint. See the [Model Armor Vertex AI integration docs](https://docs.cloud.google.com/model-armor/model-armor-vertex-integration) for supported locations.
 
 When a prompt or response is blocked, a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised.
+
+### Context caching (`google_cached_content`)
+
+When you've created a Gemini [cached content resource](https://ai.google.dev/gemini-api/docs/caching), pass its resource name through [`google_cached_content`][pydantic_ai.models.google.GoogleModelSettings.google_cached_content] to reuse it across requests:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+
+model_settings = GoogleModelSettings(
+    google_cached_content='projects/p/locations/global/cachedContents/your-cache-id',
+)
+
+agent = Agent(GoogleModel('gemini-2.5-pro'), model_settings=model_settings)
+...
+```
+
+!!! warning "Cached fields are owned by the cache resource"
+    The cache resource owns `system_instruction`, `tools`, and `tool_config` — Pydantic AI strips them from outgoing requests when `google_cached_content` is set, so agent instructions and registered tools are ignored on cached requests. A `UserWarning` is emitted whenever stripping drops a field, so the mismatch is discoverable.
+
+??? example "Create a cached content resource"
+    Pydantic AI doesn't wrap the cache-management API — create the resource with the underlying [google-genai](https://googleapis.github.io/python-genai/) SDK, then pass its name through `google_cached_content`:
+
+    ```python {test="skip"}
+    from google.genai.types import Content, CreateCachedContentConfig, Part
+
+    from pydantic_ai.providers.google import GoogleProvider
+
+    provider = GoogleProvider(api_key='your-api-key')
+
+    cache = provider.client.caches.create(
+        model='gemini-2.5-flash',
+        config=CreateCachedContentConfig(
+            system_instruction='You are a geography expert. Be concise.',
+            contents=[Content(role='user', parts=[Part(text='...long context to cache...')])],
+            ttl='3600s',
+        ),
+    )
+    print(cache.name)
+    #> cachedContents/abc123...
+    ```
+
+    Caches have a minimum size (≈1024 tokens for `gemini-2.5-flash`, ≈4096 for `gemini-2.5-pro`) and a TTL — see the [Gemini caching docs](https://ai.google.dev/gemini-api/docs/caching) for the current thresholds, pricing, and `list` / `update` / `delete` operations.
 
 ## Streaming cancellation
 

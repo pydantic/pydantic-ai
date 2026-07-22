@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import warnings
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
+from dataclasses import KW_ONLY, dataclass
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
@@ -18,15 +16,22 @@ from pydantic_ai.tools import (
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
+    SystemPromptFunc,
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
-    from pydantic_ai.agent.abstract import AgentModelSettings
+    from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.models import (
+        KnownModelName,
+        Model,
+        ModelRequestContext,
+        ModelResolutionContext,
+        ModelSelectionContext,
+    )
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -49,6 +54,15 @@ WrapNodeRunHandler: TypeAlias = 'Callable[[_agent_graph.AgentNode[AgentDepsT, An
 
 WrapModelRequestHandler: TypeAlias = 'Callable[[ModelRequestContext], Awaitable[ModelResponse]]'
 """Handler type for [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]."""
+
+ModelSelection: TypeAlias = 'Model | KnownModelName | str'
+"""A concrete model selection, before model ID resolution."""
+
+ModelSelector: TypeAlias = 'Callable[[ModelSelectionContext[AgentDepsT]], ModelSelection | Awaitable[ModelSelection]]'
+"""A sync or async per-step model selector."""
+
+AgentModel: TypeAlias = 'ModelSelection | ModelSelector[AgentDepsT]'
+"""A static model selection or a callable evaluated for every request step."""
 
 RawToolArgs: TypeAlias = str | dict[str, Any]
 """Type alias for raw (pre-validation) tool arguments."""
@@ -84,6 +98,16 @@ CapabilityPosition = Literal['outermost', 'innermost']
 
 CapabilityRef: TypeAlias = 'type[AbstractCapability[Any]] | AbstractCapability[Any]'
 """Reference to a capability — either a type (matches all instances of that type) or a specific instance (matches by identity)."""
+
+
+CapabilityDescription = str | SystemPromptFunc[AgentDepsT]
+"""Capability description: a static string, or a function (sync/async, with or without
+[`RunContext`][pydantic_ai.tools.RunContext]) that returns one.
+
+For dynamic descriptions, return a callable from
+[`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description] rather than
+having the method itself take `RunContext`.
+"""
 
 
 @dataclass
@@ -131,7 +155,7 @@ class CapabilityOrdering:
     """These types must be present in the chain (no ordering implied)."""
 
 
-@dataclass
+@dataclass(init=False)
 class AbstractCapability(ABC, Generic[AgentDepsT]):
     """Abstract base class for agent capabilities.
 
@@ -140,62 +164,72 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     Lifecycle: capabilities are passed to an [`Agent`][pydantic_ai.Agent] at construction time, where
     most `get_*` methods are called to collect static configuration (instructions, model
-    settings, toolsets, native tools). The exception is
+    settings, toolsets, native tools). When [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]
+    returns a replacement instance, that configuration is re-extracted from the replacement at run
+    setup. The exception is
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
-    which is called per-run during toolset assembly. Then, on each model request during a
+    which is always called per-run during toolset assembly. Then, on each model request during a
     run, the [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request]
     and [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request]
     hooks are called to allow dynamic adjustments.
 
-    See the [capabilities documentation](capabilities.md) for built-in capabilities.
+    See the [capabilities documentation](../capabilities/overview.md) for built-in capabilities.
 
     [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name]
     and [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] support
-    YAML/JSON specs (via [`Agent.from_spec`][pydantic_ai.Agent.from_spec]); they have
+    YAML/JSON specs (via `Agent.from_spec`); they have
     sensible defaults and typically don't need to be overridden.
     """
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        # If a subclass overrides only the deprecated `get_builtin_tools()` method (and not
-        # the new `get_native_tools()`), wire the legacy override through so the framework
-        # still picks up the user's declared tools — with a warning at class creation time.
-        own = cls.__dict__
-        if 'get_builtin_tools' in own and 'get_native_tools' not in own:
-            warnings.warn(
-                f'{cls.__name__} overrides `get_builtin_tools()`, which is deprecated — '
-                'override `get_native_tools()` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-            # Promote the legacy override to be this class's `get_native_tools`, and replace
-            # its `get_builtin_tools` with a stub that warns and delegates to the modern
-            # method. This keeps the mixed-generation MRO case working: a further subclass
-            # overriding only `get_native_tools()` still wins on a legacy-name call, because
-            # `Sub.get_builtin_tools()` resolves to the delegating stub installed here,
-            # which routes to `self.get_native_tools()` (modern override on `Sub`).
-            cls.get_native_tools = own['get_builtin_tools']
+    _safe_at_runtime: ClassVar[bool] = False
+    """Whether this capability can be added per-run when a durability capability is bound.
 
-            def _get_builtin_tools_delegating(
-                self: AbstractCapability[Any],
-            ) -> Sequence[AgentNativeTool[Any]]:
-                warnings.warn(
-                    '`AbstractCapability.get_builtin_tools()` is deprecated, use `get_native_tools()` instead.',
-                    PydanticAIDeprecationWarning,
-                    stacklevel=2,
-                )
-                return self.get_native_tools()
+    Internal, in-tree only. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
+    is the only built-in capability that sets this to `True`; the bundled `durable_exec`
+    integrations read it to allow `Instrumentation` to attach per-run despite the
+    blanket restriction on runtime capability additions.
 
-            cls.get_builtin_tools = _get_builtin_tools_delegating
+    A first-class extension point that derives this from a capability's overridden
+    hooks (so third-party capabilities don't need to set a flag manually) is tracked
+    in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
+    """
+
+    _: KW_ONLY
+
+    id: str | None = None
+    """Optional identifier used to reference this capability within a run.
+
+    Must be unique within a run, not per instance: it identifies the capability across the
+    run — including the fresh instance a [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]
+    override may return — rather than a specific object.
+
+    Required when `defer_loading=True`. If omitted for an always-available
+    capability, the run derives a local id from the class name.
+    """
+
+    description: str | None = None
+    """Description of the capability."""
+
+    defer_loading: bool = False
+    """If True, model-facing tools and instructions are hidden until the model explicitly
+    loads the capability via the `load_capability` tool.
+
+    Model settings and lifecycle hooks are registered during run setup, but only
+    apply or fire once the capability is loaded.
+
+    Requires a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id] so
+    message history can identify the capability. A
+    [`description`][pydantic_ai.capabilities.AbstractCapability.description] or
+    [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description]
+    override is optional and only adds routing context to the load catalog.
+    """
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.
 
         For a single capability, calls the visitor on itself.
         Overridden by [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
-        to recursively visit all child capabilities, and by
-        [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability]
-        to delegate to the wrapped capability.
+        to recursively visit all child capabilities.
         """
         visitor(self)
 
@@ -237,6 +271,26 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        """Return the capability instance to use with an agent.
+
+        Called after the agent's own configuration is available and before capability
+        contributions are extracted. Constructor capabilities are bound once during agent
+        construction; static run capabilities are bound once per run. Override this to inspect
+        the agent and return an agent-bound copy. The default returns `self`.
+
+        A [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] result is also bound before
+        its own [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] hook. A specialized
+        run-bound value returned by an ordinary capability's `for_run()` is not bound again.
+
+        Capabilities in the `innermost` ordering tier (see
+        [`get_ordering`][pydantic_ai.capabilities.AbstractCapability.get_ordering]), i.e. durability
+        capabilities, bind in a second phase, after the other capabilities' contributed toolsets have
+        been extracted, so `agent.toolsets` is complete when their `for_agent` wraps it. The flip side
+        is that `innermost` capabilities can't contribute toolsets of their own.
+        """
+        return self
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
 
@@ -246,27 +300,92 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return self
 
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        """Validate capabilities contributed specifically for this run.
+
+        Deliberately private: whether this becomes part of the public runtime extension
+        surface (and in what shape) will be decided as part of
+        [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
+        """
+
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Return instructions to include in the system prompt, or None.
 
-        This method is called once at agent construction time. To get dynamic
-        per-request behavior, return a callable that receives
+        Return static instruction text, a dynamic instruction callable, or a sequence
+        containing either. For dynamic per-request behavior, return a callable that receives
         [`RunContext`][pydantic_ai.tools.RunContext] or a
-        [`TemplateStr`][pydantic_ai.TemplateStr] — not a dynamic string.
+        `TemplateStr` — not a dynamic string.
+
+        When [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is
+        True, these instructions are resolved only after the model calls the
+        `load_capability` tool for this capability.
         """
         return None
+
+    def get_description(self) -> CapabilityDescription[AgentDepsT] | None:
+        """Return a human-readable description of this capability, or None.
+
+        Surfaced to the model in the catalog shown with the `load_capability` tool when
+        [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is True.
+
+        Return a static description string or a callable that receives
+        [`RunContext`][pydantic_ai.tools.RunContext] (or no arguments) when the deferred
+        capability catalog is rendered. Default: return the static `description` field.
+        """
+        return self.description
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         """Return model settings to merge into the agent's defaults, or None.
 
-        This method is called once at agent construction time. Return a static
-        `ModelSettings` dict when the settings don't change between requests.
-        Return a callable that receives [`RunContext`][pydantic_ai.tools.RunContext]
+        Return a static `ModelSettings` dict when the settings don't change between
+        requests. Return a callable that receives [`RunContext`][pydantic_ai.tools.RunContext]
         when settings need to vary per step (e.g. based on `ctx.run_step` or `ctx.deps`).
 
         When the callable is invoked, `ctx.model_settings` contains the merged
         result of all layers resolved before this capability (model defaults and
         agent-level settings). The returned dict is merged on top of that.
+
+        When [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is
+        True, these settings are registered up front but merge as an empty dict until the
+        model calls the `load_capability` tool for this capability.
+        """
+        return None
+
+    def get_model(self) -> AgentModel[AgentDepsT] | None:
+        """Return a static model, a per-step model selector, or `None` to make no selection.
+
+        A selector receives
+        [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] and may be
+        synchronous or asynchronous. Static selections are resolved once per run; selectors
+        are evaluated before each new logical model request step. When several capabilities
+        contribute a model, the last non-`None` selection wins. This differs from
+        [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id],
+        where the first resolver to return a model wins.
+
+        See [Selecting the model](../capabilities/custom.md#selecting-the-model) for precedence,
+        bootstrap, and deferred-capability semantics.
+        """
+        return None
+
+    @property
+    def has_resolve_model_id(self) -> bool:
+        """Whether this capability or a wrapped capability overrides `resolve_model_id`."""
+        return type(self).resolve_model_id is not AbstractCapability.resolve_model_id
+
+    async def resolve_model_id(
+        self,
+        ctx: ModelResolutionContext[AgentDepsT],
+        *,
+        model_id: KnownModelName | str,
+    ) -> Model | None:
+        """Resolve a model ID, or return `None` to defer.
+
+        Capabilities are tried in user-supplied order. When every capability returns `None`, the ID
+        is passed to [`infer_model`][pydantic_ai.models.infer_model]. The context provides
+        the agent and actual run dependencies, so resolution can configure tenant-specific
+        providers or look up models in a registry.
         """
         return None
 
@@ -278,15 +397,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return native tools to register with the agent."""
         return []
 
-    def get_builtin_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
-        """Deprecated: use [`get_native_tools`][pydantic_ai.capabilities.AbstractCapability.get_native_tools] instead."""
-        warnings.warn(
-            '`AbstractCapability.get_builtin_tools()` is deprecated, use `get_native_tools()` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return self.get_native_tools()
-
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, or return None to leave it unchanged.
 
@@ -294,8 +404,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] hook
         has already wrapped it). Output tools are added separately and are not included.
 
-        Unlike the other `get_*` methods which are called once at agent construction,
-        this is called each run (after [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]).
+        Unlike value-contribution methods such as
+        [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions],
+        this receives the already assembled toolset and is called each run (after
+        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]).
         When multiple capabilities provide wrappers, they follow middleware semantics:
         the first capability in the list wraps outermost (matching `wrap_*` hooks).
 
@@ -440,10 +552,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         the returned next node, call `handler` multiple times (retry), or
         return a different node to redirect graph progression.
 
-        Note: this hook fires when using [`agent.run()`][pydantic_ai.Agent.run],
-        [`agent.run_stream()`][pydantic_ai.Agent.run_stream], and when manually driving
-        an [`agent.iter()`][pydantic_ai.Agent.iter] run with
-        [`next()`][pydantic_ai.result.AgentRun.next], but it does **not** fire when
+        Note: this hook fires when using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run],
+        [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and when manually driving
+        an [`agent.iter()`][pydantic_ai.agent.Agent.iter] run with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], but it does **not** fire when
         iterating over the run with bare `async for` (which yields stream events, not
         node results).
 
@@ -488,7 +599,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Note: when this method is overridden (or [`Hooks.on.event`][pydantic_ai.capabilities.hooks.Hooks.on]
         / [`Hooks.on.run_event_stream`][pydantic_ai.capabilities.hooks.Hooks.on] are registered),
-        [`agent.run()`][pydantic_ai.Agent.run] automatically enables streaming mode so this hook
+        `agent.run()` automatically enables streaming mode so this hook
         fires even without an explicit `event_stream_handler`.
         """
         async for event in stream:
@@ -614,7 +725,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         This is the error counterpart to
         [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate].
-        Fires for [`ValidationError`][pydantic.ValidationError] (schema mismatch) and
+        Fires for `ValidationError` (schema mismatch) and
         [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (custom validator rejection).
 
         **Raise** the original `error` (or a different exception) to propagate it.
@@ -869,7 +980,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     ) -> DeferredToolResults | None:
         """Handle deferred tool calls (approval-required or externally-executed) inline during an agent run.
 
-        Called by [`ToolManager`][pydantic_ai.tool_manager.ToolManager] when:
+        Called by `ToolManager` when:
 
         - a tool raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
           [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] during execution, or
@@ -897,3 +1008,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         from .prefix_tools import PrefixTools
 
         return PrefixTools(wrapped=self, prefix=prefix)
+
+
+def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[AbstractCapability[AgentDepsT]]:
+    """Collect the leaf capabilities in a capability tree, in application order."""
+    leaves: list[AbstractCapability[AgentDepsT]] = []
+    capability.apply(leaves.append)
+    return leaves

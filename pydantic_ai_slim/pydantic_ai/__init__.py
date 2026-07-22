@@ -1,7 +1,5 @@
 from importlib.metadata import version as _metadata_version
-from typing import Any
 
-from ._template import TemplateStr
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -57,9 +55,12 @@ from .messages import (
     BinaryImage,
     CachePoint,
     CompactionPart,
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
+    EnqueuedMessagesEvent,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -75,6 +76,7 @@ from .messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestPart,
+    ModelRequestState,
     ModelResponse,
     ModelResponsePart,
     ModelResponsePartDelta,
@@ -108,7 +110,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
-from .models import ModelRequestContext
+from .models import ModelRequestContext, ModelResolutionContext, ModelSelectionContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
     CodeExecutionTool,
@@ -116,7 +118,6 @@ from .native_tools import (
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
-    UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
@@ -130,9 +131,9 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
-from .result import AgentEventStream
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
+from .template import TemplateStr
 from .tools import (
     AgentNativeTool,
     DeferredToolRequests,
@@ -220,8 +221,11 @@ __all__ = (
     'DocumentFormat',
     'DocumentMediaType',
     'DocumentUrl',
+    'EnqueuedMessagesEvent',
     'FileUrl',
     'FilePart',
+    'DeferredToolRequestsEvent',
+    'DeferredToolResultsEvent',
     'FinalResultEvent',
     'FinishReason',
     'FunctionToolCallEvent',
@@ -236,6 +240,7 @@ __all__ = (
     'ModelMessagesTypeAdapter',
     'ModelRequest',
     'ModelRequestPart',
+    'ModelRequestState',
     'ModelResponse',
     'ModelResponsePart',
     'ModelResponsePartDelta',
@@ -304,7 +309,6 @@ __all__ = (
     'ImageGenerationTool',
     'MCPServerTool',
     'MemoryTool',
-    'UrlContextTool',
     'WebFetchTool',
     'WebSearchTool',
     'WebSearchUserLocation',
@@ -324,6 +328,8 @@ __all__ = (
     'format_as_xml',
     # models
     'ModelRequestContext',
+    'ModelResolutionContext',
+    'ModelSelectionContext',
     # settings
     'ModelSettings',
     'ToolChoice',
@@ -336,35 +342,5 @@ __all__ = (
     'AgentRun',
     'AgentRunResult',
     'AgentRunResultEvent',
-    # result
-    'AgentEventStream',
 )
 __version__ = _metadata_version('pydantic_ai_slim')
-
-
-# Deprecated top-level aliases for names renamed in the built-in → native tools rename.
-# Importing these from `pydantic_ai` continues to work in 1.x with a deprecation
-# warning that points at the new name.
-_BUILTIN_TO_NATIVE_TOP_LEVEL: dict[str, str] = {
-    'BuiltinToolCallPart': 'NativeToolCallPart',
-    'BuiltinToolReturnPart': 'NativeToolReturnPart',
-    'AgentBuiltinTool': 'AgentNativeTool',
-}
-
-
-def __getattr__(name: str) -> Any:
-    if name in _BUILTIN_TO_NATIVE_TOP_LEVEL:
-        import warnings
-
-        from ._warnings import PydanticAIDeprecationWarning
-
-        new_name = _BUILTIN_TO_NATIVE_TOP_LEVEL[name]
-        warnings.warn(
-            f'`pydantic_ai.{name}` is deprecated, use `pydantic_ai.{new_name}` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        import pydantic_ai as _self
-
-        return getattr(_self, new_name)
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

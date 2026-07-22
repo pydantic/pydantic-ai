@@ -75,11 +75,13 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                     'timeout': None,
                     'defer_loading': False,
+                    'toolset_id': None,
                     'unless_native': None,
                     'with_native': None,
                     'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
+                    'capability_id': None,
                 }
             ],
             'native_tools': [
@@ -92,7 +94,7 @@ def test_model_request_parameters_are_serializable():
                     'allowed_domains': None,
                     'max_uses': None,
                 },
-                {'kind': 'code_execution', 'optional': False},
+                {'kind': 'code_execution', 'optional': False, 'files': None},
                 {
                     'kind': 'web_fetch',
                     'optional': False,
@@ -153,11 +155,13 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                     'timeout': None,
                     'defer_loading': False,
+                    'toolset_id': None,
                     'unless_native': None,
                     'with_native': None,
                     'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
+                    'capability_id': None,
                 }
             ],
             'prompted_output_template': None,

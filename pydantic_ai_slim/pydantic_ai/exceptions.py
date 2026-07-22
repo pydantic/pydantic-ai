@@ -26,6 +26,7 @@ __all__ = (
     'UserError',
     'UndrainedPendingMessagesError',
     'AgentRunError',
+    'SuspendedResponseExpired',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'ConcurrencyLimitExceeded',
@@ -192,8 +193,29 @@ class AgentRunError(RuntimeError):
         return self.message
 
 
+class SuspendedResponseExpired(AgentRunError):
+    """Raised when resuming a suspended response whose server-side job is no longer available.
+
+    Suspended/background jobs are only resumable within the provider's retention window (e.g. ~10
+    minutes for OpenAI background mode). Resuming a persisted suspended response after that window
+    raises this instead of an opaque provider HTTP error; start a new run from the preceding messages
+    to retry from scratch.
+    """
+
+
 class UsageLimitExceeded(AgentRunError):
     """Error raised when a Model's usage exceeds the specified limits."""
+
+    _HINT = (
+        'Consider raising the limit, or see the docs on usage limits '
+        'for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits'
+    )
+
+    def __init__(self, message: str):
+        # Idempotent so reconstruction via `UsageLimitExceeded(*args)` (e.g. unpickling) doesn't re-append the hint.
+        if self._HINT not in message:
+            message = f'{message.removesuffix(".")}. {self._HINT}'
+        super().__init__(message)
 
 
 class ConcurrencyLimitExceeded(AgentRunError):
@@ -230,7 +252,7 @@ class UnexpectedModelBehavior(AgentRunError):
 
 
 class ContentFilterError(UnexpectedModelBehavior):
-    """Raised when content filtering is triggered by the model provider resulting in an empty response."""
+    """Raised when content filtering is triggered by the model provider."""
 
 
 class ModelAPIError(AgentRunError):

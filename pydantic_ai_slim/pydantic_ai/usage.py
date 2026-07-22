@@ -7,12 +7,18 @@ from typing import Annotated, Any
 
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field
-from typing_extensions import deprecated, overload
 
 from . import _utils
 from .exceptions import UsageLimitExceeded
 
-__all__ = 'RequestUsage', 'RunUsage', 'Usage', 'UsageLimits'
+__all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
+
+_FIRST_CLASS_TOKEN_DETAIL_KEYS = frozenset({'input_tokens', 'output_tokens'})
+"""`details` keys whose names collide with the first-class `gen_ai.usage.{input,output}_tokens`
+attributes. They must never be emitted under `gen_ai.usage.details.*` too: doing so reports the same
+conceptual quantity under two attributes that consumers like Langfuse then sum, double-counting tokens
+and cost. Adapters that stash these keys in `details` (e.g. Anthropic's streaming carry-forward, Cohere's
+billed units) keep them accessible on `RequestUsage.details`; only the ambiguous OTel emission is dropped."""
 
 
 @dataclass(repr=False, kw_only=True)
@@ -22,12 +28,21 @@ class UsageBase:
         # `request_tokens` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
         Field(validation_alias=AliasChoices('input_tokens', 'request_tokens')),
     ] = 0
-    """Number of input/prompt tokens."""
+    """Total number of input/prompt tokens, across all modalities.
+
+    Token counts form inclusive parent/child buckets, not disjoint ones: this total includes cached
+    tokens (`cache_read_tokens`, `cache_write_tokens`) and audio tokens (`input_audio_tokens`).
+    Usage extraction normalizes providers that report these separately (e.g. Anthropic and Bedrock,
+    whose raw `input_tokens` exclude cache reads/writes) so the convention holds everywhere.
+    """
 
     cache_write_tokens: int = 0
-    """Number of tokens written to the cache."""
+    """Number of tokens written to the cache. Included in `input_tokens`."""
     cache_read_tokens: int = 0
-    """Number of tokens read from the cache."""
+    """Number of tokens read from the cache, across all modalities (includes `cache_audio_read_tokens`).
+
+    Included in `input_tokens`.
+    """
 
     output_tokens: Annotated[
         int,
@@ -37,11 +52,11 @@ class UsageBase:
     """Number of output/completion tokens."""
 
     input_audio_tokens: int = 0
-    """Number of audio input tokens."""
+    """Number of audio input tokens. Included in `input_tokens`."""
     cache_audio_read_tokens: int = 0
-    """Number of audio tokens read from the cache."""
+    """Number of audio tokens read from the cache. Included in `cache_read_tokens` and `input_audio_tokens`."""
     output_audio_tokens: int = 0
-    """Number of audio output tokens."""
+    """Number of audio output tokens. Included in `output_tokens`."""
 
     details: Annotated[
         dict[str, int],
@@ -59,19 +74,24 @@ class UsageBase:
         return new
 
     @property
-    @deprecated('`request_tokens` is deprecated, use `input_tokens` instead')
-    def request_tokens(self) -> int:
-        return self.input_tokens
-
-    @property
-    @deprecated('`response_tokens` is deprecated, use `output_tokens` instead')
-    def response_tokens(self) -> int:
-        return self.output_tokens
-
-    @property
     def total_tokens(self) -> int:
         """Sum of `input_tokens + output_tokens`."""
         return self.input_tokens + self.output_tokens
+
+    @property
+    def cache_hit_ratio(self) -> float:
+        """Fraction of input tokens that were read from the provider's prompt cache.
+
+        Computed as `cache_read_tokens / input_tokens`. Both counts span all modalities — cached audio tokens are
+        included in `cache_read_tokens` just as audio input tokens are included in `input_tokens` — and
+        `input_tokens` includes cached reads for every provider, so the ratio is comparable across providers:
+        `0.0` means no prompt-cache hits, while values approaching `1.0` mean nearly the entire prompt was served
+        from cache. Returns `0.0` when there are no input tokens.
+
+        On [`RequestUsage`][pydantic_ai.usage.RequestUsage] this is the hit ratio of a single request; on
+        [`RunUsage`][pydantic_ai.usage.RunUsage] it aggregates all requests in the run.
+        """
+        return self.cache_read_tokens / self.input_tokens if self.input_tokens else 0.0
 
     def opentelemetry_attributes(self) -> dict[str, int]:
         """Get the token usage values as OpenTelemetry attributes."""
@@ -99,6 +119,11 @@ class UsageBase:
         if details:
             prefix = 'gen_ai.usage.details.'
             for key, value in details.items():
+                # Never emit a `details` entry whose name collides with a first-class token attribute: the
+                # value is already reported as `gen_ai.usage.{input,output}_tokens`, and emitting it again
+                # under `gen_ai.usage.details.*` makes consumers like Langfuse sum the two and double-count.
+                if key in _FIRST_CLASS_TOKEN_DETAIL_KEYS:
+                    continue
                 # Skipping check for value since spec implies all detail values are relevant
                 if value:
                     result[prefix + key] = value
@@ -110,7 +135,7 @@ class UsageBase:
 
     def has_values(self) -> bool:
         """Whether any values are set and non-zero."""
-        return any(dataclasses.asdict(self).values())
+        return any(self.details.values()) or any(getattr(self, f.name) for f in fields(self) if f.name != 'details')
 
 
 @dataclass(repr=False, kw_only=True)
@@ -245,18 +270,13 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
     slf.cache_read_tokens += incr_usage.cache_read_tokens
     slf.input_audio_tokens += incr_usage.input_audio_tokens
     slf.cache_audio_read_tokens += incr_usage.cache_audio_read_tokens
+    slf.output_audio_tokens += incr_usage.output_audio_tokens
     slf.output_tokens += incr_usage.output_tokens
 
     for key, value in incr_usage.details.items():
         # Note: value can be None at runtime from model responses despite the type annotation
         if isinstance(value, (int, float)):
             slf.details[key] = slf.details.get(key, 0) + value
-
-
-@dataclass(repr=False, kw_only=True)
-@deprecated('`Usage` is deprecated, use `RunUsage` instead')
-class Usage(RunUsage):
-    """Deprecated alias for `RunUsage`."""
 
 
 @dataclass(repr=False, kw_only=True)
@@ -293,75 +313,6 @@ class UsageLimits:
     - Bedrock Converse
     - OpenAI Responses
     """
-
-    @property
-    @deprecated('`request_tokens_limit` is deprecated, use `input_tokens_limit` instead')
-    def request_tokens_limit(self) -> int | None:
-        return self.input_tokens_limit
-
-    @property
-    @deprecated('`response_tokens_limit` is deprecated, use `output_tokens_limit` instead')
-    def response_tokens_limit(self) -> int | None:
-        return self.output_tokens_limit
-
-    @overload
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        tool_calls_limit: int | None = None,
-        input_tokens_limit: int | None = None,
-        output_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-    ) -> None:
-        self.request_limit = request_limit
-        self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = input_tokens_limit
-        self.output_tokens_limit = output_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
-
-    @overload
-    @deprecated(
-        'Use `input_tokens_limit` instead of `request_tokens_limit` and `output_tokens_limit` and `total_tokens_limit`'
-    )
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        tool_calls_limit: int | None = None,
-        request_tokens_limit: int | None = None,
-        response_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-    ) -> None:
-        self.request_limit = request_limit
-        self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = request_tokens_limit
-        self.output_tokens_limit = response_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
-
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        tool_calls_limit: int | None = None,
-        input_tokens_limit: int | None = None,
-        output_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-        # deprecated:
-        request_tokens_limit: int | None = None,
-        response_tokens_limit: int | None = None,
-    ):
-        self.request_limit = request_limit
-        self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = input_tokens_limit if input_tokens_limit is not None else request_tokens_limit
-        self.output_tokens_limit = output_tokens_limit if output_tokens_limit is not None else response_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
 
     def has_token_limits(self) -> bool:
         """Returns `True` if this instance places any limits on token counts.

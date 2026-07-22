@@ -80,7 +80,13 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         (lambda: ApprovalRequired({'key': 'value'}), {'metadata': {'key': 'value'}}),
         (lambda: UserError('user error'), {'message': 'user error'}),
         (lambda: AgentRunError('agent error'), {'message': 'agent error'}),
-        (lambda: UsageLimitExceeded('limit hit'), {'message': 'limit hit'}),
+        (
+            lambda: UsageLimitExceeded('limit hit'),
+            {
+                'message': 'limit hit. Consider raising the limit, or see the docs on usage limits '
+                'for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits'
+            },
+        ),
         (lambda: ConcurrencyLimitExceeded('too many'), {'message': 'too many'}),
         (lambda: UnexpectedModelBehavior('unexpected'), {'message': 'unexpected', 'body': None}),
         (

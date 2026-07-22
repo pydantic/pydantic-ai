@@ -2,7 +2,13 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "pydantic-ai-slim[anthropic,mcp]>=1.95.1",
+#   "pydantic-ai-slim[anthropic,mcp]>=1.105.0",
+#   # The file/shell tools (Bash/Read/Write/Edit/Grep/Glob/LS) are backed by
+#   # harness FileSystem/Shell, which ship as stable top-level modules from 0.4.0
+#   # onwards. Keep these in sync with the out-of-band installs in CI and the Makefile;
+#   # the adjacent script lock pins the production dependency graph and hashes.
+#   "pydantic-ai-harness[dynamic-workflow]==0.7.0",
+#   "pydantic-monty==0.0.16",
 #   "logfire",
 #   "opentelemetry-instrumentation-httpx",
 # ]

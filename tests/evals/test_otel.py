@@ -517,10 +517,12 @@ async def test_log_levels_and_exceptions():
     # Verify attributes reflect log levels and exceptions
     log_nodes = list(
         parent_span.find_descendants(
-            lambda node: 'Debug message' in str(node.attributes)
-            or 'Info message' in str(node.attributes)
-            or 'Warning message' in str(node.attributes)
-            or 'Error occurred' in str(node.attributes)
+            lambda node: (
+                'Debug message' in str(node.attributes)
+                or 'Info message' in str(node.attributes)
+                or 'Warning message' in str(node.attributes)
+                or 'Error occurred' in str(node.attributes)
+            )
         )
     )
     assert len(log_nodes) > 0, 'Should have log messages as spans'
@@ -904,3 +906,57 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
         'refer to the documentation at '
         'https://ai.pydantic.dev/evals/#opentelemetry-integration.'
     )
+
+
+async def test_span_node_status_captured():
+    """`SpanNode.status` reflects the OTel span status (unset / ok / error)."""
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.trace import StatusCode
+
+    tracer = otel_trace.get_tracer(__name__)
+    with context_subtree() as tree:
+        with logfire.span('unset_span'):
+            pass
+        with tracer.start_as_current_span('ok_span') as ok_span:
+            ok_span.set_status(StatusCode.OK)
+        with pytest.raises(ValueError):
+            with logfire.span('error_span'):
+                raise ValueError('boom')
+
+    assert isinstance(tree, SpanTree)
+    statuses = {node.name: node.status for node in tree}
+    assert statuses == {'unset_span': 'unset', 'ok_span': 'ok', 'error_span': 'error'}
+
+
+async def test_span_query_has_status():
+    """The `has_status` SpanQuery condition filters spans by status."""
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.trace import StatusCode
+
+    tracer = otel_trace.get_tracer(__name__)
+    with context_subtree() as tree:
+        with logfire.span('parent'):
+            with logfire.span('unset_span'):
+                pass
+            with tracer.start_as_current_span('ok_span') as ok_span:
+                ok_span.set_status(StatusCode.OK)
+            with pytest.raises(ValueError):
+                with logfire.span('error_span'):
+                    raise ValueError('boom')
+
+    assert isinstance(tree, SpanTree)
+
+    assert [node.name for node in tree.find({'has_status': 'error'})] == ['error_span']
+    assert [node.name for node in tree.find({'has_status': 'ok'})] == ['ok_span']
+    assert [node.name for node in tree.find({'has_status': 'unset'})] == ['parent', 'unset_span']
+
+    # Composes with other conditions and logical operators
+    assert tree.any({'name_equals': 'error_span', 'has_status': 'error'})
+    assert not tree.any({'name_equals': 'unset_span', 'has_status': 'error'})
+    assert [node.name for node in tree.find({'not_': {'has_status': 'error'}})] == ['parent', 'unset_span', 'ok_span']
+
+    # Composes with related-span conditions
+    parent_node = tree.first({'name_equals': 'parent'})
+    assert parent_node is not None
+    assert parent_node.matches({'some_child_has': {'has_status': 'error'}})
+    assert not parent_node.matches({'no_child_has': {'has_status': 'error'}})

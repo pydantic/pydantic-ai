@@ -48,7 +48,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from .conftest import ClientWithHandler, TestEnv, try_import
+from .conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     # We check whether pydantic_ai_examples is importable as a proxy for whether all extras are installed, as some docs examples require them
@@ -117,6 +117,20 @@ def tmp_path_cwd(tmp_path: Path):
         sys.path.remove(str(tmp_path))
 
 
+def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
+    """Patch MCP-related symbols only if the underlying modules are importable in this env."""
+    try:
+        import pydantic_ai.mcp  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    except ImportError:
+        pass
+    else:
+        mocker.patch('pydantic_ai.mcp.MCPToolset', return_value=MockMCPServer())
+    try:
+        mocker.patch('mcp.server.fastmcp.FastMCP')
+    except (ImportError, AttributeError):
+        pass
+
+
 def _check_python_version(min_version: str | None, max_version: str | None) -> None:
     if min_version:
         min_info = tuple(int(v) for v in min_version.split('.'))
@@ -128,22 +142,11 @@ def _check_python_version(min_version: str | None, max_version: str | None) -> N
             pytest.skip(f'Python version <= {max_version} required')  # pragma: lax no cover
 
 
-@pytest.mark.xdist_group(name='doc_tests')
-@pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
-    'ignore:`BuiltinToolCallEvent` is deprecated',
-    'ignore:`BuiltinToolResultEvent` is deprecated',
-    # Docs intentionally keep the bare `'openai:'` prefix to surface the v2 default flip to readers.
-    'ignore:.*will resolve to the OpenAI Responses API.*:pydantic_ai._warnings.PydanticAIDeprecationWarning',
-    # Legacy MCP class examples in `pydantic_ai.mcp` docstrings (kept until v2-cut).
-    r'ignore:`MCPServer\w+` is deprecated:DeprecationWarning',
-    'ignore:`FastMCPToolset` is deprecated:DeprecationWarning',
-)
-@pytest.mark.parametrize('example', find_filter_examples())
+@pytest.mark.parametrize('example', list(find_filter_examples()))
 def test_docs_examples(
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
-    client_with_handler: ClientWithHandler,
     allow_model_requests: None,
     env: TestEnv,
     tmp_path_cwd: Path,
@@ -175,10 +178,7 @@ def test_docs_examples(
     # Reset global DEFAULT_CONFIG so configure() calls in doc examples don't leak between tests
     mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
 
-    mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
-    mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
-    mocker.patch('pydantic_ai.toolsets.fastmcp.FastMCPToolset', return_value=MockMCPServer())
-    mocker.patch('mcp.server.fastmcp.FastMCP')
+    _patch_optional_mcp_modules(mocker)
     try:
         mocker.patch('sentence_transformers.SentenceTransformer')
     except ModuleNotFoundError:
@@ -221,6 +221,7 @@ def test_docs_examples(
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
     env.set('TAVILY_API_KEY', 'testing')
+    env.set('ZAI_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -342,6 +343,12 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
 
 
 class MockMCPServer(AbstractToolset[Any]):
+    """Stand-in for `MCPToolset` used as a fixture in doc-example tests.
+
+    Doc examples rarely exercise every method; the unused bodies carry coverage-skip markers so
+    coverage reflects only paths actual examples reach.
+    """
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         pass
 
@@ -628,6 +635,10 @@ tool_responses: dict[tuple[str, str], str] = {
         'weather_forecast',
         'The forecast in Paris on 2030-01-01 is 24°C and sunny.',
     ): 'It will be warm and sunny in Paris on Tuesday.',
+    (
+        'delete_file',
+        'Deleting files is not allowed',
+    ): 'I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.',
 }
 
 
@@ -1070,13 +1081,13 @@ async def stream_model_logic(  # noqa: C901
             if chunk:
                 yield ' '.join(chunk)
 
-    async def stream_tool_call_response(r: ToolCallPart) -> AsyncIterator[DeltaToolCalls]:
+    async def stream_tool_call_response(r: ToolCallPart, index: int = 1) -> AsyncIterator[DeltaToolCalls]:
         json_text = r.args_as_json_str()
 
-        yield {1: DeltaToolCall(name=r.tool_name, tool_call_id=r.tool_call_id)}
+        yield {index: DeltaToolCall(name=r.tool_name, tool_call_id=r.tool_call_id)}
         for chunk_index in range(0, len(json_text), 15):
             text_chunk = json_text[chunk_index : chunk_index + 15]
-            yield {1: DeltaToolCall(json_args=text_chunk)}
+            yield {index: DeltaToolCall(json_args=text_chunk)}
 
     async def stream_part_response(
         r: str | ToolCallPart | Sequence[ToolCallPart],
@@ -1085,8 +1096,8 @@ async def stream_model_logic(  # noqa: C901
             async for chunk in stream_text_response(r):
                 yield chunk
         elif isinstance(r, Sequence):
-            for part in r:
-                async for chunk in stream_tool_call_response(part):
+            for index, part in enumerate(r, 1):
+                async for chunk in stream_tool_call_response(part, index):
                     yield chunk
         else:
             async for chunk in stream_tool_call_response(r):
@@ -1130,6 +1141,7 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
         'lightonai/DenseOn': 768,
         'gemini-embedding-001': 3072,
         'gemini-embedding-2-preview': 3072,
+        'gemini-embedding-2': 3072,
     }
     dimensions = dimensions_map.get(model_name, 8)
     return TestEmbeddingModel(model_name, provider_name=provider_name, dimensions=dimensions)
@@ -1144,7 +1156,7 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         model = infer_model(model)
 
     if isinstance(model, FallbackModel):
-        # When a fallback model is encountered, replace any OpenAIModel with a model that will raise a ModelHTTPError.
+        # When a fallback model is encountered, replace any OpenAIChatModel with a model that will raise a ModelHTTPError.
         # Otherwise, do the usual inference.
         def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelHTTPError(401, 'Invalid API Key')

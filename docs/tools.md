@@ -357,6 +357,7 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         description='This is a Foobar',
+        toolset_id='<agent>',
     )
 ]
 """
@@ -391,5 +392,5 @@ For more tool features and integrations, see:
 - [Toolsets](toolsets.md) - Managing collections of tools
 - [Native Tools](native-tools.md) - Native tools provided by LLM providers
 - [Common Tools](common-tools.md) - Ready-to-use tool implementations
-- [Third-Party Tools](third-party-tools.md) - Integrations with MCP, LangChain, ACI.dev and other tool libraries
+- [Third-Party Tools](third-party-tools.md) - Integrations with MCP, LangChain, and other tool libraries
 - [Deferred Tools](deferred-tools.md) - Tools requiring approval or external execution

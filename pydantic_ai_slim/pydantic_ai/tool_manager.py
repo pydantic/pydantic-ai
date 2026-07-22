@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal
 
 from pydantic import ValidationError
-from typing_extensions import deprecated
 
 from . import messages as _messages
 from ._output import (
@@ -36,6 +35,8 @@ if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability
 
 ParallelExecutionMode = Literal['parallel', 'sequential', 'parallel_ordered_events']
+"""How tool calls from a single model response are executed — see
+[`ToolManager.parallel_execution_mode`][pydantic_ai.tool_manager.ToolManager.parallel_execution_mode]."""
 
 _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar(
     'parallel_execution_mode', default='parallel'
@@ -94,7 +95,7 @@ class ToolManager(Generic[AgentDepsT]):
 
     @classmethod
     @contextmanager
-    def parallel_execution_mode(cls, mode: ParallelExecutionMode = 'parallel') -> Iterator[None]:
+    def parallel_execution_mode(cls, mode: ParallelExecutionMode = 'parallel') -> Generator[None]:
         """Set the parallel execution mode during the context.
 
         Args:
@@ -108,14 +109,6 @@ class ToolManager(Generic[AgentDepsT]):
             yield
         finally:
             _parallel_execution_mode_ctx_var.reset(token)
-
-    @classmethod
-    @contextmanager
-    @deprecated('Use `parallel_execution_mode("sequential")` instead.')
-    def sequential_tool_calls(cls) -> Iterator[None]:
-        """Run tool calls sequentially during the context."""
-        with cls.parallel_execution_mode('sequential'):
-            yield
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
         """Build a new tool manager for the next run step, carrying over the retries from the current run step."""
@@ -152,20 +145,24 @@ class ToolManager(Generic[AgentDepsT]):
 
         return [tool.tool_def for tool in self.tools.values()]
 
-    def get_parallel_execution_mode(self, calls: list[ToolCallPart]) -> ParallelExecutionMode:
-        """Get the effective parallel execution mode for a list of tool calls.
+    def get_parallel_execution_mode(self) -> ParallelExecutionMode:
+        """Get the run-scoped parallel execution mode set via [`parallel_execution_mode`][pydantic_ai.tool_manager.ToolManager.parallel_execution_mode].
 
-        This takes into account both the context variable and whether any tool
-        has `sequential=True` set. If any tool requires sequential execution,
-        returns `'sequential'` regardless of the context variable.
+        Per-tool `sequential=True` barriers are applied separately during execution and don't
+        affect this run-scoped mode: a single barrier tool no longer forces the whole batch
+        serial (the v1 behavior). Use `parallel_execution_mode('sequential')` to opt the entire
+        run into serial execution.
         """
-        # Check if any tool requires sequential execution
-        if any(tool_def.sequential for call in calls if (tool_def := self.get_tool_def(call.tool_name))):
-            return 'sequential'
+        return _parallel_execution_mode_ctx_var.get()
 
-        mode = _parallel_execution_mode_ctx_var.get()
+    def is_sequential(self, call: ToolCallPart) -> bool:
+        """Whether a tool call must run as a barrier (`sequential=True`), executing alone.
 
-        return mode
+        Tools emitted before a barrier complete first; the barrier runs by itself; tools emitted
+        after it start only once it finishes. Other tools parallelize around it.
+        """
+        tool_def = self.get_tool_def(call.tool_name)
+        return tool_def is not None and tool_def.sequential
 
     def get_tool_def(self, name: str) -> ToolDefinition | None:
         """Get the tool definition for a given tool name, or `None` if the tool is unknown."""
@@ -177,8 +174,13 @@ class ToolManager(Generic[AgentDepsT]):
     def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> None:
         """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
         assert self.ctx is not None
-        if self.ctx.retries.get(name, 0) == max_retries:
-            raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from error
+        # `>=` rather than `==` so a negative budget raises immediately instead of looping forever
+        # (the count starts at 0 and only ever grows, so it would never equal a negative target).
+        if self.ctx.retries.get(name, 0) >= max_retries:
+            raise UnexpectedModelBehavior(
+                f'Tool {name!r} exceeded max retries count of {max_retries}. Consider raising the retry '
+                'limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries'
+            ) from error
 
     @staticmethod
     def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
@@ -621,11 +623,11 @@ class ToolManager(Generic[AgentDepsT]):
 
         # Output validators see the *global* output-retry budget (`max_output_retries`), so the same
         # validator stays consistent across the text path and across multiple `ToolOutput`s. Output
-        # functions, by contrast, see the *per-tool* `tool.max_retries` (the post-#4687 override) on
-        # `validated.ctx`. Termination on the tool path checks `retries[name] == tool.max_retries`
+        # functions, by contrast, see the *per-tool* `tool.max_retries` (the post-https://github.com/pydantic/pydantic-ai/issues/4687 override) on
+        # `validated.ctx`. Termination on the tool path checks `retries[name] >= tool.max_retries`
         # (see `_check_max_retries` below), so when `ToolOutput(max_retries=N)` exceeds
         # `max_output_retries`, the validator's `ctx.last_attempt` can fire before the run actually
-        # terminates. Tracked in #5238 — revisiting cleanly needs broader thought about
+        # terminates. Tracked in https://github.com/pydantic/pydantic-ai/issues/5238 — revisiting cleanly needs broader thought about
         # `ctx.retry`/`ctx.retries[name]` semantics and is intentionally out of scope here.
         assert toolset.max_retries is not None
         validator_ctx = replace(validated.ctx, retry=self.ctx.retry, max_retries=toolset.max_retries)

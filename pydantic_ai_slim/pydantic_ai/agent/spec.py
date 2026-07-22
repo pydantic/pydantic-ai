@@ -2,24 +2,22 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
-from pydantic import BaseModel, Field, model_serializer, model_validator
+from pydantic import BaseModel, Field, model_serializer
 from pydantic_core import from_json, to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
-from typing_extensions import Self
 
 from pydantic_ai._agent_graph import EndStrategy
 from pydantic_ai._spec import CapabilitySpec, build_registry, build_schema_types
-from pydantic_ai._template import TemplateStr
-from pydantic_ai._utils import get_function_type_hints
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai._utils import get_function_type_hints, is_str_dict
 from pydantic_ai.agent.abstract import AgentRetries
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.template import TemplateStr
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -30,17 +28,6 @@ DEFAULT_SCHEMA_PATH_TEMPLATE = './{stem}_schema.json'
 """Default template for schema file paths, where {stem} is replaced with the spec filename stem."""
 
 _YAML_SCHEMA_LINE_PREFIX = '# yaml-language-server: $schema='
-
-LEGACY_CAPABILITY_NAMES: Mapping[str, str] = {
-    'BuiltinTool': 'NativeTool',
-    'BuiltinOrLocalTool': 'NativeOrLocalTool',
-}
-"""Deprecated capability spec names that warn on use and resolve to their renamed equivalents.
-
-`NativeOrLocalTool` is not in `CAPABILITY_TYPES` (it is a base class for subclassing, not
-direct spec construction). For `BuiltinOrLocalTool`, the warning fires telling the user
-about the rename, then resolution proceeds and fails with the usual "valid choices" error
-— consistent with what happens if they typed `NativeOrLocalTool` directly."""
 
 
 class AgentSpec(BaseModel):
@@ -56,52 +43,10 @@ class AgentSpec(BaseModel):
     output_schema: dict[str, Any] | None = None
     model_settings: dict[str, Any] | None = None
     retries: int | AgentRetries | None = None
-    tool_retries: int | None = Field(
-        default=None,
-        json_schema_extra={'deprecated': True},
-    )
-    output_retries: int | None = Field(
-        default=None,
-        json_schema_extra={'deprecated': True},
-    )
-    end_strategy: EndStrategy = 'early'
+    end_strategy: EndStrategy = 'graceful'
     tool_timeout: float | None = None
-    # `instrument` is deprecated in favor of an `Instrumentation` entry in `capabilities` —
-    # see the `_warn_instrument_deprecation` validator below for the emitted warning. We don't
-    # use Pydantic's `Field(deprecated=...)` because that always emits a plain `DeprecationWarning`;
-    # we want `PydanticAIDeprecationWarning` to match the rest of the project's deprecation surface.
-    instrument: bool | None = None
     metadata: dict[str, Any] | None = None
     capabilities: list[CapabilitySpec] = []
-
-    @model_validator(mode='after')
-    def _warn_instrument_deprecation(self) -> Self:
-        if 'instrument' in self.model_fields_set:
-            warnings.warn(
-                '`AgentSpec.instrument` is deprecated, use `capabilities=[Instrumentation(...)]` instead. '
-                'In 1.x, setting `instrument` on a spec still resolves through the legacy instrumentation flow.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-        return self
-
-    @model_validator(mode='after')
-    def _warn_retry_field_deprecations(self) -> Self:
-        if 'tool_retries' in self.model_fields_set:
-            warnings.warn(
-                "`AgentSpec.tool_retries` is deprecated. Use `retries={'tools': ...}` instead. "
-                'In 1.x, setting `tool_retries` on a spec still resolves to the tool retry budget.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-        if 'output_retries' in self.model_fields_set:
-            warnings.warn(
-                "`AgentSpec.output_retries` is deprecated. Use `retries={'output': ...}` instead. "
-                'In 1.x, setting `output_retries` on a spec still resolves to the output retry budget.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-        return self
 
     @classmethod
     def from_file(
@@ -148,6 +93,8 @@ class AgentSpec(BaseModel):
                     'PyYAML is required to load YAML agent specs. Install it with: pip install "pydantic-ai-slim[spec]"'
                 ) from None
             data = yaml.safe_load(text)
+        if not is_str_dict(data):
+            raise UserError(f'Agent spec must parse to an object, got {type(data).__name__}')
         return cls.from_dict(data)
 
     @classmethod
@@ -189,7 +136,9 @@ class AgentSpec(BaseModel):
             if not schema_path.is_absolute():
                 schema_ref = str(schema_path)
                 schema_path = path.parent / schema_path
-            else:  # pragma: no cover
+            elif schema_path.is_relative_to(path.parent):
+                schema_ref = str(schema_path.relative_to(path.parent))
+            else:
                 schema_ref = str(schema_path)
             self._save_schema(schema_path, custom_capability_types)
 
@@ -252,17 +201,8 @@ class AgentSpec(BaseModel):
             output_schema: dict[str, Any] | None = None
             model_settings: ModelSettings | None = None
             retries: int | AgentRetries | None = None
-            tool_retries: int | None = Field(
-                default=None,
-                json_schema_extra={'deprecated': True},
-            )
-            output_retries: int | None = Field(
-                default=None,
-                json_schema_extra={'deprecated': True},
-            )
-            end_strategy: EndStrategy = 'early'
+            end_strategy: EndStrategy = 'graceful'
             tool_timeout: float | None = None
-            instrument: bool | None = None
             metadata: dict[str, Any] | None = None
             if capability_schema_types:  # pragma: no branch
                 capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore  # noqa: UP007
@@ -383,7 +323,6 @@ def load_capability_from_nested_spec(spec: CapabilitySpec | dict[str, Any] | str
             label='capability',
             custom_types_param='custom_capability_types',
             instantiate=ctx.instantiate,
-            legacy_aliases=LEGACY_CAPABILITY_NAMES,
         )
     else:
         return load_from_registry(
@@ -392,7 +331,6 @@ def load_capability_from_nested_spec(spec: CapabilitySpec | dict[str, Any] | str
             label='capability',
             custom_types_param='custom_capability_types',
             instantiate=lambda cap_cls, args, kwargs: cap_cls.from_spec(*args, **kwargs),
-            legacy_aliases=LEGACY_CAPABILITY_NAMES,
         )
 
 

@@ -15,9 +15,9 @@ The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptua
 | [Dependency type constraint](dependencies.md)             | Dynamic instructions functions, tools, and output functions may all use dependencies when they're run.          |
 | [LLM model](api/models/base.md)                           | Optional default LLM model associated with the agent. Can also be specified when running the agent.       |
 | [Model Settings](#additional-configuration)               | Optional default model settings to help fine tune requests. Can also be specified when running the agent. |
-| [Capabilities](capabilities.md)                           | Reusable bundles of tools, hooks, instructions, and model settings that extend agent behavior.            |
+| [Capabilities](capabilities/overview.md)                           | Reusable bundles of tools, hooks, instructions, and model settings that extend agent behavior.            |
 
-While each of these can be configured individually, [capabilities](capabilities.md) let you bundle related behavior into reusable units that are easier to compose, share, and [load from configuration files](agent-spec.md).
+While each of these can be configured individually, [capabilities](capabilities/overview.md) let you bundle related behavior into reusable units that are easier to compose, share, and [load from configuration files](agent-spec.md).
 
 In typing terms, agents are generic in their dependency and output types, e.g., an agent which required dependencies of type `#!python Foobar` and produced outputs of type `#!python list[str]` would have type `Agent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with Pydantic AI.
 
@@ -69,7 +69,7 @@ There are five ways to run an agent:
 1. [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] — an async function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response.
 2. [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] — a plain, synchronous function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response (internally, this just calls `loop.run_until_complete(self.run())`).
 3. [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] — an async context manager which returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], which contains methods to stream text and structured output as an async iterable. [`agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] is a synchronous variation that returns a [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] with synchronous versions of the same methods.
-4. [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] — a function which returns an [`AgentEventStream`][pydantic_ai.result.AgentEventStream] async context manager that yields [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] and a [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
+4. [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] — an async context manager which yields an async iterator over [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] ending with an [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
 5. [`agent.iter()`][pydantic_ai.agent.Agent.iter] — a context manager which returns an [`AgentRun`][pydantic_ai.agent.AgentRun], an async iterable over the nodes of the agent's underlying [`Graph`][pydantic_graph.graph_builder.Graph].
 
 Here's a simple example demonstrating the first four:
@@ -96,11 +96,11 @@ async def main():
             #> The capital of the UK is
             #> The capital of the UK is London.
 
-    events: list[AgentStreamEvent | AgentRunResultEvent] = []
-    async with agent.run_stream_events('What is the capital of Mexico?') as stream:
-        async for event in stream:
-            events.append(event)
-    print(events)
+    collected: list[AgentStreamEvent | AgentRunResultEvent] = []
+    async with agent.run_stream_events('What is the capital of Mexico?') as events:
+        async for event in events:
+            collected.append(event)
+    print(collected)
     """
     [
         PartStartEvent(index=0, part=TextPart(content='The capital of ')),
@@ -238,7 +238,7 @@ Like `agent.run_stream()`, [`agent.run()`][pydantic_ai.agent.AbstractAgent.run_s
 argument that lets you stream all events from the model's streaming response and the agent's execution of tools.
 Unlike `run_stream()`, it always runs the agent graph to completion even if text was received ahead of tool calls that looked like it could've been the final result.
 
-For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] method is also available as a wrapper around `run(event_stream_handler=...)`, which returns an [`AgentEventStream`][pydantic_ai.result.AgentEventStream] async context manager that yields [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] and a [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
+For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] method is also available as a wrapper around `run(event_stream_handler=...)`. It is an async context manager that yields an async iterator over [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] ending with an [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] carrying the final run result.
 
 !!! note
     As they return raw events as they come in, the `run_stream_events()` and `run(event_stream_handler=...)` methods require you to piece together the streamed text and structured output yourself from the `PartStartEvent` and subsequent `PartDeltaEvent`s.
@@ -256,8 +256,8 @@ from run_stream_event_stream_handler import handle_event, output_messages, weath
 async def main():
     user_prompt = 'What will the weather be like in Paris on Tuesday?'
 
-    async with weather_agent.run_stream_events(user_prompt) as stream:
-        async for event in stream:
+    async with weather_agent.run_stream_events(user_prompt) as events:
+        async for event in events:
             if isinstance(event, AgentRunResultEvent):
                 output_messages.append(f'[Final Output] {event.result.output}')
             else:
@@ -588,7 +588,7 @@ usage (tokens, requests, and tool calls) on model runs.
 
 You can apply these settings by passing the `usage_limits` argument to the `run{_sync,_stream}` functions.
 
-Consider the following example, where we limit the number of response tokens:
+Consider the following example, where we limit the number of output tokens:
 
 ```py
 from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
@@ -597,7 +597,7 @@ agent = Agent('anthropic:claude-sonnet-4-6')
 
 result_sync = agent.run_sync(
     'What is the capital of Italy? Answer with just the city.',
-    usage_limits=UsageLimits(response_tokens_limit=10),
+    usage_limits=UsageLimits(output_tokens_limit=10),
 )
 print(result_sync.output)
 #> Rome
@@ -607,11 +607,13 @@ print(result_sync.usage)
 try:
     result_sync = agent.run_sync(
         'What is the capital of Italy? Answer with a paragraph.',
-        usage_limits=UsageLimits(response_tokens_limit=10),
+        usage_limits=UsageLimits(output_tokens_limit=10),
     )
 except UsageLimitExceeded as e:
     print(e)
-    #> Exceeded the output_tokens_limit of 10 (output_tokens=32)
+    """
+    Exceeded the output_tokens_limit of 10 (output_tokens=32). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    """
 ```
 
 Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:
@@ -649,7 +651,9 @@ try:
     )
 except UsageLimitExceeded as e:
     print(e)
-    #> The next request would exceed the request_limit of 3
+    """
+    The next request would exceed the request_limit of 3. Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    """
 ```
 
 1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
@@ -675,17 +679,21 @@ try:
     agent.run_sync('Please call the tool twice', usage_limits=UsageLimits(tool_calls_limit=1))
 except UsageLimitExceeded as e:
     print(e)
-    #> The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2).
+    """
+    The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    """
 ```
 
 !!! note
     - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the number of successful tool executions within a run.
     - The `tool_calls_limit` is checked before executing tool calls. If the model returns parallel tool calls that would exceed the limit, no tools will be executed.
 
+Tools and [capabilities](capabilities/overview.md) can read the run's limits from [`ctx.usage_limits`][pydantic_ai.tools.RunContext.usage_limits] (alongside [`ctx.usage`][pydantic_ai.tools.RunContext.usage] for usage so far), so a budget-aware tool or capability can disclose or adapt to the remaining budget without being configured with a duplicate copy of the limits. It reflects what the run is already enforcing and is read-only by convention.
+
 #### Model (Run) Settings
 
 Pydantic AI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSettings] structure to help you fine tune your requests.
-This structure allows you to configure common parameters that influence the model's behavior, such as `temperature`, `max_tokens`,
+This structure allows you to configure common parameters that influence the model's behavior, such as `temperature`, `max_tokens`, `top_k`,
 `timeout`, and more.
 
 There are three ways to apply these settings, with a clear precedence order:
@@ -732,7 +740,7 @@ Settings are resolved in layers, each merged on top of the previous:
 
 1. **Model defaults** (`model.settings`)
 2. **Agent-level** (`Agent(model_settings=...)`)
-3. **Capability-level** (e.g. from [`Thinking()`][pydantic_ai.capabilities.Thinking] — see [Capabilities](capabilities.md#providing-model-settings))
+3. **Capability-level** (e.g. from [`Thinking()`][pydantic_ai.capabilities.Thinking] — see [Capabilities](capabilities/custom.md#providing-model-settings))
 4. **Run-level** (`agent.run(model_settings=...)`)
 
 Inside a callable, `ctx.model_settings` contains the merged result of all *previous* layers (position-dependent). For example, an agent-level callable sees only model defaults, while a run-level callable sees model defaults + agent-level + capability-level settings. To reset a field set by a previous layer, set it explicitly (e.g. `{'temperature': None}`).
@@ -1077,7 +1085,7 @@ _(This example is complete, it can be run "as is")_
 
 Note that returning an empty string will result in no instruction message added.
 
-Instructions can also come from [capabilities](capabilities.md) via [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], or from [template strings](agent-spec.md#template-strings) rendered against the agent's dependencies.
+Instructions can also come from [capabilities](capabilities/overview.md) via [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], or from [template strings](agent-spec.md#template-strings) rendered against the agent's dependencies.
 
 ## Reflection and self-correction
 
@@ -1085,7 +1093,7 @@ Validation errors from both function tool parameter validation and [structured o
 
 You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [output function](output.md#output-functions) to tell the model it should retry generating a response.
 
-- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__] with `retries` or [`AgentRetries`][pydantic_ai.agent.AgentRetries], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__]. The output side of the agent retry budget can also be overridden per run via `agent.run(retries={'output': ...})` and friends.
+- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__] with `retries` or [`AgentRetries`][pydantic_ai.agent.AgentRetries], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__]. Both the tool and output sides of the agent retry budget can also be overridden per run via `agent.run(retries={'tools': ..., 'output': ...})` and friends (or for a block of runs via [`agent.override()`][pydantic_ai.agent.Agent.override]). At these call sites a bare `int` overrides both budgets, just like at construction — pass a dict such as `retries={'tools': ...}` to override just one. The tool-retry default and its per-run override apply to function tools and output tools; MCP tools used through a durable-exec wrapper ([`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] / [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent]) do not yet honor them and fall back to their toolset-level `max_retries` (default `1`); see [pydantic-ai#5180](https://github.com/pydantic/pydantic-ai/issues/5180).
 - You can access the current retry count from within a tool, output validator, or output function via [`ctx.retry`][pydantic_ai.tools.RunContext.retry].
 
 ### How output retries are enforced
@@ -1225,7 +1233,10 @@ with capture_run_messages() as messages:  # (2)!
         result = agent.run_sync('Please get me the volume of a box with size 6.')
     except UnexpectedModelBehavior as e:
         print('An error occurred:', e)
-        #> An error occurred: Tool 'calc_volume' exceeded max retries count of 1
+        """
+        An error occurred:
+        Tool 'calc_volume' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries
+        """
         print('cause:', repr(e.__cause__))
         #> cause: ModelRetry('Please try again.')
         print('messages:', messages)
@@ -1295,8 +1306,65 @@ with capture_run_messages() as messages:  # (2)!
 
 _(This example is complete, it can be run "as is")_
 
+When a run is cut short by an exception while streaming, an exception inside a tool, or external cancellation, Pydantic AI still captures partial state where it can. Partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] and [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages have `state='interrupted'` so persistence layers and UIs can distinguish them from complete messages.
+
+For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped. The captured messages reflect exactly what happened — half-finished tool call parts are not turned into synthetic tool results at capture time. When an interrupted history is passed back into a run, it is [repaired automatically](message-history.md#making-histories-provider-valid) before the next model request.
+
+In this example, `get_volume` completes before `get_mass` raises, so the interrupted request contains the completed `get_volume` return:
+
+```python {title="capture_interrupted_run.py"}
+from pydantic_ai import Agent, ModelRequest, capture_run_messages
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def call_tools(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(
+        parts=[
+            ToolCallPart(tool_name='get_volume', args={'size': 6}, tool_call_id='volume_call'),
+            ToolCallPart(tool_name='get_mass', args={'size': 6}, tool_call_id='mass_call'),
+        ]
+    )
+
+
+agent = Agent(FunctionModel(function=call_tools))
+
+
+@agent.tool_plain(sequential=True)
+def get_volume(size: int) -> int:
+    return size**3
+
+
+@agent.tool_plain(sequential=True)
+def get_mass(size: int) -> int:
+    raise RuntimeError('missing density')
+
+
+with capture_run_messages() as messages:
+    try:
+        agent.run_sync('Calculate volume and mass.')
+    except RuntimeError as exc:
+        print(f'Run failed: {exc}')
+        #> Run failed: missing density
+
+interrupted_request = next(
+    message for message in messages if isinstance(message, ModelRequest) and message.state == 'interrupted'
+)
+assert any(
+    isinstance(part, ToolReturnPart) and part.tool_name == 'get_volume' and part.content == 216
+    for part in interrupted_request.parts
+)
+```
+
 !!! note
     If you call [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.
+
+    `capture_run_messages` contexts can be nested: each context captures the runs for which it is the innermost active context. A run started inside a nested context is captured by that nested context, not by any enclosing one. This means you can wrap a nested agent run (for example inside a tool that calls another agent) in its own `capture_run_messages` to inspect that inner run's messages independently.
 
 ## Agent Specs
 

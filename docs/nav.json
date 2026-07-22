@@ -25,7 +25,10 @@
       },
       "dependencies",
       "output",
-      "capabilities",
+      {
+        "label": "Multimodal Input",
+        "slug": "input"
+      },
       {
         "label": "Hooks",
         "slug": "hooks"
@@ -45,6 +48,10 @@
         "label": "Overview",
         "slug": "models/overview"
       },
+      {
+        "label": "HTTP Request Retries",
+        "slug": "models/http-request-retries"
+      },
       "models/openai",
       "models/anthropic",
       "models/google",
@@ -56,8 +63,7 @@
       "models/huggingface",
       "models/mistral",
       "models/ollama",
-      "models/openrouter",
-      "models/outlines"
+      "models/openrouter"
     ]
   },
   {
@@ -73,11 +79,141 @@
     ]
   },
   {
-    "label": "Advanced Features",
+    "label": "Capabilities",
     "items": [
-      "input",
-      "thinking",
-      "retries"
+      {
+        "label": "Overview",
+        "slug": "capabilities/overview"
+      },
+      {
+        "label": "On-Demand Capabilities",
+        "slug": "capabilities/on-demand"
+      },
+      {
+        "label": "Building Custom Capabilities",
+        "slug": "capabilities/custom"
+      },
+      {
+        "label": "Thinking",
+        "slug": "capabilities/thinking"
+      },
+      {
+        "label": "Instrumentation",
+        "slug": "capabilities/instrumentation"
+      },
+      {
+        "label": "Web Search",
+        "slug": "capabilities/web-search"
+      },
+      {
+        "label": "Web Fetch",
+        "slug": "capabilities/web-fetch"
+      },
+      {
+        "label": "Image Generation",
+        "slug": "capabilities/image-generation"
+      },
+      {
+        "label": "X Search",
+        "slug": "capabilities/x-search"
+      },
+      {
+        "label": "MCP",
+        "slug": "capabilities/mcp"
+      },
+      {
+        "label": "Tool Search",
+        "slug": "capabilities/tool-search"
+      },
+      {
+        "label": "Compaction",
+        "slug": "capabilities/compaction"
+      },
+      {
+        "label": "Thread Executor",
+        "slug": "capabilities/thread-executor"
+      },
+      {
+        "label": "Select Model",
+        "slug": "capabilities/select-model"
+      },
+      {
+        "label": "Resolve Model ID",
+        "slug": "capabilities/resolve-model-id"
+      },
+      {
+        "label": "Prepare Tools",
+        "slug": "capabilities/prepare-tools"
+      },
+      {
+        "label": "Prefix Tools",
+        "slug": "capabilities/prefix-tools"
+      },
+      {
+        "label": "Include Tool Return Schemas",
+        "slug": "capabilities/include-tool-return-schemas"
+      },
+      {
+        "label": "Set Tool Metadata",
+        "slug": "capabilities/set-tool-metadata"
+      },
+      {
+        "label": "Raise Content Filter Error",
+        "slug": "capabilities/raise-content-filter-error"
+      },
+      {
+        "label": "Reinject System Prompt",
+        "slug": "capabilities/reinject-system-prompt"
+      },
+      {
+        "label": "Handle Deferred Tool Calls",
+        "slug": "capabilities/handle-deferred-tool-calls"
+      },
+      {
+        "label": "Process History",
+        "slug": "capabilities/process-history"
+      },
+      {
+        "label": "Process Event Stream",
+        "slug": "capabilities/process-event-stream"
+      },
+      {
+        "label": "Durable Execution",
+        "items": [
+          {
+            "label": "Overview",
+            "slug": "durable_execution/overview"
+          },
+          {
+            "label": "Temporal",
+            "slug": "durable_execution/temporal"
+          },
+          {
+            "label": "DBOS",
+            "slug": "durable_execution/dbos"
+          },
+          {
+            "label": "Prefect",
+            "slug": "durable_execution/prefect"
+          },
+          {
+            "label": "Restate",
+            "slug": "durable_execution/restate"
+          },
+          {
+            "label": "Kitaru",
+            "slug": "durable_execution/kitaru"
+          },
+          {
+            "label": "Apache Airflow",
+            "slug": "durable_execution/airflow"
+          }
+        ]
+      },
+      {
+        "label": "Third-Party Capabilities",
+        "slug": "capabilities/third-party"
+      }
     ]
   },
   {
@@ -113,21 +249,7 @@
         "slug": "mcp/overview"
       },
       "mcp/client",
-      "mcp/fastmcp-client",
       "mcp/server"
-    ]
-  },
-  {
-    "label": "Pydantic AI Harness",
-    "items": [
-      {
-        "label": "Overview",
-        "slug": "harness/overview"
-      },
-      {
-        "label": "Code Mode",
-        "slug": "harness/code-mode"
-      }
     ]
   },
   {
@@ -277,31 +399,6 @@
         "slug": "logfire"
       },
       {
-        "label": "Durable Execution",
-        "items": [
-          {
-            "label": "Overview",
-            "slug": "durable_execution/overview"
-          },
-          {
-            "label": "Temporal",
-            "slug": "durable_execution/temporal"
-          },
-          {
-            "label": "DBOS",
-            "slug": "durable_execution/dbos"
-          },
-          {
-            "label": "Prefect",
-            "slug": "durable_execution/prefect"
-          },
-          {
-            "label": "Restate",
-            "slug": "durable_execution/restate"
-          }
-        ]
-      },
-      {
         "label": "UI Event Streams",
         "items": [
           {
@@ -317,10 +414,6 @@
             "slug": "ui/vercel-ai"
           }
         ]
-      },
-      {
-        "label": "Agent2Agent (A2A)",
-        "slug": "a2a"
       },
       {
         "label": "Command Line Interface (CLI)",
@@ -367,8 +460,7 @@
       {
         "label": "Complex Workflows",
         "items": [
-          "examples/flight-booking",
-          "examples/question-graph"
+          "examples/flight-booking"
         ]
       },
       {
@@ -391,7 +483,6 @@
       {
         "label": "pydantic_ai",
         "items": [
-          "api/ag_ui",
           "api/agent",
           "api/native_tools",
           "api/capabilities",
@@ -426,7 +517,6 @@
               "api/models/ollama",
               "api/models/openai",
               "api/models/openrouter",
-              "api/models/outlines",
               "api/models/test",
               "api/models/wrapper"
             ]
@@ -438,6 +528,7 @@
           "api/retries",
           "api/run",
           "api/settings",
+          "api/template",
           "api/tools",
           "api/toolsets",
           {
@@ -467,29 +558,14 @@
       {
         "label": "pydantic_graph",
         "items": [
-          "api/pydantic_graph/graph",
-          "api/pydantic_graph/nodes",
-          "api/pydantic_graph/persistence",
-          "api/pydantic_graph/mermaid",
-          "api/pydantic_graph/exceptions",
-          {
-            "label": "Graph Builder",
-            "items": [
-              "api/pydantic_graph/graph_builder",
-              "api/pydantic_graph/graph_builder_graph",
-              "api/pydantic_graph/graph_builder_graph_builder",
-              "api/pydantic_graph/graph_builder_step",
-              "api/pydantic_graph/graph_builder_join",
-              "api/pydantic_graph/graph_builder_decision",
-              "api/pydantic_graph/graph_builder_node"
-            ]
-          }
-        ]
-      },
-      {
-        "label": "fasta2a",
-        "items": [
-          "api/fasta2a"
+          "api/pydantic_graph/basenode",
+          "api/pydantic_graph/graph_builder",
+          "api/pydantic_graph/step",
+          "api/pydantic_graph/join",
+          "api/pydantic_graph/decision",
+          "api/pydantic_graph/node",
+          "api/pydantic_graph/util",
+          "api/pydantic_graph/exceptions"
         ]
       }
     ]

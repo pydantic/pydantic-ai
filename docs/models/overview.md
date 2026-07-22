@@ -13,7 +13,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Hugging Face](huggingface.md)
 * [Mistral](mistral.md)
 * [OpenRouter](openrouter.md)
-* [Outlines](outlines.md) (deprecated, will be removed in v2)
+* [Z.AI](zai.md)
 
 ## OpenAI-compatible Providers
 
@@ -66,6 +66,28 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
 When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `openai:gpt-5.2` or `openrouter:google/gemini-3-pro-preview`,
 Pydantic AI will automatically select the appropriate model class, provider, and profile.
 If you want to use a different provider or profile, you can instantiate a model class directly and pass in `provider` and/or `profile` arguments.
+
+### Inspecting a model's profile
+
+A model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] also describes what the model can do. It is a `TypedDict`, so you read capability flags with normal dictionary access via `model.profile` — for example [`supports_tools`][pydantic_ai.profiles.ModelProfile.supports_tools], [`supports_json_schema_output`][pydantic_ai.profiles.ModelProfile.supports_json_schema_output], and [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools]. This is useful when you want to branch on a capability rather than discover a limitation at request time — for example checking whether a model supports tool calling, native JSON-schema output, or a specific native tool before relying on it:
+
+```python
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import WebSearchTool
+
+model = TestModel()
+profile = model.profile
+
+print(profile['supports_tools'])
+#> True
+print(profile['supports_json_schema_output'])
+#> False
+print(WebSearchTool in profile['supported_native_tools'])
+#> True
+```
+
+`model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so direct key access like `profile['supports_tools']` works. If you supply `profile=` as a callable (or otherwise have a partial profile dict), use `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`) to tolerate missing keys.
+Any [`Model`][pydantic_ai.models.Model] instance exposes its resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. Don't confuse this with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
 
 ## HTTP Client Lifecycle
 
@@ -192,9 +214,7 @@ exception handlers, and response handlers — all of which can be sync or async.
 In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
 and then falls back to the Anthropic model.
 
-<!-- TODO(Marcelo): Do not skip this test. For some reason it becomes a flaky test if we don't skip it. -->
-
-```python {title="fallback_model.py" test="skip"}
+```python {title="fallback_model.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
@@ -206,8 +226,8 @@ fallback_model = FallbackModel(openai_model, anthropic_model)
 
 agent = Agent(fallback_model)
 response = agent.run_sync('What is the capital of France?')
-print(response.data)
-#> Paris
+print(response.output)
+#> The capital of France is Paris.
 
 print(response.all_messages())
 """
@@ -217,17 +237,19 @@ print(response.all_messages())
             UserPromptPart(
                 content='What is the capital of France?',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
             )
         ],
-        kind='request',
+        timestamp=datetime.datetime(...),
+        run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
-        parts=[TextPart(content='Paris', part_kind='text')],
+        parts=[TextPart(content='The capital of France is Paris.')],
+        usage=RequestUsage(input_tokens=56, output_tokens=7),
         model_name='claude-sonnet-4-5',
         timestamp=datetime.datetime(...),
-        kind='response',
-        provider_response_id=None,
+        run_id='...',
+        conversation_id='...',
     ),
 ]
 """
@@ -388,7 +410,8 @@ print(result.output)
     Note that Pydantic AI already handles some finish reasons automatically in the [agent loop](../agent.md):
     responses with a `'length'` or `'content_filter'` finish reason raise exceptions (which `FallbackModel`
     catches by default), and empty responses are retried. A response handler is useful for custom
-    checks beyond these built-in behaviors.
+    checks beyond these built-in behaviors. To also raise on `content_filter` responses that still carry
+    partial or refusal text, add the [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
 
 #### Native Tool Failure Example
 

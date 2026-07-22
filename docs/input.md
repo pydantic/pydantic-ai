@@ -1,5 +1,6 @@
-# Image, Audio, Video & Document Input
+# Multimodal Input
 
+Alongside text, agents can accept image, audio, video, and document input, as long as the model supports it.
 
 ## Image Input
 
@@ -143,13 +144,13 @@ Support for file URLs varies depending on type and provider:
 
 | Model | Send URL directly | Download and send bytes | Unsupported |
 |-------|-------------------|-------------------------|-------------|
-| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl`. `DocumentUrl` [not supported with `AzureProvider`](models/openai.md#using-azure-with-the-responses-api) |
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl`. `DocumentUrl` [not supported with `AzureProvider`](models/openai.md#using-azure-with-the-responses-api) or [`AlibabaProvider`](models/openai.md#alibaba-cloud-model-studio-dashscope) |
 | [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | — | `VideoUrl` |
 | [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl` |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Google Cloud) | All URL types | — | — |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Gemini API) | [YouTube](models/google.md#document-image-audio-and-video-input), [Files API](models/google.md#document-image-audio-and-video-input) | All other URLs | — |
 | [`XaiModel`][pydantic_ai.models.xai.XaiModel] | `ImageUrl` | `DocumentUrl` | `AudioUrl`, `VideoUrl` |
-| [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | — | `AudioUrl`, `VideoUrl`, `DocumentUrl` (non-PDF) |
+| [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl`, `DocumentUrl` (non-PDF, non-text) |
 | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` |
 | [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` | — |
 
@@ -171,7 +172,7 @@ DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
 
     Don't construct [`ImageUrl`][pydantic_ai.messages.ImageUrl], [`AudioUrl`][pydantic_ai.messages.AudioUrl], [`VideoUrl`][pydantic_ai.messages.VideoUrl], or [`DocumentUrl`][pydantic_ai.messages.DocumentUrl] from untrusted user input without validating the scheme and scope. For frontend-initiated uploads to cloud storage, convert references like `s3://bucket/key` into pre-signed `https://` URLs server-side before constructing the file URL part. `force_download=True` only works for `http(s)://` URLs (it routes through the library's HTTP client and applies SSRF protection); cloud-storage schemes like `s3://` and `gs://` aren't supported by the local download path and are forwarded to the provider as-is. Only use `force_download='allow-local'` for server-authored URLs, since it allows local network access.
 
-    The [UI adapters](ui/overview.md) apply this sanitization automatically to client-submitted messages via [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes] and [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].
+    The [UI adapters](ui/overview.md) apply this sanitization automatically to client-submitted messages via [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes] and [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download]. If you accept serialized `message_history` through a custom client API, use [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] before passing that history to the agent.
 
 ## Uploaded Files
 
@@ -218,12 +219,12 @@ The `media_type` parameter is optional for [`UploadedFile`][pydantic_ai.messages
 Follow the [Anthropic Files API docs](https://docs.anthropic.com/en/docs/build-with-claude/files) to upload files. You can access the underlying Anthropic client via `provider.client`.
 
 !!! note "Beta Feature"
-    The Anthropic Files API is currently in beta. You need to include the beta header `anthropic-beta: files-api-2025-04-14` when making requests.
+    The Anthropic Files API is currently in beta. `AnthropicModel` automatically adds the required `anthropic-beta: files-api-2025-04-14` header when a request contains an Anthropic [`UploadedFile`][pydantic_ai.messages.UploadedFile], so you don't need to set it yourself.
 
 ```py {title="uploaded_file_anthropic.py" test="skip"}
 import asyncio
 
-from pydantic_ai import Agent, ModelSettings, UploadedFile
+from pydantic_ai import Agent, UploadedFile
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -236,14 +237,13 @@ async def main():
     with open('document.pdf', 'rb') as f:
         uploaded_file = await provider.client.beta.files.upload(file=f)
 
-    # Reference the uploaded file, including the required beta header
+    # Reference the uploaded file; the beta header is added automatically
     agent = Agent(model)
     result = await agent.run(
         [
             'Summarize this document',
             UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
-        ],
-        model_settings=ModelSettings(extra_headers={'anthropic-beta': 'files-api-2025-04-14'}),
+        ]
     )
     print(result.output)
     #> The document discusses the main topics and key findings...
@@ -286,6 +286,12 @@ async def main():
 
 asyncio.run(main())
 ```
+
+!!! note "Referencing uploaded images"
+    [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] can only reference uploaded *documents* by `file_id`. Referencing an uploaded image (an `image/*` media type) raises a [`UserError`][pydantic_ai.exceptions.UserError], because the Chat Completions API doesn't accept a `file_id` for image parts. Use [`ImageUrl`][pydantic_ai.messages.ImageUrl] or [`BinaryContent`][pydantic_ai.messages.BinaryContent] for images, or use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], which does support uploaded images.
+
+    With `OpenAIResponsesModel`, control the image [detail level](https://platform.openai.com/docs/guides/images-vision) by passing `vendor_metadata={'detail': 'high'}` (or `'low'`) to the `UploadedFile`; it defaults to `'auto'`.
+    With `OpenAIChatModel`, `GroqModel`, `MistralModel`, and `XaiModel`, control the image detail level by passing `vendor_metadata={'detail': 'high'}` (or `'low'`) to the [`ImageUrl`][pydantic_ai.messages.ImageUrl] or [`BinaryContent`][pydantic_ai.messages.BinaryContent]; it defaults to `'auto'`.
 
 ### Google
 
@@ -373,7 +379,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 async def main():
     provider = XaiProvider()
-    model = XaiModel('grok-4-fast', provider=provider)
+    model = XaiModel('grok-4.3', provider=provider)
 
     # Upload a file using the provider's client (xAI client)
     with open('document.pdf', 'rb') as f:

@@ -17,5 +17,4 @@
         - PreparedToolset
         - WrapperToolset
         - ToolsetFunc
-
-::: pydantic_ai.toolsets.fastmcp
+        - AgentToolset

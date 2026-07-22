@@ -21,12 +21,18 @@ node_modules/
 /test_tmp/
 .mcp.json
 CLAUDE.local.md
+AGENTS.override.md
+.grok/*
 .codex/*
 .agents/*
 !.agents/skills/
 .agents/skills/*
 !.agents/skills/complete-partial-pr/
 !.agents/skills/complete-partial-pr/SKILL.md
+!.agents/skills/adding-a-provider-api-feature/
+!.agents/skills/adding-a-provider-api-feature/SKILL.md
+!.agents/skills/add-new-model/
+!.agents/skills/add-new-model/SKILL.md
 .claude/*
 !.claude/plans/
 !.claude/skills/
@@ -39,6 +45,4 @@ CLAUDE.local.md
 /.cursor/
 /.devcontainer/
 .claude/plans/
-
-# AICA mini-PR diagnostic scratch (see team.pydantic.work)
 local-notes/
