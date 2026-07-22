@@ -279,7 +279,9 @@ def resolve_run_id(
             raise exceptions.UserError(
                 f'`run_id={explicit!r}` already appears in `message_history`. '
                 'Each agent run needs a distinct `run_id`; reuse breaks `new_messages()`. '
-                'Use `conversation_id` to correlate across turns or deferred-tool resume.'
+                'Use `conversation_id` to correlate across turns or deferred-tool resume. '
+                'When retrying a failed run with the same `run_id`, rebuild `message_history` '
+                "without the failed attempt's messages."
             )
         return explicit
     return str(uuid7())
