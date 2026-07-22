@@ -292,13 +292,12 @@ class GoogleModelSettings(ModelSettings, total=False):
     """
 
     google_model_armor_config: ModelArmorConfigDict
-    """Model Armor configuration for screening prompts and responses.
+    """Model Armor configuration for screening prompts and responses. Only supported by the Vertex AI API.
 
     Specifies the Model Armor templates to use for sanitizing user prompts and model responses.
     Both fields are optional — omit either to skip screening for that direction.
 
-    Only supported with `GoogleCloudProvider` (Google Cloud / Vertex AI). Using this with the
-    Gemini API (`GoogleProvider`) raises [`UserError`][pydantic_ai.exceptions.UserError].
+    See the [Model Armor docs](https://cloud.google.com/security-command-center/docs/model-armor-overview) for use cases and limitations.
     """
 
 
@@ -823,16 +822,6 @@ class GoogleModel(Model[Client]):
             }
             return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
 
-    def _get_model_armor_config(self, model_settings: GoogleModelSettings) -> ModelArmorConfigDict | None:
-        """Return model_armor_config, raising UserError if used with a non-Cloud provider."""
-        model_armor_config = model_settings.get('google_model_armor_config')
-        if model_armor_config is not None and self.system not in _GOOGLE_CLOUD_PROVIDER_NAMES:
-            raise UserError(
-                'google_model_armor_config is only supported with GoogleCloudProvider (Google Cloud / Vertex AI). '
-                'Model Armor is not available in the Gemini API.'
-            )
-        return model_armor_config or None
-
     async def _build_content_and_config(
         self,
         messages: list[ModelMessage],
@@ -894,8 +883,6 @@ class GoogleModel(Model[Client]):
         # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
         _warn_on_cached_content_strips(cached_content, system_instruction, tools)
 
-        model_armor_config = self._get_model_armor_config(model_settings)
-
         config = GenerateContentConfigDict(
             http_options=http_options,
             system_instruction=None if cached_content else system_instruction,
@@ -918,7 +905,7 @@ class GoogleModel(Model[Client]):
             response_json_schema=response_schema,
             response_modalities=modalities,
             image_config=image_config,
-            model_armor_config=model_armor_config,
+            model_armor_config=model_settings.get('google_model_armor_config'),
         )
 
         if gla_service_tier is not None:

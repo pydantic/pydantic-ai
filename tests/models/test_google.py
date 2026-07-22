@@ -6517,7 +6517,7 @@ def model_armor_settings() -> GoogleModelSettings:
 async def test_google_model_armor_prompt_template_text_gets_blocked(
     allow_model_requests: None, vertex_provider: GoogleProvider, model_armor_settings: GoogleModelSettings
 ):
-    """Test that Model Armor raises ContentFilterError when a jailbreak prompt violates the prompt template."""
+    """Test that Model Armor raises `ContentFilterError` when a jailbreak prompt violates the prompt template."""
     model = GoogleModel(model_name='gemini-2.5-flash', provider=vertex_provider, settings=model_armor_settings)
     agent = Agent(model=model, name='test-agent', output_type=str)
 
@@ -6571,11 +6571,39 @@ async def test_google_model_armor_response_template_text_gets_blocked(
     assert kwargs.get('config')['model_armor_config'] == _MODEL_ARMOR_CONFIG
 
 
-def test_google_model_armor_config_raises_user_error_for_gemini_api(
-    google_provider: GoogleProvider, model_armor_settings: GoogleModelSettings
+async def test_google_model_armor_config_is_sent_in_request(
+    allow_model_requests: None,
+    vertex_provider: GoogleProvider,
+    mocker: MockerFixture,
+    model_armor_settings: GoogleModelSettings,
 ):
-    """Test that google_model_armor_config raises UserError when used with GoogleProvider (Gemini API)."""
-    model = GoogleModel(model_name='gemini-2.5-flash', provider=google_provider, settings=model_armor_settings)
+    """Test that `google_model_armor_config` is forwarded into the request config via the public `agent.run()` path.
 
-    with pytest.raises(UserError, match='google_model_armor_config is only supported with GoogleCloudProvider'):
-        model._get_model_armor_config(model_armor_settings)  # pyright: ignore[reportPrivateUsage]
+    Asserted against a patched client rather than a VCR cassette because the cassette matchers are not
+    request-body-sensitive, so a recording would still replay green if the config stopped being sent.
+    """
+    model = GoogleModel(model_name='gemini-2.5-flash', provider=vertex_provider, settings=model_armor_settings)
+
+    response = GenerateContentResponse(
+        candidates=[
+            Candidate(
+                content=Content(parts=[Part(text='Hello!')], role='model'),
+                finish_reason=GoogleFinishReason.STOP,
+            )
+        ],
+        usage_metadata=GenerateContentResponseUsageMetadata(prompt_token_count=1, candidates_token_count=1),
+        response_id='1',
+        model_version='gemini-2.5-flash',
+    )
+    mock_generate = mocker.patch.object(
+        model.client.aio.models,
+        'generate_content',
+        new_callable=mocker.AsyncMock,
+        return_value=response,
+    )
+
+    agent = Agent(model=model, name='test-agent', output_type=str)
+    await agent.run('hello')
+
+    _, kwargs = mock_generate.call_args
+    assert kwargs.get('config')['model_armor_config'] == _MODEL_ARMOR_CONFIG
