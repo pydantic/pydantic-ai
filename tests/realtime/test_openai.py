@@ -47,30 +47,32 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
-    AudioDelta,
     AudioInput,
-    CancelResponse,
-    ClearAudio,
-    CommitAudio,
-    CreateResponse,
     InputSpeechEndEvent,
     InputSpeechStartEvent,
-    InputTranscript,
     InputTranscriptionFailedEvent,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
     ReconnectedEvent,
     SessionUsageEvent,
-    ToolCall,
-    ToolResult,
-    Transcript,
-    TruncateOutput,
     TurnCompleteEvent,
     TurnDetection,
 )
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput, merge_realtime_profile
 from pydantic_ai.realtime._openai_protocol import map_conversation_event, realtime_websocket_url
+from pydantic_ai.realtime.codec import (
+    AudioDelta,
+    CancelResponse,
+    ClearAudio,
+    CommitAudio,
+    CreateResponse,
+    InputTranscript,
+    ToolCall,
+    ToolResult,
+    Transcript,
+    TruncateOutput,
+)
 from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage

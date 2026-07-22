@@ -5,7 +5,7 @@ connection rather than the request-response pattern of the standard
 [`Model`][pydantic_ai.models.Model] interface.
 
 This module defines the provider-facing ABCs ([`RealtimeModel`][pydantic_ai.realtime.RealtimeModel],
-[`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection]) and the event/input types
+[`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection]) and the event/input types
 exchanged over a realtime session.
 """
 
@@ -270,7 +270,7 @@ RealtimeSessionInput = TypeAliasType('RealtimeSessionInput', 'AudioInput | Image
 Session content only: audio, images, and text. Turn-control verbs (`CommitAudio`, `ClearAudio`,
 `CreateResponse`, `CancelResponse`, `TruncateOutput`) are connection-level vocabulary driven through the
 dedicated `RealtimeSession` methods (`commit_audio()`, `clear_audio()`, `create_response()`,
-`interrupt()`), and [`ToolResult`][pydantic_ai.realtime.ToolResult] is sent by the session itself when a
+`interrupt()`), and [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] is sent by the session itself when a
 tool completes — neither is accepted by `send()`.
 """
 
@@ -278,10 +278,10 @@ RealtimeInput = TypeAliasType(
     'RealtimeInput',
     'RealtimeSessionInput | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult',
 )
-"""Union of content types accepted by [`RealtimeConnection.send`][pydantic_ai.realtime.RealtimeConnection.send].
+"""Union of content types accepted by [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send].
 
 A superset of [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput]: the low-level
-connection additionally accepts the turn-control verbs and [`ToolResult`][pydantic_ai.realtime.ToolResult],
+connection additionally accepts the turn-control verbs and [`ToolResult`][pydantic_ai.realtime.codec.ToolResult],
 which [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] sends on the caller's behalf.
 """
 
@@ -382,7 +382,7 @@ class ToolCallCancelled:
     """
 
     tool_call_ids: list[str]
-    """Identifiers of the [`ToolCall`][pydantic_ai.realtime.ToolCall]s that were cancelled."""
+    """Identifiers of the [`ToolCall`][pydantic_ai.realtime.codec.ToolCall]s that were cancelled."""
 
 
 @dataclass
@@ -572,7 +572,7 @@ RealtimeCodecEvent = TypeAliasType(
     | PartEndEvent
     | SessionErrorEvent,
 )
-"""Union of the low-level codec events yielded by [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection].
+"""Union of the low-level codec events yielded by [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection].
 
 This is the provider-facing vocabulary: providers translate their wire protocol into these events, and
 [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] translates them again into the shared
@@ -634,7 +634,7 @@ class RealtimeModelProfile(TypedDict, total=False):
 
     All fields are optional. Consumers treat absent boolean flags as `False`, absent
     `supported_native_tools` as empty, and absent sample rates as the values in
-    [`DEFAULT_REALTIME_PROFILE`][pydantic_ai.realtime.DEFAULT_REALTIME_PROFILE].
+    [`DEFAULT_REALTIME_PROFILE`][pydantic_ai.realtime.codec.DEFAULT_REALTIME_PROFILE].
     """
 
     supports_image_input: bool
@@ -713,7 +713,7 @@ class RealtimeConnection(ABC):
     """A live connection to a realtime model.
 
     Providers implement this to handle protocol-specific framing (WebSocket frames,
-    HTTP/2 messages, etc.). Content is fed in via [`send`][pydantic_ai.realtime.RealtimeConnection.send]
+    HTTP/2 messages, etc.). Content is fed in via [`send`][pydantic_ai.realtime.codec.RealtimeConnection.send]
     and events are consumed by iterating the connection.
     """
 
@@ -750,7 +750,7 @@ class RealtimeConnection(ABC):
 
     @property
     def input_transcription_enabled(self) -> bool:
-        """Whether this connection will emit [`InputTranscript`][pydantic_ai.realtime.InputTranscript] events for the user's audio.
+        """Whether this connection will emit [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript] events for the user's audio.
 
         Providers that transcribe the user's input (the default) leave this `True`. When it is `False`,
         no transcript arrives, so [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] finalizes a
@@ -812,7 +812,7 @@ class RealtimeModel(AbstractModel):
             model_request_parameters: Function and native tools available to the session.
 
         Returns:
-            An async context manager yielding a [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection].
+            An async context manager yielding a [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection].
         """
         raise NotImplementedError
 

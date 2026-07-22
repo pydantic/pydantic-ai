@@ -23,13 +23,13 @@ graph LR
 ```
 
 A [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] opens a
-[`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection] (the provider-specific transport).
+[`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection] (the provider-specific transport).
 A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] wraps that connection: it translates the
 low-level codec events into the shared message/part event vocabulary from
 [`pydantic_ai.messages`][pydantic_ai.messages], builds ordinary
 [`ModelMessage`][pydantic_ai.messages.ModelMessage] history, and executes tools automatically —
-intercepting each [`ToolCall`][pydantic_ai.realtime.ToolCall], running it, sending the
-[`ToolResult`][pydantic_ai.realtime.ToolResult] back, and emitting a
+intercepting each [`ToolCall`][pydantic_ai.realtime.codec.ToolCall], running it, sending the
+[`ToolResult`][pydantic_ai.realtime.codec.ToolResult] back, and emitting a
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] then a
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Every tool runs
 concurrently so the model can keep speaking while it works.
@@ -44,33 +44,35 @@ concurrently so the model can keep speaking while it works.
 | [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] | Settings shared by realtime providers. |
 | [`TurnDetection`][pydantic_ai.realtime.TurnDetection] | Cross-provider automatic VAD sensitivity, padding, and silence configuration. |
 | [`KnownRealtimeModelName`][pydantic_ai.realtime.KnownRealtimeModelName] / [`infer_realtime_model`][pydantic_ai.realtime.infer_realtime_model] | Provider-prefixed model IDs and inference. |
-| [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection] | Provider ABC; `send()` content in, iterate events out. |
+| [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection] | Provider ABC; `send()` content in, iterate events out. |
 | [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic concurrent tool dispatch. |
 
-**Inputs** — [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send] accepts plain `str`,
-image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], a sequence of these, or a precise
-[`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput]:
-data — [`AudioInput`][pydantic_ai.realtime.AudioInput],
-[`TextInput`][pydantic_ai.realtime.TextInput],
-[`ImageInput`][pydantic_ai.realtime.ImageInput];
-control verbs — [`CommitAudio`][pydantic_ai.realtime.CommitAudio],
-[`ClearAudio`][pydantic_ai.realtime.ClearAudio],
-[`CreateResponse`][pydantic_ai.realtime.CreateResponse],
-[`CancelResponse`][pydantic_ai.realtime.CancelResponse],
-[`TruncateOutput`][pydantic_ai.realtime.TruncateOutput].
+**Inputs** — [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send] accepts session content
+only: plain `str`, image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], a sequence of
+these, or a precise [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput] —
+[`AudioInput`][pydantic_ai.realtime.AudioInput],
+[`TextInput`][pydantic_ai.realtime.TextInput], or
+[`ImageInput`][pydantic_ai.realtime.ImageInput]. Turn-taking and interruption go through the dedicated
+[`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] methods (`commit_audio()`, `clear_audio()`,
+`create_response()`, `interrupt()`), not `send()`.
 
-The low-level [`RealtimeConnection.send`][pydantic_ai.realtime.RealtimeConnection.send] accepts the
-superset [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput], which additionally includes
-[`ToolResult`][pydantic_ai.realtime.ToolResult] — the session sends those itself as each tool
-completes, so it is deliberately excluded from what a caller passes to `session.send()`.
+The low-level [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send] accepts the
+superset [`RealtimeInput`][pydantic_ai.realtime.codec.RealtimeInput], which additionally includes the
+turn-control verbs ([`CommitAudio`][pydantic_ai.realtime.codec.CommitAudio],
+[`ClearAudio`][pydantic_ai.realtime.codec.ClearAudio],
+[`CreateResponse`][pydantic_ai.realtime.codec.CreateResponse],
+[`CancelResponse`][pydantic_ai.realtime.codec.CancelResponse], and
+[`TruncateOutput`][pydantic_ai.realtime.codec.TruncateOutput]) that those session methods emit, plus
+[`ToolResult`][pydantic_ai.realtime.codec.ToolResult] — which the session sends itself as each tool
+completes.
 
-**Connection events** — [`RealtimeCodecEvent`][pydantic_ai.realtime.RealtimeCodecEvent], the low-level codec
+**Connection events** — [`RealtimeCodecEvent`][pydantic_ai.realtime.codec.RealtimeCodecEvent], the low-level codec
 vocabulary yielded by a connection:
-[`AudioDelta`][pydantic_ai.realtime.AudioDelta],
-[`Transcript`][pydantic_ai.realtime.Transcript],
-[`InputTranscript`][pydantic_ai.realtime.InputTranscript],
-[`ToolCall`][pydantic_ai.realtime.ToolCall],
-[`ToolCallCancelled`][pydantic_ai.realtime.ToolCallCancelled],
+[`AudioDelta`][pydantic_ai.realtime.codec.AudioDelta],
+[`Transcript`][pydantic_ai.realtime.codec.Transcript],
+[`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript],
+[`ToolCall`][pydantic_ai.realtime.codec.ToolCall],
+[`ToolCallCancelled`][pydantic_ai.realtime.codec.ToolCallCancelled],
 [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent],
 [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent],
 [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent],
@@ -92,6 +94,15 @@ control-plane events above (`TurnCompleteEvent`, `InputSpeechStartEvent`, `Input
 `ReconnectedEvent`). Usage updates are accumulated on the session and are not yielded.
 
 ::: pydantic_ai.realtime
+
+## Codec
+
+The lower-level *codec* vocabulary, for implementing a realtime provider or consuming a
+[`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection] directly: the raw events a
+connection yields, the turn-control verbs and inputs it accepts, and the model-profile merge helpers.
+Most users only need the session-level API above.
+
+::: pydantic_ai.realtime.codec
 
 ## OpenAI provider
 

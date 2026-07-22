@@ -1,4 +1,4 @@
-"""A realtime session that wraps a [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection] with automatic tool execution."""
+"""A realtime session that wraps a [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection] with automatic tool execution."""
 
 from __future__ import annotations as _annotations
 
@@ -247,7 +247,7 @@ class _RealtimePendingMessages(list[PendingMessage]):
 
 
 class RealtimeSession:
-    """Wraps a [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection], building message history and auto-executing tools.
+    """Wraps a [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection], building message history and auto-executing tools.
 
     The session translates the connection's low-level codec events into the shared message/part event
     vocabulary from [`pydantic_ai.messages`][pydantic_ai.messages] and accumulates ordinary
@@ -563,7 +563,7 @@ class RealtimeSession:
         `send()` accepts session content only. Turn-control verbs (`CommitAudio`, `ClearAudio`,
         `CreateResponse`, `CancelResponse`, `TruncateOutput`) are driven through the dedicated methods
         (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
-        [`ToolResult`][pydantic_ai.realtime.ToolResult] is sent by the session itself as each tool
+        [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] is sent by the session itself as each tool
         completes (see `_execute_tool`) — neither is accepted here.
         """
         if isinstance(content, str):
@@ -1196,7 +1196,7 @@ class RealtimeSession:
         """Finalize a user turn from retained input audio when no transcript will arrive.
 
         With input transcription disabled but input audio retained (`audio_retention='input_audio'`/`'both'`),
-        the user's turn produces no [`InputTranscript`][pydantic_ai.realtime.InputTranscript], so the
+        the user's turn produces no [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript], so the
         transcript-driven `_finalize_user` never runs. This is called at each user-turn boundary (speech
         stopped / commit / turn complete) to finalize an audio-only user
         [`SpeechPart`][pydantic_ai.messages.SpeechPart] so the turn still lands in history.

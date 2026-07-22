@@ -24,13 +24,15 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.realtime import (
-    RealtimeCodecEvent,
-    RealtimeConnection,
-    RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
     TurnCompleteEvent,
+)
+from pydantic_ai.realtime.codec import (
+    RealtimeCodecEvent,
+    RealtimeConnection,
+    RealtimeInput,
 )
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition

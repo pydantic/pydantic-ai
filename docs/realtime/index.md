@@ -872,9 +872,9 @@ Some capabilities are intentionally out of scope:
 ## Implementing a provider
 
 A provider implements two ABCs: [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel]
-(opens a connection) and [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection]
-(sends [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput] and yields the low-level
-[`RealtimeCodecEvent`][pydantic_ai.realtime.RealtimeCodecEvent] vocabulary, which the session
+(opens a connection) and [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection]
+(sends [`RealtimeInput`][pydantic_ai.realtime.codec.RealtimeInput] and yields the low-level
+[`RealtimeCodecEvent`][pydantic_ai.realtime.codec.RealtimeCodecEvent] vocabulary, which the session
 translates into user-facing [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent]s). The OpenAI
 provider in [`pydantic_ai.realtime.openai`][pydantic_ai.realtime.openai] is a reference
 implementation; the same shape applies to Azure OpenAI, Gemini Live, xAI Grok Voice, and others. Inputs a provider

@@ -44,21 +44,23 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
-    AudioDelta,
     AudioInput,
     InputSpeechStartEvent,
-    InputTranscript,
     RealtimeSession,
     ReconnectedEvent,
     SessionUsageEvent,
-    ToolCall,
-    ToolCallCancelled,
-    ToolResult,
-    Transcript,
     TurnCompleteEvent,
     TurnDetection,
 )
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
+from pydantic_ai.realtime.codec import (
+    AudioDelta,
+    InputTranscript,
+    ToolCall,
+    ToolCallCancelled,
+    ToolResult,
+    Transcript,
+)
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 

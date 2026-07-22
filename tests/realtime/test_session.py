@@ -58,30 +58,16 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
-    AudioDelta,
     AudioInput,
-    CancelResponse,
-    ClearAudio,
-    CommitAudio,
-    CreateResponse,
     InputSpeechEndEvent,
-    InputTranscript,
     InputTranscriptionFailedEvent,
-    RealtimeCodecEvent,
-    RealtimeConnection,
     RealtimeError,
     RealtimeEvent,
-    RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession as _RealtimeSession,
     SessionUsageEvent,
-    ToolCall,
-    ToolCallCancelled,
-    ToolResult,
-    Transcript,
-    TruncateOutput,
     TurnCompleteEvent,
 )
 from pydantic_ai.realtime._base import (
@@ -90,6 +76,22 @@ from pydantic_ai.realtime._base import (
     ImageInput,
     SessionErrorEvent,
     TextInput,
+)
+from pydantic_ai.realtime.codec import (
+    AudioDelta,
+    CancelResponse,
+    ClearAudio,
+    CommitAudio,
+    CreateResponse,
+    InputTranscript,
+    RealtimeCodecEvent,
+    RealtimeConnection,
+    RealtimeInput,
+    ToolCall,
+    ToolCallCancelled,
+    ToolResult,
+    Transcript,
+    TruncateOutput,
 )
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tool_manager import ToolManager
