@@ -114,7 +114,7 @@ async def test_decision_no_matching_branch():
         return f'Got: {ctx.inputs}'  # pragma: no cover
 
     # the purpose of this test is to test runtime behavior when you have this type failure, which is why
-    # we have the `# type: ignore` below
+    # we suppress the type checker on the next line
     g.add(
         g.edge_from(g.start_node).to(return_unexpected),
         g.edge_from(return_unexpected).to(g.decision().branch(g.match(str).to(handle_str))),  # pyright: ignore[reportArgumentType]
@@ -169,7 +169,7 @@ async def test_map_non_iterable():
     sum_items = g.join(reduce_sum, initial=0)
 
     # This will fail at runtime because we're trying to map over a non-iterable
-    # We have a `# type: ignore` below because we are testing behavior when you ignore the type error
+    # We suppress the type checker on the next line because we are testing behavior when you ignore the type error
     g.add(
         g.edge_from(g.start_node).to(return_non_iterable),
         g.edge_from(return_non_iterable).map().to(process_item),  # pyright: ignore[reportAttributeAccessIssue, reportUnknownArgumentType, reportUnknownMemberType]
