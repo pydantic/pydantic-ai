@@ -407,19 +407,28 @@ print(result.output)
     To keep exception-based fallback alongside a response handler, pass them together as a list — see the [mixed example below](#combining-handlers).
 
 !!! note
-    Note that the [agent loop](../agent.md) can raise on empty, thinking-only, or non-empty
-    responses: a `'length'` finish reason raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]
-    when the model produced no actionable output (typically because it hit the token limit mid-thinking),
-    an empty response with a `'content_filter'` finish reason raises
-    [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError], and a non-empty response truncated
-    mid-tool-call raises [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (also a subclass
-    of `UnexpectedModelBehavior`). Otherwise non-empty responses are returned as-is. These exceptions are
-    raised from the agent loop rather than from `model.request()`, so they are **not** caught by
-    `FallbackModel`'s default `fallback_on=(ModelAPIError,)` (and `ContentFilterError` does not inherit
-    from [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]).
-    To fall back on them, add a response handler (see the [example above](#finish-reason-example)) that
-    inspects [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason]. To also raise on
-    `content_filter` responses that still carry partial or refusal text, add the
+    The [agent loop](../agent.md) only acts on a finish reason when the response has no actionable
+    output. A `'length'` finish reason on an empty or thinking-only response raises
+    [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] (typically the model hit
+    the token limit mid-thinking), and an empty response with a `'content_filter'` finish reason raises
+    [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
+    responses are re-prompted, up to the output retry limit. Non-empty responses are handled normally
+    regardless of finish reason — a tool call truncated mid-arguments is re-prompted like any other
+    invalid-arguments failure, and only once its retry budget is exhausted does it surface as
+    [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
+    `UnexpectedModelBehavior`).
+
+    All of these are raised from the agent loop, after `model.request()` has already returned
+    successfully, so no exception-based `fallback_on` can catch them — not the default
+    `fallback_on=(ModelAPIError,)` (which wouldn't match anyway, as `ContentFilterError` inherits from
+    `UnexpectedModelBehavior`, not [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]), and not an
+    explicit `fallback_on=(ContentFilterError,)` either. To fall back on a bad finish reason instead,
+    use a response handler (see the [example above](#finish-reason-example)) that inspects
+    [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason]: it rejects the response inside
+    `FallbackModel` before the agent loop sees it, so the next model is tried instead of an exception
+    being raised. Note that it rejects *every* response with that finish reason, including non-empty
+    ones the agent loop would have accepted. To instead raise on `content_filter` responses that still
+    carry partial or refusal text, add the
     [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
 
 #### Native Tool Failure Example
