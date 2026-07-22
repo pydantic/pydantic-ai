@@ -4,15 +4,15 @@ import os
 import threading
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
 from pydantic_ai import (
     Agent,
@@ -1470,6 +1470,72 @@ async def test_cache_policy_tool_key_stable_after_callable_state_changes() -> No
     tool.tool_def.description = 'changed contract'
     changed_contract_key = cache_policy.compute_key(task_ctx=mock_task_ctx, inputs=inputs, flow_parameters={})
     assert changed_contract_key != key_before
+
+
+def _prefect_transform_to_two(value: int) -> int:
+    return 2
+
+
+def _prefect_reject(value: int) -> int:
+    raise ToolFailed('rejected by validator')
+
+
+def _prefect_transform_to_three(value: int) -> int:
+    return 3
+
+
+async def test_prefect_tool_validation_precedes_task_cache_lookup() -> None:
+    """Validator behavior cannot be bypassed by an otherwise colliding Prefect task key.
+
+    All three runs advertise the same tool contract and receive the same raw arguments. If
+    Prefect looked up the task cache before validation, the rejecting and transform-to-three
+    calls would reuse the transform-to-two result.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/pull/6659#discussion_r3632156580.
+    """
+    executed_args: list[int] = []
+
+    async def run_two(value: Annotated[int, AfterValidator(_prefect_transform_to_two)]) -> int:
+        executed_args.append(value)
+        return value
+
+    async def run_rejected(value: Annotated[int, AfterValidator(_prefect_reject)]) -> int:
+        executed_args.append(value)
+        return value
+
+    async def run_three(value: Annotated[int, AfterValidator(_prefect_transform_to_three)]) -> int:
+        executed_args.append(value)
+        return value
+
+    async def run_with_validator(tool_function: Callable[[int], Awaitable[int]]) -> AgentRunResult[str]:
+        toolset = FunctionToolset(id='validator_tools')
+        toolset.add_function(
+            tool_function,
+            name='cached_tool',
+            description='Return the validated value.',
+        )
+
+        agent = Agent(
+            TestModel(call_tools=['cached_tool']),
+            name='prefect_validator_cache',
+            toolsets=[toolset],
+            capabilities=[PrefectDurability()],
+        )
+        return await agent.run('run')
+
+    @flow
+    async def run_all() -> tuple[AgentRunResult[str], AgentRunResult[str], AgentRunResult[str]]:
+        return (
+            await run_with_validator(run_two),
+            await run_with_validator(run_rejected),
+            await run_with_validator(run_three),
+        )
+
+    first, rejected, third = await run_all()
+    assert executed_args == [2, 3]
+    assert (first.output, rejected.output, third.output) == snapshot(
+        ('{"cached_tool":2}', '{"cached_tool":"rejected by validator"}', '{"cached_tool":3}')
+    )
 
 
 async def test_cache_policy_per_run_ids_excluded_but_dict_keys_kept():
