@@ -63,8 +63,9 @@ AudioRetention = TypeAliasType('AudioRetention', Literal['transcript_only', 'inp
 - `'both'`: retain both sides' audio.
 
 Retained audio is stored on the [`SpeechPart`][pydantic_ai.messages.SpeechPart]'s `audio` as WAV
-[`BinaryContent`][pydantic_ai.messages.BinaryContent]. Live audio deltas remain raw PCM. Alignment
-between retained audio and its transcript is approximate.
+[`BinaryContent`][pydantic_ai.messages.BinaryContent]. Live audio deltas remain raw PCM. Retained
+audio is attached to its own user turn (by provider item id where the provider reports one, so
+overlapping turns stay correct); only the exact split at a turn boundary is approximate.
 """
 
 
@@ -406,6 +407,9 @@ class InputSpeechStartEvent:
     in-progress turn is being interrupted.
     """
 
+    item_id: str | None = None
+    """Provider id of the user input item this speech segment belongs to, when reported."""
+
     event_kind: Literal['input_speech_start'] = 'input_speech_start'
     """Event type identifier, used as a discriminator."""
 
@@ -415,6 +419,13 @@ class InputSpeechEndEvent:
     """The provider detected that the user stopped speaking.
 
     Useful as a 'processing' indicator: the user's turn has ended and the model is about to respond.
+    """
+
+    item_id: str | None = None
+    """Provider id of the user input item this speech segment belongs to, when reported.
+
+    Used to attach retained input audio (`audio_retention='input'`/`'both'`) to the right user turn
+    when turns overlap, since transcripts for different items can finalize out of order.
     """
 
     event_kind: Literal['input_speech_end'] = 'input_speech_end'

@@ -562,10 +562,14 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         )
 
     if event_type == 'input_audio_buffer.speech_started':
-        return InputSpeechStartEvent()
+        started_item_id = data.get('item_id')
+        return InputSpeechStartEvent(item_id=started_item_id if isinstance(started_item_id, str) else None)
 
     if event_type == 'input_audio_buffer.speech_stopped':
-        return InputSpeechEndEvent()
+        # The stopped frame names the input item this speech segment produced, letting the session attach
+        # retained input audio to the right user turn even when overlapping turns finalize out of order.
+        stopped_item_id = data.get('item_id')
+        return InputSpeechEndEvent(item_id=stopped_item_id if isinstance(stopped_item_id, str) else None)
 
     if event_type == 'response.done':
         return _map_response_done(data)

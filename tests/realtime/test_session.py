@@ -586,11 +586,13 @@ async def test_control_events_and_recoverable_error_pass_through() -> None:
 
 
 async def test_input_transcription_failure_passes_through_and_session_continues() -> None:
-    failure = InputTranscriptionFailedEvent(message='audio unintelligible', item_id='user-1', content_index=0)
-    conn = FakeRealtimeConnection([failure, TurnCompleteEvent()])
+    # Failures pass through whether or not they identify their turn (`item_id` may be absent).
+    identified = InputTranscriptionFailedEvent(message='audio unintelligible', item_id='user-1', content_index=0)
+    anonymous = InputTranscriptionFailedEvent(message='transcription unavailable')
+    conn = FakeRealtimeConnection([identified, anonymous, TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner)
 
-    assert await collect_events(session) == [failure, TurnCompleteEvent()]
+    assert await collect_events(session) == [identified, anonymous, TurnCompleteEvent()]
 
 
 async def test_fatal_session_error_raises() -> None:
@@ -1821,6 +1823,66 @@ async def test_audio_retained_with_transcription_enabled_waits_for_transcript() 
                 ]
             )
         ]
+    )
+
+
+async def test_input_audio_segmented_by_item_id_across_overlapping_turns() -> None:
+    # With input audio retained and transcription enabled, each speech-stopped boundary carries the input
+    # item id, so its audio is cut into a per-item segment. When two turns overlap and their transcripts
+    # finalize out of order (the second turn's `is_final` arrives before the first's), each user message
+    # still carries its own audio. Without segmentation the whole rolling buffer would attach to whichever
+    # transcript finalized first, giving that turn both turns' audio and the other turn none.
+    gate_a = asyncio.Event()
+    gate_b = asyncio.Event()
+
+    class _Overlapping(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            await gate_a.wait()
+            yield InputSpeechEndEvent(item_id='A')  # segments turn A's audio
+            await gate_b.wait()
+            yield InputSpeechEndEvent(item_id='B')  # segments turn B's audio
+            yield InputTranscript(text='second', is_final=True, item_id='B')  # B finalizes first...
+            yield InputTranscript(text='first', is_final=True, item_id='A')  # ...then A, out of order
+            yield TurnCompleteEvent()
+
+    conn = _Overlapping([])
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    await session.send_audio(b'\xaa')  # turn A's audio, buffered before its boundary fires
+    gate_a.set()
+    async with session:
+        async for event in session:
+            # When A's boundary has passed (its segment is captured), queue B's audio and release B's.
+            if isinstance(event, InputSpeechEndEvent) and event.item_id == 'A':
+                await session.send_audio(b'\xbb')
+                gate_b.set()
+
+    assert session.new_messages() == snapshot(
+        [
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='second', audio=_wav_content(b'\xbb'), id='B')]),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='first', audio=_wav_content(b'\xaa'), id='A')]),
+        ]
+    )
+
+
+async def test_retained_input_audio_dropped_when_transcription_fails() -> None:
+    # A speech-stopped boundary captures the turn's audio segment, but transcription then fails, so the
+    # item never finalizes. Its captured segment must be dropped, not leaked onto a later turn — and the
+    # following turn, whose own audio was consumed by the failed turn's boundary, simply has no audio.
+    conn = FakeRealtimeConnection(
+        [
+            InputSpeechEndEvent(item_id='A'),
+            InputTranscriptionFailedEvent(message='transcription failed', item_id='A'),
+            InputTranscript(text='hi', is_final=True, item_id='B'),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    await session.send_audio(b'\xaa')
+    _ = await collect_events(session)
+    # Only turn B is recorded (A never finalized), and it carries no audio: A's boundary already consumed
+    # and then dropped the buffered bytes.
+    assert session.new_messages() == snapshot(
+        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hi', id='B')])]
     )
 
 
