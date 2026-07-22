@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai._json_schema import JsonSchemaTransformer
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 
 
 class _PassthroughTransformer(JsonSchemaTransformer):
@@ -257,8 +257,6 @@ def test_typeless_anyof_member_still_recursed():
 
 def test_inline_defs_preserves_ref_sibling_keywords():
     """Test internal schema walking, which has no provider request to cover with VCR."""
-    from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
-
     schema = {
         'type': 'object',
         'properties': {
