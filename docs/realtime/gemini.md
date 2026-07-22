@@ -77,3 +77,9 @@ Set `google_enable_session_resumption=True` together with
 [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]. The session re-dials after a drop from
 the latest server handle and emits `state_restored=True`. See
 [Reconnecting](index.md#reconnecting).
+
+!!! note "Proactive resume before the connection cap is not yet supported"
+    Gemini Live closes a connection at its session-duration cap and sends a `GoAway` warning shortly
+    before doing so. Pydantic AI reconnects on the drop (restoring prior turns from the resumption
+    handle), but does not yet resume *proactively* on `GoAway`, so a long call can briefly drop mid-turn
+    at the cap. Tracked in [#6643](https://github.com/pydantic/pydantic-ai/issues/6643).
