@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
 from typing import Any, cast
 
 from prefect import task
@@ -19,7 +18,7 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._toolset import enqueue_guard, resolve_tool_task_config, with_non_retryable_errors
+from ._toolset import guard_task_enqueue, resolve_tool_task_config, with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
 
 
@@ -38,7 +37,7 @@ def prefectify_dynamic_toolset(
 
     @task
     async def call_tool_task(tool_name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> Any:
-        task_ctx = replace(ctx, pending_messages=enqueue_guard())
+        task_ctx = guard_task_enqueue(ctx)
         return await wrap_tool_call_result(call_dynamic_tool(wrapped, tool_name, tool_args, task_ctx))
 
     async def call_tool_operation(
