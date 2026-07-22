@@ -453,16 +453,15 @@ def exa_answer_tool(
 class ExaToolset(FunctionToolset):
     """A toolset that provides Exa search tools with a shared client.
 
-    This is more efficient than creating individual tools when using multiple
-    Exa tools, as it shares a single API client across all tools.
+    Deprecated in favor of the [`ExaSearch`](https://pydantic.dev/docs/ai/harness/exa-search/)
+    capability in the Pydantic AI Harness:
 
-    Example:
-    ```python
+    ```python {test="skip"}
+    from pydantic_ai_harness.exa import ExaSearch
+
     from pydantic_ai import Agent
-    from pydantic_ai.common_tools.exa import ExaToolset
 
-    toolset = ExaToolset(api_key='your-api-key')
-    agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+    agent = Agent('openai:gpt-5.2', capabilities=[ExaSearch()])
     ```
     """
 
