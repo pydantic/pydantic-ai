@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from dbos import DBOS
@@ -10,6 +11,7 @@ from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableDynamicToolset,
     DynamicToolsResult,
+    EnqueueGuard,
     call_dynamic_tool,
     get_dynamic_tools,
     unwrap_recorded_tool_call_result,
@@ -32,6 +34,18 @@ def dbosify_dynamic_toolset(
 
     @DBOS.step(name=f'{name}.call_tool', **(step_config or {}))
     async def call_tool_step(tool_name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> CallToolResult:
+        if DBOS.workflow_id is not None:
+            # Recovery replays this step's recorded output without re-executing the tool, so
+            # in-step enqueued messages would be silently dropped. Outside a workflow the step
+            # degrades to a plain call and enqueueing keeps working.
+            ctx = replace(
+                ctx,
+                pending_messages=EnqueueGuard(
+                    '`ctx.enqueue()` is not supported inside DBOS step-wrapped tools because workflow '
+                    'recovery replays the recorded step output and would drop the enqueued messages. '
+                    'Enqueue messages from workflow-level code instead.'
+                ),
+            )
         # DBOS has no selective non-retryable-exception support, so control-flow
         # exceptions must cross the step boundary as successful values.
         return await wrap_tool_call_result(call_dynamic_tool(wrapped, tool_name, tool_args, ctx))

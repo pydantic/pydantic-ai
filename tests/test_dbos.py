@@ -2315,6 +2315,36 @@ async def test_dbos_dynamic_tool_model_retry_crosses_step_without_engine_retries
     assert await run_workflow() == 1
 
 
+async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None:
+    """`ctx.enqueue()` inside a step-wrapped dynamic tool raises instead of silently dropping.
+
+    Recovery replays the recorded step output without re-executing the tool, so in-step
+    enqueued messages would be lost. Outside a workflow the step degrades to a plain call
+    and enqueueing keeps working.
+    """
+
+    async def enqueue(ctx: RunContext[object]) -> str:
+        ctx.enqueue('later')
+        return 'done'
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_dynamic_enqueue',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([enqueue]), id='enqueue_dynamic')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='recovery replays the recorded step output'):
+        await run_workflow()
+
+    await agent.run('run')
+
+
 async def test_dbos_durability_parallel_mode_applies_inside_run(dbos: DBOS) -> None:
     """The configured parallel-execution mode is active for the duration of the run."""
     from pydantic_ai import tool_manager as _tm
