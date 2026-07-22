@@ -21,20 +21,13 @@ try:
     from openai.types.chat import chat_completion, chat_completion_chunk
 
     from ..providers.snowflake import SnowflakeModelProfile
+    from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
     from .openai import (
         OpenAIChatModel,
         OpenAIChatModelSettings,
         OpenAIStreamedResponse,
         _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
         _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
-    )
-
-    # Cortex adopted OpenRouter's `reasoning_details` format for Claude reasoning, so we reuse
-    # the OpenRouter reasoning detail codec.
-    from .openrouter import (
-        _from_reasoning_detail,  # pyright: ignore[reportPrivateUsage]
-        _into_reasoning_detail,  # pyright: ignore[reportPrivateUsage]
-        _OpenRouterReasoningDetail,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError as _import_error:
     raise ImportError(
@@ -118,9 +111,9 @@ class SnowflakeModelSettings(ModelSettings, total=False):
 
 
 class _SnowflakeCompletionMessage(chat.ChatCompletionMessage):
-    """Chat completion message with the OpenRouter-format `reasoning_details` Cortex returns for Claude models."""
+    """Chat completion message with the `reasoning_details` Cortex returns for Claude models."""
 
-    reasoning_details: list[_OpenRouterReasoningDetail] | None = None
+    reasoning_details: list[ReasoningDetail] | None = None
     """The reasoning details associated with the message, if any."""
 
 
@@ -133,7 +126,7 @@ class _SnowflakeChatCompletion(_ChatCompletion):
 
 
 class _SnowflakeChoiceDelta(chat_completion_chunk.ChoiceDelta):
-    reasoning_details: list[_OpenRouterReasoningDetail] | None = None
+    reasoning_details: list[ReasoningDetail] | None = None
     """The reasoning details associated with the delta, if any."""
 
 
@@ -225,7 +218,7 @@ class SnowflakeModel(OpenAIChatModel):
         assert isinstance(message, _SnowflakeCompletionMessage)
 
         if reasoning_details := message.reasoning_details:
-            return [_from_reasoning_detail(detail, self.system) for detail in reasoning_details]
+            return [from_reasoning_detail(detail, self.system) for detail in reasoning_details]
         else:
             return super()._process_thinking(message)
 
@@ -243,7 +236,7 @@ class SnowflakeModel(OpenAIChatModel):
 
         @override
         def _map_response_thinking_part(self, item: ThinkingPart) -> None:
-            if item.provider_name == self._model.system and (reasoning_detail := _into_reasoning_detail(item)):
+            if item.provider_name == self._model.system and (reasoning_detail := into_reasoning_detail(item)):
                 self.reasoning_details.append(reasoning_detail.model_dump())
             else:
                 super()._map_response_thinking_part(item)
@@ -269,7 +262,7 @@ class SnowflakeStreamedResponse(OpenAIStreamedResponse):
 
         if reasoning_details := choice.delta.reasoning_details:
             for i, detail in enumerate(reasoning_details):
-                thinking_part = _from_reasoning_detail(detail, self._provider_name)
+                thinking_part = from_reasoning_detail(detail, self._provider_name)
                 # Use unique vendor_part_id for each reasoning detail type to prevent
                 # different detail types from being incorrectly merged into a single ThinkingPart.
                 vendor_id = f'reasoning_detail_{detail.type}_{i}'

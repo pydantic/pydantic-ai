@@ -32,7 +32,7 @@ class SnowflakeModelProfile(OpenAIModelProfile, total=False):
     """
 
     snowflake_supports_reasoning: bool
-    """Whether the model supports the OpenRouter-style `reasoning` request object (Claude models)."""
+    """Whether the model supports the `reasoning` request object (Claude models)."""
 
     snowflake_reasoning_requires_temperature_1: bool
     """Whether the model requires `temperature` to be exactly 1 when reasoning is enabled.
@@ -83,7 +83,7 @@ class SnowflakeProvider(Provider[AsyncOpenAI]):
         cortex_profile = OpenAIModelProfile(openai_supports_strict_tool_definition=False)
         if model_name.startswith('claude'):
             # Claude models only support `json_schema` as the response format type, and thinking
-            # is requested with an OpenRouter-style `reasoning` object (see `SnowflakeModel`).
+            # is requested with a `reasoning` object (see `SnowflakeModel`).
             cortex_profile.update(
                 SnowflakeModelProfile(
                     supports_json_schema_output=True,

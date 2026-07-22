@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
-from typing_extensions import TypedDict, assert_never, override
+from typing_extensions import TypedDict, override
 
 from .. import usage
 from ..exceptions import ModelHTTPError, UserError
@@ -26,6 +26,7 @@ from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
+from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
 
 try:
     from openai import APIError, AsyncOpenAI, omit
@@ -346,106 +347,6 @@ class _OpenRouterError(BaseModel):
     message: str
 
 
-class _BaseReasoningDetail(BaseModel, frozen=True):
-    """Common fields shared across all reasoning detail types."""
-
-    id: str | None = None
-    format: (
-        Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1', 'google-gemini-v1']
-        | str
-        | None
-    ) = None
-    index: int | None = None
-    type: Literal['reasoning.text', 'reasoning.summary', 'reasoning.encrypted']
-
-
-class _ReasoningSummary(_BaseReasoningDetail, frozen=True):
-    """Represents a high-level summary of the reasoning process."""
-
-    type: Literal['reasoning.summary']
-    summary: str = ''
-
-
-class _ReasoningEncrypted(_BaseReasoningDetail, frozen=True):
-    """Represents encrypted reasoning data."""
-
-    type: Literal['reasoning.encrypted']
-    data: str = ''
-
-
-class _ReasoningText(_BaseReasoningDetail, frozen=True):
-    """Represents raw text reasoning."""
-
-    type: Literal['reasoning.text']
-    text: str = ''
-    signature: str | None = None
-
-
-_OpenRouterReasoningDetail = _ReasoningSummary | _ReasoningEncrypted | _ReasoningText
-
-
-def _from_reasoning_detail(reasoning: _OpenRouterReasoningDetail, provider_name: str = 'openrouter') -> ThinkingPart:
-    provider_details = reasoning.model_dump(include={'format', 'index', 'type'})
-    if isinstance(reasoning, _ReasoningText):
-        return ThinkingPart(
-            id=reasoning.id,
-            content=reasoning.text,
-            signature=reasoning.signature,
-            provider_name=provider_name,
-            provider_details=provider_details,
-        )
-    elif isinstance(reasoning, _ReasoningSummary):
-        return ThinkingPart(
-            id=reasoning.id, content=reasoning.summary, provider_name=provider_name, provider_details=provider_details
-        )
-    elif isinstance(reasoning, _ReasoningEncrypted):
-        return ThinkingPart(
-            id=reasoning.id,
-            content='',
-            signature=reasoning.data,
-            provider_name=provider_name,
-            provider_details=provider_details,
-        )
-    else:
-        assert_never(reasoning)
-
-
-def _into_reasoning_detail(thinking_part: ThinkingPart) -> _OpenRouterReasoningDetail | None:
-    if thinking_part.provider_details is None:  # pragma: lax no cover
-        return None
-
-    data = _BaseReasoningDetail.model_validate(thinking_part.provider_details)
-
-    if data.type == 'reasoning.text':
-        return _ReasoningText(
-            type=data.type,
-            id=thinking_part.id,
-            format=data.format,
-            index=data.index,
-            text=thinking_part.content,
-            signature=thinking_part.signature,
-        )
-    elif data.type == 'reasoning.summary':
-        return _ReasoningSummary(
-            type=data.type,
-            id=thinking_part.id,
-            format=data.format,
-            index=data.index,
-            summary=thinking_part.content,
-        )
-    elif data.type == 'reasoning.encrypted':
-        assert thinking_part.signature is not None
-        return _ReasoningEncrypted(
-            type=data.type,
-            id=thinking_part.id,
-            format=data.format,
-            index=data.index,
-            data=thinking_part.signature,
-        )
-    else:
-        assert_never(data.type)
-
-
 class _OpenRouterFileAnnotation(BaseModel, frozen=True):
     """File annotation from OpenRouter.
 
@@ -487,7 +388,7 @@ class _OpenRouterCompletionMessage(chat.ChatCompletionMessage):
     reasoning: str | None = None
     """The reasoning text associated with the message, if any."""
 
-    reasoning_details: list[_OpenRouterReasoningDetail] | None = None
+    reasoning_details: list[ReasoningDetail] | None = None
     """The reasoning details associated with the message, if any."""
 
     tool_calls: list[_OpenRouterChatCompletionMessageToolCallUnion] | None = None  # type: ignore[reportIncompatibleVariableOverride]
@@ -1000,7 +901,7 @@ class OpenRouterModel(OpenAIChatModel):
         assert isinstance(message, _OpenRouterCompletionMessage)
 
         if reasoning_details := message.reasoning_details:
-            return [_from_reasoning_detail(detail) for detail in reasoning_details]
+            return [from_reasoning_detail(detail, self.system) for detail in reasoning_details]
         else:
             return super()._process_thinking(message)
 
@@ -1033,7 +934,7 @@ class OpenRouterModel(OpenAIChatModel):
         def _map_response_thinking_part(self, item: ThinkingPart) -> None:
             assert isinstance(self._model, OpenRouterModel)
             if item.provider_name == self._model.system:
-                if reasoning_detail := _into_reasoning_detail(item):  # pragma: lax no cover
+                if reasoning_detail := into_reasoning_detail(item):  # pragma: lax no cover
                     self.reasoning_details.append(reasoning_detail.model_dump())
             else:  # pragma: lax no cover
                 super()._map_response_thinking_part(item)
@@ -1104,7 +1005,7 @@ class _OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):
     reasoning: str | None = None
     """The reasoning text associated with the message, if any."""
 
-    reasoning_details: list[_OpenRouterReasoningDetail] | None = None
+    reasoning_details: list[ReasoningDetail] | None = None
     """The reasoning details associated with the message, if any."""
 
     annotations: list[_OpenRouterAnnotation] | None = None
@@ -1163,7 +1064,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
 
         if reasoning_details := choice.delta.reasoning_details:
             for i, detail in enumerate(reasoning_details):
-                thinking_part = _from_reasoning_detail(detail)
+                thinking_part = from_reasoning_detail(detail, self._provider_name)
                 # Use unique vendor_part_id for each reasoning detail type to prevent
                 # different detail types (e.g., reasoning.text, reasoning.encrypted)
                 # from being incorrectly merged into a single ThinkingPart.
