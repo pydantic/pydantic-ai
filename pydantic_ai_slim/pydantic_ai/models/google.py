@@ -297,6 +297,9 @@ class GoogleModelSettings(ModelSettings, total=False):
     Specifies the Model Armor templates to use for sanitizing user prompts and model responses.
     Both fields are optional — omit either to skip screening for that direction.
 
+    Mutually exclusive with `google_safety_settings`: Vertex AI rejects a request that sets both,
+    since Model Armor replaces the built-in safety filters for that request.
+
     See the [Model Armor docs](https://cloud.google.com/security-command-center/docs/model-armor-overview) for use cases and limitations.
     """
 

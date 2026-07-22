@@ -6568,7 +6568,7 @@ async def test_google_model_armor_response_template_text_gets_blocked(
 
     assert 'SPII' in str(exc_info.value)
     _, kwargs = mock_generate.call_args
-    assert kwargs.get('config')['model_armor_config'] == _MODEL_ARMOR_CONFIG
+    assert kwargs['config']['model_armor_config'] == _MODEL_ARMOR_CONFIG
 
 
 async def test_google_model_armor_config_is_sent_in_request(
@@ -6606,4 +6606,4 @@ async def test_google_model_armor_config_is_sent_in_request(
     await agent.run('hello')
 
     _, kwargs = mock_generate.call_args
-    assert kwargs.get('config')['model_armor_config'] == _MODEL_ARMOR_CONFIG
+    assert kwargs['config']['model_armor_config'] == _MODEL_ARMOR_CONFIG
