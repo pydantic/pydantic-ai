@@ -2694,7 +2694,7 @@ class SandboxContributingCapability(AbstractCapability[Any]):
 
 
 sandbox_capability_agent = Agent(model, name='sandbox_capability_agent', capabilities=[SandboxContributingCapability()])
-sandbox_capability_temporal_agent = TemporalAgent(sandbox_capability_agent, activity_config=BASE_ACTIVITY_CONFIG)
+sandbox_capability_temporal_agent = TemporalAgent(sandbox_capability_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn

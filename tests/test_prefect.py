@@ -1656,7 +1656,7 @@ async def test_prefect_flow_forwards_sandbox_to_tools():
         seen.append(ctx.sandbox)
         return 'ok'
 
-    prefect_agent = PrefectAgent(agent)
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
 
     @flow
     async def run_agent() -> str:
