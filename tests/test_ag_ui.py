@@ -4680,9 +4680,10 @@ async def test_stream_tool_return_files_roundtrip_to_history() -> None:
 def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Message]:
     """Build the client tool history needed to round-trip tool-result metadata.
 
-    The pinned reducer creates a content-only `ToolMessage` for `TOOL_CALL_RESULT`, then attaches
-    `REASONING_ENCRYPTED_VALUE(subtype='message')` by message ID:
-    https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts#L439-L464
+    The pinned reducer creates a content-only `ToolMessage` for `TOOL_CALL_RESULT`:
+    https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts#L439-L506
+    It then attaches `REASONING_ENCRYPTED_VALUE(subtype='message')` by message ID:
+    https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts#L1130-L1174
     """
     start = next(event for event in events if event['type'] == 'TOOL_CALL_START')
     result = next(event for event in events if event['type'] == 'TOOL_CALL_RESULT')

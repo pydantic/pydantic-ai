@@ -379,7 +379,9 @@ AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`]
 
 ### Preserving failed tool outcomes
 
-Live failed tool results preserve `outcome='failed'` from [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] in AG-UI message metadata when using `ag-ui-protocol >= 0.1.13`. If those messages are sent back on a later run, the adapter restores the failed outcome. Event streams produced with earlier protocol versions have no metadata carrier for the outcome, so reloading them reconstructs the tool result as `outcome='success'`.
+AG-UI's [`ToolCallResultEvent`](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/sdk/python/core/events.mdx#L284-L304) has no error or outcome field. Although [encrypted reasoning continuity](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/concepts/reasoning.mdx#L6-L29) is the intended use of [`ReasoningEncryptedValueEvent`](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/sdk/python/core/events.mdx#L555-L577), it is also AG-UI's standard event for attaching `encrypted_value` to a message or tool call. Pydantic AI uses that attachment mechanism with a namespaced payload to preserve `outcome='failed'` from [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] when using `ag-ui-protocol >= 0.1.13`.
+
+If the client sends those messages back on a later run, the adapter restores the failed outcome. This is a history-continuity mechanism: it does not set [`ToolMessage.error`](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/concepts/messages.mdx#L143-L163) or guarantee that a frontend visually renders the result as an error. Event streams produced with earlier protocol versions have no metadata carrier for the outcome, so reloading them reconstructs the tool result as `outcome='success'`.
 
 ### Preserving files across round-trips
 
