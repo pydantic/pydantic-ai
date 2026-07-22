@@ -354,8 +354,8 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             if not (origin is not None and NoneType in args):
                 type_name = getattr(self.state_type, '__name__', str(self.state_type))
                 raise TypeError(
-                    f"A state instance is required when state_type is {type_name}, "
-                    "but got None. Did you forget to pass state= to graph.run()?"
+                    f'A state instance is required when state_type is {type_name}, '
+                    'but got None. Did you forget to pass state= to graph.run()?'
                 )
 
         with ExitStack() as stack:
@@ -919,9 +919,9 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
             # Provide a more helpful error for common misconfigurations
             if node_id == '__start__':
                 raise exceptions.GraphSetupError(
-                    "The start node has no outgoing edges. "
-                    "Did you forget to add an edge from the start node? "
-                    "e.g.: g.add(g.edge_from(g.start_node).to(first_step))"
+                    'The start node has no outgoing edges. '
+                    'Did you forget to add an edge from the start node? '
+                    'e.g.: g.add(g.edge_from(g.start_node).to(first_step))'
                 ) from None
             raise
 
