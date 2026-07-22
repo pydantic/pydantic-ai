@@ -1194,6 +1194,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             ModelRetry: If the tool errors and `tool_error_behavior='retry'` (the default), or if an MCP
                 protocol error occurs with `tool_error_behavior='retry'` or `'failed'`.
             fastmcp.exceptions.ToolError: If the tool errors and `tool_error_behavior='error'`.
+            mcp.shared.exceptions.McpError: If an MCP protocol error occurs and `tool_error_behavior='error'`.
             ToolFailed: If a completed tool error occurs and `tool_error_behavior='failed'`.
         """
         async with self:
