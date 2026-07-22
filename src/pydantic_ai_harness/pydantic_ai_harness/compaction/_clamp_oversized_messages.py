@@ -52,7 +52,9 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
     - `ToolCallPart` args, when `clamp_tool_call_args` is set (the same failure shape for a
       giant tool-call payload). The args are replaced with a small JSON object so they stay
       valid function arguments; the original call already executed, so this only shrinks the
-      history copy.
+      history copy. Framework-typed subclasses (`ToolSearchCallPart`, `LoadCapabilityCallPart`)
+      are never clamped: their typed args must survive the `ModelMessagesTypeAdapter`
+      round-trip that persistence relies on.
 
     Request-side parts (user prompts, tool returns, system prompts) are out of scope: user
     input should not be silently rewritten, and oversized tool *returns* are the job of
@@ -153,7 +155,13 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
                         new_parts.append(replace(part, content=clamped))
                         changed = True
                         continue
-                elif isinstance(part, ToolCallPart) and self.clamp_tool_call_args:
+                # Exact type, not `isinstance`: typed `ToolCallPart` subclasses such as
+                # `ToolSearchCallPart` and `LoadCapabilityCallPart` narrow `args` to a typed shape
+                # that `ModelMessagesTypeAdapter` validates when persisted history is restored
+                # (e.g. a `StepPersistence` resume). Replacing that shape with the `_clamped`
+                # object keeps the concrete class but fails the round-trip, so only plain tool
+                # calls are clamped.
+                elif type(part) is ToolCallPart and self.clamp_tool_call_args:
                     clamped = self._clamp(part.args_as_json_str())
                     if clamped is not None:
                         new_parts.append(replace(part, args={_CLAMP_ARGS_KEY: clamped}))
