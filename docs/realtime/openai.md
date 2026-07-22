@@ -47,6 +47,34 @@ cheaper prompt-cached audio prefix as a session grows. OpenAI realtime does not 
 `temperature`. Input transcription defaults to `'auto'`; see
 [Transcribing user input](index.md#transcribing-user-input).
 
+## Browser WebRTC
+
+For browser voice agents, OpenAI recommends WebRTC: the audio flows browser ↔ OpenAI directly, while
+your backend attaches a control-plane **sideband** to run the agent. See
+[Browser / WebRTC](index.md#browser-webrtc) in the overview for the topology and the secure flow, and
+the [realtime WebRTC example](../examples/realtime-webrtc.md) for a runnable app.
+
+[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel] implements two signaling
+helpers, both binding the session configuration (instructions, tools, voice, VAD) server-side:
+
+- [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer] — the **secure** path:
+  relay the browser's SDP offer to `POST /v1/realtime/calls`, returning the SDP answer and a
+  [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall] to attach a sideband to with
+  [`agent.realtime_session(provider_session=…)`][pydantic_ai.agent.Agent.realtime_session]. The browser
+  never sees a token.
+- [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret] — mint a short-lived
+  [`RealtimeClientSecret`][pydantic_ai.realtime.RealtimeClientSecret] (ephemeral token) for a browser
+  that negotiates the WebRTC call itself, when you don't relay the SDP through your backend.
+
+```python {test="skip" lint="skip"}
+# In your `POST /offer` handler, `sdp_offer` is the browser's SDP offer (the request body):
+answer = await model.answer_webrtc_offer(sdp_offer, instructions='You are a helpful assistant.')
+# Return `answer.sdp` to the browser, then run the agent over the sideband:
+async with agent.realtime_session(model=model, provider_session=answer.call) as session:
+    async for event in session:
+        ...
+```
+
 ## Reasoning
 
 The cross-provider [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting mirrors

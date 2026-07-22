@@ -63,6 +63,7 @@ if TYPE_CHECKING:
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeSession,
+        WebRTCCall,
     )
 
 
@@ -1538,6 +1539,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
+        provider_session: WebRTCCall | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session backed by the agent's tools.
 

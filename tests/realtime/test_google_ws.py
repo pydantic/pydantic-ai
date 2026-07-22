@@ -321,4 +321,5 @@ def test_profile_allow_seeding() -> None:
         supported_native_tools=frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
         audio_input_sample_rate=16000,
         audio_output_sample_rate=24000,
+        owns_media=True,
     )

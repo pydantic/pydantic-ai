@@ -45,6 +45,7 @@ from ._base import (
     InputTranscript,
     InputTranscriptionFailedEvent,
     KnownRealtimeTranscriptionModelName,
+    RealtimeClientSecret,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeError,
@@ -66,6 +67,8 @@ from ._base import (
     TruncateOutput,
     TurnCompleteEvent,
     TurnDetection,
+    WebRTCAnswer,
+    WebRTCCall,
     merge_realtime_profile,
 )
 from ._session import RealtimeSession
@@ -160,6 +163,7 @@ __all__ = (
     'InputTranscript',
     'KnownRealtimeTranscriptionModelName',
     'KnownRealtimeModelName',
+    'RealtimeClientSecret',
     'RealtimeConnection',
     'RealtimeCodecEvent',
     'RealtimeEvent',
@@ -183,6 +187,8 @@ __all__ = (
     'TruncateOutput',
     'TurnDetection',
     'TurnCompleteEvent',
+    'WebRTCAnswer',
+    'WebRTCCall',
     'infer_realtime_model',
     'ImageInput',
     'TextInput',

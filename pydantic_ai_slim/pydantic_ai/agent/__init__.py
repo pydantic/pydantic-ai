@@ -123,7 +123,14 @@ if TYPE_CHECKING:
 
     from pydantic_graph import GraphRunContext
 
-    from ..realtime import AudioRetention, KnownRealtimeModelName, RealtimeModel, RealtimeModelSettings, RealtimeSession
+    from ..realtime import (
+        AudioRetention,
+        KnownRealtimeModelName,
+        RealtimeModel,
+        RealtimeModelSettings,
+        RealtimeSession,
+        WebRTCCall,
+    )
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -3002,6 +3009,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
+        provider_session: WebRTCCall | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session backed by the agent's tools.
 
@@ -3072,8 +3080,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             retain_images_every_n: Keep one of every `N` images sent during the session in message
                 history. Defaults to `1`, which keeps every image. Increase this for high-rate camera
                 or screen streams to trade complete visual history for lower memory use.
+            provider_session: A [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall] to attach a **sideband**
+                control session to, from
+                [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer]. When set,
+                the browser exchanges audio with the provider directly over WebRTC and this session runs
+                only the control plane (instructions, tools, transcripts, history) — the audio methods
+                (`send_audio`/`commit_audio`/`clear_audio`) are unavailable and `audio_retention` must be
+                left at `'transcript_only'`. See the realtime docs for the full browser/WebRTC flow.
         """
-        from ..realtime import RealtimeModel, RealtimeSession, infer_realtime_model
+        from ..realtime import RealtimeModel, RealtimeSession, infer_realtime_model, merge_realtime_profile
 
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
@@ -3168,6 +3183,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # connecting, rather than mid-session. This is the signal a caller or capability needs to fall
         # back (e.g. to a local tool); the session itself does not fall back automatically.
         model_profile = model.profile
+        if provider_session is not None:
+            # A WebRTC sideband session doesn't own the audio transport: the browser streams audio to the
+            # provider directly. Mark the profile so the session disables its audio methods, and reject an
+            # audio-retention request that can never be satisfied (no audio bytes flow over this connection).
+            model_profile = merge_realtime_profile(model_profile, {'owns_media': False})
+            if audio_retention != 'transcript_only':
+                raise exceptions.UserError(
+                    "A WebRTC sideband session can't retain audio: the browser exchanges audio with the "
+                    'provider directly, so no audio bytes reach this connection. Leave `audio_retention` at '
+                    "'transcript_only' (transcripts still build the conversation history)."
+                )
         supported_native_tools = model_profile.get('supported_native_tools', frozenset())
         if unsupported_native_tools := [t for t in native_tools if not isinstance(t, tuple(supported_native_tools))]:
             unsupported = ', '.join(sorted(type(t).__name__ for t in unsupported_native_tools))
@@ -3223,11 +3249,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     '`message_history`.'
                 )
 
-            async with model.connect(
-                messages=request_messages,
-                model_settings=effective_model_settings,
-                model_request_parameters=model_request_parameters,
-            ) as connection:
+            if provider_session is not None:
+                connection_manager = model.connect_webrtc(
+                    provider_session,
+                    messages=request_messages,
+                    model_settings=effective_model_settings,
+                    model_request_parameters=model_request_parameters,
+                )
+            else:
+                connection_manager = model.connect(
+                    messages=request_messages,
+                    model_settings=effective_model_settings,
+                    model_request_parameters=model_request_parameters,
+                )
+            async with connection_manager as connection:
                 session = RealtimeSession(
                     connection,
                     tool_manager,

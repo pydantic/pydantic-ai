@@ -68,6 +68,7 @@ from pydantic_ai.realtime import (
     TruncateOutput,
     TurnCompleteEvent,
     TurnDetection,
+    WebRTCCall,
 )
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput, merge_realtime_profile
 from pydantic_ai.realtime._openai_protocol import map_conversation_event, realtime_websocket_url
@@ -628,6 +629,43 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
     assert session['audio']['output']['voice'] == 'alloy'
     assert session['tools'][0]['name'] == 'get_weather'
     assert session['tools'][0]['type'] == 'function'
+
+
+@pytest.mark.anyio
+async def test_connect_webrtc_sideband_handshake(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The sideband attaches by `call_id` and applies its session config without a `session.created` wait.
+
+    A control connection joins an *existing* WebRTC call, so (unlike the WebSocket path) the server does
+    not emit `session.created` first: the connection sends `session.update` immediately and waits for
+    `session.updated`, which also reports the served model. A unit test because a cassette's request
+    matcher ignores the handshake ordering this pins.
+    """
+    updated = json.dumps({'type': 'session.updated', 'session': {'model': 'gpt-realtime-2.1'}})
+    transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'hi'})
+    ws = FakeWebSocket([updated, transcript])
+    fake_connect = FakeConnect(ws)
+    monkeypatch.setattr(rt_openai.websockets, 'connect', fake_connect)
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
+    call = WebRTCCall(provider_name='openai', call_id='rtc_test1')
+    async with model.connect_webrtc(
+        call,
+        messages=[ModelRequest(parts=[], instructions='Be nice')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as conn:
+        events = [e async for e in conn]
+
+    # Attaches to the call by id (no `?model=`), with the same bearer auth as the WebSocket path.
+    assert fake_connect.url == 'wss://api.openai.com/v1/realtime?call_id=rtc_test1'
+    assert fake_connect.headers == {'Authorization': 'Bearer k'}
+    # The very first frame is `session.update` — the call already exists, so there is no handshake wait.
+    first = json.loads(ws.sent[0])
+    assert first['type'] == 'session.update'
+    assert first['session']['instructions'] == 'Be nice'
+    # The served model is captured from `session.updated` (not `session.created`).
+    assert conn.model_name == 'gpt-realtime-2.1'
+    assert events == [Transcript(text='hi', is_final=True)]
 
 
 @pytest.mark.anyio

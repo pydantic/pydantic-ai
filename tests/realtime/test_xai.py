@@ -194,6 +194,7 @@ def test_profile() -> None:
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supported_native_tools=frozenset(),
+        owns_media=True,
     )
 
 

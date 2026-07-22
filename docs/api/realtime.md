@@ -47,6 +47,16 @@ concurrently so the model can keep speaking while it works.
 | [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection] | Provider ABC; `send()` content in, iterate events out. |
 | [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic concurrent tool dispatch. |
 
+**Browser / WebRTC** — for browser voice agents, the media flows browser ↔ provider directly while the
+backend runs a control-plane sideband (OpenAI and Azure OpenAI; see [Browser / WebRTC](../realtime/index.md#browser-webrtc)):
+
+| Object | Role |
+| --- | --- |
+| [`RealtimeModel.answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer] | Relay the browser's SDP offer; return the SDP answer and a [`WebRTCAnswer`][pydantic_ai.realtime.WebRTCAnswer] / [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall]. |
+| [`RealtimeModel.create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret] | Mint an ephemeral [`RealtimeClientSecret`][pydantic_ai.realtime.RealtimeClientSecret] for a browser client. |
+| [`Agent.realtime_session(provider_session=…)`][pydantic_ai.agent.Agent.realtime_session] | Attach the sideband session to a [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall] and run the agent. |
+| [`RealtimeModelProfile.owns_media`][pydantic_ai.realtime.RealtimeModelProfile.owns_media] | `False` on a sideband session: the browser owns the audio, so the audio methods are unavailable. |
+
 **Inputs** — [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send] accepts plain `str`,
 image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], a sequence of these, or a precise
 [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput]:

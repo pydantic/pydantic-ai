@@ -170,6 +170,7 @@ nav:
       - Realtime:
           - examples/realtime-voice.md
           - examples/realtime-camera.md
+          - examples/realtime-webrtc.md
       - Complex Workflows:
           - examples/flight-booking.md
       - Business Applications:
