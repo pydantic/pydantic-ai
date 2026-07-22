@@ -23,6 +23,8 @@ from .exceptions import (
     ModelRetry,
     SkipToolExecution,
     SkipToolValidation,
+    ToolFailed,
+    ToolFailedError,
     ToolRetryError,
     UnexpectedModelBehavior,
 )
@@ -35,6 +37,8 @@ if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability
 
 ParallelExecutionMode = Literal['parallel', 'sequential', 'parallel_ordered_events']
+"""How tool calls from a single model response are executed — see
+[`ToolManager.parallel_execution_mode`][pydantic_ai.tool_manager.ToolManager.parallel_execution_mode]."""
 
 _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar(
     'parallel_execution_mode', default='parallel'
@@ -69,8 +73,8 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     for consistency with regular tool calls). Output-tool semantic unwrapping happens
     inside `execute_output_tool_call` at the output hook boundary, not here.
     """
-    validation_error: ToolRetryError | None = None
-    """The validation error if validation failed, None otherwise."""
+    validation_error: ToolRetryError | ToolFailedError | None = None
+    """The model-visible tool result if validation failed, None otherwise."""
 
 
 @dataclass
@@ -172,7 +176,9 @@ class ToolManager(Generic[AgentDepsT]):
     def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> None:
         """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
         assert self.ctx is not None
-        if self.ctx.retries.get(name, 0) == max_retries:
+        # `>=` rather than `==` so a negative budget raises immediately instead of looping forever
+        # (the count starts at 0 and only ever grows, so it would never equal a negative target).
+        if self.ctx.retries.get(name, 0) >= max_retries:
             raise UnexpectedModelBehavior(
                 f'Tool {name!r} exceeded max retries count of {max_retries}. Consider raising the retry '
                 'limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries'
@@ -187,6 +193,17 @@ class ToolManager(Generic[AgentDepsT]):
             content = error.message
         m = _messages.RetryPromptPart(tool_name=name, content=content, tool_call_id=call.tool_call_id)
         return ToolRetryError(m)
+
+    @staticmethod
+    def _wrap_error_as_failed(name: str, call: ToolCallPart, error: ToolFailed) -> ToolFailedError:
+        """Convert a ToolFailed to a ToolFailedError with a failed ToolReturnPart."""
+        m = _messages.ToolReturnPart(
+            tool_name=name,
+            content=error.message,
+            tool_call_id=call.tool_call_id,
+            outcome='failed',
+        )
+        return ToolFailedError(m)
 
     def _build_tool_context(
         self,
@@ -325,9 +342,9 @@ class ToolManager(Generic[AgentDepsT]):
                     tool_result = await cap.wrap_tool_execute(
                         ctx, call=call, tool_def=tool_def, args=args, handler=do_execute
                     )
-                except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError):
+                except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError, ToolFailedError):
                     raise  # Control flow, not errors
-                except ModelRetry:
+                except (ToolFailed, ModelRetry):
                     raise  # Propagate to outer handler
                 except Exception as e:
                     tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
@@ -346,6 +363,10 @@ class ToolManager(Generic[AgentDepsT]):
                 self._check_max_retries(name, validated.tool.max_retries, e)
                 self.failed_tools.add(name)
                 raise self._wrap_error_as_retry(name, call, e) from e
+            except ToolFailed as e:
+                if not wrap_validation_errors:
+                    raise
+                raise self._wrap_error_as_failed(call.tool_name, call, e) from e
         else:
             tool_result = await do_execute(validated.validated_args)
 
@@ -436,10 +457,11 @@ class ToolManager(Generic[AgentDepsT]):
             wrap_validation_errors: If True (default), wrap `ValidationError` / `ModelRetry`
                 as `ToolRetryError` on the returned `ValidatedToolCall.validation_error`,
                 count the call against the retry budget, and add it to `failed_tools`.
-                If False, propagate the raw `ValidationError` / `ModelRetry` and leave
-                retry-budget state untouched — useful for nested callers (e.g. sandboxed
-                tool dispatch) where validation failures shouldn't consume the agent's
-                retry budget and the raw exception is what the caller wants to surface.
+                `ToolFailed` is wrapped as `ToolFailedError` without consuming the retry
+                budget. If False, propagate the raw exception and leave retry-budget state
+                untouched — useful for nested callers (e.g. sandboxed tool dispatch) where
+                validation failures shouldn't consume the agent's retry budget and the raw
+                exception is what the caller wants to surface.
 
         Returns:
             ValidatedToolCall with validation results, ready for execution via execute_tool_call().
@@ -461,6 +483,17 @@ class ToolManager(Generic[AgentDepsT]):
             if not wrap_validation_errors:
                 raise
             return self._make_validation_failure(call.tool_name, call, tool, ctx, e)
+        except ToolFailed as e:
+            if not wrap_validation_errors:
+                raise
+            return ValidatedToolCall(
+                call=call,
+                tool=tool,
+                ctx=ctx,
+                args_valid=False,
+                validated_args=None,
+                validation_error=self._wrap_error_as_failed(call.tool_name, call, e),
+            )
 
     async def execute_tool_call(
         self,
@@ -486,9 +519,11 @@ class ToolManager(Generic[AgentDepsT]):
             The tool result if validation passed and execution succeeded.
 
         Raises:
-            ToolRetryError: If validation failed (contains the retry prompt) or the tool
-                raised `ModelRetry`. Only when `wrap_validation_errors=True`.
-            ModelRetry / ValidationError: When `wrap_validation_errors=False`.
+            ToolRetryError: If validation failed with a retry prompt or the tool raised
+                `ModelRetry`. Only when `wrap_validation_errors=True`.
+            ToolFailedError: If validation failed with `ToolFailed`, or the tool raised
+                `ToolFailed`. Only when `wrap_validation_errors=True`.
+            ModelRetry / ValidationError / ToolFailed: When `wrap_validation_errors=False`.
             RuntimeError: If trying to execute an external tool.
         """
         if self.ctx is None:
@@ -620,7 +655,7 @@ class ToolManager(Generic[AgentDepsT]):
         # Output validators see the *global* output-retry budget (`max_output_retries`), so the same
         # validator stays consistent across the text path and across multiple `ToolOutput`s. Output
         # functions, by contrast, see the *per-tool* `tool.max_retries` (the post-https://github.com/pydantic/pydantic-ai/issues/4687 override) on
-        # `validated.ctx`. Termination on the tool path checks `retries[name] == tool.max_retries`
+        # `validated.ctx`. Termination on the tool path checks `retries[name] >= tool.max_retries`
         # (see `_check_max_retries` below), so when `ToolOutput(max_retries=N)` exceeds
         # `max_output_retries`, the validator's `ctx.last_attempt` can fire before the run actually
         # terminates. Tracked in https://github.com/pydantic/pydantic-ai/issues/5238 — revisiting cleanly needs broader thought about
@@ -710,9 +745,11 @@ class ToolManager(Generic[AgentDepsT]):
         validation carries a pre-wrapped `ToolRetryError`; raw-mode callers get raw
         errors at the `validate_tool_call(wrap_validation_errors=False)` boundary.
 
-        Raises ToolRetryError if validation previously failed or the tool raises ModelRetry
-        (when `wrap_validation_errors=True`); when False, ModelRetry from the tool body
-        or hooks propagates raw. Raises UnexpectedModelBehavior if max retries exceeded.
+        Raises ToolRetryError if validation previously failed with a retry prompt or the
+        tool raises ModelRetry (when `wrap_validation_errors=True`). Raises ToolFailedError
+        if validation previously failed with ToolFailed or the tool raises ToolFailed.
+        When False, ModelRetry / ToolFailed from the tool body or hooks propagates raw.
+        Raises UnexpectedModelBehavior if max retries exceeded.
         """
         # Asserts narrow types for pyright; invariants guaranteed by ValidatedToolCall construction
         if not validated.args_valid:
@@ -755,6 +792,10 @@ class ToolManager(Generic[AgentDepsT]):
                 validated.ctx,
                 validated.tool,
             )
+        except ToolFailed as e:
+            if not wrap_validation_errors:
+                raise
+            raise self._wrap_error_as_failed(name, validated.call, e) from e
         except ModelRetry as e:
             if not wrap_validation_errors:
                 raise
@@ -787,11 +828,12 @@ class ToolManager(Generic[AgentDepsT]):
             approved: Whether the tool call has been approved.
             metadata: Additional metadata from DeferredToolResults.metadata.
             wrap_validation_errors: If True (default), validation failures surface as
-                `ToolRetryError` (after counting against the retry budget). If False,
-                the raw `ValidationError` / `ModelRetry` propagates and retry-budget
-                state is left untouched — useful for nested callers (e.g. sandboxed
-                tool dispatch) where the call shouldn't consume the agent's retry
-                budget and the raw exception is what the caller wants to surface.
+                `ToolRetryError` (after counting against the retry budget) or
+                `ToolFailedError` (without consuming the retry budget). If False, the
+                raw `ValidationError` / `ModelRetry` / `ToolFailed` propagates and
+                retry-budget state is left untouched — useful for nested callers (e.g.
+                sandboxed tool dispatch) where the call shouldn't consume the agent's
+                retry budget and the raw exception is what the caller wants to surface.
 
         Returns:
             The tool's return value on success — possibly a [`ToolReturn`][pydantic_ai.messages.ToolReturn]
@@ -879,8 +921,10 @@ class ToolManager(Generic[AgentDepsT]):
             ToolRetryError: Handler requested a retry via `ModelRetry` or `RetryPromptPart`,
                 or the approved tool re-raised `ModelRetry` (only when
                 `wrap_validation_errors=True`).
-            ValidationError / ModelRetry: When `wrap_validation_errors=False` and the
-                approved tool's re-validation fails or its body raises `ModelRetry`.
+            ToolFailedError: Handler reported a failure via `ToolFailed`, or the approved
+                tool raised `ToolFailed` (only when `wrap_validation_errors=True`).
+            ValidationError / ModelRetry / ToolFailed: When `wrap_validation_errors=False` and the
+                approved tool's re-validation fails or its body raises `ModelRetry` or `ToolFailed`.
             CallDeferred / ApprovalRequired: Handler couldn't resolve the call, or the
                 approved tool re-raised a deferral.
         """
@@ -904,6 +948,10 @@ class ToolManager(Generic[AgentDepsT]):
             # `isinstance`-check the result of `handle_call` to distinguish a denial
             # from a successful tool return.
             return tool_call_result
+        if isinstance(tool_call_result, ToolFailed):
+            if not wrap_validation_errors:
+                raise tool_call_result
+            raise self._wrap_error_as_failed(call.tool_name, call, tool_call_result)
         if isinstance(tool_call_result, ToolApproved):
             validate_call = call
             if tool_call_result.override_args is not None:

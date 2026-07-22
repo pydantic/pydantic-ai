@@ -78,11 +78,22 @@ Use the durable execution integrations when the run must survive crashes, retrie
 
 Temporal entry points:
 
-- `TemporalAgent`
+- `Agent(..., capabilities=[TemporalDurability(...)])`
 - `PydanticAIWorkflow`
 - `PydanticAIPlugin`
+- `AgentPlugin`
 
-There are parallel integrations for DBOS and Prefect.
+`TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
+
+## Handle MCP Tool Errors
+
+Set `MCPToolset(tool_error_behavior=...)` according to the server error semantics:
+
+- `'retry'` asks the model to correct and retry the call. This is the default.
+- `'failed'` reports a completed failed result via `ToolFailed` without consuming retry budget.
+- `'error'` propagates the underlying exception to application code.
+
+Structured server error content is serialized as JSON for both `'retry'` and `'failed'`. Protocol and transport errors (as opposed to completed tool errors) stay retryable even under `'failed'`.
 
 ## Use Embeddings for RAG
 
