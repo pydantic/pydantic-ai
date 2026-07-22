@@ -34,7 +34,12 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     """Settings specific to Azure realtime models."""
 
     azure_voice_live: bool
-    """Use the Azure AI Voice Live endpoint and beta session protocol instead of the GA endpoint."""
+    """Use the Azure AI Voice Live endpoint and beta session protocol instead of the GA endpoint.
+
+    Voice Live is a distinct Azure resource; [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider]
+    reads its `AZURE_VOICELIVE_ENDPOINT` / `AZURE_VOICELIVE_API_KEY` / `AZURE_VOICELIVE_API_VERSION`
+    credentials as a fallback to the `AZURE_OPENAI_*` variables.
+    """
     azure_voice_live_turn_detection: ServerVAD | SemanticVAD
     """Voice Live server or semantic VAD config; only applies when `azure_voice_live=True`."""
 

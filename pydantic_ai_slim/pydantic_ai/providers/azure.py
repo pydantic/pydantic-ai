@@ -150,19 +150,25 @@ class AzureProvider(Provider[AsyncOpenAI]):
             self._azure_endpoint = self._base_url.partition('/openai/')[0].rstrip('/')
             self._api_key = openai_client.api_key or None
         else:
-            azure_endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT')
+            # Azure AI Voice Live (used by `AzureRealtimeModel`) is a distinct resource with its own
+            # `AZURE_VOICELIVE_*` credentials; accept those as a fallback so a Voice Live user doesn't need
+            # to also set `AZURE_OPENAI_*`. An explicit argument, then the OpenAI prefix, then Voice Live.
+            azure_endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT') or os.getenv('AZURE_VOICELIVE_ENDPOINT')
             if not azure_endpoint:
                 raise UserError(
-                    'Must provide one of the `azure_endpoint` argument or the `AZURE_OPENAI_ENDPOINT` environment variable'
+                    'Must provide the `azure_endpoint` argument or set the `AZURE_OPENAI_ENDPOINT` '
+                    '(or `AZURE_VOICELIVE_ENDPOINT`) environment variable'
                 )
 
-            if not api_key and 'AZURE_OPENAI_API_KEY' not in os.environ:  # pragma: no cover
+            api_key = api_key or os.getenv('AZURE_OPENAI_API_KEY') or os.getenv('AZURE_VOICELIVE_API_KEY')
+            if not api_key:  # pragma: no cover
                 raise UserError(
-                    'Must provide one of the `api_key` argument or the `AZURE_OPENAI_API_KEY` environment variable'
+                    'Must provide the `api_key` argument or set the `AZURE_OPENAI_API_KEY` '
+                    '(or `AZURE_VOICELIVE_API_KEY`) environment variable'
                 )
 
             self._azure_endpoint = azure_endpoint.rstrip('/')
-            self._api_key = api_key or os.getenv('AZURE_OPENAI_API_KEY')
+            self._api_key = api_key
 
             if http_client is None:
                 http_client = create_async_http_client()
@@ -181,14 +187,16 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     )
                 self._client = AsyncOpenAI(
                     base_url=v1_base_url,
-                    api_key=api_key or os.getenv('AZURE_OPENAI_API_KEY'),
+                    api_key=api_key,
                     http_client=http_client,
                 )
                 self._base_url = str(self._client.base_url)
             else:
-                if not api_version and 'OPENAI_API_VERSION' not in os.environ:  # pragma: no cover
+                api_version = api_version or os.getenv('OPENAI_API_VERSION') or os.getenv('AZURE_VOICELIVE_API_VERSION')
+                if not api_version:  # pragma: no cover
                     raise UserError(
-                        'Must provide one of the `api_version` argument or the `OPENAI_API_VERSION` environment variable'
+                        'Must provide the `api_version` argument or set the `OPENAI_API_VERSION` '
+                        '(or `AZURE_VOICELIVE_API_VERSION`) environment variable'
                     )
 
                 self._client = AsyncAzureOpenAI(

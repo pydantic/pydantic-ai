@@ -1,7 +1,8 @@
-# Azure OpenAI Realtime
+# Azure Realtime
 
-[`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel] connects to Azure OpenAI's GA
-realtime protocol with the server-side Pydantic AI agent loop. See the [realtime overview](index.md).
+[`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel] connects to Azure's realtime
+speech-to-speech with the server-side Pydantic AI agent loop — either the **Azure OpenAI GA** protocol
+(the default) or **Azure AI Voice Live** (opt-in). See the [realtime overview](index.md).
 
 ## Installation
 
@@ -61,6 +62,34 @@ realtime does not expose `temperature`. Input transcription defaults to `'auto'`
     need transcripts, disable transcription with `input_transcription_model=None` and pass
     `audio_retention='input'` so the spoken turn is still kept as audio.
 
-## Azure AI Voice Live support is coming soon
+## Azure AI Voice Live
 
-Azure AI Voice Live support is coming soon.
+[Azure AI Voice Live](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live) is
+Microsoft's managed speech-to-speech service — a superset of the GA realtime API with extra session
+options. It's the **same [`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel]**: opt in
+with [`azure_voice_live=True`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live]
+and the model targets the Voice Live endpoint and beta session protocol; GA stays the default.
+
+Voice Live is a distinct Azure resource with its own credentials, so set `AZURE_VOICELIVE_ENDPOINT`,
+`AZURE_VOICELIVE_API_KEY`, and `AZURE_VOICELIVE_API_VERSION` — [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider]
+reads these as a fallback to the `AZURE_OPENAI_*` variables — or pass them to `AzureProvider` explicitly.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.realtime.azure import AzureRealtimeModelSettings
+
+agent = Agent(instructions='You are a helpful voice assistant.')
+
+
+async def main():
+    async with agent.realtime_session(
+        model='azure:gpt-realtime',
+        model_settings=AzureRealtimeModelSettings(azure_voice_live=True),
+    ) as session:
+        await session.send('Say hello.')
+        async for event in session:
+            ...
+```
+
+Voice-Live-only knobs use the `azure_voice_live_*` prefix (e.g.
+[`azure_voice_live_turn_detection`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_turn_detection]).

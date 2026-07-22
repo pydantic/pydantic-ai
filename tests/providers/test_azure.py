@@ -225,6 +225,22 @@ def test_azure_provider_openai_v1_ga_endpoint():
     assert provider.base_url == 'https://project-id.openai.azure.com/openai/v1/'
 
 
+def test_azure_provider_reads_voice_live_env_prefix(monkeypatch: pytest.MonkeyPatch):
+    # Azure AI Voice Live is a distinct resource with `AZURE_VOICELIVE_*` credentials; the provider falls
+    # back to that prefix (endpoint, key, and api-version) so a Voice Live user doesn't also need to set
+    # the `AZURE_OPENAI_*` variables.
+    monkeypatch.delenv('AZURE_OPENAI_ENDPOINT', raising=False)
+    monkeypatch.delenv('AZURE_OPENAI_API_KEY', raising=False)
+    monkeypatch.delenv('OPENAI_API_VERSION', raising=False)
+    monkeypatch.setenv('AZURE_VOICELIVE_ENDPOINT', 'https://my-voice-live.cognitiveservices.azure.com')
+    monkeypatch.setenv('AZURE_VOICELIVE_API_KEY', 'voice-live-key')
+    monkeypatch.setenv('AZURE_VOICELIVE_API_VERSION', '2026-04-10')
+
+    provider = AzureProvider()
+    assert provider.azure_endpoint == 'https://my-voice-live.cognitiveservices.azure.com'
+    assert provider.api_key == 'voice-live-key'
+
+
 def test_azure_provider_foundry_serverless_with_openai_model():
     model = OpenAIChatModel(
         model_name='gpt-oss-120b',
