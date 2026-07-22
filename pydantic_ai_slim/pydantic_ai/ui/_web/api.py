@@ -12,6 +12,7 @@ from starlette.routing import Route
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
@@ -130,15 +131,27 @@ def create_api_app(
 
     seen_model_ids: set[str] = set()
     for label, model_ref in all_models:
-        model = infer_model(model_ref)
+        try:
+            model = infer_model(model_ref)
+        except UserError:
+            # A capability resolver may intentionally use an ID that built-in inference does
+            # not understand. Resolution needs run dependencies, so leave custom references
+            # untouched here and let Agent resolve them when the request is dispatched.
+            if agent._root_capability.has_resolve_model_id:  # pyright: ignore[reportPrivateUsage]
+                model = None
+            else:
+                raise
         # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
-        model_id = model_ref if isinstance(model_ref, str) else model.model_id
+        model_id = model_ref if isinstance(model_ref, str) else model_ref.model_id
         if model_id in seen_model_ids:
             continue
         seen_model_ids.add(model_id)
-        display_name = label or model.label
-        model_supported_tools = model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-        supported_tool_ids = [t.unique_id for t in ui_native_tools if type(t) in model_supported_tools]
+        display_name = label or (model.label if model is not None else model_id)
+        if model is None:
+            supported_tool_ids = []
+        else:
+            model_supported_tools = model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+            supported_tool_ids = [t.unique_id for t in ui_native_tools if type(t) in model_supported_tools]
 
         model_id_to_ref[model_id] = model_ref
         model_infos.append(ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids))

@@ -1,6 +1,5 @@
 from importlib.metadata import version as _metadata_version
 
-from ._template import TemplateStr
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -57,9 +56,12 @@ from .messages import (
     BinaryImage,
     CachePoint,
     CompactionPart,
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
+    EnqueuedMessagesEvent,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -109,7 +111,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
-from .models import ModelRequestContext
+from .models import ModelRequestContext, ModelResolutionContext, ModelSelectionContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
     CodeExecutionTool,
@@ -133,6 +135,7 @@ from .profiles import (
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .sandbox import Sandbox
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
+from .template import TemplateStr
 from .tools import (
     AgentNativeTool,
     DeferredToolRequests,
@@ -220,8 +223,11 @@ __all__ = (
     'DocumentFormat',
     'DocumentMediaType',
     'DocumentUrl',
+    'EnqueuedMessagesEvent',
     'FileUrl',
     'FilePart',
+    'DeferredToolRequestsEvent',
+    'DeferredToolResultsEvent',
     'FinalResultEvent',
     'FinishReason',
     'FunctionToolCallEvent',
@@ -327,6 +333,8 @@ __all__ = (
     'format_as_xml',
     # models
     'ModelRequestContext',
+    'ModelResolutionContext',
+    'ModelSelectionContext',
     # settings
     'ModelSettings',
     'ToolChoice',

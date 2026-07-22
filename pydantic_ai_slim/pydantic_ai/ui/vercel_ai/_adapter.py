@@ -316,8 +316,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, FileUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         # Restoring client-supplied `vendor_metadata` is intentional (as the `UploadedFile` branch
-                        # already does, #5571/#5772): it carries only the requester's own request params and is
-                        # dict-validated by the constructors below.
+                        # already does — see https://github.com/pydantic/pydantic-ai/issues/5571 and
+                        # https://github.com/pydantic/pydantic-ai/issues/5772): it carries only the requester's own
+                        # request params and is dict-validated by the constructors below.
                         vendor_metadata = provider_meta.get('vendor_metadata')
                         force_download = provider_meta.get('force_download', False)
                         try:

@@ -44,7 +44,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsSameStr, IsStr
+from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts
 
 pytestmark = pytest.mark.anyio
 
@@ -111,10 +111,8 @@ async def test_dangling_tool_call_gets_synthesized_return():
     # The synthesized return is persisted in the run's message history, not just sent to the model.
     synthesized = [
         part
-        for message in result.all_messages()
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.metadata == {SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True}
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.metadata == {SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True}
     ]
     assert len(synthesized) == 1
 
@@ -929,10 +927,8 @@ async def test_repair_is_idempotent_and_deterministic():
     assert received_c[0][: len(repaired)] == repaired
     synthesized = [
         part
-        for message in received_c[0]
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.metadata == {SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True}
+        for part in iter_message_parts(received_c[0], ModelRequest, ToolReturnPart)
+        if part.metadata == {SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True}
     ]
     assert len(synthesized) == 1
 

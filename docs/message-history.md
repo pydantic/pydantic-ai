@@ -478,7 +478,7 @@ _(This example is complete, it can be run "as is")_
     `system_prompt` is different: system prompt parts are part of the message
     history. If the receiving agent has its own `system_prompt` and you need to
     ensure it is present when reusing history, see
-    [`ReinjectSystemPrompt`](capabilities.md#reinjectsystemprompt). Use
+    [`ReinjectSystemPrompt`](capabilities/reinject-system-prompt.md). Use
     `replace_existing=True` when a system prompt from another agent should not
     remain authoritative.
 
@@ -510,6 +510,8 @@ A `priority` controls when the enqueued content is delivered:
 - a complete [`ModelRequest`][pydantic_ai.messages.ModelRequest] or [`ModelResponse`][pydantic_ai.messages.ModelResponse], to control request-level fields like `instructions`/`metadata` or to inject a synthetic prior turn.
 
 Adjacent part-style items (user content and [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s) are coalesced into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete messages stay separate. This lets a single call inject an interleaved exchange — for example a synthetic tool call (a [`ModelResponse`][pydantic_ai.messages.ModelResponse]) followed by its result (a [`ModelRequest`][pydantic_ai.messages.ModelRequest]). The content must end in a request, so the agent has something to respond to.
+
+Both `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered messages (exactly as they landed in history), so a client can observe when its steering message took effect. The event carries the delivered message objects themselves — the same objects held in the run's message history. A history processor that replaces history with new message objects does not affect the event, but in-place mutation of a delivered message will be visible through it.
 
 ### From inside a tool or hook
 
@@ -725,7 +727,7 @@ This allows for more sophisticated message processing based on the current state
 
 #### Summarize Old Messages
 
-Use an LLM to summarize older messages to preserve context while reducing tokens.
+Use an LLM to summarize older messages to preserve context while reducing tokens. This is one of several ways to keep a conversation within the context window — see [Compaction](capabilities/compaction.md) for the full picture, including provider-native compaction and ready-made strategies from [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/compaction/).
 
 ```python {title="summarize_old_messages.py"}
 from pydantic_ai import Agent, ModelMessage

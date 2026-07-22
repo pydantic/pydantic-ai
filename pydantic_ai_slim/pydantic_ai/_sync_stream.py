@@ -299,7 +299,7 @@ class SyncStreamBridge(Generic[StreamT]):
 
         Without this, a `KeyboardInterrupt` (Ctrl-C) or `SystemExit` landing while we're blocked on the
         event loop would unwind the caller while leaving the async code's pending tasks and open sockets
-        until garbage collection. See #5975.
+        until garbage collection. See https://github.com/pydantic/pydantic-ai/issues/5975.
         """
         if not self._finalizer.alive:
             raise RuntimeError('This synchronous stream is already closed.')

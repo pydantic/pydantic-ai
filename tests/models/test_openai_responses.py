@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 import warnings
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -14,6 +14,7 @@ import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 from vcr.cassette import Cassette
+from vcr.record_mode import RecordMode
 
 from pydantic_ai import (
     BinaryContent,
@@ -932,6 +933,245 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
             )
 
     assert output_text == snapshot(['The capital of France is Paris.'])
+
+
+async def test_openai_responses_moderation(allow_model_requests: None, openai_api_key: str):
+    """Moderation results requested via `openai_moderation` are surfaced in `provider_details['moderation']`."""
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(openai_moderation={'model': 'omni-moderation-latest'})
+    agent = Agent(model=model, model_settings=settings)
+
+    result = await agent.run('What is the capital of France?')
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'completed',
+            'timestamp': IsDatetime(),
+            'moderation': {
+                'input': {
+                    'categories': {
+                        'harassment': False,
+                        'harassment/threatening': False,
+                        'sexual': False,
+                        'hate': False,
+                        'hate/threatening': False,
+                        'illicit': False,
+                        'illicit/violent': False,
+                        'self-harm/intent': False,
+                        'self-harm/instructions': False,
+                        'self-harm': False,
+                        'sexual/minors': False,
+                        'violence': False,
+                        'violence/graphic': False,
+                    },
+                    'category_applied_input_types': {
+                        'harassment': ['text'],
+                        'harassment/threatening': ['text'],
+                        'sexual': ['text'],
+                        'hate': ['text'],
+                        'hate/threatening': ['text'],
+                        'illicit': ['text'],
+                        'illicit/violent': ['text'],
+                        'self-harm/intent': ['text'],
+                        'self-harm/instructions': ['text'],
+                        'self-harm': ['text'],
+                        'sexual/minors': ['text'],
+                        'violence': ['text'],
+                        'violence/graphic': ['text'],
+                    },
+                    'category_scores': {
+                        'harassment': 1.5598027633743823e-05,
+                        'harassment/threatening': 2.212566909570261e-06,
+                        'sexual': 9.818326983657703e-07,
+                        'hate': 2.7803096387751555e-05,
+                        'hate/threatening': 1.0783312222985275e-06,
+                        'illicit': 0.005284363395662242,
+                        'illicit/violent': 3.514382632807918e-05,
+                        'self-harm/intent': 2.627477314480822e-06,
+                        'self-harm/instructions': 5.955139348629957e-07,
+                        'self-harm': 2.4682904407607285e-06,
+                        'sexual/minors': 1.9333584585546466e-07,
+                        'violence': 6.814872211615988e-06,
+                        'violence/graphic': 7.889262586245034e-07,
+                    },
+                    'flagged': False,
+                    'model': 'omni-moderation-latest',
+                    'type': 'moderation_result',
+                },
+                'output': {
+                    'categories': {
+                        'harassment': False,
+                        'harassment/threatening': False,
+                        'sexual': False,
+                        'hate': False,
+                        'hate/threatening': False,
+                        'illicit': False,
+                        'illicit/violent': False,
+                        'self-harm/intent': False,
+                        'self-harm/instructions': False,
+                        'self-harm': False,
+                        'sexual/minors': False,
+                        'violence': False,
+                        'violence/graphic': False,
+                    },
+                    'category_applied_input_types': {
+                        'harassment': ['text'],
+                        'harassment/threatening': ['text'],
+                        'sexual': ['text'],
+                        'hate': ['text'],
+                        'hate/threatening': ['text'],
+                        'illicit': ['text'],
+                        'illicit/violent': ['text'],
+                        'self-harm/intent': ['text'],
+                        'self-harm/instructions': ['text'],
+                        'self-harm': ['text'],
+                        'sexual/minors': ['text'],
+                        'violence': ['text'],
+                        'violence/graphic': ['text'],
+                    },
+                    'category_scores': {
+                        'harassment': 5.0333557545281144e-05,
+                        'harassment/threatening': 1.2533751425646102e-05,
+                        'sexual': 0.00012448433020883747,
+                        'hate': 3.740956047302422e-05,
+                        'hate/threatening': 1.6187581436151335e-06,
+                        'illicit': 3.077430764601415e-05,
+                        'illicit/violent': 1.442598644847886e-05,
+                        'self-harm/intent': 1.6442494559854523e-06,
+                        'self-harm/instructions': 1.2805474213228684e-06,
+                        'self-harm': 1.0391067562761452e-05,
+                        'sexual/minors': 3.120191139396651e-06,
+                        'violence': 0.0005852836038915696,
+                        'violence/graphic': 1.2339457598623173e-05,
+                    },
+                    'flagged': False,
+                    'model': 'omni-moderation-latest',
+                    'type': 'moderation_result',
+                },
+            },
+        }
+    )
+
+
+async def test_openai_responses_moderation_stream(allow_model_requests: None, openai_api_key: str):
+    """Streaming moderation results arrive on the final `response.completed` event and are surfaced in `provider_details['moderation']`."""
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(openai_moderation={'model': 'omni-moderation-latest'})
+    agent = Agent(model=model, model_settings=settings)
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        await result.get_output()
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'timestamp': IsDatetime(),
+            'finish_reason': 'completed',
+            'moderation': {
+                'input': {
+                    'categories': {
+                        'harassment': False,
+                        'harassment/threatening': False,
+                        'sexual': False,
+                        'hate': False,
+                        'hate/threatening': False,
+                        'illicit': False,
+                        'illicit/violent': False,
+                        'self-harm/intent': False,
+                        'self-harm/instructions': False,
+                        'self-harm': False,
+                        'sexual/minors': False,
+                        'violence': False,
+                        'violence/graphic': False,
+                    },
+                    'category_applied_input_types': {
+                        'harassment': ['text'],
+                        'harassment/threatening': ['text'],
+                        'sexual': ['text'],
+                        'hate': ['text'],
+                        'hate/threatening': ['text'],
+                        'illicit': ['text'],
+                        'illicit/violent': ['text'],
+                        'self-harm/intent': ['text'],
+                        'self-harm/instructions': ['text'],
+                        'self-harm': ['text'],
+                        'sexual/minors': ['text'],
+                        'violence': ['text'],
+                        'violence/graphic': ['text'],
+                    },
+                    'category_scores': {
+                        'harassment': 1.5598027633743823e-05,
+                        'harassment/threatening': 2.212566909570261e-06,
+                        'sexual': 9.818326983657703e-07,
+                        'hate': 2.7803096387751555e-05,
+                        'hate/threatening': 1.0783312222985275e-06,
+                        'illicit': 0.005284363395662242,
+                        'illicit/violent': 3.514382632807918e-05,
+                        'self-harm/intent': 2.627477314480822e-06,
+                        'self-harm/instructions': 5.955139348629957e-07,
+                        'self-harm': 2.4682904407607285e-06,
+                        'sexual/minors': 1.9333584585546466e-07,
+                        'violence': 6.814872211615988e-06,
+                        'violence/graphic': 7.889262586245034e-07,
+                    },
+                    'flagged': False,
+                    'model': 'omni-moderation-latest',
+                    'type': 'moderation_result',
+                },
+                'output': {
+                    'categories': {
+                        'harassment': False,
+                        'harassment/threatening': False,
+                        'sexual': False,
+                        'hate': False,
+                        'hate/threatening': False,
+                        'illicit': False,
+                        'illicit/violent': False,
+                        'self-harm/intent': False,
+                        'self-harm/instructions': False,
+                        'self-harm': False,
+                        'sexual/minors': False,
+                        'violence': False,
+                        'violence/graphic': False,
+                    },
+                    'category_applied_input_types': {
+                        'harassment': ['text'],
+                        'harassment/threatening': ['text'],
+                        'sexual': ['text'],
+                        'hate': ['text'],
+                        'hate/threatening': ['text'],
+                        'illicit': ['text'],
+                        'illicit/violent': ['text'],
+                        'self-harm/intent': ['text'],
+                        'self-harm/instructions': ['text'],
+                        'self-harm': ['text'],
+                        'sexual/minors': ['text'],
+                        'violence': ['text'],
+                        'violence/graphic': ['text'],
+                    },
+                    'category_scores': {
+                        'harassment': 5.0333557545281144e-05,
+                        'harassment/threatening': 1.2533751425646102e-05,
+                        'sexual': 0.00012448433020883747,
+                        'hate': 3.740956047302422e-05,
+                        'hate/threatening': 1.6187581436151335e-06,
+                        'illicit': 3.077430764601415e-05,
+                        'illicit/violent': 1.442598644847886e-05,
+                        'self-harm/intent': 1.6442494559854523e-06,
+                        'self-harm/instructions': 1.2805474213228684e-06,
+                        'self-harm': 1.0391067562761452e-05,
+                        'sexual/minors': 3.120191139396651e-06,
+                        'violence': 0.0005852836038915696,
+                        'violence/graphic': 1.2339457598623173e-05,
+                    },
+                    'flagged': False,
+                    'model': 'omni-moderation-latest',
+                    'type': 'moderation_result',
+                },
+            },
+        }
+    )
 
 
 async def test_openai_include_raw_annotations_streaming(allow_model_requests: None, openai_api_key: str):
@@ -12724,8 +12964,19 @@ def _text_response(text: str, *, status: ResponseStatus = 'completed', backgroun
     return r
 
 
+def _tracking_sleep(*, real_sleep: bool = False) -> tuple[list[float], Callable[[float], Awaitable[None]]]:
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+        if real_sleep:  # pragma: lax no cover
+            await asyncio.sleep(delay)
+
+    return delays, sleep
+
+
 @pytest.mark.vcr()
-async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: str):
+async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
     """VCR test: background mode with a simple prompt.
 
     When background=True, the API may return 'queued'/'in_progress' before completing.
@@ -12733,13 +12984,17 @@ async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: s
     """
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep(real_sleep=vcr.record_mode != RecordMode.NONE)
 
-    result = await agent.run(
-        'What is 2 + 2?',
-        model_settings=OpenAIResponsesModelSettings(openai_background=True),
-    )
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'What is 2 + 2?',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
 
     assert result.output == snapshot('2 + 2 equals 4.')
+    # Live responses may require a different number of polls while recording.
+    assert vcr.record_mode != RecordMode.NONE or sleep_delays == [2.0, 2.0]
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -12772,22 +13027,78 @@ async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: s
 
 
 @pytest.mark.vcr()
-async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_api_key: str):
+async def test_background_mode_reasoning_vcr(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
+    """VCR test: background mode on a reasoning model, exercising the encrypted-content retrieve path.
+
+    Reasoning models request `reasoning.encrypted_content` on create, but the background poll must omit
+    it, else OpenAI 400s ('Encrypted content cannot be requested for persisted responses'). Every other
+    background cassette uses a non-reasoning model (gpt-4o) whose `include` is empty, so this is the only
+    one that covers the retrieve path that regressed in #6611.
+    """
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+    _, sleep = _tracking_sleep(real_sleep=vcr.record_mode != RecordMode.NONE)
+
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'What is 2 + 2?',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
+
+    assert result.output == snapshot('2 + 2 = 4.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='2 + 2 = 4.',
+                        id='msg_047f9036fb333784006a5fe9dd449881908fcfe84c03eed1b3',
+                        provider_name='openai',
+                        provider_details={'phase': 'final_answer'},
+                    )
+                ],
+                usage=RequestUsage(input_tokens=14, output_tokens=12, details={'reasoning_tokens': 0}),
+                model_name='gpt-5.6-sol',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
+                provider_response_id='resp_047f9036fb333784006a5fe9db456c819095d041b89bf6629e',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
     """VCR test: background mode with a tool call."""
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep(real_sleep=vcr.record_mode != RecordMode.NONE)
 
     @agent.tool_plain
     def get_weather(city: str) -> str:
         """Get current weather for a city."""
         return f'Sunny and 72F in {city}'
 
-    result = await agent.run(
-        'What is the weather in Paris? Use the get_weather tool.',
-        model_settings=OpenAIResponsesModelSettings(openai_background=True),
-    )
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'What is the weather in Paris? Use the get_weather tool.',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
 
     assert result.output == snapshot('The weather in Paris is currently sunny with a temperature of 72\u00b0F.')
+    # Live responses may require a different number of polls while recording.
+    assert vcr.record_mode != RecordMode.NONE or sleep_delays == [2.0, 2.0, 2.0]
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -13096,7 +13407,10 @@ async def test_background_mode_streaming_without_starting_after_vcr(
 
 
 async def test_background_queued_then_completed(allow_model_requests: None):
-    """Background mode: create returns status='queued', retrieve returns status='completed'."""
+    """Background mode: create returns status='queued', retrieve returns status='completed'.
+
+    Scripted SDK responses make the polling transition deterministic, which a live VCR recording cannot guarantee.
+    """
     mock_client = MockOpenAIResponses(
         response=_text_response('', status='queued', background=True),
         retrieve_responses=[_text_response('The answer is 42.', background=True)],
@@ -13104,11 +13418,14 @@ async def test_background_queued_then_completed(allow_model_requests: None):
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep()
 
-    result = await agent.run(
-        'What is the meaning of life?',
-        model_settings=OpenAIResponsesModelSettings(openai_background=True),
-    )
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'What is the meaning of life?',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
+    assert sleep_delays == [2.0]
     assert result.output == 'The answer is 42.'
     assert result.all_messages() == snapshot(
         [
@@ -13135,7 +13452,10 @@ async def test_background_queued_then_completed(allow_model_requests: None):
 
 
 async def test_background_in_progress_then_completed(allow_model_requests: None):
-    """Background mode: create returns status='in_progress', retrieve returns status='completed'."""
+    """Background mode: create returns status='in_progress', retrieve returns status='completed'.
+
+    Scripted SDK responses make the polling transition deterministic, which a live VCR recording cannot guarantee.
+    """
     mock_client = MockOpenAIResponses(
         response=_text_response('thinking...', status='in_progress', background=True),
         retrieve_responses=[_text_response('Done!', background=True)],
@@ -13143,11 +13463,14 @@ async def test_background_in_progress_then_completed(allow_model_requests: None)
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep()
 
-    result = await agent.run(
-        'Hello',
-        model_settings=OpenAIResponsesModelSettings(openai_background=True),
-    )
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'Hello',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
+    assert sleep_delays == [2.0]
     assert result.output == 'Done!'
     assert result.all_messages() == snapshot(
         [
@@ -13194,6 +13517,7 @@ async def test_background_max_polls(allow_model_requests: None, monkeypatch: pyt
     Re-polling one background job is a `merge_mode` *replace* re-suspension, so it's bounded by the far
     larger `MAX_BACKGROUND_POLLS` backstop (not the small `MAX_GENERATION_CONTINUATIONS` cap), which
     is why a legitimately long job isn't killed after 10 generation continuations. Patch it small here.
+    Scripted responses are required because a live VCR recording cannot deterministically reach the backstop.
     """
     monkeypatch.setattr('pydantic_ai._agent_graph.MAX_BACKGROUND_POLLS', 3)
     retrieve_response = _text_response('still working...', status='in_progress', background=True)
@@ -13205,17 +13529,24 @@ async def test_background_max_polls(allow_model_requests: None, monkeypatch: pyt
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep()
 
-    with pytest.raises(UnexpectedModelBehavior, match='remained suspended after polling the maximum of 3 times'):
-        await agent.run(
-            'test',
-            model_settings=OpenAIResponsesModelSettings(openai_background=True),
-            usage_limits=UsageLimits(request_limit=None),
-        )
+    with Agent.using_sleep(sleep):
+        with pytest.raises(UnexpectedModelBehavior, match='remained suspended after polling the maximum of 3 times'):
+            await agent.run(
+                'test',
+                model_settings=OpenAIResponsesModelSettings(openai_background=True),
+                usage_limits=UsageLimits(request_limit=None),
+            )
+
+    assert sleep_delays == [2.0, 2.0, 2.0, 2.0]
 
 
 async def test_background_retrieve_uses_response_id(allow_model_requests: None):
-    """Verify that the retrieve call uses the response ID from the create response."""
+    """Verify that the retrieve call uses the response ID from the create response.
+
+    The mock client exposes exact retrieve arguments, which the VCR request matcher does not assert.
+    """
     queued_response = _text_response('', status='queued', background=True)
     queued_response.id = 'resp_bg_123'
 
@@ -13226,11 +13557,14 @@ async def test_background_retrieve_uses_response_id(allow_model_requests: None):
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep()
 
-    result = await agent.run(
-        'test',
-        model_settings=OpenAIResponsesModelSettings(openai_background=True),
-    )
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'test',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
+    assert sleep_delays == [2.0]
     assert result.output == 'final'
     assert result.all_messages() == snapshot(
         [
@@ -13261,6 +13595,38 @@ async def test_background_retrieve_uses_response_id(allow_model_requests: None):
     retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
     assert len(retrieve_kwargs) == 1
     assert retrieve_kwargs[0]['response_id'] == 'resp_bg_123'
+
+
+async def test_background_reasoning_retrieve_omits_encrypted_content(allow_model_requests: None):
+    """A reasoning model requests `reasoning.encrypted_content` on create, but the background poll must not.
+
+    OpenAI 400s ('Encrypted content cannot be requested for persisted responses') when a retrieve of a
+    background response asks for encrypted content, so `_responses_retrieve` passes `is_retrieve=True` to
+    drop it. The mock client exposes the exact create/retrieve arguments, which the VCR matcher does not
+    assert, so this pins the asymmetry that the retrieve wire contract depends on.
+    """
+    queued_response = _text_response('', status='queued', background=True)
+    queued_response.id = 'resp_bg_reasoning_123'
+
+    mock_client = MockOpenAIResponses(
+        response=queued_response,
+        retrieve_responses=[_text_response('final', background=True)],
+    )
+    mock_client = cast(AsyncOpenAI, mock_client)
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+    _, sleep = _tracking_sleep()
+
+    with Agent.using_sleep(sleep):
+        result = await agent.run('test', model_settings=OpenAIResponsesModelSettings(openai_background=True))
+    assert result.output == 'final'
+
+    create_kwargs = get_mock_responses_kwargs(mock_client)
+    assert create_kwargs[0]['include'] == ['reasoning.encrypted_content']
+
+    retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
+    assert len(retrieve_kwargs) == 1
+    assert 'reasoning.encrypted_content' not in retrieve_kwargs[0].get('include', [])
 
 
 async def test_background_request_stream_uses_non_stream_retrieve_without_sequence(allow_model_requests: None):

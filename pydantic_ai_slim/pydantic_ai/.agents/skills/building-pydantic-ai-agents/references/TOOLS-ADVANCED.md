@@ -39,6 +39,8 @@ Two key rules:
 - `DeferredToolRequests` must be in the output type
 - for conditional approval, raise `ApprovalRequired(...)` instead of marking the whole tool `requires_approval=True`
 
+Deferred batches also surface in the event stream: `DeferredToolRequestsEvent` carries the `DeferredToolRequests` once per batch, before any `HandleDeferredToolCalls` handler runs; `DeferredToolResultsEvent` carries the `DeferredToolResults` when a handler resolves requests inline (not when results are provided to a new run via `deferred_tool_results`).
+
 ## Make an Agent Resilient with Retries
 
 Raise `ModelRetry` from inside the tool when the model should correct and try again.
@@ -58,6 +60,8 @@ def get_user_by_name(ctx: RunContext[dict[str, int]], name: str) -> int:
 ```
 
 Use retries for recoverable model mistakes, not application crashes.
+
+Set the agent-wide tool-retry default with `Agent(retries={'tools': N})`, and override it for a single run (or `iter`) with `agent.run(retries={'tools': N})` — explicit per-tool `retries=` and per-toolset `FunctionToolset(max_retries=N)` still win. A bare `int` at run time overrides both budgets (matching construction), so pass a dict like `{'tools': N}` or `{'output': N}` to change just one.
 
 ## Validate or Require Approval Before Tool Execution
 

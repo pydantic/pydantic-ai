@@ -1,0 +1,291 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '236'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Briefly: what is 17 * 23? Think first.'
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      thinking:
+        budget_tokens: 1024
+        type: enabled
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1389'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-dc8f52d114d90a217652497fda8e5b78-744ef3948c9aa560-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - signature: EvMCCm4IDxgCKkBE0p/gSfslgYoMmoemAD063lJAiMvcShO/u6pOvrM5dH3v7Jfy2W3Syx4XNK5Rhd9ABAinRBQp7gij6gKq4y3vMhpjbGF1ZGUtc29ubmV0LTQtNS0yMDI1MDkyOTgAQgh0aGlua2luZxIMhk8ISPbHO9FAncaiGgwZgE///ai4loOb5yAiMJAUGp7hT2NaezGj+6Lnq7F5nKCk5ghMiBNyohpFF+cUAz1Z0a5VqIw5sIW62i3jKiqyAYE2frpB4m/Oy3/V9H5JLMCeDsrmgXJR5Y010N24gC+xCToWD/DSUv8NG07LLPxzOXQyl9JqP09OrBVRbow0lgOfkU0UXUYOeKkhZwcCOwg/0kynAW7dFnfDr9jI18TIdveXndYwUJZ6mqZs1xWYcXlD+Vne4Qm8nKgYfmBEGboS0y94cNodPLFGdgLZJ4eGNccPht6DeSSyS/9DpKpxxwzsyVFlhFLfsQuWEFbp4hXBRfgYAQ==
+        thinking: |-
+          Let me calculate 17 * 23.
+
+          I can break this down:
+          17 * 23 = 17 * 20 + 17 * 3
+          = 340 + 51
+          = 391
+
+          Let me verify:
+          17 * 20 = 340 ✓
+          17 * 3 = 51 ✓
+          340 + 51 = 391 ✓
+        type: thinking
+      - text: |-
+          17 * 23 = 391
+
+          (I broke it down as: 17 × 20 = 340, plus 17 × 3 = 51, giving 340 + 51 = 391)
+        type: text
+      id: msg_011CcmZtr3JDBGubCX9bN3RW
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 51
+        output_tokens: 161
+        output_tokens_details:
+          thinking_tokens: 104
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1228'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Briefly: what is 17 * 23? Think first.'
+          type: text
+        role: user
+      - content:
+        - signature: EvMCCm4IDxgCKkBE0p/gSfslgYoMmoemAD063lJAiMvcShO/u6pOvrM5dH3v7Jfy2W3Syx4XNK5Rhd9ABAinRBQp7gij6gKq4y3vMhpjbGF1ZGUtc29ubmV0LTQtNS0yMDI1MDkyOTgAQgh0aGlua2luZxIMhk8ISPbHO9FAncaiGgwZgE///ai4loOb5yAiMJAUGp7hT2NaezGj+6Lnq7F5nKCk5ghMiBNyohpFF+cUAz1Z0a5VqIw5sIW62i3jKiqyAYE2frpB4m/Oy3/V9H5JLMCeDsrmgXJR5Y010N24gC+xCToWD/DSUv8NG07LLPxzOXQyl9JqP09OrBVRbow0lgOfkU0UXUYOeKkhZwcCOwg/0kynAW7dFnfDr9jI18TIdveXndYwUJZ6mqZs1xWYcXlD+Vne4Qm8nKgYfmBEGboS0y94cNodPLFGdgLZJ4eGNccPht6DeSSyS/9DpKpxxwzsyVFlhFLfsQuWEFbp4hXBRfgYAQ==
+          thinking: |-
+            Let me calculate 17 * 23.
+
+            I can break this down:
+            17 * 23 = 17 * 20 + 17 * 3
+            = 340 + 51
+            = 391
+
+            Let me verify:
+            17 * 20 = 340 ✓
+            17 * 3 = 51 ✓
+            340 + 51 = 391 ✓
+          type: thinking
+        - text: |-
+            17 * 23 = 391
+
+            (I broke it down as: 17 × 20 = 340, plus 17 × 3 = 51, giving 340 + 51 = 391)
+          type: text
+        role: assistant
+      - content:
+        - text: 'Reply with exactly: OK'
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      thinking:
+        budget_tokens: 1024
+        type: enabled
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1084'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-5247452424b7624675b88d04473ec423-7eda2fbb62c83a14-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - signature: EqQCCm4IDxgCKkBMhZEor71OLq2/zwCli63tL9BB6BYQzK6jM+MIN7WeO9gJbvXVSuzzjV7Q87d8fGKPVUbBE5Bp9hPNGr1U0PdsMhpjbGF1ZGUtc29ubmV0LTQtNS0yMDI1MDkyOTgAQgh0aGlua2luZxIM8P4dYbqhyCcJFGtTGgz/eteOdrMOaFmn348iMPRVdz4W1yPYtM6knVOydSoBogotVK1oZsd1wl3LjFHogug3wnUK1BqntjbJKt3AzCpkB4/ymeSMF4rM6aOUiPs9OB2zTToIp6JWZqu2Cd51u2FGrgnFoKqReHin1vzVBX8i9MlaTjLlUm2mucznw3bj5IYRRf36H8wwFmofWPlSf6BYQGay8FttMNkt8B2NEnuxUNJBphgB
+        thinking: The user is asking me to reply with exactly "OK". This is a straightforward request.
+        type: thinking
+      - text: OK
+        type: text
+      id: msg_011CcmZu7L4Do8m7xDdn9Hme
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 115
+        output_tokens: 31
+        output_tokens_details:
+          thinking_tokens: 24
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1228'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Briefly: what is 17 * 23? Think first.'
+          type: text
+        role: user
+      - content:
+        - signature: EvMCCm4IDxgCKkBE0p/gSfslgYoMmoemAD063lJAiMvcShO/u6pOvrM5dH3v7Jfy2W3Syx4XNK5Rhd9ABAinRBQp7gij6gKq4y3vMhpjbGF1ZGUtc29ubmV0LTQtNS0yMDI1MDkyOTgAQgh0aGlua2luZxIMhk8ISPbHO9FAncaiGgwZgE///ai4loOb5yAiMJAUGp7hT2NaezGj+6Lnq7F5nKCk5ghMiBNyohpFF+cUAz1Z0a5VqIw5sIW62i3jKiqyAYE2frpB4m/Oy3/V9H5JLMCeDsrmgXJR5Y010N24gC+xCToWD/DSUv8NG07LLPxzOXQyl9JqP09OrBVRbow0lgOfkU0UXUYOeKkhZwcCOwg/0kynAW7dFnfDr9jI18TIdveXndYwUJZ6mqZs1xWYcXlD+Vne4Qm8nKgYfmBEGboS0y94cNodPLFGdgLZJ4eGNccPht6DeSSyS/9DpKpxxwzsyVFlhFLfsQuWEFbp4hXBRfgYAQ==
+          thinking: |-
+            Let me calculate 17 * 23.
+
+            I can break this down:
+            17 * 23 = 17 * 20 + 17 * 3
+            = 340 + 51
+            = 391
+
+            Let me verify:
+            17 * 20 = 340 ✓
+            17 * 3 = 51 ✓
+            340 + 51 = 391 ✓
+          type: thinking
+        - text: |-
+            17 * 23 = 391
+
+            (I broke it down as: 17 × 20 = 340, plus 17 × 3 = 51, giving 340 + 51 = 391)
+          type: text
+        role: assistant
+      - content:
+        - text: 'Reply with exactly: OK'
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      thinking:
+        budget_tokens: 1024
+        type: enabled
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1091'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-44956b106843941fa93ef0e9d7c74c29-876d536bd09e2ed3-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - signature: EqcCCm4IDxgCKkDs/1lQMBQX9T6RQkD48yE5LIWRUwm6jO1rjkKgx4ELtbaEG8P9QelptyiGq35HFjsUV2OZvoobXZ4U9fmA0+4TMhpjbGF1ZGUtc29ubmV0LTQtNS0yMDI1MDkyOTgAQgh0aGlua2luZxIMifHVOFsQIJsH8IayGgxv17Ktz/krvAq41o4iMBqt/VEfCTzM245nZw/iytTELnKH6e0cLvWcjx1Fh43o/uh0WZkblHFjLhzp3iejCCpnncYy6PNKKa7MDqReRZ9FWJ1OjSPMF0GXNnrFIGkhamMmelzO79GzhVdzDCIReLEBCM+kLU5IIi6XQov+XdHIWjVuvbSlKYQy1sKWxMfquFFlNngIlTNm+pRZB5R0hCK2XTfalrYUZBgB
+        thinking: The user is asking me to reply with exactly "OK". This is a simple, direct instruction.
+        type: thinking
+      - text: OK
+        type: text
+      id: msg_011CcmZuEEHaLyjcedLAh6HP
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 115
+        output_tokens: 32
+        output_tokens_details:
+          thinking_tokens: 25
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

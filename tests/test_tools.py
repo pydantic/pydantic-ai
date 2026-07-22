@@ -37,10 +37,10 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr, message, message_part
+from .conftest import IsDatetime, IsStr, iter_message_parts, message, message_part
 
 
 def test_tool_no_ctx():
@@ -167,6 +167,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -209,6 +210,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -259,6 +261,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -310,6 +313,7 @@ def test_google_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -358,6 +362,7 @@ def test_sphinx_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -412,6 +417,7 @@ def test_numpy_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -454,6 +460,7 @@ def test_only_returns_type():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -487,6 +494,7 @@ def test_docstring_unknown():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -538,6 +546,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -582,6 +591,7 @@ def test_takes_just_model():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -635,6 +645,7 @@ def test_takes_model_and_int():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -661,14 +672,16 @@ def test_init_tool_plain():
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
     assert agent._function_toolset.tools['plain_tool'].takes_ctx is False
-    assert agent._function_toolset.tools['plain_tool'].max_retries == 7
+    # No explicit per-tool budget, so the agent default resolves per-run via `RunContext.max_retries`
+    # rather than baked onto the tool (contrast `test_init_tool_ctx`, where explicit `max_retries=3` wins).
+    assert agent._function_toolset.tools['plain_tool'].max_retries is None
 
     agent_infer = Agent('test', tools=[plain_tool], retries={'tools': 7, 'output': 7})
     result = agent_infer.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0, 0])
     assert agent_infer._function_toolset.tools['plain_tool'].takes_ctx is False
-    assert agent_infer._function_toolset.tools['plain_tool'].max_retries == 7
+    assert agent_infer._function_toolset.tools['plain_tool'].max_retries is None
 
 
 def ctx_tool(ctx: RunContext[int], x: int) -> int:
@@ -1030,6 +1043,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -1110,6 +1124,7 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
+                'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
                 'tool_kind': None,
@@ -1133,6 +1148,7 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
+                'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
                 'tool_kind': None,
@@ -1177,7 +1193,7 @@ def test_call_tool_without_unrequired_parameters():
     all_messages = result.all_messages()
     first_response = message(all_messages, ModelResponse, index=1)
     second_request = message(all_messages, ModelRequest, index=2)
-    tool_call_args = [p.args for p in first_response.parts if isinstance(p, ToolCallPart)]
+    tool_call_args = [p.args for p in first_response.tool_calls]
     tool_returns = [p.content for p in second_request.parts if isinstance(p, ToolReturnPart)]
     assert tool_call_args == snapshot(
         [
@@ -1227,6 +1243,7 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
+                'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
                 'tool_kind': None,
@@ -1249,6 +1266,7 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
+                'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
                 'tool_kind': None,
@@ -1294,6 +1312,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -1376,7 +1395,8 @@ def test_function_tool_consistent_with_schema():
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
-    assert agent._function_toolset.tools['foobar'].max_retries == 0
+    # The agent default resolves per-run via `RunContext.max_retries`, so it isn't baked onto the tool.
+    assert agent._function_toolset.tools['foobar'].max_retries is None
 
 
 def test_function_tool_from_schema_with_ctx():
@@ -1405,7 +1425,8 @@ def test_function_tool_from_schema_with_ctx():
     result = agent.run_sync('foobar', deps='Hello, ')
     assert result.output == snapshot('{"foobar":"Hello, I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is True
-    assert agent._function_toolset.tools['foobar'].max_retries == 0
+    # The agent default resolves per-run via `RunContext.max_retries`, so it isn't baked onto the tool.
+    assert agent._function_toolset.tools['foobar'].max_retries is None
 
 
 def test_function_tool_inconsistent_with_schema():
@@ -1452,7 +1473,29 @@ def test_async_function_tool_consistent_with_schema():
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
-    assert agent._function_toolset.tools['foobar'].max_retries == 0
+    # The agent default resolves per-run via `RunContext.max_retries`, so it isn't baked onto the tool.
+    assert agent._function_toolset.tools['foobar'].max_retries is None
+
+
+@pytest.mark.anyio
+async def test_positional_or_keyword_with_var_args():
+    """A POSITIONAL_OR_KEYWORD param followed by *args must not be double-bound.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/6540.
+
+    Not VCR-backed: this exercises local schema-to-call argument binding and makes no provider request.
+    """
+
+    def f(r0: int, *values: int) -> dict[str, Any]:
+        return {'r0': r0, 'values': list(values)}
+
+    tool = Tool(f)
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    args = {'r0': 1, 'values': [0]}
+    result = await tool.function_schema.call(args, ctx)
+    assert result == {'r0': 1, 'values': [0]}
+    # `call` must not mutate the caller's args dict — tool-execute hooks inspect it afterwards.
+    assert args == {'r0': 1, 'values': [0]}
 
 
 def test_tool_retries():
@@ -1649,12 +1692,9 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
 
     assert result.output == MyOutput(value=42)
     messages = result.all_messages()
-    retry_parts = [part for message in messages for part in message.parts if isinstance(part, RetryPromptPart)]
+    retry_parts = list(iter_message_parts(messages, ModelRequest, RetryPromptPart))
     my_tool_returns = [
-        part
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'my_tool'
+        part for part in iter_message_parts(messages, ModelRequest, ToolReturnPart) if part.tool_name == 'my_tool'
     ]
     assert len(retry_parts) == 1
     assert retry_parts[0].tool_call_id == 'output_call'
@@ -2491,13 +2531,7 @@ def test_unapproved_tool_invalid_args_retry():
 
     result = agent.run_sync('test')
     assert result.output == 'done'
-    retry_parts = [
-        part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart)
-    ]
+    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
     assert len(retry_parts) == 1
     assert retry_parts[0].tool_name == 'my_tool'
 
@@ -2925,10 +2959,8 @@ async def test_tool_timeout_triggers_retry():
     # Check that retry prompt was sent to the model
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+        if 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
     assert 'Timed out after 0.1 seconds' in retry_parts[0].content
@@ -2968,10 +3000,8 @@ async def test_tool_with_timeout_completes_successfully():
     # Should NOT have any retry prompts since tool completed within timeout
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+        if 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 0
     assert 'completed successfully' in result.output
@@ -3043,10 +3073,8 @@ async def test_tool_timeout_message_format():
 
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+        if 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
     # Check message contains timeout value (tool_name is in the part, not in content)
@@ -3132,10 +3160,8 @@ async def test_agent_level_tool_timeout():
     # Check that retry prompt was sent
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+        if 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
     assert 'Timed out after 0.1 seconds' in retry_parts[0].content
@@ -3168,10 +3194,8 @@ async def test_per_tool_timeout_overrides_agent_timeout():
     # Should timeout because per-tool timeout (0.1s) is applied, not agent timeout (10s)
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+        if 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
     assert 'Timed out after 0.1 seconds' in retry_parts[0].content
@@ -4627,3 +4651,39 @@ def test_tooloutput_rejects_negative_max_retries():
 def test_tooloutput_accepts_valid_max_retries(max_retries: int | None):
     out = ToolOutput(int, max_retries=max_retries)
     assert out.max_retries == max_retries
+
+
+def test_tool_return_part_serializes_with_serialization_alias():
+    """Tool return serialization uses field aliases so wire output matches return_schema.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/6542: the
+    `return_schema` is generated with `mode='serialization'` (advertising the
+    `serialization_alias`), but `ToolReturnPart.model_response_str()` and
+    `model_response_object()` must also serialize with `by_alias=True` so the payload
+    keys agree with the schema the model received.
+    """
+
+    class OutputModel(BaseModel):
+        value: int = Field(serialization_alias='wireOut')
+
+    def my_tool() -> OutputModel:
+        return OutputModel(value=1)
+
+    tool = Tool(my_tool)
+    # The advertised return schema uses the serialization alias.
+    return_schema = tool.function_schema.return_schema
+    assert 'wireOut' in return_schema.get('properties', {})
+
+    part = ToolReturnPart(tool_name='my_tool', content=my_tool(), tool_call_id='call-1')
+
+    # String serialization should use the alias key.
+    serialized_str = part.model_response_str()
+    assert json.loads(serialized_str) == {'wireOut': 1}
+
+    # Object serialization should use the alias key.
+    serialized_obj = part.model_response_object()
+    assert serialized_obj == {'wireOut': 1}
+
+    # The wire output keys agree with the advertised return schema properties.
+    assert set(json.loads(serialized_str)) == set(return_schema.get('properties', {}))
+    assert set(serialized_obj) == set(return_schema.get('properties', {}))
