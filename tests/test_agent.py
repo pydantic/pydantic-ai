@@ -65,6 +65,7 @@ from pydantic_ai._output import (
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
+    Hooks,
     NativeTool,
     PrepareOutputTools,
     PrepareTools,
@@ -3992,6 +3993,24 @@ def test_agent_run_id_empty_string_raises() -> None:
     agent = Agent(TestModel(custom_output_text='ok'))
     with pytest.raises(UserError, match=r'`run_id` must be a non-empty string'):
         agent.run_sync('hi', run_id='')
+
+
+async def test_agent_run_id_stamped_on_request_before_hooks() -> None:
+    """The pending request already carries `run_id` when `before_model_request` hooks see it.
+
+    The request is stamped again after hooks, so this pre-hook stamp is only observable
+    from inside a hook. Not a VCR test: in-memory framework behavior.
+    """
+    seen: list[str | None] = []
+
+    async def capture(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        seen.append(request_context.messages[-1].run_id)
+        return request_context
+
+    agent = Agent(TestModel(custom_output_text='ok'), capabilities=[Hooks(before_model_request=capture)])
+    await agent.run('hi', run_id='run-pre-hook')
+
+    assert seen == ['run-pre-hook']
 
 
 def test_agent_run_id_duplicate_on_model_response_raises() -> None:
