@@ -1260,9 +1260,13 @@ class GeminiStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
             self.provider_details = {'timestamp': self._provider_timestamp}
+        # Track the last chunk with usage_metadata so we can run the expensive
+        # genai-prices extraction once after the loop instead of on every chunk.
+        _last_usage_chunk: GenerateContentResponse | None = None
         try:
             async for chunk in self._response:
-                self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
+                if chunk.usage_metadata is not None:
+                    _last_usage_chunk = chunk
 
                 if (
                     chunk.sdk_http_response
@@ -1475,6 +1479,16 @@ class GeminiStreamedResponse(StreamedResponse):
             for pending in self._pending_file_search_returns:
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
             self._pending_file_search_returns = []
+
+            # Full genai-prices extraction: once per stream, not per chunk.
+            # Gemini sends usage_metadata as cumulative snapshots, so the last
+            # chunk's metadata is authoritative for typed token fields.
+            if _last_usage_chunk is not None:
+                self._usage = _metadata_as_usage(
+                    _last_usage_chunk, self._provider_name, self._provider_url, self._usage
+                )
+            elif self._usage is None:
+                self._usage = usage.RequestUsage()
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 raise ModelHTTPError(
