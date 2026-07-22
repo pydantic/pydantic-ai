@@ -126,10 +126,6 @@ def _deferred_tool_call_result_discriminator(x: Any) -> str | None:
     elif isinstance(x, dict):
         x_dict = cast(dict[str, Any], x)
         if 'kind' in x_dict:
-            if x_dict['kind'] == 'tool-failed' and set(x_dict) != {'kind', 'message'}:
-                # `calls` accepts arbitrary external results. Only reserve the exact serialized
-                # ToolFailed shape; an application dict with additional data remains a plain result.
-                return None
             return cast(str, x_dict['kind'])
         elif 'part_kind' in x_dict:
             return cast(str, x_dict['part_kind'])
