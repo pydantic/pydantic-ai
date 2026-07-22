@@ -24,6 +24,8 @@ try:
     from openai.types.realtime import (
         ConversationItemInputAudioTranscriptionCompletedEvent,
         RealtimeResponseUsage,
+        RealtimeResponseUsageInputTokenDetails,
+        RealtimeResponseUsageOutputTokenDetails,
         RealtimeSessionCreateRequest,
         ResponseAudioDeltaEvent,
         ResponseCreatedEvent,
@@ -33,7 +35,9 @@ try:
     from openai.types.realtime.conversation_item_input_audio_transcription_completed_event import (
         UsageTranscriptTextUsageDuration,
         UsageTranscriptTextUsageTokens,
+        UsageTranscriptTextUsageTokensInputTokenDetails,
     )
+    from openai.types.realtime.realtime_response_usage_input_token_details import CachedTokensDetails
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -97,6 +101,7 @@ from ._openai_protocol import (
     tool_def_to_openai,
     turn_detection_config,
     user_message_item,
+    validate_response_data,
 )
 
 # `input_transcription_model='auto'` resolves to this — OpenAI's recommended realtime transcription model
@@ -145,13 +150,37 @@ def _int(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
+def _validate_usage_shape(usage: object, *, transcription: bool = False) -> None:
+    """Reject malformed nested usage objects before accessing SDK-constructed fields."""
+    if usage is None:
+        return
+    if not is_str_dict(usage):
+        raise ValueError('`usage` must be an object')
+    detail_keys = ('input_token_details',) if transcription else ('input_token_details', 'output_token_details')
+    for key in detail_keys:
+        details = usage.get(key)
+        if details and not is_str_dict(details):
+            raise ValueError(f'`usage.{key}` must be an object')
+    input_details = usage.get('input_token_details')
+    if is_str_dict(input_details):
+        cached_details = input_details.get('cached_tokens_details')
+        if cached_details and not is_str_dict(cached_details):
+            raise ValueError('`usage.input_token_details.cached_tokens_details` must be an object')
+
+
 def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
     """Map a `response.done` `usage` payload to a [`RequestUsage`][pydantic_ai.usage.RequestUsage]."""
     if usage is None or not usage.model_fields_set:
         return None
-    inp = usage.input_token_details
-    out = usage.output_token_details
+    inp = usage.input_token_details or None
+    out = usage.output_token_details or None
+    if inp is not None and not isinstance(inp, RealtimeResponseUsageInputTokenDetails):
+        raise ValueError('`usage.input_token_details` must be an object')
+    if out is not None and not isinstance(out, RealtimeResponseUsageOutputTokenDetails):
+        raise ValueError('`usage.output_token_details` must be an object')
     cached = inp.cached_tokens_details if inp is not None else None
+    if cached is not None and not isinstance(cached, CachedTokensDetails):
+        raise ValueError('`usage.input_token_details.cached_tokens_details` must be an object')
     details: dict[str, int] = {}
     for key, raw in (
         ('input_text_tokens', inp.text_tokens if inp is not None else None),
@@ -190,7 +219,9 @@ def _map_transcription_usage(usage: RealtimeTranscriptionUsage | None) -> Reques
         return None
     details: dict[str, int] = {}
     if usage.type == 'tokens':
-        token_details = usage.input_token_details
+        token_details = usage.input_token_details or None
+        if token_details is not None and not isinstance(token_details, UsageTranscriptTextUsageTokensInputTokenDetails):
+            raise ValueError('`usage.input_token_details` must be an object')
         for key, raw in (
             ('input_transcription_tokens', usage.total_tokens),
             ('input_transcription_audio_tokens', token_details.audio_tokens if token_details is not None else None),
@@ -394,9 +425,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         event_type = data.get('type')
         events: list[RealtimeCodecEvent] = []
         if event_type == 'response.created':
+            response_data = data.get('response')
+            if response_data is not None and not is_str_dict(response_data):
+                raise ValueError('`response` must be an object')
             created = ResponseCreatedEvent.construct(**data)
             self._response_active = True
-            self._active_response_id = created.response.id or None if isinstance(data.get('response'), dict) else None
+            self._active_response_id = created.response.id or None if is_str_dict(response_data) else None
         elif event_type in AUDIO_DELTA_TYPES:
             audio = ResponseAudioDeltaEvent.construct(**data)
             # Track the speaking item so a later `TruncateOutput` can name it.
@@ -404,6 +438,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 self._current_item_id = audio.item_id
                 self._current_content_index = audio.content_index or 0
         elif event_type == 'response.done':
+            response_data = validate_response_data(data)
+            _validate_usage_shape(response_data.get('usage'))
             done = ResponseDoneEvent.construct(**data)
             response = done.response
             response_id = response.id
@@ -422,6 +458,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # OpenAI nests usage under `response.usage`; xAI Grok Voice reports the same shape at the
             # top level of the `response.done` frame (its `response.usage` is empty), so fall back to it.
             top_level_usage = (done.model_extra or {}).get('usage')  # xAI frame-level provider extra.
+            _validate_usage_shape(top_level_usage)
             usage = _map_usage(response.usage) or _map_usage(
                 RealtimeResponseUsage.construct(**top_level_usage) if is_str_dict(top_level_usage) else None
             )
@@ -452,6 +489,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if (event := self._map_event(data)) is not None:
             events.append(event)
             if isinstance(event, InputTranscript) and event.is_final and event_type in INPUT_TRANSCRIPT_DONE_TYPES:
+                _validate_usage_shape(data.get('usage'), transcription=True)
                 completed = ConversationItemInputAudioTranscriptionCompletedEvent.construct(**data)
                 if (asr := _map_transcription_usage(completed.usage)) is not None:
                     events.append(SessionUsageEvent(usage=asr, response_scoped=False))

@@ -133,6 +133,27 @@ def test_map_transcription_usage() -> None:
     ) == RequestUsage(details={'input_transcription_tokens': 7})
 
 
+@pytest.mark.parametrize(
+    'usage',
+    [
+        RealtimeResponseUsage.construct(input_token_details='bad'),
+        RealtimeResponseUsage.construct(output_token_details='bad'),
+        RealtimeResponseUsage.construct(
+            input_token_details={'cached_tokens_details': 'bad'},
+        ),
+    ],
+)
+def test_map_usage_rejects_malformed_constructed_details(usage: RealtimeResponseUsage) -> None:
+    with pytest.raises(ValueError, match='must be an object'):
+        rt_openai._map_usage(usage)
+
+
+def test_map_transcription_usage_rejects_malformed_constructed_details() -> None:
+    usage = UsageTranscriptTextUsageTokens.construct(type='tokens', input_token_details='bad')
+    with pytest.raises(ValueError, match='must be an object'):
+        rt_openai._map_transcription_usage(usage)
+
+
 def test_merge_realtime_profile_skips_empty_layers_and_applies_overrides() -> None:
     assert merge_realtime_profile(None, None, {}) == {}
     assert merge_realtime_profile(
@@ -342,6 +363,18 @@ def test_map_response_done_failed_and_unknown_incomplete_reason() -> None:
 def test_map_conversation_item_without_identifiers_is_ignored() -> None:
     assert map_conversation_event({'type': 'conversation.item.created', 'item': {}}) is None
     assert map_conversation_event({'type': 'conversation.item.created'}) is None
+
+
+@pytest.mark.parametrize(
+    'frame',
+    [
+        {'type': 'conversation.created', 'conversation': 'bad'},
+        {'type': 'conversation.item.created', 'item': 'bad'},
+    ],
+)
+def test_map_conversation_event_rejects_malformed_nested_object(frame: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match='must be an object'):
+        map_conversation_event(frame)
     assert map_conversation_event({'type': 'conversation.created'}) is None
 
 
@@ -878,8 +911,48 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
     bad_json = 'not json'
     non_object = json.dumps(['not', 'an', 'object'])
     bad_audio = json.dumps({'type': 'response.output_audio.delta', 'delta': 'not-base64!!'})
+    malformed_nested_frames = [
+        json.dumps({'type': 'conversation.item.input_audio_transcription.failed', 'error': 'bad'}),
+        json.dumps({'type': 'response.created', 'response': 'bad'}),
+        json.dumps({'type': 'response.done', 'response': 'bad'}),
+        json.dumps({'type': 'response.done', 'response': {'output': 'bad'}}),
+        json.dumps({'type': 'response.done', 'response': {'output': ['bad']}}),
+        json.dumps({'type': 'response.done', 'response': {'usage': 'bad'}}),
+        json.dumps(
+            {
+                'type': 'response.done',
+                'response': {
+                    'id': 'bad-usage',
+                    'status': 'completed',
+                    'output': [],
+                    'usage': {'input_tokens': 1, 'input_token_details': 'bad'},
+                },
+            }
+        ),
+        json.dumps(
+            {
+                'type': 'response.done',
+                'response': {
+                    'id': 'bad-cached-usage',
+                    'status': 'completed',
+                    'output': [],
+                    'usage': {'input_token_details': {'cached_tokens_details': 'bad'}},
+                },
+            }
+        ),
+        json.dumps(
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'transcript': 'hello',
+                'usage': {'type': 'tokens', 'total_tokens': 1, 'input_token_details': 'bad'},
+            }
+        ),
+    ]
     good = json.dumps({'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'\x09').decode('ascii')})
-    ws = FakeWebSocket([_created(), _updated(), bad_json, non_object, bad_audio, good])
+    frames = [bad_json, non_object, bad_audio]
+    for malformed in malformed_nested_frames:
+        frames.extend((malformed, good))
+    ws = FakeWebSocket([_created(), _updated(), *frames])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
     async with _connect(model, 'x') as conn:
@@ -888,9 +961,11 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
         'SessionErrorEvent',
         'SessionErrorEvent',
         'SessionErrorEvent',
-        'AudioDelta',
+        *['SessionErrorEvent', 'AudioDelta'] * len(malformed_nested_frames),
     ]
-    assert all(isinstance(e, SessionErrorEvent) and e.recoverable for e in events[:3])
+    errors = [event for event in events if isinstance(event, SessionErrorEvent)]
+    assert len(errors) == 3 + len(malformed_nested_frames)
+    assert all(event.recoverable for event in errors)
     assert events[-1] == AudioDelta(data=b'\x09')
 
 
