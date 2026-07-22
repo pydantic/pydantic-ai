@@ -31,7 +31,7 @@ from .._instrumentation import (
 )
 from .._tool_execution import build_tool_return_part
 from .._utils import cancel_and_drain
-from ..exceptions import ApprovalRequired, CallDeferred, ToolRetryError, UsageLimitExceeded, UserError
+from ..exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError, UsageLimitExceeded, UserError
 from ..messages import (
     BinaryContent,
     DeferredToolRequestsEvent,
@@ -1399,6 +1399,13 @@ class RealtimeSession:
                 )
             except ToolRetryError as e:
                 result_part = e.tool_retry
+                user_content = None
+            except ToolFailedError as e:
+                # A tool that raised `ToolFailed` yields a `failed` result rather than a retry. Send it
+                # back so the model sees the failure — error-key-wrapped below (via
+                # `model_response_str_and_user_content`) for the string-only tool channel, since realtime
+                # providers have no native failed-tool flag.
+                result_part = e.tool_failed
                 user_content = None
             except (ApprovalRequired, CallDeferred) as e:
                 # `handle_call` already gave the `HandleDeferredToolCalls` capability handler the

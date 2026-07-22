@@ -22,6 +22,7 @@ from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
@@ -2453,6 +2454,31 @@ async def test_agent_realtime_session_tool_exception() -> None:
         with pytest.raises(ValueError, match='nope'):
             _ = [e async for e in session]
     assert conn.sent == []
+
+
+async def test_agent_realtime_session_tool_failed_returns_error_result() -> None:
+    """A tool raising `ToolFailed` yields a `failed`, error-key-wrapped result — not a crashed session.
+
+    `tool_manager.handle_call` raises `ToolFailedError` for a `ToolFailed`; the session must answer with
+    the failed result (like `run`/`iter`) rather than let it tear down the session. Realtime providers
+    have no native failed-tool flag, so the failure is wrapped in an `{"error": ...}` object on the
+    string-only tool channel.
+    """
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def boom() -> str:
+        raise ToolFailed('service down')
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='boom', args='{}'), TurnCompleteEvent()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model) as session:
+        events = [e async for e in session]
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert result.part.outcome == 'failed'
+    sent = next(s for s in conn.sent if isinstance(s, ToolResult))
+    assert '"error"' in sent.output  # wrapped so the model sees the failure over the string-only channel
 
 
 async def test_agent_realtime_session_validates_and_coerces_args() -> None:
