@@ -3803,7 +3803,11 @@ async def test_adapter_dispatch_request():
 
 
 async def test_adapter_dispatch_request_explicit_run_id():
-    """`run_id=` passed to `dispatch_request` stamps the run result and agent messages."""
+    """`run_id=` passed to `dispatch_request` stamps the run result and agent messages.
+
+    Not a VCR test: adapter kwarg forwarding and id stamping are in-memory framework
+    behavior, no provider request shape is involved.
+    """
     captured_results: list[AgentRunResult[Any]] = []
 
     agent = Agent(model=TestModel())

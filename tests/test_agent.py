@@ -3995,7 +3995,10 @@ def test_agent_run_id_empty_string_raises() -> None:
 
 
 def test_agent_run_id_duplicate_on_model_response_raises() -> None:
-    """The duplicate check scans responses too, not just requests."""
+    """The duplicate check scans responses too, not just requests.
+
+    Not a VCR test: the guard raises before any model request is made.
+    """
     agent = Agent(TestModel(custom_output_text='ok'))
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='prior')]),
@@ -4006,7 +4009,11 @@ def test_agent_run_id_duplicate_on_model_response_raises() -> None:
 
 
 async def test_agent_run_id_on_run_stream_events() -> None:
-    """`run_id=` flows through `run_stream_events` to the run result and message stamps."""
+    """`run_id=` flows through `run_stream_events` to the run result and message stamps.
+
+    Not a VCR test: id stamping is in-memory framework behavior that a cassette match
+    would not protect.
+    """
     agent = Agent(TestModel(custom_output_text='streamed'))
     async with agent.run_stream_events('hi', run_id='run-events') as events:
         collected = [event async for event in events]
