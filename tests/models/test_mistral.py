@@ -3556,7 +3556,12 @@ async def test_reasoning_effort_stream_with_tools(allow_model_requests: None) ->
 
 
 async def test_prompt_cache_key_sent(allow_model_requests: None) -> None:
-    """`mistral_prompt_cache_key` reaches the SDK call when set."""
+    """`mistral_prompt_cache_key` reaches the SDK call when set.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
     c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
@@ -3568,7 +3573,12 @@ async def test_prompt_cache_key_sent(allow_model_requests: None) -> None:
 
 
 async def test_prompt_cache_key_unset_without_config(allow_model_requests: None) -> None:
-    """Without `mistral_prompt_cache_key`, `prompt_cache_key` stays `UNSET`."""
+    """Without `mistral_prompt_cache_key`, `prompt_cache_key` stays `UNSET`.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
     c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
@@ -3580,11 +3590,20 @@ async def test_prompt_cache_key_unset_without_config(allow_model_requests: None)
 
 
 async def test_prompt_cache_key_stream(allow_model_requests: None) -> None:
-    """`mistral_prompt_cache_key` reaches the SDK call in streaming mode too."""
+    """`mistral_prompt_cache_key` reaches the SDK call in streaming mode too, and stays `UNSET` by default.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
     stream = [text_chunk('hello', finish_reason='stop')]
     mock_client = MockMistralAI(stream=stream)
     m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        await result.get_output()
+    assert isinstance(mock_client.chat_completion_kwargs[-1]['prompt_cache_key'], MistralUnset)
 
     async with agent.run_stream(
         'hello', model_settings=MistralModelSettings(mistral_prompt_cache_key='conv-123')
@@ -3595,7 +3614,12 @@ async def test_prompt_cache_key_stream(allow_model_requests: None) -> None:
 
 
 async def test_parallel_tool_calls_sent(allow_model_requests: None) -> None:
-    """`parallel_tool_calls` reaches the SDK call when set, and is `None` (omitted by the SDK) by default."""
+    """`parallel_tool_calls` reaches the SDK call when set, and is `None` (omitted by the SDK) by default.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
     c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
@@ -3611,11 +3635,20 @@ async def test_parallel_tool_calls_sent(allow_model_requests: None) -> None:
 
 
 async def test_parallel_tool_calls_stream(allow_model_requests: None) -> None:
-    """`parallel_tool_calls` reaches the SDK call in streaming mode too."""
+    """`parallel_tool_calls` reaches the SDK call in streaming mode too, and is `None` by default.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
     stream = [text_chunk('hello', finish_reason='stop')]
     mock_client = MockMistralAI(stream=stream)
     m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        await result.get_output()
+    assert mock_client.chat_completion_kwargs[-1]['parallel_tool_calls'] is None
 
     async with agent.run_stream('hello', model_settings=MistralModelSettings(parallel_tool_calls=True)) as result:
         text = await result.get_output()
