@@ -5769,6 +5769,81 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
     )
 
 
+async def test_google_failed_tool_return_uses_error_response(google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='final_result', content='Disk full', tool_call_id='test_id', outcome='failed'),
+            ]
+        )
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'final_result',
+                            'response': {'error': 'Disk full'},
+                            'id': 'test_id',
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_google_failed_tool_return_keeps_files_out_of_error_payload(google_provider: GoogleProvider):
+    """A failed return carrying file content sends the file parts but never folds their references into `error`.
+
+    `gemini-2.5-flash` supports no native tool-return MIME types, so the file takes the fallback path.
+    The error payload must stay the plain failure message (no `See file ...` refs, unlike the success
+    branch's `output`), while the file parts are still appended after the `function_response`.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    file = BinaryContent(data=b'fakeimg', media_type='image/png', identifier='report')
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='final_result',
+                    content=['Disk full', file],
+                    tool_call_id='test_id',
+                    outcome='failed',
+                ),
+            ]
+        )
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'function_response': {'name': 'final_result', 'response': {'error': 'Disk full'}, 'id': 'test_id'}}
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'text': 'This is file report:'},
+                    {'inline_data': {'data': b'fakeimg', 'mime_type': 'image/png'}},
+                ],
+            },
+        ]
+    )
+
+
 async def test_google_prepends_empty_user_turn_when_first_content_is_model(google_provider: GoogleProvider):
     """Test that an empty user turn is prepended when contents start with a model response.
 

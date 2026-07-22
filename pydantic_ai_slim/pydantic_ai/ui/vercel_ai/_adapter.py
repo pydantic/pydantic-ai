@@ -735,16 +735,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 approval=ToolApprovalResponded(
                                     id=str(uuid.uuid4()),
                                     approved=False,
-                                    reason=builtin_return.model_response_str(),
+                                    reason=builtin_return.model_response_str(wrap_if_error=False),
                                 ),
                             )
                         )
                     elif (
                         builtin_return.outcome == 'failed'
-                        or builtin_return.model_response_object().get('is_error') is True
+                        or builtin_return.model_response_object(wrap_if_error=False).get('is_error') is True
                     ):
-                        response_obj = builtin_return.model_response_object()
-                        error_text = response_obj.get('error_text', builtin_return.model_response_str())
+                        response_obj = builtin_return.model_response_object(wrap_if_error=False)
+                        error_text = response_obj.get(
+                            'error_text', builtin_return.model_response_str(wrap_if_error=False)
+                        )
                         ui_parts.append(
                             ToolOutputErrorPart(
                                 type=tool_name,
@@ -844,7 +846,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         approval=ToolApprovalResponded(
                             id=str(uuid.uuid4()),
                             approved=False,
-                            reason=tool_result.model_response_str(),
+                            reason=tool_result.model_response_str(wrap_if_error=False),
                         ),
                     )
                 )
@@ -854,7 +856,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
                         input=part.args_as_dict(),
-                        error_text=tool_result.model_response_str(),
+                        error_text=tool_result.model_response_str(wrap_if_error=False),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
                     )
@@ -926,6 +928,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         sdk_version: Literal[5, 6, 7] = 5,
     ) -> list[UIMessage]:
         """Transform Pydantic AI messages into Vercel AI messages.
+
+        Note: The round-trip `dump_messages` -> `load_messages` is not fully lossless for tool
+        results. Successful, failed, and denied results each round-trip via their own part type
+        (`ToolOutputAvailablePart` / `ToolOutputErrorPart` / `ToolOutputDeniedPart`), but a
+        `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='failed'` on reload (or a user
+        text part when it has no `tool_name`), since the protocol has no separate retry concept —
+        both a retry prompt and a `ToolFailed` result map to `ToolOutputErrorPart`. A reloaded retry
+        is therefore presented to the model as a definitive failure rather than a request to correct
+        and retry; keep the conversation in-process rather than persisting through the Vercel AI wire
+        format if you need retry semantics to survive a round-trip.
 
         When `sdk_version=6`, tool calls that have no corresponding result in the message history
         are automatically detected as deferred and emitted with `state='approval-requested'`, so the

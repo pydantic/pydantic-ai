@@ -385,7 +385,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     model_selector: ModelSelector[DepsT] | None
     model_selected_for_step: int | None
     evaluate_model_selector: Callable[
-        [ModelSelector[DepsT], models.ModelSelectionContext[DepsT]], Awaitable[models.Model]
+        [ModelSelector[DepsT], models.ModelSelectionContext[DepsT]], Awaitable[tuple[models.Model, str | None]]
     ]
     enter_model: Callable[[models.Model], Awaitable[None]]
     get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
@@ -1051,7 +1051,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         try:
             model, model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(
-                ctx
+                ctx, streaming=True
             )
         except exceptions.SkipModelRequest as e:
             # SkipModelRequest in stream path: yield an empty stream and finish handling
@@ -1123,7 +1123,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
-        wrap_request_context.model_id = None if ctx.deps.model_selector is not None else ctx.deps.model_id
+        wrap_request_context.model_id = ctx.deps.model_id
         # Signal to hooks that the agent loop expects a real event stream.
         wrap_request_context.streaming = True
         wrap_task = asyncio.create_task(
@@ -1182,7 +1182,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             replay_sr = CompletedStreamedResponse(
                 model_response,
                 model_request_parameters=model_request_parameters,
-                events=True,
+                replay_events=True,
             )
             agent_stream = self._build_agent_stream(ctx, replay_sr, model_request_parameters)
             yield agent_stream
@@ -1268,7 +1268,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         try:
             model, model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(
-                ctx
+                ctx, streaming=False
             )
         except exceptions.SkipModelRequest as e:
             # new_message_index wasn't updated in _prepare_request, fix it here
@@ -1307,7 +1307,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
-        request_context.model_id = None if ctx.deps.model_selector is not None else ctx.deps.model_id
+        request_context.model_id = ctx.deps.model_id
         try:
             try:
                 model_response = await ctx.deps.root_capability.wrap_model_request(
@@ -1336,7 +1336,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         return await self._finish_handling(ctx, model_response)
 
     async def _prepare_request(
-        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        *,
+        streaming: bool,
     ) -> tuple[
         models.Model,
         ModelSettings | None,
@@ -1345,7 +1348,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         RunContext[DepsT],
     ]:
         if self._resume_suspended is not None:
-            return await self._prepare_resume_request(ctx)
+            return await self._prepare_resume_request(ctx, streaming=streaming)
 
         self.request.timestamp = now_utc()
         if not self.is_resuming_without_prompt:
@@ -1392,6 +1395,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
+        request_context.model_id = ctx.deps.model_id
+        request_context.streaming = streaming
         messages_before_processing = len(request_context.messages)
         self.last_request_context = request_context
         request_context = await ctx.deps.root_capability.before_model_request(
@@ -1484,7 +1489,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         return model, model_settings or None, model_request_parameters, messages, run_context
 
     async def _prepare_resume_request(
-        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        *,
+        streaming: bool,
     ) -> tuple[
         models.Model,
         ModelSettings | None,
@@ -1532,6 +1540,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
+        request_context.model_id = ctx.deps.model_id
+        request_context.streaming = streaming
         self.last_request_context = request_context
         request_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
         self.last_request_context = request_context
@@ -2104,9 +2114,10 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
         messages=list(ctx.state.message_history[:-1]),
         usage=ctx.state.usage,
     )
-    model = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
+    model, model_id = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
     await ctx.deps.enter_model(model)
     ctx.deps.model = model
+    ctx.deps.model_id = model_id
     ctx.deps.model_selected_for_step = ctx.state.run_step
 
 
