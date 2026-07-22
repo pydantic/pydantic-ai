@@ -721,8 +721,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
     `'retry'` (default) raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] so the model can
     self-correct; `'error'` propagates the underlying `fastmcp.exceptions.ToolError` to the caller.
-    `'failed'` raises [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] for completed tool errors so the model can see the error.
-    MCP protocol errors remain retryable under `'retry'` and `'failed'`; only `'error'` propagates them raw.
+    `'failed'` raises [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] so the model can see the error.
     """
 
     max_retries: int | None
@@ -855,9 +854,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             tool_error_behavior: `'retry'` (default) raises
                 [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on tool errors so the model can
                 self-correct; `'error'` propagates the underlying exception; `'failed'` raises
-                [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] for completed tool errors so the model can see the error.
-                MCP protocol errors remain retryable under `'retry'` and `'failed'`; only `'error'`
-                propagates them raw.
+                [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] so the model can see the error.
             process_tool_call: Hook to wrap tool calls. See
                 [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
             cache_tools: Whether to cache the list of tools. See
@@ -1191,11 +1188,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 `tasks/result`. Only valid for tools whose `execution.taskSupport` is `'required'` or `'optional'`.
 
         Raises:
-            ModelRetry: If the tool errors and `tool_error_behavior='retry'` (the default), or if an MCP
-                protocol error occurs with `tool_error_behavior='retry'` or `'failed'`.
+            ModelRetry: If the tool errors and `tool_error_behavior='retry'` (the default).
             fastmcp.exceptions.ToolError: If the tool errors and `tool_error_behavior='error'`.
-            mcp.shared.exceptions.McpError: If an MCP protocol error occurs and `tool_error_behavior='error'`.
-            ToolFailed: If a completed tool error occurs and `tool_error_behavior='failed'`.
+            ToolFailed: If the tool errors and `tool_error_behavior='failed'`.
         """
         async with self:
             try:
@@ -1219,10 +1214,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 if self.tool_error_behavior == 'error':
                     raise
                 _raise_mcp_tool_error(str(e), self.tool_error_behavior, cause=e)
-            except mcp_exceptions.McpError as e:
-                if self.tool_error_behavior == 'error':
-                    raise
-                _raise_mcp_tool_error(str(e), 'retry', cause=e)
             except _utils.BaseExceptionGroup as eg:
                 # The FastMCP client runs the MCP session in an anyio task group, so a tool/protocol
                 # error can surface wrapped in an `ExceptionGroup` rather than as a bare

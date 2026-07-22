@@ -157,7 +157,7 @@ To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_a
 | `tool_validate` | `tool_validate=` | `wrap_tool_validate` |
 | `tool_validate_error` | `tool_validate_error=` | `on_tool_validate_error` |
 
-Validation hooks fire when the model's JSON arguments are parsed and validated. All validation hooks receive `call` ([`ToolCallPart`][pydantic_ai.messages.ToolCallPart]) and `tool_def` ([`ToolDefinition`][pydantic_ai.tools.ToolDefinition]) parameters.
+Validation hooks fire when the model's JSON arguments are parsed and validated. All tool hooks receive `call` ([`ToolCallPart`][pydantic_ai.messages.ToolCallPart]) and `tool_def` ([`ToolDefinition`][pydantic_ai.tools.ToolDefinition]) parameters.
 
 !!! note
     Tool validation and execution hooks only fire for function tools. Internal output tools (used to deliver structured output) are not user-facing and are skipped.
@@ -168,15 +168,12 @@ To skip validation, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.Sk
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
 |---|---|---|
-| `tool_call` | `tool_call=` | `wrap_tool_call` |
 | `before_tool_execute` | `before_tool_execute=` | `before_tool_execute` |
 | `after_tool_execute` | `after_tool_execute=` | `after_tool_execute` |
 | `tool_execute` | `tool_execute=` | `wrap_tool_execute` |
 | `tool_execute_error` | `tool_execute_error=` | `on_tool_execute_error` |
 
-`tool_call` wraps an already-classified function tool call, including argument-validation failures and the full execution-hook lifecycle. Its `handler` takes no arguments because validation has already settled; use `tool_execute` when the wrapper needs to receive or modify validated `args`. Raising `ModelRetry` or `ToolFailed` from this wrapper follows the normal tool retry or failed-result behavior.
-
-The remaining execution hooks fire when the tool function runs. `args` is always the validated `dict[str, Any]`.
+Execution hooks fire when the tool function runs. `args` is always the validated `dict[str, Any]`.
 
 To skip execution, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `tool_execute` (wrap).
 

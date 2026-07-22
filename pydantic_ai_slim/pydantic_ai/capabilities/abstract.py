@@ -73,9 +73,6 @@ ValidatedToolArgs: TypeAlias = dict[str, Any]
 WrapToolValidateHandler: TypeAlias = Callable[[RawToolArgs], Awaitable[ValidatedToolArgs]]
 """Handler type for [`wrap_tool_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_validate]."""
 
-WrapToolCallHandler: TypeAlias = Callable[[], Awaitable[Any]]
-"""Handler type for [`wrap_tool_call`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_call]."""
-
 WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs], Awaitable[Any]]
 """Handler type for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]."""
 
@@ -739,26 +736,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         raise error
 
     # --- Tool execute lifecycle hooks ---
-
-    async def wrap_tool_call(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        call: ToolCallPart,
-        handler: WrapToolCallHandler,
-    ) -> Any:
-        """Wrap a settled tool call, including validation failures and execution hooks.
-
-        The handler takes no arguments because validation and failure classification have
-        already completed. Use
-        [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]
-        to modify validated arguments or the tool execution itself.
-
-        [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] and
-        [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] raised by the wrapper use the
-        normal tool retry and failed-result semantics.
-        """
-        return await handler()
 
     async def before_tool_execute(
         self,

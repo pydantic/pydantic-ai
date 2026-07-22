@@ -1031,8 +1031,8 @@ class BedrockConverseModel(Model[BaseClient]):
             'bedrock_tool_result_colocatable_content', _ALL_TOOL_RESULT_COLOCATABLE_CONTENT
         )
 
-        # AWS documents `status` support only for Amazon Nova and Anthropic Claude 3/4 models.
-        supports_tool_result_status = profile.get('bedrock_supports_tool_result_status', False)
+        # Most families accept a `status` field on `toolResult` blocks; Writer Palmyra rejects it.
+        supports_tool_result_status = profile.get('bedrock_supports_tool_result_status', True)
 
         # Media returned from a tool that can't live inside a `toolResult` block (see
         # `bedrock_supported_media_kinds_in_tool_returns`) is emitted as a sibling block. Models like

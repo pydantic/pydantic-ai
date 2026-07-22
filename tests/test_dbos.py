@@ -14,7 +14,7 @@ from typing import Any, Literal, cast
 
 import pytest
 from httpx import AsyncClient
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
@@ -63,13 +63,8 @@ from .conftest import IsDatetime, IsNow, IsStr
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
-    from dbos._error import DBOSAwaitedWorkflowCancelledError
 
-    from pydantic_ai.durable_exec._toolset import (
-        CallToolResult,
-        unwrap_recorded_tool_call_result,
-        wrap_tool_call_result,
-    )
+    from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
     from pydantic_ai.durable_exec.dbos import (
         DBOSAgent,  # pyright: ignore[reportDeprecated]
         DBOSDurability,
@@ -2359,75 +2354,6 @@ async def test_dbos_dynamic_tool_model_retry_crosses_step_without_engine_retries
         return calls
 
     assert await run_workflow() == 1
-
-
-async def test_dbos_durability_dynamic_tool_failed_survives_cancel_resume(dbos: DBOS) -> None:
-    """Cancel/resume restores a recorded failed dynamic-tool result without re-execution.
-
-    Regression test for https://github.com/pydantic/pydantic-ai/pull/5585 and
-    https://github.com/pydantic/pydantic-ai/pull/6640, using DBOS's public workflow recovery
-    API: https://docs.dbos.dev/python/tutorials/workflow-management.
-    """
-    agent_completed = asyncio.Event()
-    release_workflow = asyncio.Event()
-    tool_calls = 0
-
-    async def failing_tool() -> str:
-        nonlocal tool_calls
-        tool_calls += 1
-        raise ToolFailed('Disk full')
-
-    agent = Agent(
-        TestModel(),
-        name='dbos_dynamic_tool_failed_recovery',
-        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([failing_tool]), id='failed_dynamic')],
-        capabilities=[DBOSDurability()],
-    )
-
-    @DBOS.step()
-    async def cancellation_checkpoint() -> None:
-        return None
-
-    @DBOS.workflow()
-    async def run_agent() -> list[tuple[str, Any, str]]:
-        result = await agent.run('Call the tool')
-        tool_returns = [
-            (part.tool_name, part.content, part.outcome)
-            for message in result.all_messages()
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
-        agent_completed.set()
-        await release_workflow.wait()
-        await cancellation_checkpoint()
-        return tool_returns
-
-    workflow_id = str(uuid.uuid4())
-    with SetWorkflowID(workflow_id):
-        handle = await DBOS.start_workflow_async(run_agent)
-
-    await asyncio.wait_for(agent_completed.wait(), timeout=10)
-    await DBOS.cancel_workflow_async(workflow_id)
-    assert (await handle.get_status()).status == 'CANCELLED'
-    release_workflow.set()
-    with pytest.raises(DBOSAwaitedWorkflowCancelledError):
-        await handle.get_result(polling_interval_sec=0.01)
-
-    resumed = await DBOS.resume_workflow_async(workflow_id)
-    tool_returns = await resumed.get_result(polling_interval_sec=0.01)
-
-    assert tool_returns == [('failing_tool', 'Disk full', 'failed')]
-    assert tool_calls == 1
-    steps = await dbos.list_workflow_steps_async(workflow_id)
-    call_tool_steps = [step for step in steps if step['function_name'].endswith('failed_dynamic.call_tool')]
-    assert len(call_tool_steps) == 1
-    assert call_tool_steps[0]['error'] is None
-    call_tool_result_adapter: TypeAdapter[CallToolResult] = TypeAdapter(CallToolResult)
-    recorded_output = call_tool_result_adapter.validate_python(call_tool_steps[0]['output'])
-    assert call_tool_result_adapter.dump_python(recorded_output) == {
-        'message': 'Disk full',
-        'kind': 'tool_failed',
-    }
 
 
 async def test_dbos_mcp_step_rejects_enqueue_in_workflow(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:

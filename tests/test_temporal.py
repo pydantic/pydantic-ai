@@ -3372,13 +3372,10 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
 
 
 tool_failed_agent = Agent(TestModel(call_tools=['failing_tool']), name='tool_failed_agent')
-tool_failed_calls = 0
 
 
 @tool_failed_agent.tool_plain
 def failing_tool() -> str:
-    global tool_failed_calls
-    tool_failed_calls += 1
     raise ToolFailed('Disk full')
 
 
@@ -3399,15 +3396,6 @@ class ToolFailedWorkflow:
 
 
 async def test_temporal_agent_with_tool_failed(client: Client):
-    """A recorded `ToolFailed` result replays without re-executing its activity.
-
-    Regression test for https://github.com/pydantic/pydantic-ai/pull/5585 and
-    https://github.com/pydantic/pydantic-ai/pull/6640, using Temporal's replay contract:
-    https://docs.temporal.io/develop/python/testing-suite#replay.
-    """
-    global tool_failed_calls
-    tool_failed_calls = 0
-    workflow_id = f'{ToolFailedWorkflow.__name__}-{uuid.uuid4()}'
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -3417,36 +3405,11 @@ async def test_temporal_agent_with_tool_failed(client: Client):
         tool_returns = await client.execute_workflow(
             ToolFailedWorkflow.run,
             args=['Call the failing tool'],
-            id=workflow_id,
+            id=ToolFailedWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
-        history = await client.get_workflow_handle(workflow_id).fetch_history()
 
     assert tool_returns == [('failing_tool', 'Disk full', 'failed')]
-    assert tool_failed_calls == 1
-
-    scheduled_call_tool_event_ids = {
-        event.event_id
-        for event in history.events
-        if event.HasField('activity_task_scheduled_event_attributes')
-        and event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__call_tool')
-    }
-    completed_call_tool_events = [
-        event.activity_task_completed_event_attributes
-        for event in history.events
-        if event.HasField('activity_task_completed_event_attributes')
-        and event.activity_task_completed_event_attributes.scheduled_event_id in scheduled_call_tool_event_ids
-    ]
-    assert len(completed_call_tool_events) == 1
-    decoded = await pydantic_data_converter.decode(completed_call_tool_events[0].result.payloads)
-    assert decoded == [{'message': 'Disk full', 'kind': 'tool_failed'}]
-
-    await Replayer(
-        workflows=[ToolFailedWorkflow],
-        workflow_runner=UnsandboxedWorkflowRunner(),
-        data_converter=pydantic_data_converter,
-    ).replay_workflow(history)
-    assert tool_failed_calls == 1
 
 
 class CustomModelSettings(ModelSettings, total=False):
