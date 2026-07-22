@@ -410,7 +410,8 @@ class MistralModel(Model[Mistral]):
         assert response.choices, 'Unexpected empty response choice.'
 
         choice = response.choices[0]
-        assert choice.message, 'Unexpected empty response message.'
+        if choice.message is None:  # pragma: no cover
+            raise UnexpectedModelBehavior('Unexpected empty response message from Mistral')
         content = choice.message.content
         tool_calls = choice.message.tool_calls
 
