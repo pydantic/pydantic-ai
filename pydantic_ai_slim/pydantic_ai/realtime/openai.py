@@ -433,6 +433,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                         finish_reason=response_finish_reason(response),
                     )
                 )
+            elif matches_active_response and response_finish_reason(response) == 'tool_call':
+                events.append(
+                    SessionUsageEvent(
+                        usage=RequestUsage(),
+                        provider_response_id=response_id or None,
+                        finish_reason='tool_call',
+                    )
+                )
             if matches_active_response and self._pending_response:
                 self._pending_response = False
                 # A cancelled response means the user barged in: a new turn is starting, so

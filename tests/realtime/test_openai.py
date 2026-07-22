@@ -1596,6 +1596,70 @@ async def test_response_done_function_call_only_still_emits_usage() -> None:
 
 
 @pytest.mark.anyio
+async def test_function_call_only_response_without_usage_finalizes_before_answer() -> None:
+    frames = [
+        json.dumps({'type': 'response.created', 'response': {'id': 'resp-tool'}}),
+        json.dumps(
+            {
+                'type': 'response.function_call_arguments.done',
+                'call_id': 'call-1',
+                'name': 'get_weather',
+                'arguments': '{}',
+            }
+        ),
+        json.dumps(
+            {
+                'type': 'response.done',
+                'response': {
+                    'id': 'resp-tool',
+                    'status': 'completed',
+                    'output': [{'type': 'function_call'}],
+                },
+            }
+        ),
+        json.dumps({'type': 'response.created', 'response': {'id': 'resp-answer'}}),
+        json.dumps(
+            {
+                'type': 'response.output_audio_transcript.done',
+                'item_id': 'answer-1',
+                'transcript': 'Sunny',
+            }
+        ),
+        json.dumps(
+            {
+                'type': 'response.done',
+                'response': {
+                    'id': 'resp-answer',
+                    'status': 'completed',
+                    'output': [],
+                    'usage': {'output_tokens': 3},
+                },
+            }
+        ),
+    ]
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'sunny'
+
+    connection = OpenAIRealtimeConnection(FakeWebSocket(frames))  # type: ignore[arg-type]
+    session = RealtimeSession(connection, make_tool_manager(runner), provider_name='openai')
+    async with session:
+        _ = [event async for event in session]
+
+    messages = session.all_messages()
+    assert len(messages) == 3
+    tool_response, tool_result, answer = messages
+    assert isinstance(tool_response, ModelResponse)
+    assert tool_response.parts == [ToolCallPart(tool_name='get_weather', args='{}', tool_call_id='call-1')]
+    assert tool_response.usage == RequestUsage()
+    assert isinstance(tool_result, ModelRequest)
+    assert isinstance(tool_result.parts[0], ToolReturnPart)
+    assert isinstance(answer, ModelResponse)
+    assert answer.parts == [SpeechPart(speaker='assistant', transcript='Sunny', id='answer-1', provider_name='openai')]
+    assert answer.usage == RequestUsage(output_tokens=3)
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     ('status', 'raw_reason', 'finish_reason', 'state'),
     # A cancelled (barge-in) turn is interrupted, not an error, so `finish_reason` stays unset.
