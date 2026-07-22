@@ -149,9 +149,11 @@ def test_google_cloud_provider_api_key_from_env(env: TestEnv, api_key_env_var: s
     assert provider.client._api_client.api_key == 'your-api-key'  # pyright: ignore[reportPrivateUsage]
 
 
-def test_google_cloud_provider_adc_env_takes_precedence_over_api_key(env: TestEnv):
+@pytest.mark.parametrize('api_key', [None, ''])
+def test_google_cloud_provider_adc_env_takes_precedence_over_api_key(env: TestEnv, api_key: str | None):
     """Application credentials take precedence over an API key from the environment.
 
+    An empty `api_key` counts as unset, so it must not resurrect an environment API key either.
     This is a unit test because it verifies SDK authentication routing before a request is sent.
     """
     env.set('GOOGLE_APPLICATION_CREDENTIALS', '/path/to/service-account.json')
@@ -162,7 +164,7 @@ def test_google_cloud_provider_adc_env_takes_precedence_over_api_key(env: TestEn
     credentials = AnonymousCredentials()
 
     with patch('google.auth.default', return_value=(credentials, 'pydantic-ai')):
-        provider = GoogleCloudProvider()
+        provider = GoogleCloudProvider(api_key=api_key)
 
     api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
     assert api_client.api_key is None
@@ -232,6 +234,8 @@ def test_google_cloud_provider_adc_kwargs_take_precedence_over_explicit_api_key(
     forwarded_credentials = api_client._credentials  # pyright: ignore[reportPrivateUsage]
     assert isinstance(forwarded_credentials, service_account.Credentials)
     assert forwarded_credentials.service_account_email == 'service-account@example.com'
+    # The credentials fed in are unscoped, so this proves the forwarded object went through scoping.
+    assert forwarded_credentials.scopes == ['https://www.googleapis.com/auth/cloud-platform']
 
 
 def test_google_cloud_provider_google_api_key_takes_precedence_over_gemini_api_key(env: TestEnv):

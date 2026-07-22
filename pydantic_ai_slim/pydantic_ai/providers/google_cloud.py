@@ -42,7 +42,8 @@ class GoogleCloudProvider(BaseGoogleProvider):
 
         Args:
             api_key: The [Vertex AI Express Mode API key](https://cloud.google.com/vertex-ai/generative-ai/docs/start/api-keys?usertype=expressmode)
-                to use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable.
+                to use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable,
+                or the legacy `GEMINI_API_KEY` environment variable (`GOOGLE_API_KEY` takes precedence).
                 Explicit `credentials` use credential-based authentication instead.
                 Explicit `project`/`location` use Application Default Credentials.
                 The `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_CLOUD_LOCATION`
@@ -65,6 +66,10 @@ class GoogleCloudProvider(BaseGoogleProvider):
         if client is not None:
             self._client = client
             return
+
+        # Treat an empty api_key as unset so it doesn't skip the precedence/ADC blocks below and let
+        # the SDK resurrect an environment API key (its BaseApiClient does `api_key or env_api_key`).
+        api_key = api_key or None
 
         # ADC kwargs take precedence over API-key auth. With none provided and only an api_key,
         # the SDK uses Vertex AI Express Mode. The SDK reads `GOOGLE_API_KEY`/`GEMINI_API_KEY` itself,
