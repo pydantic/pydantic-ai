@@ -4,7 +4,9 @@ from __future__ import annotations as _annotations
 
 import pytest
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.azure import AzureProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.realtime.azure import AzureRealtimeModel
 
 
@@ -12,6 +14,13 @@ def test_model_is_exported_from_realtime_package() -> None:
     from pydantic_ai.realtime import AzureRealtimeModel as ExportedAzureRealtimeModel
 
     assert ExportedAzureRealtimeModel is AzureRealtimeModel
+
+
+def test_non_azure_provider_instance_is_rejected() -> None:
+    # A non-Azure `Provider` *instance* (not just the `provider='...'` string) must fail fast with a clear
+    # `UserError` at construction, rather than an `AssertionError` deep inside later.
+    with pytest.raises(UserError, match='requires an `AzureProvider`'):
+        AzureRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='x'))
 
 
 @pytest.mark.anyio
