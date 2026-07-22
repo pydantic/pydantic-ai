@@ -74,6 +74,11 @@ async def test_audio_in_server_vad_turn(
                 if isinstance(event, TurnCompleteEvent):
                     break
 
+    # Pin the spoken-turn event order for this cassette (Gemini streams input transcripts natively).
+    assert collapse_event_types(events) == snapshot(
+        ['PartStartEvent', 'PartDeltaEvent', 'PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnCompleteEvent']
+    )
+
     messages = session.all_messages()
     # Automatic VAD may split the clip into several short user turns; the invariant is that the spoken
     # input is transcribed into user history (not dropped) ahead of the assistant's reply.

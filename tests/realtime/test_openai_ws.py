@@ -132,6 +132,22 @@ async def test_audio_in_server_vad_turn(
                 if isinstance(event, TurnCompleteEvent):
                     break
 
+    # Pin the canonical spoken-turn event order: speech start -> stop -> user turn -> assistant reply.
+    assert collapse_event_types(events) == snapshot(
+        [
+            'InputSpeechStartEvent',
+            'InputSpeechEndEvent',
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'TurnCompleteEvent',
+        ]
+    )
+
     messages = session.all_messages()
     # The spoken turn is transcribed into a user request ahead of the assistant's reply.
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])

@@ -31,7 +31,13 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import PartStartEvent, ReconnectedEvent, ReconnectPolicy, TurnCompleteEvent
+from pydantic_ai.realtime import (
+    PartStartEvent,
+    RealtimeModelProfile,
+    ReconnectedEvent,
+    ReconnectPolicy,
+    TurnCompleteEvent,
+)
 from pydantic_ai.realtime._base import SessionErrorEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
@@ -138,6 +144,21 @@ async def test_audio_in_server_vad_turn(
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
+
+    # Pin the canonical spoken-turn event order: speech start -> stop -> user turn -> assistant reply.
+    assert collapse_event_types(events) == snapshot(
+        [
+            'InputSpeechStartEvent',
+            'InputSpeechEndEvent',
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'TurnCompleteEvent',
+        ]
+    )
 
     messages = session.all_messages()
     user_speech = [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
@@ -411,3 +432,25 @@ async def test_session_resumption_after_drop(xai_ws_cassette: tuple[XaiProvider,
     final_part = responses[-1].parts[0]
     assert isinstance(final_part, SpeechPart)
     assert 'cobalt' in (final_part.transcript or '').lower()
+
+
+def test_profile_allow_seeding() -> None:
+    """Unit guard: the model advertises session seeding, which the seeding cassette test relies on.
+
+    Kept as a plain unit assertion (not a cassette test) because it pins intrinsic capability flags a
+    recording wouldn't protect. Grok Voice has no image input or output truncation, and seeds from text
+    history only (no image or audio seeding).
+    """
+    profile = XaiRealtimeModel(MODEL, provider=XaiProvider(api_key='xai-test-key')).profile
+    assert profile == RealtimeModelProfile(
+        supports_image_input=False,
+        supports_manual_turn_control=True,
+        supports_interruption=True,
+        supports_output_truncation=False,
+        supports_session_seeding=True,
+        supports_seeding_images=False,
+        supports_seeding_audio=False,
+        supported_native_tools=frozenset(),
+        audio_input_sample_rate=24000,
+        audio_output_sample_rate=24000,
+    )
