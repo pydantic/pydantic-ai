@@ -137,11 +137,11 @@ def test_map_transcription_usage() -> None:
     # tolerates; the SDK's lenient `.construct` then builds the tokens variant with `type=None`. It must
     # be read as tokens rather than falling through to the duration branch, whose `.seconds` this variant
     # lacks — previously an `AttributeError` that escaped the recoverable path and tore the session down.
-    assert rt_openai._map_transcription_usage(
+    assert rt_openai._map_transcription_usage(  # pyright: ignore[reportPrivateUsage]
         UsageTranscriptTextUsageTokens.construct(total_tokens=12)
     ) == RequestUsage(details={'input_transcription_tokens': 12})
     # A type-less payload carrying only a duration is a graceful no-op, not a crash.
-    assert rt_openai._map_transcription_usage(UsageTranscriptTextUsageTokens.construct(seconds=1.5)) is None
+    assert rt_openai._map_transcription_usage(UsageTranscriptTextUsageTokens.construct(seconds=1.5)) is None  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize(
