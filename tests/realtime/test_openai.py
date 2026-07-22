@@ -106,12 +106,12 @@ def _wav_bytes(pcm: bytes, sample_rate: int = 24000) -> bytes:
 
 
 def test_map_transcription_usage() -> None:
-    assert rt_openai._map_transcription_usage(None) is None
-    assert rt_openai._map_transcription_usage(UsageTranscriptTextUsageDuration(type='duration', seconds=0.5)) is None
-    assert rt_openai._map_transcription_usage(
+    assert rt_openai._map_transcription_usage(None) is None  # pyright: ignore[reportPrivateUsage]
+    assert rt_openai._map_transcription_usage(UsageTranscriptTextUsageDuration(type='duration', seconds=0.5)) is None  # pyright: ignore[reportPrivateUsage]
+    assert rt_openai._map_transcription_usage(  # pyright: ignore[reportPrivateUsage]
         UsageTranscriptTextUsageDuration(type='duration', seconds=3)
     ) == RequestUsage(details={'input_transcription_seconds': 3})
-    assert rt_openai._map_transcription_usage(
+    assert rt_openai._map_transcription_usage(  # pyright: ignore[reportPrivateUsage]
         UsageTranscriptTextUsageTokens(
             type='tokens',
             input_tokens=5,
@@ -126,7 +126,7 @@ def test_map_transcription_usage() -> None:
             'input_transcription_text_tokens': 1,
         }
     )
-    assert rt_openai._map_transcription_usage(
+    assert rt_openai._map_transcription_usage(  # pyright: ignore[reportPrivateUsage]
         UsageTranscriptTextUsageTokens(
             type='tokens', input_tokens=5, output_tokens=2, total_tokens=7, input_token_details=None
         )
@@ -145,13 +145,13 @@ def test_map_transcription_usage() -> None:
 )
 def test_map_usage_rejects_malformed_constructed_details(usage: RealtimeResponseUsage) -> None:
     with pytest.raises(ValueError, match='must be an object'):
-        rt_openai._map_usage(usage)
+        rt_openai._map_usage(usage)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_transcription_usage_rejects_malformed_constructed_details() -> None:
     usage = UsageTranscriptTextUsageTokens.construct(type='tokens', input_token_details='bad')
     with pytest.raises(ValueError, match='must be an object'):
-        rt_openai._map_transcription_usage(usage)
+        rt_openai._map_transcription_usage(usage)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_merge_realtime_profile_skips_empty_layers_and_applies_overrides() -> None:
@@ -188,9 +188,9 @@ def test_realtime_url_for_gateway_provider(monkeypatch: pytest.MonkeyPatch):
     )
     plain_model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
 
-    assert '/v1/realtime' in string_model._realtime_url()
-    assert '/v1/realtime' in instance_model._realtime_url()
-    assert plain_model._realtime_url().count('/v1') == 1
+    assert '/v1/realtime' in string_model._realtime_url()  # pyright: ignore[reportPrivateUsage]
+    assert '/v1/realtime' in instance_model._realtime_url()  # pyright: ignore[reportPrivateUsage]
+    assert plain_model._realtime_url().count('/v1') == 1  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_audio_delta() -> None:
@@ -960,7 +960,11 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
         # A `duration` transcription usage with no numeric `seconds` (the SDK's lenient union fallback would
         # otherwise construct the wrong variant and crash on `usage.seconds`).
         json.dumps(
-            {'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'hi', 'usage': {'type': 'duration'}}
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'transcript': 'hi',
+                'usage': {'type': 'duration'},
+            }
         ),
         json.dumps(
             {
@@ -970,7 +974,11 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
             }
         ),
         json.dumps(
-            {'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'hi', 'usage': {'type': 'mystery'}}
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'transcript': 'hi',
+                'usage': {'type': 'mystery'},
+            }
         ),
     ]
     good = json.dumps({'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'\x09').decode('ascii')})
@@ -1703,7 +1711,11 @@ async def test_transcription_completed_token_usage_emits_run_level_usage() -> No
             'type': 'conversation.item.input_audio_transcription.completed',
             'item_id': 'u1',
             'transcript': 'hi',
-            'usage': {'type': 'tokens', 'total_tokens': 5, 'input_token_details': {'audio_tokens': 4, 'text_tokens': 1}},
+            'usage': {
+                'type': 'tokens',
+                'total_tokens': 5,
+                'input_token_details': {'audio_tokens': 4, 'text_tokens': 1},
+            },
         }
     )
     ws = FakeWebSocket([frame])
