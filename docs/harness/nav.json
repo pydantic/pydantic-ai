@@ -9,6 +9,7 @@
       { "label": "Context", "slug": "context" },
       { "label": "Pydantic AI Docs", "slug": "pydantic-ai-docs" },
       { "label": "Exa Search", "slug": "exa-search" },
+      { "label": "Macroscope", "slug": "macroscope" },
       { "label": "Compaction", "slug": "compaction" },
       { "label": "Overflowing Tool Output", "slug": "overflowing-tool-output" },
       { "label": "Cache Stability Monitor", "slug": "cache-stability" },
