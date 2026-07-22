@@ -536,6 +536,25 @@ async def test_partial_only_user_transcript_finalized_on_turn_complete() -> None
     )
 
 
+async def test_partial_only_user_transcript_strips_leading_space() -> None:
+    # Gemini streams partial-only transcripts whose first delta carries a leading space; with no final
+    # snapshot to reconcile against (unlike OpenAI's `.completed`), the finalized turn would keep the
+    # space. Finalization strips it so the result matches the OpenAI transcription of the same utterance.
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text=' Hello, my name', is_final=False),
+            InputTranscript(text=' is Marcelo.', is_final=False),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+    _ = await collect_events(session)
+    [request] = [message for message in session.new_messages() if isinstance(message, ModelRequest)]
+    [part] = request.parts
+    assert isinstance(part, SpeechPart)
+    assert part.transcript == 'Hello, my name is Marcelo.'
+
+
 async def test_user_transcript_final_snapshot_reconciles_whitespace_drift() -> None:
     # OpenAI's input-transcription deltas can carry a leading space that the `.completed` full-text
     # snapshot trims. The final snapshot must replace the accumulated deltas, not append a near-
@@ -1226,6 +1245,23 @@ async def test_tool_call_cancellation_cancels_running_tool() -> None:
     assert [(part.tool_call_id, part.content) for part in returns] == [
         ('c1', 'Tool call cancelled before it completed.')
     ]
+
+
+async def test_tool_call_cancellation_unknown_id_is_ignored() -> None:
+    # A cancellation for an id with no matching in-flight call (already finished, or never started) must
+    # be a no-op: no crash, no spurious result event, nothing sent. Covers the race where a tool finishes
+    # in the window before its cancellation arrives (the `finally`-pop makes that atomic).
+    conn = FakeRealtimeConnection(
+        [
+            ToolCallCancelled(tool_call_ids=['never-started']),
+            Transcript(text='hi', is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+    events = await collect_events(session)
+    assert [event for event in events if isinstance(event, FunctionToolResultEvent)] == []
+    assert conn.sent == []
 
 
 async def test_interrupt_does_not_cancel_in_flight_tool() -> None:

@@ -1077,8 +1077,12 @@ class RealtimeSession:
             part = self._active_users_by_id.pop(item_id)
             self._user_transcripts_by_id.pop(item_id)
             self._finalized_user_item_ids.add(item_id)
-        if part.transcript == '':
-            part = replace(part, transcript=None)
+        # Strip surrounding whitespace at finalization: providers whose transcripts arrive as a cumulative
+        # or final snapshot (OpenAI/xAI) already reconcile leading-space drift via `_accumulate_transcript`,
+        # but a partial-only stream (Gemini) concatenates deltas verbatim and would otherwise keep the
+        # leading space its first delta carries. Stripping here aligns the two; it's a no-op when already
+        # reconciled, and an all-whitespace (or empty) transcript collapses to `None` (an audio-only turn).
+        part = replace(part, transcript=(part.transcript or '').strip() or None)
         if self._retain_input:
             # Prefer this item's own segment (cut at its speech-stopped boundary); it's the correct audio
             # even if a later turn's transcript already finalized. Fall back to the rolling buffer for
