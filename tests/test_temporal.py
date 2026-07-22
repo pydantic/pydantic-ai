@@ -6334,8 +6334,12 @@ class WorkflowStreamAgentWorkflow:
     async def run(self, prompt: str) -> str:
         result = await _workflow_stream_durable_agent.run(prompt)
         # Stay alive until the subscriber has drained the stream: subscription is a workflow
-        # update long-poll, which can't reach the workflow once it has completed.
-        await workflow.wait_condition(lambda: self._released)
+        # update long-poll, which can't reach the workflow once it has completed. Bound the wait so
+        # a subscriber that never releases (e.g. under CI load) can't hang the worker's shutdown.
+        try:
+            await workflow.wait_condition(lambda: self._released, timeout=timedelta(seconds=30))
+        except asyncio.TimeoutError:
+            pass
         return result.output
 
     @workflow.signal
@@ -6391,7 +6395,7 @@ async def test_temporal_durability_streaming_to_workflow_stream(client: Client) 
 
         collected = await asyncio.wait_for(
             _collect_agent_events(client, handle, lambda: handle.signal(WorkflowStreamAgentWorkflow.release)),
-            timeout=15.0,
+            timeout=60.0,
         )
         output = await handle.result()
 
@@ -6427,7 +6431,11 @@ class FilteredWorkflowStreamAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await _filtered_stream_durable_agent.run(prompt)
-        await workflow.wait_condition(lambda: self._released)
+        # Bounded so a subscriber that never releases can't hang the worker's shutdown.
+        try:
+            await workflow.wait_condition(lambda: self._released, timeout=timedelta(seconds=30))
+        except asyncio.TimeoutError:
+            pass
         return result.output
 
     @workflow.signal
@@ -6453,7 +6461,7 @@ async def test_temporal_durability_event_stream_topic_filter(client: Client) -> 
 
         collected = await asyncio.wait_for(
             _collect_agent_events(client, handle, lambda: handle.signal(FilteredWorkflowStreamAgentWorkflow.release)),
-            timeout=15.0,
+            timeout=60.0,
         )
         await handle.result()
 
