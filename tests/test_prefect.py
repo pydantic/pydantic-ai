@@ -40,6 +40,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart
+from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
@@ -2625,6 +2626,12 @@ async def test_prefect_durability_event_stream_handler_rejects_enqueue() -> None
         async for _ in stream:
             with pytest.raises(UserError, match='enqueued messages would be dropped') as exc_info:
                 ctx.enqueue('later')
+            # The ambient current context is guarded too, so reading it instead of the argument
+            # doesn't bypass the guard.
+            ambient = get_current_run_context()
+            assert ambient is not None
+            with pytest.raises(UserError, match='enqueued messages would be dropped'):
+                ambient.enqueue('later')
             enqueue_errors.append(str(exc_info.value))
 
     async def handled_tool() -> str:

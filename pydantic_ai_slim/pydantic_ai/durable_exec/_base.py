@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping
+from contextlib import contextmanager
 from typing import Any, ClassVar
 
 from typing_extensions import Self
 
+from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -279,6 +281,18 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return guard_run_context_enqueue(
             ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun
         )
+
+    @contextmanager
+    def _durable_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT]]:
+        """Run user code inside a durable unit with `ctx` guarded and set as the ambient context.
+
+        Both the yielded context and `get_current_run_context()` are guarded, so user code can't
+        enqueue whether it reads its argument or the ambient getter (Temporal gets the same guard
+        because its activity-side context comes from `deserialize_run_context`).
+        """
+        guarded = self._durable_run_context(ctx)
+        with set_current_run_context(guarded):
+            yield guarded
 
     @abstractmethod
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:

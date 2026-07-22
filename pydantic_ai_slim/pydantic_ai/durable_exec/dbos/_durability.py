@@ -164,12 +164,12 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             run_context: RunContext[Any],
         ) -> StreamedActivityResult:
             model = await self._resolve_model_for_request(model_id, run_context)
-            with set_current_run_context(run_context):
+            with self._durable_run_context_scope(run_context) as ctx:
                 async with model.request_stream(
-                    messages, model_settings, model_request_parameters, run_context
+                    messages, model_settings, model_request_parameters, ctx
                 ) as streamed_response:
                     events = await capture_event_stream(
-                        run_context=self._durable_run_context(run_context),
+                        run_context=ctx,
                         stream=streamed_response,
                         handler=self._effective_event_stream_handler(),
                     )
@@ -195,7 +195,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             ) -> None:
                 handler = self._effective_event_stream_handler()
                 assert handler is not None
-                await handler(self._durable_run_context(run_context), self._single_event_stream(event))
+                with self._durable_run_context_scope(run_context) as ctx:
+                    await handler(ctx, self._single_event_stream(event))
 
             self._event_stream_handler_step = event_stream_handler_step
 
