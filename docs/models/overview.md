@@ -407,14 +407,16 @@ print(result.output)
     To keep exception-based fallback alongside a response handler, pass them together as a list — see the [mixed example below](#combining-handlers).
 
 !!! note
-    Note that the [agent loop](../agent.md) raises on empty or thinking-only responses: a
-    `'length'` finish reason raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]
+    Note that the [agent loop](../agent.md) can raise on empty, thinking-only, or non-empty
+    responses: a `'length'` finish reason raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]
     when the model produced no actionable output (typically because it hit the token limit mid-thinking),
-    and an empty response with a `'content_filter'` finish reason raises
-    [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Non-empty responses with either
-    finish reason are returned as-is. These exceptions are raised from the agent loop rather than from
-    `model.request()`, so they are **not** caught by `FallbackModel`'s default `fallback_on=(ModelAPIError,)`
-    (and `ContentFilterError` does not inherit from [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]).
+    an empty response with a `'content_filter'` finish reason raises
+    [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError], and a non-empty response truncated
+    mid-tool-call raises [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (also a subclass
+    of `UnexpectedModelBehavior`). Otherwise non-empty responses are returned as-is. These exceptions are
+    raised from the agent loop rather than from `model.request()`, so they are **not** caught by
+    `FallbackModel`'s default `fallback_on=(ModelAPIError,)` (and `ContentFilterError` does not inherit
+    from [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]).
     To fall back on them, add a response handler (see the [example above](#finish-reason-example)) that
     inspects [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason]. To also raise on
     `content_filter` responses that still carry partial or refusal text, add the
