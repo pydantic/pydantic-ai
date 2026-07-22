@@ -50,6 +50,17 @@ speed, server/semantic VAD, and truncation use
 realtime does not expose `temperature`. Input transcription defaults to `'auto'`; see
 [Transcribing user input](index.md#transcribing-user-input).
 
+!!! note "Input transcription needs a deployed transcription model"
+    Azure resolves the input-transcription model against your resource's own **deployments**, not
+    OpenAI's hosted models. The default (`gpt-realtime-whisper`) is not a deployment, so on a resource
+    without a transcription deployment, input transcription fails with `DeploymentNotFound` — surfaced as
+    a recoverable [`InputTranscriptionFailedEvent`][pydantic_ai.realtime.InputTranscriptionFailedEvent],
+    and the spoken user turn is not recorded in history. Deploy a transcription model (e.g. `whisper`) and
+    set it via `input_transcription_model` on
+    [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]. If you don't
+    need transcripts, disable transcription with `input_transcription_model=None` and pass
+    `audio_retention='input'` so the spoken turn is still kept as audio.
+
 ## Azure AI Voice Live support is coming soon
 
 Azure AI Voice Live support is coming soon.
