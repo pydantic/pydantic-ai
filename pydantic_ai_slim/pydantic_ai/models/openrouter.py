@@ -1130,7 +1130,6 @@ class OpenRouterModel(OpenAIChatModel):
         tool_def = super()._map_tool_definition(f, model_settings)
         if self.model_name.startswith('anthropic/') and model_settings.get('anthropic_eager_input_streaming'):
             tool_def['eager_input_streaming'] = True  # type: ignore[typeddict-item]
-
         return tool_def
 
 
