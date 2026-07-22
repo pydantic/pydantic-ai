@@ -576,7 +576,7 @@ class GoogleModel(Model[Client]):
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         try:
-            yield await self._process_streamed_response(response, model_request_parameters)  # pyright: ignore[reportArgumentType]
+            yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore[reportArgumentType]
         finally:
             aclose = getattr(response, 'aclose', None)
             if aclose is not None:  # pragma: no branch
@@ -763,13 +763,13 @@ class GoogleModel(Model[Client]):
         )
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
-            return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
+            return await func(model=self._model_name, contents=contents, config=config)  # type: ignore[reportReturnType]
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 raise ModelHTTPError(
                     status_code=status_code,
                     model_name=self._model_name,
-                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+                    body=cast(Any, e.details),  # type: ignore[reportUnknownMemberType]
                 ) from e
             raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
 
@@ -1064,7 +1064,7 @@ class GoogleModel(Model[Client]):
 
         # Google GenAI requires at least one user part in the message, and that function call turns
         # come immediately after a user turn or after a function response turn.
-        if not contents or contents[0].get('role') == 'model':  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        if not contents or contents[0].get('role') == 'model':  # type: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
             contents.insert(0, {'role': 'user', 'parts': [{'text': ''}]})
 
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
@@ -1259,7 +1259,7 @@ class GeminiStreamedResponse(StreamedResponse):
         try:
             # google.genai types this as AsyncIterator, but at runtime it's an
             # async generator that exposes aclose().
-            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            await self._response.source.aclose()  # type: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
         except RuntimeError as exc:
             if not _utils.is_async_generator_already_running(exc):
                 raise
@@ -1487,7 +1487,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 raise ModelHTTPError(
                     status_code=status_code,
                     model_name=self._model_name,
-                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+                    body=cast(Any, e.details),  # type: ignore[reportUnknownMemberType]
                 ) from e
             raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
 
@@ -1707,7 +1707,7 @@ def _native_tool_return_part_dict(
         return None
     if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
         return _attach_signature(
-            {'code_execution_result': cast(CodeExecutionResultDict, item.content)},  # pyright: ignore[reportUnknownMemberType]
+            {'code_execution_result': cast(CodeExecutionResultDict, item.content)},  # type: ignore[reportUnknownMemberType]
             signature,
         )
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
