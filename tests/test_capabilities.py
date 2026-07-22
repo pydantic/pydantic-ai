@@ -23505,8 +23505,11 @@ async def test_combined_capability_subclass_custom_init_for_run() -> None:
 
     assert isinstance(result, CombinedSubclass)
     assert result is not combined
-    assert isinstance(result.capabilities[0], PerRunLeaf)
-    assert result.capabilities[0].n == 6
+    leaf = result.capabilities[0]
+    assert isinstance(leaf, PerRunLeaf)
+    assert leaf.n == 6
+    # Exercising `get_instructions` also covers the leaf's instruction emission.
+    assert leaf.get_instructions() == 'leaf 6'
 
 
 def test_combined_capability_subclass_custom_init_for_agent() -> None:
@@ -23533,4 +23536,6 @@ def test_combined_capability_subclass_custom_init_for_agent() -> None:
 
     assert isinstance(bound, CombinedSubclass)
     assert bound is not combined
-    assert bound.capabilities[0].bound is True
+    bound_leaf = bound.capabilities[0]
+    assert isinstance(bound_leaf, BindingLeaf)
+    assert bound_leaf.bound is True
