@@ -93,7 +93,7 @@ Set `MCPToolset(tool_error_behavior=...)` according to the server error semantic
 - `'failed'` reports a completed failed result via `ToolFailed` without consuming retry budget.
 - `'error'` propagates the underlying exception to application code.
 
-Structured server error content is serialized as JSON for both `'retry'` and `'failed'`.
+Structured server error content is serialized as JSON for both `'retry'` and `'failed'`. Protocol and transport errors (as opposed to completed tool errors) stay retryable even under `'failed'`.
 
 ## Use Embeddings for RAG
 
