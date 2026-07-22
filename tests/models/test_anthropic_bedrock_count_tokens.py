@@ -45,9 +45,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as botocore_available:
-    import importlib
-
-    importlib.import_module('botocore')
+    import botocore  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),

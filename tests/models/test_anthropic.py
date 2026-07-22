@@ -94,9 +94,7 @@ from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as botocore_available:
-    import importlib
-
-    importlib.import_module('botocore')
+    import botocore  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
 with try_import() as imports_successful:
     from anthropic import (
