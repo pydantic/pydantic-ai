@@ -655,7 +655,10 @@ class AdvisorTool(AbstractNativeTool):
     """
 
     max_uses: int | None = None
-    """If provided, the advisor can be consulted at most this many times. Maps to `max_uses`.
+    """If provided, the advisor can be consulted at most this many times per request. Maps to `max_uses`.
+
+    This is a per-request cap, not a per-run budget: a run that spans multiple requests resets the
+    count each request. Enforce a conversation-wide ceiling yourself if you need one.
 
     Supported by:
 

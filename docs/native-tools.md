@@ -841,7 +841,7 @@ Advisor tokens are reported separately under `advisor_*` keys on [`RequestUsage.
 | Parameter | Anthropic | OpenRouter |
 |-----------|-----------|------------|
 | `model` | ✅ (required — the advisor model to consult) | ✅ (required — an OpenRouter catalog slug) |
-| `max_uses` | ✅ (cap on advisor consultations per run) | ❌ (fixed gateway limit; raises `UserError`) |
+| `max_uses` | ✅ (cap on advisor consultations per request) | ❌ (fixed gateway limit; raises `UserError`) |
 | `max_tokens` | ✅ (cap on advisor output tokens, minimum 1024; makes the result carry a `stop_reason`) | ✅ (maps to `max_completion_tokens`) |
 | `caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; raises `UserError`) |
 

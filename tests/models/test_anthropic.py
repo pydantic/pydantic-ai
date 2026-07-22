@@ -7344,6 +7344,30 @@ async def test_anthropic_advisor_history_dropped_when_absent():
     assert [b.get('type') for b in blocks] == snapshot(['text'])
 
 
+async def test_anthropic_advisor_history_dropped_for_count_tokens(allow_model_requests: None):
+    """`count_tokens` strips the advisor tool from the wire, so advisor history must be stripped too.
+
+    The advisor tool is a server tool that `count_tokens` rejects, so `_messages_count_tokens`
+    drops it from the outgoing `tools`. Replaying advisor call/result history blocks without the
+    tool definition would 400, so mapping must run with advisor inactive even though the request
+    params still carry the `AdvisorTool` (which stays active on the real `/v1/messages` request).
+    """
+    mock_client = cast(AsyncAnthropic, MockAnthropic())
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    mrp = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-opus-4-8')])
+
+    await m.count_tokens(_advisor_history(m), None, mrp)
+
+    count_tokens_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    # The advisor beta header is only added when the advisor tool reaches the wire; its absence
+    # (`betas` stays unset/`Omit`) confirms the tool was stripped from the count-tokens request...
+    assert count_tokens_kwargs.get('betas', OMIT) is OMIT
+    # ...so the advisor history blocks it would otherwise require must be stripped too.
+    assistant_content = next(msg['content'] for msg in count_tokens_kwargs['messages'] if msg['role'] == 'assistant')
+    blocks = [item for item in assistant_content if isinstance(item, dict)]
+    assert [b.get('type') for b in blocks] == snapshot(['text'])
+
+
 async def test_anthropic_advisor_dangling_call_replayed_when_active():
     """A dangling advisor call (pause_turn resume) with no paired result replays verbatim when active."""
     m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key='test-key'))

@@ -1003,10 +1003,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
-        # Map messages with the UNMODIFIED params so `tool_search_active` stays True and tool-search
-        # replay history renders the same `tool_reference` wire shape as `/v1/messages`; those
-        # references point at `function_tools`, which aren't stripped here, so they stay valid.
-        system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
+        # Map with params that keep `ToolSearchTool` but drop `AdvisorTool`. Keeping tool search
+        # leaves `tool_search_active` True so tool-search replay renders the same `tool_reference`
+        # wire shape as `/v1/messages` (those references point at `function_tools`, which aren't
+        # stripped here, so they stay valid). Dropping advisor makes `advisor_active` False so its
+        # call/result history blocks are stripped during replay — the advisor tool is a server tool
+        # that `count_tokens` rejects (and is absent from the wire `tools` above), and replaying
+        # advisor blocks without the tool definition would 400.
+        map_parameters = replace(
+            model_request_parameters,
+            native_tools=[tool for tool in model_request_parameters.native_tools if not isinstance(tool, AdvisorTool)],
+        )
+        system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
         self._limit_cache_points(
