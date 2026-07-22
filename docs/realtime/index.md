@@ -80,8 +80,10 @@ session:
 | [`send_audio`][pydantic_ai.realtime.RealtimeSession.send_audio] | A chunk of raw mono PCM16 microphone audio at the model profile's input sample rate. |
 | [`send`][pydantic_ai.realtime.RealtimeSession.send] | Plain text, image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], a typed [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput], or a sequence of these. |
 
-The `audio_stream()` and `play_audio()` adapter seams are yours to implement; see
-[Connecting a frontend](#connecting-a-frontend).
+The audio capture and playback seams are yours to implement; the
+[voice assistant example](../examples/realtime-voice.md) shows a complete, runnable `sounddevice`
+microphone/speaker version of this quickstart, and [Connecting a frontend](#connecting-a-frontend)
+covers browser/telephony transports.
 
 ## The event loop
 
@@ -192,6 +194,8 @@ user never heard:
 async for event in session:
     if isinstance(event, InputSpeechStartEvent):
         speaker.flush()  # drop buffered audio locally
+        # `interrupt()` (and `audio_end_ms`) require provider support — OpenAI and Azure OpenAI here.
+        # Gemini and xAI handle barge-in themselves; see the model profile reference below.
         await session.interrupt(audio_end_ms=speaker.played_ms())
 ```
 
@@ -434,7 +438,8 @@ and emits the finalized user transcript at the end of the turn.
 
 Send an image as conversation context (for example a video frame) with
 [`send`][pydantic_ai.realtime.RealtimeSession.send]. An image does not itself trigger a
-response — the model picks it up on the next turn (via VAD or `create_response`).
+response — the model picks it up on the next turn (via VAD, a text turn, or `create_response` where
+manual turn-taking is supported).
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import BinaryContent
@@ -795,7 +800,7 @@ Azure OpenAI, and xAI use 24 kHz in both directions; Gemini uses 16 kHz input an
 | [`supports_session_seeding`][pydantic_ai.realtime.RealtimeModelProfile.supports_session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ | ✅ | ✅ |
 | [`supports_seeding_images`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_images] | Images in `message_history` | ✅ | ✅ | ✅ | ❌ |
 | [`supports_seeding_audio`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_audio] | Transcript-less retained user audio in `message_history` | ✅ | ✅ | ❌ | ❌ |
-| [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] | [`thinking`](openai.md#reasoning) | `gpt-realtime-2*` | ❌ | Native-audio models | ❌ |
+| [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] | [`thinking`](openai.md#reasoning) | `gpt-realtime-2*` | `gpt-realtime-2*` | Native-audio models | ❌ |
 
 Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
 exposes neither the manual turn verbs nor an explicit `interrupt()`. xAI Grok Voice supports

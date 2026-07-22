@@ -1,7 +1,7 @@
 # `pydantic_ai.realtime`
 
-Support for **realtime, bidirectional speech-to-speech models** (OpenAI Realtime, Azure AI Voice
-Live, Gemini Live, xAI Grok Voice, and any other provider that streams audio in and out over a
+Support for **realtime, bidirectional speech-to-speech models** (OpenAI Realtime, Azure OpenAI,
+Gemini Live, xAI Grok Voice, and any other provider that streams audio in and out over a
 persistent connection).
 
 Unlike [`Model`][pydantic_ai.models.Model], which is request-response, a realtime model opens a
