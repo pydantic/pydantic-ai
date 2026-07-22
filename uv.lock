@@ -3466,7 +3466,7 @@ wheels = [
 
 [[package]]
 name = "mistralai"
-version = "2.2.0"
+version = "2.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "eval-type-backport" },
@@ -3478,9 +3478,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fc/d0/229ac07a67a9f4488d13f7a0080471d82f22dc1cdad7bf6b748d27a00d1a/mistralai-2.2.0.tar.gz", hash = "sha256:48abfa247ea5a888400ee294a5c1e090ae7e1445cc8cd008c120ae1e3b8eb9eb", size = 385567, upload-time = "2026-03-31T11:21:38.265Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/e0/bc0188444f122083e1cd554a33440589f4c7a55bab57563333f004cf4934/mistralai-2.7.1.tar.gz", hash = "sha256:1b67a224a9387b33d8ca381d24cd8d075dbe6650af305d763d71c4cad06b2ddf", size = 530696, upload-time = "2026-07-21T13:12:51.041Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/db/96/91c8225e1517b728543fcad7bc789391aa22452beb8d88edfaf4111cc9eb/mistralai-2.2.0-py3-none-any.whl", hash = "sha256:9e0cea19eb5281428010c9a220f186e5db0993cfe88f8855ef9d69291956f40b", size = 924713, upload-time = "2026-03-31T11:21:39.761Z" },
+    { url = "https://files.pythonhosted.org/packages/45/1a/c502cad6ebb3363911ad30ec0318c216dcac4f5be485651b7672bdcd3ff7/mistralai-2.7.1-py3-none-any.whl", hash = "sha256:25a78835e52eb44ca8c10046dbb1635545c53c40a06397075df246c82f12b186", size = 1266550, upload-time = "2026-07-21T13:12:49.5Z" },
 ]
 
 [[package]]
@@ -5694,7 +5694,7 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=1.3.4,<2.0.0" },
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.16.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
-    { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.0.5,!=2.4.6" },
+    { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.4.2,!=2.4.6" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=2.45.0" },
     { name = "openai", marker = "extra == 'openrouter'", specifier = ">=2.45.0" },
     { name = "openai", marker = "extra == 'zai'", specifier = ">=2.45.0" },
