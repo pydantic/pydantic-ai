@@ -5,7 +5,7 @@
 ## API Design
 
 <!-- rule:912 -->
-- Silently ignore unsupported generic tuning settings (`temperature`, sampling params, penalties, …) at runtime and document them in docstrings — a model that simply no-ops an unsupported knob keeps client code portable across models; failing noisily would break that portability (provider-namespaced settings like `google_*`/`openai_*` are the next rule, not this one)
+- Silently ignore unsupported generic tuning settings (`temperature`, sampling params, penalties, …) at runtime and document them in docstrings — a model that simply no-ops an unsupported knob keeps client code portable across models; failing noisily would break that portability (provider-namespaced settings like `google_*`/`openai_*` are governed by a separate rule below, not this one)
 <!-- rule:81 -->
 - Apply identical response processing to both `request()` and `request_stream()` — if `request()` calls `_process_response()`, `request_stream()` must apply it to each chunk — Ensures streaming and non-streaming code paths support the same message types (`ToolCallPart`, `NativeToolCallPart`, `TextPart`, etc.) with consistent behavior, preventing bugs where features work in one mode but fail in the other
 <!-- rule:598 -->
