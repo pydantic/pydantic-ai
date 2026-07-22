@@ -364,14 +364,49 @@ async def test_multiple_assistant_items_fold_into_one_response() -> None:
 
 
 @pytest.mark.parametrize(
-    ('finish_reason', 'provider_details'),
+    ('finish_reason', 'provider_details', 'expected_messages'),
     [
-        ('length', {'status': 'incomplete', 'finish_reason': 'max_output_tokens'}),
-        ('error', {'status': 'failed'}),
+        (
+            'length',
+            {'status': 'incomplete', 'finish_reason': 'max_output_tokens'},
+            # Each case carries its own `snapshot(...)` call site: `inline-snapshot` keys snapshots by
+            # source location, so a single shared `snapshot()` in the test body would raise `UsageError`
+            # when the two parametrized cases evaluate it to different values.
+            snapshot(
+                [
+                    ModelResponse(
+                        parts=[],
+                        provider_details={'status': 'incomplete', 'finish_reason': 'max_output_tokens'},
+                        provider_response_id='response-empty',
+                        timestamp=IsDatetime(),
+                        finish_reason='length',
+                        conversation_id='conversation-1',
+                    )
+                ]
+            ),
+        ),
+        (
+            'error',
+            {'status': 'failed'},
+            snapshot(
+                [
+                    ModelResponse(
+                        parts=[],
+                        provider_details={'status': 'failed'},
+                        provider_response_id='response-empty',
+                        timestamp=IsDatetime(),
+                        finish_reason='error',
+                        conversation_id='conversation-1',
+                    )
+                ]
+            ),
+        ),
     ],
 )
 async def test_empty_terminal_response_is_recorded(
-    finish_reason: Literal['length', 'error'], provider_details: dict[str, Any]
+    finish_reason: Literal['length', 'error'],
+    provider_details: dict[str, Any],
+    expected_messages: list[ModelResponse],
 ) -> None:
     conn = FakeRealtimeConnection(
         [
@@ -386,18 +421,7 @@ async def test_empty_terminal_response_is_recorded(
 
     _ = await collect_events(session)
 
-    assert session.new_messages() == snapshot(
-        [
-            ModelResponse(
-                parts=[],
-                provider_details=provider_details,
-                provider_response_id='response-empty',
-                timestamp=IsDatetime(),
-                finish_reason=finish_reason,
-                conversation_id='conversation-1',
-            )
-        ]
-    )
+    assert session.new_messages() == expected_messages
     assert session.usage.requests == 1
 
 
@@ -512,6 +536,25 @@ async def test_partial_only_user_transcript_finalized_on_turn_complete() -> None
     )
 
 
+async def test_partial_only_user_transcript_strips_leading_space() -> None:
+    # Gemini streams partial-only transcripts whose first delta carries a leading space; with no final
+    # snapshot to reconcile against (unlike OpenAI's `.completed`), the finalized turn would keep the
+    # space. Finalization strips it so the result matches the OpenAI transcription of the same utterance.
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text=' Hello, my name', is_final=False),
+            InputTranscript(text=' is Marcelo.', is_final=False),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+    _ = await collect_events(session)
+    [request] = [message for message in session.new_messages() if isinstance(message, ModelRequest)]
+    [part] = request.parts
+    assert isinstance(part, SpeechPart)
+    assert part.transcript == 'Hello, my name is Marcelo.'
+
+
 async def test_user_transcript_final_snapshot_reconciles_whitespace_drift() -> None:
     # OpenAI's input-transcription deltas can carry a leading space that the `.completed` full-text
     # snapshot trims. The final snapshot must replace the accumulated deltas, not append a near-
@@ -562,11 +605,33 @@ async def test_control_events_and_recoverable_error_pass_through() -> None:
 
 
 async def test_input_transcription_failure_passes_through_and_session_continues() -> None:
-    failure = InputTranscriptionFailedEvent(message='audio unintelligible', item_id='user-1', content_index=0)
-    conn = FakeRealtimeConnection([failure, TurnCompleteEvent()])
+    # Failures pass through whether or not they identify their turn (`item_id` may be absent).
+    identified = InputTranscriptionFailedEvent(message='audio unintelligible', item_id='user-1', content_index=0)
+    anonymous = InputTranscriptionFailedEvent(message='transcription unavailable')
+    conn = FakeRealtimeConnection([identified, anonymous, TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner)
 
-    assert await collect_events(session) == [failure, TurnCompleteEvent()]
+    assert await collect_events(session) == [identified, anonymous, TurnCompleteEvent()]
+
+
+async def test_input_transcription_failure_after_partial_does_not_block_later_turns() -> None:
+    # Item A streams a partial transcript then its transcription fails; item B then finalizes. A must be
+    # discarded (never a turn) and must NOT sit at the head of the order blocking B — otherwise B only
+    # reaches history at session close, and a mid-session `all_messages()` silently omits it.
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='partial A', is_final=False, item_id='A'),
+            InputTranscriptionFailedEvent(message='transcription failed', item_id='A'),
+            InputTranscript(text='hello from B', is_final=True, item_id='B'),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+    _ = await collect_events(session)
+    # Only B is recorded, and it's present immediately (not parked behind the failed A until teardown).
+    assert session.new_messages() == snapshot(
+        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello from B', id='B')])]
+    )
 
 
 async def test_fatal_session_error_raises() -> None:
@@ -1202,6 +1267,60 @@ async def test_tool_call_cancellation_cancels_running_tool() -> None:
     ]
 
 
+async def test_tool_call_cancellation_unknown_id_is_ignored() -> None:
+    # A cancellation for an id with no matching in-flight call (already finished, or never started) must
+    # be a no-op: no crash, no spurious result event, nothing sent. Covers the race where a tool finishes
+    # in the window before its cancellation arrives (the `finally`-pop makes that atomic).
+    conn = FakeRealtimeConnection(
+        [
+            ToolCallCancelled(tool_call_ids=['never-started']),
+            Transcript(text='hi', is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+    events = await collect_events(session)
+    assert [event for event in events if isinstance(event, FunctionToolResultEvent)] == []
+    assert conn.sent == []
+
+
+async def test_interrupt_does_not_cancel_in_flight_tool() -> None:
+    # A user barge-in via `interrupt()` cancels the *model's* response server-side (`CancelResponse`),
+    # but deliberately does NOT cancel a local tool that's already running: the work was dispatched, so it
+    # runs to completion and its `ToolResult` is still sent back to the model. This is the intended design
+    # (matching the OpenAI Agents SDK) and contrasts with a provider-driven `ToolCallCancelled` (above),
+    # which *does* cancel the local task. On OpenAI/xAI, sending the result then auto-triggers a fresh
+    # response server-side; suppressing that is the model's concern, not ours to second-guess here.
+    started = asyncio.Event()
+    release = asyncio.Event()
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    async def slow() -> str:
+        started.set()
+        await release.wait()
+        return 'done'
+
+    class _IdleAfterCall(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='slow', args='{}')
+            await asyncio.Event().wait()  # stay open; the consumer breaks out on the tool result
+
+    conn = _IdleAfterCall([])
+    async with agent.realtime_session(model=FakeRealtimeModel(conn)) as session:
+        async for event in session:
+            if isinstance(event, FunctionToolCallEvent):
+                await started.wait()
+                await session.interrupt()
+                release.set()
+            elif isinstance(event, FunctionToolResultEvent):
+                break
+
+    # The barge-in reached the model, and the tool still completed and reported its result afterwards.
+    assert CancelResponse() in conn.sent
+    assert ToolResult(tool_call_id='c1', output='done') in conn.sent
+
+
 # --- send helpers + history ---------------------------------------------------------------------
 
 
@@ -1300,6 +1419,16 @@ async def test_send_rejects_unsupported_binary_content() -> None:
     with pytest.raises(UserError, match=r"Unsupported binary media type 'application/pdf'.*image and audio"):
         await session.send(BinaryContent(data=b'document', media_type='application/pdf'))
 
+    assert conn.sent == []
+
+
+async def test_send_rejects_raw_bytes_with_audio_hint() -> None:
+    # `bytes` is a `Sequence[int]`; sending it must give a clear "use `send_audio`" error, not iterate into
+    # a confusing per-byte failure.
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    with pytest.raises(UserError, match=r'Raw audio bytes cannot be sent.*send_audio'):
+        await session.send(b'\x00\x01')  # type: ignore[arg-type]
     assert conn.sent == []
 
 
@@ -1763,6 +1892,66 @@ async def test_audio_retained_with_transcription_enabled_waits_for_transcript() 
     )
 
 
+async def test_input_audio_segmented_by_item_id_across_overlapping_turns() -> None:
+    # With input audio retained and transcription enabled, each speech-stopped boundary carries the input
+    # item id, so its audio is cut into a per-item segment. When two turns overlap and their transcripts
+    # finalize out of order (the second turn's `is_final` arrives before the first's), each user message
+    # still carries its own audio. Without segmentation the whole rolling buffer would attach to whichever
+    # transcript finalized first, giving that turn both turns' audio and the other turn none.
+    gate_a = asyncio.Event()
+    gate_b = asyncio.Event()
+
+    class _Overlapping(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            await gate_a.wait()
+            yield InputSpeechEndEvent(item_id='A')  # segments turn A's audio
+            await gate_b.wait()
+            yield InputSpeechEndEvent(item_id='B')  # segments turn B's audio
+            yield InputTranscript(text='second', is_final=True, item_id='B')  # B finalizes first...
+            yield InputTranscript(text='first', is_final=True, item_id='A')  # ...then A, out of order
+            yield TurnCompleteEvent()
+
+    conn = _Overlapping([])
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    await session.send_audio(b'\xaa')  # turn A's audio, buffered before its boundary fires
+    gate_a.set()
+    async with session:
+        async for event in session:
+            # When A's boundary has passed (its segment is captured), queue B's audio and release B's.
+            if isinstance(event, InputSpeechEndEvent) and event.item_id == 'A':
+                await session.send_audio(b'\xbb')
+                gate_b.set()
+
+    assert session.new_messages() == snapshot(
+        [
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='second', audio=_wav_content(b'\xbb'), id='B')]),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='first', audio=_wav_content(b'\xaa'), id='A')]),
+        ]
+    )
+
+
+async def test_retained_input_audio_dropped_when_transcription_fails() -> None:
+    # A speech-stopped boundary captures the turn's audio segment, but transcription then fails, so the
+    # item never finalizes. Its captured segment must be dropped, not leaked onto a later turn — and the
+    # following turn, whose own audio was consumed by the failed turn's boundary, simply has no audio.
+    conn = FakeRealtimeConnection(
+        [
+            InputSpeechEndEvent(item_id='A'),
+            InputTranscriptionFailedEvent(message='transcription failed', item_id='A'),
+            InputTranscript(text='hi', is_final=True, item_id='B'),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    await session.send_audio(b'\xaa')
+    _ = await collect_events(session)
+    # Only turn B is recorded (A never finalized), and it carries no audio: A's boundary already consumed
+    # and then dropped the buffered bytes.
+    assert session.new_messages() == snapshot(
+        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hi', id='B')])]
+    )
+
+
 async def test_no_transcription_and_no_input_retention_raises() -> None:
     # Transcription off + retention that doesn't keep input audio = user turns silently dropped. That
     # contradictory config is rejected up front rather than producing a lossy history.
@@ -1829,6 +2018,19 @@ async def test_empty_input_transcript_produces_no_request() -> None:
     end = next(e for e in events if isinstance(e, PartEndEvent))
     assert isinstance(end.part, SpeechPart) and end.part.transcript is None
     assert session.new_messages() == []
+
+
+async def test_duplicate_final_input_transcript_is_idempotent() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='hello', is_final=True, item_id='user-1'),
+            InputTranscript(text='hello', is_final=True, item_id='user-1'),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='m')
+    _ = await collect_events(session)
+
+    assert session.all_messages() == [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello', id='user-1')])]
 
 
 async def test_transcript_only_default_drops_audio() -> None:
@@ -3193,11 +3395,20 @@ async def test_wrapper_agent_realtime_session_proxies() -> None:
 
     inner: Agent[None, str] = Agent(instructions='Inner')
     wrapper = WrapperAgent(inner)
-    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    conn = FakeRealtimeConnection([])
     model = FakeRealtimeModel(conn)
-    async with wrapper.realtime_session(model=model) as session:
-        _ = [e async for e in session]
+    images = [BinaryImage(data=bytes([index]), media_type='image/png') for index in range(3)]
+    # The wrapped agent's session is used, and per-session options like `retain_images_every_n` forward
+    # through the wrapper (and the durable-exec subclasses that extend it) rather than being dropped.
+    async with wrapper.realtime_session(model=model, retain_images_every_n=2) as session:
+        for image in images:
+            await session.send(image)
+        retained = session.new_messages()
     assert model.last_instructions == 'Inner'  # the wrapped agent's session was used
+    assert retained == [
+        ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())]),
+        ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())]),
+    ]
 
 
 async def test_agent_realtime_session_drops_auto_injected_tool_search() -> None:

@@ -8,7 +8,7 @@ Unlike [`Model`][pydantic_ai.models.Model], which is request-response, a realtim
 long-lived connection: you stream audio (or text/images) in, and consume audio, transcripts, and
 tool calls as they arrive. The high-level entry point is
 [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session], which wires the agent's tools and
-instructions into a session and runs the tool loop for you. See the [Realtime guide](../realtime.md)
+instructions into a session and runs the tool loop for you. See the [Realtime guide](../realtime/index.md)
 for a walkthrough.
 
 The flow of a session:

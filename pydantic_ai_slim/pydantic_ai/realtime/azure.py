@@ -78,10 +78,9 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
 
     def __post_init__(self, provider: Provider[AsyncOpenAI] | str) -> None:
         if isinstance(provider, str):
-            resolved = infer_provider(provider)
-            if not isinstance(resolved, AzureProvider):
-                raise UserError("`AzureRealtimeModel` requires an `AzureProvider` or `provider='azure'`.")
-            provider = resolved
+            provider = infer_provider(provider)
+        if not isinstance(provider, AzureProvider):
+            raise UserError("`AzureRealtimeModel` requires an `AzureProvider` or `provider='azure'`.")
         self._provider = provider
 
     @property

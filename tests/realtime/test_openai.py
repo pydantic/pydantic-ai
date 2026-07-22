@@ -75,7 +75,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import try_import
+from ..conftest import IsStr, try_import
 from .test_session import make_tool_manager
 
 with try_import() as imports_successful:
@@ -131,6 +131,27 @@ def test_map_transcription_usage() -> None:
             type='tokens', input_tokens=5, output_tokens=2, total_tokens=7, input_token_details=None
         )
     ) == RequestUsage(details={'input_transcription_tokens': 7})
+
+
+@pytest.mark.parametrize(
+    'usage',
+    [
+        RealtimeResponseUsage.construct(input_token_details='bad'),
+        RealtimeResponseUsage.construct(output_token_details='bad'),
+        RealtimeResponseUsage.construct(
+            input_token_details={'cached_tokens_details': 'bad'},
+        ),
+    ],
+)
+def test_map_usage_rejects_malformed_constructed_details(usage: RealtimeResponseUsage) -> None:
+    with pytest.raises(ValueError, match='must be an object'):
+        rt_openai._map_usage(usage)
+
+
+def test_map_transcription_usage_rejects_malformed_constructed_details() -> None:
+    usage = UsageTranscriptTextUsageTokens.construct(type='tokens', input_token_details='bad')
+    with pytest.raises(ValueError, match='must be an object'):
+        rt_openai._map_transcription_usage(usage)
 
 
 def test_merge_realtime_profile_skips_empty_layers_and_applies_overrides() -> None:
@@ -342,6 +363,18 @@ def test_map_response_done_failed_and_unknown_incomplete_reason() -> None:
 def test_map_conversation_item_without_identifiers_is_ignored() -> None:
     assert map_conversation_event({'type': 'conversation.item.created', 'item': {}}) is None
     assert map_conversation_event({'type': 'conversation.item.created'}) is None
+
+
+@pytest.mark.parametrize(
+    'frame',
+    [
+        {'type': 'conversation.created', 'conversation': 'bad'},
+        {'type': 'conversation.item.created', 'item': 'bad'},
+    ],
+)
+def test_map_conversation_event_rejects_malformed_nested_object(frame: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match='must be an object'):
+        map_conversation_event(frame)
     assert map_conversation_event({'type': 'conversation.created'}) is None
 
 
@@ -479,6 +512,16 @@ def test_map_unhandled_event_returns_none() -> None:
                 item_id='u',
                 content_index=2,
             ),
+        ),
+        (
+            # A `DeploymentNotFound` transcription failure is a misconfiguration (the transcription model
+            # isn't deployed on the Azure resource), not a transient failure, so it maps to a
+            # non-recoverable error the session raises — unlike `audio_unintelligible` above.
+            {
+                'type': 'conversation.item.input_audio_transcription.failed',
+                'error': {'message': 'x', 'type': 'server_error', 'code': 'DeploymentNotFound'},
+            },
+            SessionErrorEvent(message=IsStr(regex=r'.*transcription model is not deployed.*'), recoverable=False),
         ),
     ],
 )
@@ -878,8 +921,63 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
     bad_json = 'not json'
     non_object = json.dumps(['not', 'an', 'object'])
     bad_audio = json.dumps({'type': 'response.output_audio.delta', 'delta': 'not-base64!!'})
+    malformed_nested_frames = [
+        json.dumps({'type': 'conversation.item.input_audio_transcription.failed', 'error': 'bad'}),
+        json.dumps({'type': 'response.created', 'response': 'bad'}),
+        json.dumps({'type': 'response.done', 'response': 'bad'}),
+        json.dumps({'type': 'response.done', 'response': {'output': 'bad'}}),
+        json.dumps({'type': 'response.done', 'response': {'output': ['bad']}}),
+        json.dumps({'type': 'response.done', 'response': {'usage': 'bad'}}),
+        json.dumps(
+            {
+                'type': 'response.done',
+                'response': {
+                    'id': 'bad-usage',
+                    'status': 'completed',
+                    'output': [],
+                    'usage': {'input_tokens': 1, 'input_token_details': 'bad'},
+                },
+            }
+        ),
+        json.dumps(
+            {
+                'type': 'response.done',
+                'response': {
+                    'id': 'bad-cached-usage',
+                    'status': 'completed',
+                    'output': [],
+                    'usage': {'input_token_details': {'cached_tokens_details': 'bad'}},
+                },
+            }
+        ),
+        json.dumps(
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'transcript': 'hello',
+                'usage': {'type': 'tokens', 'total_tokens': 1, 'input_token_details': 'bad'},
+            }
+        ),
+        # A `duration` transcription usage with no numeric `seconds` (the SDK's lenient union fallback would
+        # otherwise construct the wrong variant and crash on `usage.seconds`).
+        json.dumps(
+            {'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'hi', 'usage': {'type': 'duration'}}
+        ),
+        json.dumps(
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'transcript': 'hi',
+                'usage': {'type': 'duration', 'seconds': 'nope'},
+            }
+        ),
+        json.dumps(
+            {'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'hi', 'usage': {'type': 'mystery'}}
+        ),
+    ]
     good = json.dumps({'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'\x09').decode('ascii')})
-    ws = FakeWebSocket([_created(), _updated(), bad_json, non_object, bad_audio, good])
+    frames = [bad_json, non_object, bad_audio]
+    for malformed in malformed_nested_frames:
+        frames.extend((malformed, good))
+    ws = FakeWebSocket([_created(), _updated(), *frames])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
     async with _connect(model, 'x') as conn:
@@ -888,9 +986,11 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
         'SessionErrorEvent',
         'SessionErrorEvent',
         'SessionErrorEvent',
-        'AudioDelta',
+        *['SessionErrorEvent', 'AudioDelta'] * len(malformed_nested_frames),
     ]
-    assert all(isinstance(e, SessionErrorEvent) and e.recoverable for e in events[:3])
+    errors = [event for event in events if isinstance(event, SessionErrorEvent)]
+    assert len(errors) == 3 + len(malformed_nested_frames)
+    assert all(event.recoverable for event in errors)
     assert events[-1] == AudioDelta(data=b'\x09')
 
 
@@ -1508,6 +1608,123 @@ async def test_connection_send_cancel_when_idle_does_not_send() -> None:
 
 
 @pytest.mark.anyio
+async def test_connection_drops_deltas_from_a_cancelled_response() -> None:
+    # After a barge-in cancel, the server keeps streaming the cancelled response's trailing audio and
+    # transcript deltas before its `response.done`. Those must be dropped (the user already interrupted
+    # that speech), while the cancelled response's own `response.done` still closes the turn, and a fresh
+    # response that follows streams normally.
+    audio_straggler = json.dumps(
+        {
+            'type': 'response.output_audio.delta',
+            'response_id': 'resp-1',
+            'item_id': 'item-1',
+            'delta': base64.b64encode(b'\x01').decode('ascii'),
+        }
+    )
+    transcript_straggler = json.dumps(
+        {'type': 'response.output_audio_transcript.delta', 'response_id': 'resp-1', 'item_id': 'item-1', 'delta': 'no'}
+    )
+    cancelled_done = json.dumps({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'cancelled'}})
+    new_created = json.dumps({'type': 'response.created', 'response': {'id': 'resp-2'}})
+    new_audio = json.dumps(
+        {
+            'type': 'response.output_audio.delta',
+            'response_id': 'resp-2',
+            'item_id': 'item-2',
+            'delta': base64.b64encode(b'\x02').decode('ascii'),
+        }
+    )
+    ws = FakeWebSocket([audio_straggler, transcript_straggler, cancelled_done, new_created, new_audio])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    conn._active_response_id = 'resp-1'  # pyright: ignore[reportPrivateUsage]
+    await conn.send(CancelResponse())  # cancels resp-1 and starts suppressing its stragglers
+
+    events = [event async for event in conn]
+    assert events == [
+        TurnCompleteEvent(
+            interrupted=True,
+            provider_response_id='resp-1',
+            finish_reason=None,
+            provider_details={'status': 'cancelled'},
+        ),
+        AudioDelta(data=b'\x02', item_id='item-2'),  # the next response is unaffected
+    ]
+    assert conn._cancelled_response_id is None  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_superseded_cancelled_response_done_suppresses_turn_complete() -> None:
+    # A barge-in cancels response A; a new response B then becomes active before A's late `response.done`
+    # arrives. A's usage is still accounted, but its `TurnCompleteEvent` must be suppressed — otherwise the
+    # session would finalize B's in-flight output under A's (interrupted) boundary.
+    created_b = json.dumps({'type': 'response.created', 'response': {'id': 'B'}})
+    late_a_done = json.dumps(
+        {'type': 'response.done', 'response': {'id': 'A', 'status': 'cancelled', 'usage': {'input_tokens': 1}}}
+    )
+    b_audio = json.dumps(
+        {
+            'type': 'response.output_audio.delta',
+            'response_id': 'B',
+            'item_id': 'b-item',
+            'delta': base64.b64encode(b'\x02').decode('ascii'),
+        }
+    )
+    ws = FakeWebSocket([created_b, late_a_done, b_audio])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    conn._active_response_id = 'A'  # pyright: ignore[reportPrivateUsage]
+    await conn.send(CancelResponse())  # cancel A (barge-in); B is created below and becomes active
+
+    events = [event async for event in conn]
+    # A's usage is recorded, B keeps streaming, and no `TurnCompleteEvent` fired for the superseded A.
+    assert [type(event).__name__ for event in events] == ['SessionUsageEvent', 'AudioDelta']
+    assert isinstance(events[0], SessionUsageEvent) and events[0].provider_response_id == 'A'
+    assert events[1] == AudioDelta(data=b'\x02', item_id='b-item')
+    assert not any(isinstance(event, TurnCompleteEvent) for event in events)
+
+
+@pytest.mark.anyio
+async def test_response_done_without_response_object_is_recoverable() -> None:
+    # A malformed `response.done` with no `response` object must not raise `AttributeError` (escaping the
+    # recoverable path); it degrades to a graceful `TurnCompleteEvent` with an unknown status.
+    ws = FakeWebSocket([json.dumps({'type': 'response.done'})])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    events = [event async for event in conn]
+    assert events == [TurnCompleteEvent(interrupted=False, provider_details={'status': None})]
+
+
+@pytest.mark.anyio
+async def test_transcription_completed_token_usage_emits_run_level_usage() -> None:
+    # A final input transcription with well-formed token usage yields the transcript plus a run-level
+    # (non-response-scoped) ASR usage event with the per-modality token breakdown in `details`.
+    frame = json.dumps(
+        {
+            'type': 'conversation.item.input_audio_transcription.completed',
+            'item_id': 'u1',
+            'transcript': 'hi',
+            'usage': {'type': 'tokens', 'total_tokens': 5, 'input_token_details': {'audio_tokens': 4, 'text_tokens': 1}},
+        }
+    )
+    ws = FakeWebSocket([frame])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    events = [event async for event in conn]
+    assert events == [
+        InputTranscript(text='hi', is_final=True, item_id='u1'),
+        SessionUsageEvent(
+            usage=RequestUsage(
+                details={
+                    'input_transcription_tokens': 5,
+                    'input_transcription_audio_tokens': 4,
+                    'input_transcription_text_tokens': 1,
+                }
+            ),
+            response_scoped=False,
+        ),
+    ]
+
+
+@pytest.mark.anyio
 async def test_response_done_emits_usage_then_turn_complete() -> None:
     done = json.dumps(
         {
@@ -1593,6 +1810,70 @@ async def test_response_done_function_call_only_still_emits_usage() -> None:
             finish_reason='tool_call',
         )
     ]
+
+
+@pytest.mark.anyio
+async def test_function_call_only_response_without_usage_finalizes_before_answer() -> None:
+    frames = [
+        json.dumps({'type': 'response.created', 'response': {'id': 'resp-tool'}}),
+        json.dumps(
+            {
+                'type': 'response.function_call_arguments.done',
+                'call_id': 'call-1',
+                'name': 'get_weather',
+                'arguments': '{}',
+            }
+        ),
+        json.dumps(
+            {
+                'type': 'response.done',
+                'response': {
+                    'id': 'resp-tool',
+                    'status': 'completed',
+                    'output': [{'type': 'function_call'}],
+                },
+            }
+        ),
+        json.dumps({'type': 'response.created', 'response': {'id': 'resp-answer'}}),
+        json.dumps(
+            {
+                'type': 'response.output_audio_transcript.done',
+                'item_id': 'answer-1',
+                'transcript': 'Sunny',
+            }
+        ),
+        json.dumps(
+            {
+                'type': 'response.done',
+                'response': {
+                    'id': 'resp-answer',
+                    'status': 'completed',
+                    'output': [],
+                    'usage': {'output_tokens': 3},
+                },
+            }
+        ),
+    ]
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'sunny'
+
+    connection = OpenAIRealtimeConnection(FakeWebSocket(frames))  # type: ignore[arg-type]
+    session = RealtimeSession(connection, make_tool_manager(runner), provider_name='openai')
+    async with session:
+        _ = [event async for event in session]
+
+    messages = session.all_messages()
+    assert len(messages) == 3
+    tool_response, tool_result, answer = messages
+    assert isinstance(tool_response, ModelResponse)
+    assert tool_response.parts == [ToolCallPart(tool_name='get_weather', args='{}', tool_call_id='call-1')]
+    assert tool_response.usage == RequestUsage()
+    assert isinstance(tool_result, ModelRequest)
+    assert isinstance(tool_result.parts[0], ToolReturnPart)
+    assert isinstance(answer, ModelResponse)
+    assert answer.parts == [SpeechPart(speaker='assistant', transcript='Sunny', id='answer-1', provider_name='openai')]
+    assert answer.usage == RequestUsage(output_tokens=3)
 
 
 @pytest.mark.anyio
@@ -1849,6 +2130,20 @@ async def test_response_done_resets_tracked_item() -> None:
     _ = [e async for e in conn]  # delta sets the item, response.done clears it
     await conn.send(TruncateOutput(audio_end_ms=500))
     assert ws.sent == []
+
+
+@pytest.mark.anyio
+async def test_cancel_clears_tracked_item_so_later_truncate_is_noop() -> None:
+    # A client-driven `CancelResponse` forgets the cancelled response's output item, so a second
+    # `interrupt(audio_end_ms=...)` before the next turn's first audio delta doesn't truncate a stale item.
+    ws = FakeWebSocket([_audio_delta('item_5')])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    _ = [e async for e in conn]  # the delta sets the current output item
+    await conn.send(CancelResponse())
+    await conn.send(TruncateOutput(audio_end_ms=500))
+    assert json.loads(ws.sent[0]) == {'type': 'response.cancel'}
+    assert len(ws.sent) == 1  # no truncate for the cleared, cancelled item
 
 
 class PushWebSocket:

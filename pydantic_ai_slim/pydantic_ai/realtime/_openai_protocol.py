@@ -22,7 +22,7 @@ import json
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 
 from openai.types.realtime import (
     ConversationCreatedEvent,
@@ -48,6 +48,7 @@ from openai.types.realtime import (
 )
 from typing_extensions import assert_never
 
+from .._utils import is_str_dict
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
@@ -378,8 +379,11 @@ def map_conversation_event(
     """
     event_type = data.get('type')
     if event_type == 'conversation.created':
-        if not isinstance(data.get('conversation'), dict):
+        conversation_data = data.get('conversation')
+        if conversation_data is None:
             return None
+        if not is_str_dict(conversation_data):
+            raise ValueError('`conversation` must be an object')
         event = ConversationCreatedEvent.construct(**data)
         conversation_id = event.conversation.id
         return ConversationCreated(conversation_id) if conversation_id else None
@@ -389,8 +393,11 @@ def map_conversation_event(
         event = ConversationItemCreatedEvent.construct(**data)
     else:
         return None
-    if not isinstance(data.get('item'), dict):
+    item_data = data.get('item')
+    if item_data is None:
         return None
+    if not is_str_dict(item_data):
+        raise ValueError('`item` must be an object')
     item_id = event.item.id or data.get('item_id')
     tool_call_id = (
         event.item.call_id
@@ -423,6 +430,10 @@ def loads_obj(raw: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f'expected a JSON object, got {type(data).__name__}')
     return cast('dict[str, Any]', data)
+
+
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
 
 
 def _is_function_call_only(output: list[ConversationItem] | None) -> bool:
@@ -466,6 +477,23 @@ def _response_provider_details(response: RealtimeResponse) -> dict[str, Any]:
     return details
 
 
+def validate_response_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Return a raw response object after validating fields read through SDK-constructed models."""
+    response_data = data.get('response')
+    if response_data is None:
+        return {}
+    if not is_str_dict(response_data):
+        raise ValueError('`response` must be an object')
+    output_data = response_data.get('output')
+    if output_data is not None:
+        if not _is_object_list(output_data):
+            raise ValueError('`response.output` must be a list of objects')
+        for item in output_data:
+            if not is_str_dict(item):
+                raise ValueError('`response.output` must be a list of objects')
+    return response_data
+
+
 def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     """Map a `response.done` event, returning `None` for function-call-only responses.
 
@@ -473,7 +501,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     tools and the model emits a further `response.done` with the actual answer. Surfacing a
     `TurnCompleteEvent` here would prematurely signal the end of the turn.
     """
-    if not isinstance(data.get('response'), dict):
+    if not validate_response_data(data):
         return TurnCompleteEvent(interrupted=False, provider_details={'status': None})
     event = ResponseDoneEvent.construct(**data)
     response = event.response
@@ -534,15 +562,22 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         )
 
     if event_type == 'input_audio_buffer.speech_started':
-        return InputSpeechStartEvent()
+        started_item_id = data.get('item_id')
+        return InputSpeechStartEvent(item_id=started_item_id if isinstance(started_item_id, str) else None)
 
     if event_type == 'input_audio_buffer.speech_stopped':
-        return InputSpeechEndEvent()
+        # The stopped frame names the input item this speech segment produced, letting the session attach
+        # retained input audio to the right user turn even when overlapping turns finalize out of order.
+        stopped_item_id = data.get('item_id')
+        return InputSpeechEndEvent(item_id=stopped_item_id if isinstance(stopped_item_id, str) else None)
 
     if event_type == 'response.done':
         return _map_response_done(data)
 
     if event_type == 'error':
+        error_data = data.get('error')
+        if not is_str_dict(error_data):
+            return SessionErrorEvent(message=str(error_data), recoverable=True)
         event = RealtimeErrorEvent.construct(**data)
         error = event.error
         return SessionErrorEvent(
@@ -557,7 +592,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
 def _map_input_transcription_event(
     data: dict[str, Any], event_type: str
-) -> InputTranscript | InputTranscriptionFailedEvent | None:
+) -> InputTranscript | InputTranscriptionFailedEvent | SessionErrorEvent | None:
     """Map input transcription progress and failure events."""
     if event_type == 'conversation.item.input_audio_transcription.delta':
         event = ConversationItemInputAudioTranscriptionDeltaEvent.construct(**data)
@@ -571,7 +606,22 @@ def _map_input_transcription_event(
             return None
         return InputTranscript(text=event.transcript or '', is_final=True, item_id=event.item_id or None)
 
+    if not is_str_dict(data.get('error')):
+        raise ValueError('`error` must be an object')
     event = ConversationItemInputAudioTranscriptionFailedEvent.construct(**data)
+    if event.error.code == 'DeploymentNotFound':
+        # A misconfiguration, not a transient per-utterance failure: Azure resolves the transcription
+        # model against the resource's own deployments, so the default fails on every turn until fixed —
+        # silently dropping user turns. Fail loudly instead of surfacing a recoverable event nobody reads.
+        return SessionErrorEvent(
+            message=(
+                'Input transcription failed: the transcription model is not deployed on this Azure '
+                'resource (DeploymentNotFound). Deploy a transcription model and set '
+                '`input_transcription_model` in the realtime model settings, or disable input '
+                'transcription with `input_transcription_model=None`.'
+            ),
+            recoverable=False,
+        )
     return InputTranscriptionFailedEvent(
         message=event.error.message or '',
         type=event.error.type or None,

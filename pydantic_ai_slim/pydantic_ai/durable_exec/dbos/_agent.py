@@ -6,6 +6,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from dbos import DBOS, DBOSConfiguredInstance
+from typing_extensions import deprecated
 
 from pydantic_ai import (
     AbstractToolset,
@@ -15,6 +16,7 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import (
     AbstractAgent,
     AgentRun,
@@ -58,6 +60,17 @@ DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """
 
 
+@deprecated(
+    """`DBOSAgent` is deprecated in favor of the `DBOSDurability` capability. Migrate each constructor argument as follows:
+- With the capability, call `agent.run()` inside a `@DBOS.workflow`; the wrapper did this automatically.
+- `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[DBOSDurability(...)])`.
+- `name=` → set `name=` on `Agent`, or `name=` on `DBOSDurability`.
+- `event_stream_handler=` → pass `event_stream_handler=` to `DBOSDurability`; it runs inside steps, exactly like before.
+- `mcp_step_config=` → set `mcp_step_config=` on `DBOSDurability`.
+- `model_step_config=` → set `model_step_config=` on `DBOSDurability`.
+- `parallel_execution_mode=` → set `parallel_execution_mode=` on `DBOSDurability`.""",
+    category=PydanticAIDeprecationWarning,
+)
 @DBOS.dbos_class()
 class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
     _parallel_execution_mode: ParallelExecutionMode
@@ -232,7 +245,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             spec: dict[str, Any] | AgentSpec | None = None,
         ) -> AgentRunResult[Any]:
             with self._dbos_overrides(toolsets, event_stream_handler=event_stream_handler):
-                return super(DBOSAgent, self).run_sync(
+                return super(DBOSAgent, self).run_sync(  # pyright: ignore[reportDeprecated]
                     user_prompt,
                     output_type=output_type,
                     message_history=message_history,
@@ -439,9 +452,9 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -579,9 +592,9 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -718,9 +731,9 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -878,9 +891,9 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -1050,9 +1063,9 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -1106,6 +1119,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         conversation_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session; see [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] for the parameters.
 
@@ -1131,6 +1145,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             conversation_id=conversation_id,
             message_history=message_history,
             audio_retention=audio_retention,
+            retain_images_every_n=retain_images_every_n,
         ) as session:
             yield session
 
@@ -1165,8 +1180,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
             retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
-                override the output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries]
-                dict for finer control. When set, any per-run `retries` argument is ignored.
+                override both the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries]
+                dict to override just one (e.g. `retries={'tools': 3}`). When set, any per-run `retries` argument is ignored.
             spec: Optional agent spec to apply as overrides.
         """
         if _utils.is_set(model) and not isinstance(model, (DBOSModel)):

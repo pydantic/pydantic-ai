@@ -1,5 +1,5 @@
 This example sends microphone audio and one camera frame per second from a browser to a
-[Gemini Live realtime session](../realtime.md), then plays the model's spoken responses. You can ask
+[Gemini Live realtime session](../realtime/index.md), then plays the model's spoken responses. You can ask
 about objects in view or show the assistant a sketch to redraw.
 
 By default, the assistant includes a `redraw_diagram` function tool that hands a captured frame to a
@@ -10,13 +10,13 @@ default `CAMERA_DRAW=true` disables web search; set `CAMERA_DRAW=false` and leav
 
 Demonstrates:
 
-- [realtime sessions](../realtime.md) with the [Gemini provider][pydantic_ai.realtime.google.GoogleRealtimeModel]
-- [sending images](../realtime.md#images) — each camera frame is an
+- [realtime sessions](../realtime/index.md) with the [Gemini provider][pydantic_ai.realtime.google.GoogleRealtimeModel]
+- [sending images](../realtime/index.md#images) — each camera frame is an
   [`BinaryContent`][pydantic_ai.messages.BinaryContent] sent with [`send`][pydantic_ai.realtime.RealtimeSession.send]
-- [live vision](../realtime.md#images) — `turn_coverage='all_input'` plus a *Watch* toggle so the
+- [live vision](../realtime/index.md#images) — `turn_coverage='all_input'` plus a *Watch* toggle so the
   assistant reacts to what changes, not just to your voice
 - function tools — the default `redraw_diagram` tool converts a sketch into a clean diagram
-- [web search](../realtime.md#built-in-tools-web-search) — the
+- [web search](../realtime/index.md#built-in-tools-web-search) — the
   [`WebSearch`][pydantic_ai.capabilities.WebSearch] capability (Grounding with Google Search), so it
   can answer with current facts and render citations from native-tool return part events when drawing
   is disabled

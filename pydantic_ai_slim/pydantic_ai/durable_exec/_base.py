@@ -15,8 +15,11 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrde
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
+from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._runtime_toolsets import RuntimeToolsetKind, reject_unsupported_runtime_toolsets
 from ._utils import unwrap_model
@@ -124,8 +127,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         runtime_leaves: list[AbstractToolset[AgentDepsT]] = []
 
         def collect(leaf: AbstractToolset[AgentDepsT]) -> None:
-            if id(leaf) not in construction_leaves:
-                runtime_leaves.append(leaf)
+            if id(leaf) in construction_leaves:
+                return
+            if isinstance(leaf, CapabilityOwnedToolset):
+                # The run re-collects capability contributions in a fresh `CapabilityOwnedToolset`
+                # whenever `for_run` changed the capability tree (e.g. a `DynamicCapability`
+                # resolved, or a per-run capability was added). The wrapper itself is
+                # non-executing packaging; the toolset it wraps is visited separately by this
+                # same walk and judged on its own identity.
+                return
+            runtime_leaves.append(leaf)
 
         toolset.apply(collect)
         reject_unsupported_runtime_toolsets(
@@ -175,6 +186,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         ts_id = ts.id
+        if ts_id is None and isinstance(ts, DynamicToolset):
+            raise UserError(
+                f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
+                f'need to have a unique `id` in order to be used with {self.engine_name}. '
+                f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
+                f'{self._durable_container_noun}. Set the dynamic toolset ID with `DynamicToolset(id=...)`, '
+                "or, when it is contributed by a capability, set the capability's `id` (for example, "
+                "`DynamicCapability(..., id='user-tools')`). A capability function passed directly to "
+                '`capabilities=` cannot carry an `id`; wrap it explicitly: '
+                "`DynamicCapability(my_func, id='...')`."
+            )
         if ts_id is not None and (existing := self._toolsets_by_id.get(ts_id)) is not None:
             if existing.wrapped is ts:
                 # The same toolset instance can appear in more than one place in the tree;
@@ -321,9 +343,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         result to rebuild the same `Model` on the other side via
         `_resolve_model_for_request`.
 
-        Instances are matched by identity after stripping `WrapperModel` layers,
-        so e.g. an `InstrumentedModel`-wrapped default still takes the default's
-        fast path. The `model_id` fallback covers models built from a run-time
+        `WrapperModel` layers are peeled off the request's model one at a time, matching
+        registered instances as-is at each depth and preferring the shallowest match: a
+        registered behavior-changing wrapper keeps its own ID — even under further
+        unregistered wrapping, e.g. an `InstrumentedModel` around it — while an
+        unregistered wrapper around the default still takes the default's fast path.
+        The registered side is never unwrapped: a registered wrapper's identity holds at
+        its registered depth, so its bare inner model doesn't inherit the wrapper's ID. The
+        `model_id` fallback covers models built from a run-time
         string (via `resolve_model_id`) and models an outer capability swaps in
         via `before_model_request`: the worker rebuilds them by looking the
         `model_id` up in the registry, then falling back to the `resolve_model_id`
@@ -332,10 +359,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         can rebuild — a pre-built instance with a custom provider, client, or
         settings that isn't registered in `models=` will not survive it faithfully.
         """
-        unwrapped = unwrap_model(model)
-        for model_id, registered in self._models_by_id.items():
-            if unwrap_model(registered) is unwrapped:
-                return None if model_id == 'default' else model_id
+        candidate: Model | None = model
+        while candidate is not None:
+            for model_id, registered in self._models_by_id.items():
+                if registered is candidate:
+                    return None if model_id == 'default' else model_id
+            candidate = candidate.wrapped if isinstance(candidate, WrapperModel) else None
         # Runtime-built or swapped-in Model: round-trip via its model_id string. The worker
         # rebuilds it the same way (registry lookup → resolve_model_id chain → infer_model).
         return model.model_id

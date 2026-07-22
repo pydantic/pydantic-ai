@@ -467,10 +467,10 @@ print(science_result.output)
 _(This example is complete, it can be run "as is")_
 
 !!! tip "Handing off from a realtime session"
-    A [realtime speech-to-speech session](realtime.md) accumulates the same message history, so you
+    A [realtime speech-to-speech session](realtime/index.md) accumulates the same message history, so you
     can pass [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] straight
     into `agent.run(message_history=...)` to summarize or extract structured data from a voice
-    conversation. See [Realtime message history](realtime.md#message-history).
+    conversation. See [Realtime message history](realtime/index.md#message-history).
 
 !!! note "Instructions, system prompts, and tools"
     When you pass `message_history` to another agent, previous
@@ -733,7 +733,7 @@ This allows for more sophisticated message processing based on the current state
 
 #### Summarize Old Messages
 
-Use an LLM to summarize older messages to preserve context while reducing tokens.
+Use an LLM to summarize older messages to preserve context while reducing tokens. This is one of several ways to keep a conversation within the context window — see [Compaction](capabilities/compaction.md) for the full picture, including provider-native compaction and ready-made strategies from [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/compaction/).
 
 ```python {title="summarize_old_messages.py"}
 from pydantic_ai import Agent, ModelMessage
