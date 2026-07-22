@@ -1248,7 +1248,7 @@ def failing_tool() -> str:
     raise ToolFailed('Disk full')
 
 
-tool_failed_prefect_agent = PrefectAgent(tool_failed_agent)
+tool_failed_prefect_agent = PrefectAgent(tool_failed_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_prefect_agent_with_tool_failed() -> None:

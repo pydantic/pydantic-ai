@@ -3379,7 +3379,7 @@ def failing_tool() -> str:
     raise ToolFailed('Disk full')
 
 
-tool_failed_temporal_agent = TemporalAgent(tool_failed_agent, activity_config=BASE_ACTIVITY_CONFIG)
+tool_failed_temporal_agent = TemporalAgent(tool_failed_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
 
 
 @workflow.defn

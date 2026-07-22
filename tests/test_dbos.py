@@ -1899,7 +1899,7 @@ def failing_tool() -> str:
     raise ToolFailed('Disk full')
 
 
-tool_failed_dbos_agent = DBOSAgent(tool_failed_agent)
+tool_failed_dbos_agent = DBOSAgent(tool_failed_agent)  # pyright: ignore[reportDeprecated]
 
 
 async def test_dbos_agent_with_tool_failed(dbos: DBOS):
