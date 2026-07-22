@@ -146,9 +146,19 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool_config_key=self._tool_config_key,
         )
 
+    def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        """The handler in-boundary event delivery targets for the current run.
+
+        Engines may override to consult per-run state — e.g. DBOS honors the
+        `event_stream_handler` recorded in a wrapper-era workflow's inputs, delivering
+        it exactly the way the wrapper did so recovery replays the recorded step
+        sequence.
+        """
+        return self._event_stream_handler
+
     @property
     def has_wrap_run_event_stream(self) -> bool:
-        return self._event_stream_handler is not None
+        return self._effective_event_stream_handler() is not None
 
     async def wrap_run_event_stream(
         self,
@@ -156,7 +166,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        if self._event_stream_handler is None:
+        if self._effective_event_stream_handler() is None:
             async for event in stream:
                 yield event
             return

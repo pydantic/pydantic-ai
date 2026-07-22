@@ -386,9 +386,21 @@ async def _migration_event_stream_handler(ctx: RunContext[None], stream: AsyncIt
         pass
 
 
+async def _migration_tool() -> str:
+    return 'tool result'
+
+
 _migration_agent_name = 'temporal_agent_migration'
+# A tool call makes the recorded history include graph-level `__event_stream_handler`
+# activities and a tool-call activity, so replay verifies the workflow-side event
+# dispatch sequence — not just the model activities.
 _legacy_migration_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
-    Agent(TestModel(custom_output_text='migrated'), name=_migration_agent_name, deps_type=type(None)),
+    Agent(
+        TestModel(custom_output_text='migrated'),
+        name=_migration_agent_name,
+        deps_type=type(None),
+        tools=[_migration_tool],
+    ),
     activity_config=BASE_ACTIVITY_CONFIG,
     event_stream_handler=_migration_event_stream_handler,
 )
@@ -396,6 +408,7 @@ _capability_migration_agent = Agent(
     TestModel(custom_output_text='migrated'),
     name=_migration_agent_name,
     deps_type=type(None),
+    tools=[_migration_tool],
     capabilities=[
         TemporalDurability(
             activity_config=BASE_ACTIVITY_CONFIG,

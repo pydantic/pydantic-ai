@@ -9,6 +9,7 @@ from pydantic import Discriminator, Tag
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
@@ -177,6 +178,34 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
     if isinstance(result, _ModelRetry):
         raise ModelRetry(result.message)
     assert_never(result)
+
+
+class EnqueueGuard(list[PendingMessage]):
+    """Replaces `ctx.pending_messages` inside durable-unit-wrapped tools, where enqueueing can't be supported.
+
+    A durable unit's recorded output is replayed on recovery (DBOS) or cache hit (Prefect)
+    without re-executing the tool, so messages enqueued inside it would be silently dropped;
+    enqueueing raises the engine's explanatory `UserError` instead.
+    """
+
+    def __init__(self, message: str):
+        super().__init__()
+        self._message = message
+
+    def append(self, pending: PendingMessage) -> None:
+        raise UserError(self._message)
+
+
+def unwrap_recorded_tool_call_result(result: Any) -> Any:
+    """Unwrap a durably-recorded tool result, passing raw pre-wrapper values through.
+
+    Engines that replay recorded durable-unit outputs (DBOS step recovery, Prefect task
+    caches) may hold outputs recorded before the unit wrapped control-flow exceptions as
+    values; those recordings are the raw tool result and are returned unchanged.
+    """
+    if isinstance(result, _ToolReturn | _ToolContentResult | _ApprovalRequired | _CallDeferred | _ModelRetry):
+        return unwrap_tool_call_result(result)
+    return result
 
 
 def resolve_tool_durable_config(
@@ -422,7 +451,7 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        if not self._in_durable_context():  # pragma: no cover
+        if not self._in_durable_context():
             return await self._mcp_toolset.call_tool(name, tool_args, ctx, tool)
         config = self._resolve_tool_config(tool, name)
         if config is False:  # pragma: no cover — no engine's resolver currently permits inline MCP tools

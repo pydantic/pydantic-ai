@@ -1,14 +1,43 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping
 from typing import Any, Literal, cast
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.durable_exec._toolset import EnqueueGuard
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._types import TaskConfig
+
+
+def enqueue_guard() -> EnqueueGuard:
+    return EnqueueGuard(
+        '`ctx.enqueue()` is not supported inside Prefect task-wrapped tools because task-cache replay '
+        'would drop the enqueued messages. Enqueue messages from flow-level code instead.'
+    )
+
+
+def with_non_retryable_errors(config: TaskConfig) -> TaskConfig:
+    """Ensure framework configuration errors are not retried by Prefect."""
+    config = config.copy()
+    configured_condition = config.get('retry_condition_fn')
+
+    async def retry_condition(task: Any, task_run: Any, state: Any) -> bool:
+        result = state.result(raise_on_failure=False)
+        if inspect.isawaitable(result):
+            result = await result
+        if isinstance(result, (UserError, UnexpectedModelBehavior)):
+            return False
+        if configured_condition is None:
+            return True
+        decision = configured_condition(task, task_run, state)
+        return await decision if inspect.isawaitable(decision) else decision
+
+    config['retry_condition_fn'] = retry_condition
+    return config
 
 
 def resolve_tool_task_config(
