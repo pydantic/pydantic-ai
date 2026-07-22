@@ -370,3 +370,55 @@ async def test_reduce_first_value():
     # Due to cancellation, not all 5 tasks should complete
     # (though timing can be tricky, so we just verify we got a result)
     assert 'completed-1' in state.results
+
+
+async def test_reduce_first_value_keeps_completed_siblings_side_effects():
+    """`ReduceFirstValue` guarantees the winning value, not side-effect exclusivity.
+
+    It early-stops siblings that are still suspended, but it cannot un-run a side effect a
+    branch already executed: sibling cancellation is dispatched only once the winner's value
+    is reduced, so any sibling that reached its side effect before then keeps it. Branches 1
+    and 2 record before cancellation is dispatched (nothing awaits in front of the side effect)
+    and both survive; branch 3 stays suspended on an event that is never set and is cancelled
+    before its side-effect line. `test_reduce_first_value` above deliberately avoids asserting
+    the completed count for the same reason: under load a sleeping sibling's timer can fire
+    before cancellation reaches it, so the count is not a safe assertion.
+    """
+
+    @dataclass
+    class CountingState:
+        completed: list[str] = field(default_factory=list[str])
+
+    blocked = asyncio.Event()  # never set: holds the slow branch suspended until it is cancelled
+
+    g = GraphBuilder(state_type=CountingState, output_type=str)
+
+    @g.step
+    async def generate(ctx: StepContext[CountingState, None, None]) -> list[int]:
+        return [1, 2, 3]
+
+    @g.step
+    async def process(ctx: StepContext[CountingState, None, int]) -> str:
+        if ctx.inputs == 3:
+            await blocked.wait()  # suspended before its side effect -> cancelled, never records
+            ctx.state.completed.append('slow')
+            return 'result-slow'
+        ctx.state.completed.append(f'fast-{ctx.inputs}')
+        return f'result-{ctx.inputs}'
+
+    first = g.join(ReduceFirstValue[str](), initial='', node_id='first')
+
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map().to(process),
+        g.edge_from(process).to(first),
+        g.edge_from(first).to(g.end_node),
+    )
+
+    state = CountingState()
+    result = await g.build().run(state=state)
+
+    assert result == 'result-1'
+    # Branches 1 and 2 completed their side effect before cancellation was dispatched and kept it;
+    # branch 3 was still suspended, so it was cancelled and never recorded.
+    assert state.completed == ['fast-1', 'fast-2']

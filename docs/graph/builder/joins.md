@@ -290,29 +290,22 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ```python {title="first_value_reducer.py"}
 import asyncio
-from dataclasses import dataclass
 
 from pydantic_graph import GraphBuilder, ReduceFirstValue, StepContext
 
 
-@dataclass
-class SimpleState:
-    tasks_completed: int = 0
-
-
 async def main():
-    g = GraphBuilder(state_type=SimpleState, output_type=str)
+    g = GraphBuilder(output_type=str)
 
     @g.step
-    async def generate(ctx: StepContext[SimpleState, None, None]) -> list[int]:
+    async def generate(ctx: StepContext[None, None, None]) -> list[int]:
         return [1, 12, 13, 14, 15]
 
     @g.step
-    async def slow_process(ctx: StepContext[SimpleState, None, int]) -> str:
+    async def slow_process(ctx: StepContext[None, None, int]) -> str:
         """Simulate variable processing times."""
         # Simulate different delays
         await asyncio.sleep(ctx.inputs * 0.1)
-        ctx.state.tasks_completed += 1
         return f'Result from task {ctx.inputs}'
 
     # Use ReduceFirstValue to get the first result and cancel the rest
@@ -326,13 +319,10 @@ async def main():
     )
 
     graph = g.build()
-    state = SimpleState()
-    result = await graph.run(state=state)
+    result = await graph.run()
 
     print(result)
     #> Result from task 1
-    print(f'Tasks completed: {state.tasks_completed}')
-    #> Tasks completed: 1
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
