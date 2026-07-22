@@ -304,6 +304,10 @@ def print_callback(s: str) -> str:
     s = re.sub(r'datetime.date\(', 'date(', s)
     s = re.sub(r"run_id='.+?'", "run_id='...'", s)
     s = re.sub(r"conversation_id='.+?'", "conversation_id='...'", s)
+    # `ReduceFirstValue` guarantees the winning value, not how many siblings finished their
+    # side effect before cancellation, so the graph joins example's completed count is not
+    # deterministic (see docs/graph/builder/joins.md `first_value_reducer.py`).
+    s = re.sub(r'Tasks completed: \d+', 'Tasks completed: ...', s)
     return s
 
 
