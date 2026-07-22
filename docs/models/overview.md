@@ -25,6 +25,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Fireworks AI](openai.md#fireworks-ai)
 - [GitHub Models](openai.md#github-models)
 - [Heroku](openai.md#heroku-ai)
+- [Inception](openai.md#inception)
 - [LiteLLM](openai.md#litellm)
 - [Nebius AI Studio](openai.md#nebius-ai-studio)
 - [Ollama](openai.md#ollama)

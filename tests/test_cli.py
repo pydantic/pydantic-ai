@@ -175,6 +175,7 @@ def test_list_models(capfd: CaptureFixture[str]):
         'deepseek',
         'gateway/',
         'heroku',
+        'inception',
         'moonshotai',
         'xai',
         'huggingface',

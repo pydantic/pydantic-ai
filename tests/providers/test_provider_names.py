@@ -26,6 +26,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
+    from pydantic_ai.providers.inception import InceptionProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
@@ -61,6 +62,7 @@ with try_import() as imports_successful:
         ('litellm', LiteLLMProvider, None),
         ('nebius', NebiusProvider, 'NEBIUS_API_KEY'),
         ('ovhcloud', OVHcloudProvider, 'OVHCLOUD_API_KEY'),
+        ('inception', InceptionProvider, 'INCEPTION_API_KEY'),
         ('gateway/chat', OpenAIProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/groq', GroqProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/google', GoogleCloudProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
