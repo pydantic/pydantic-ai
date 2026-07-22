@@ -2616,13 +2616,16 @@ async def test_prefect_durability_event_stream_handler_rejects_enqueue() -> None
 
     The handler runs inside a durable task for both model events (the model-request task) and
     graph events (the `Handle Stream Event` task); either task's cached result is replayed without
-    re-running it, so an enqueue would be dropped. This exercises the graph-event path.
+    re-running it, so an enqueue would be dropped. The handler catches the error on every event so
+    the run still completes, exercising both delivery paths.
     """
+    enqueue_errors: list[str] = []
 
     async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
-        async for event in stream:
-            if isinstance(event, FunctionToolCallEvent):
+        async for _ in stream:
+            with pytest.raises(UserError, match='enqueued messages would be dropped') as exc_info:
                 ctx.enqueue('later')
+            enqueue_errors.append(str(exc_info.value))
 
     async def handled_tool() -> str:
         return 'handled'
@@ -2634,8 +2637,9 @@ async def test_prefect_durability_event_stream_handler_rejects_enqueue() -> None
     async def run_durable_agent() -> str:
         return (await agent.run('Hello')).output
 
-    with pytest.raises(UserError, match='enqueued messages would be dropped'):
-        await run_durable_agent()
+    await run_durable_agent()
+    # Guarded on both the model-event (model-request task) and graph-event (dispatch task) paths.
+    assert len(enqueue_errors) > 1
 
 
 async def test_prefect_durability_identical_events_are_dispatched_twice() -> None:

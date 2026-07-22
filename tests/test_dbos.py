@@ -2976,13 +2976,16 @@ async def test_dbos_durability_event_stream_handler_rejects_enqueue(dbos: DBOS) 
 
     The handler runs inside a durable step for both model events (the model-request step) and
     graph events (the `__event_stream_handler` step); either step's recorded result is replayed
-    without re-running it, so an enqueue would be dropped. This exercises the graph-event path.
+    without re-running it, so an enqueue would be dropped. The handler catches the error on every
+    event so the run still completes, exercising both delivery paths.
     """
+    enqueue_errors: list[str] = []
 
     async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
-        async for event in stream:
-            if isinstance(event, FunctionToolCallEvent):
+        async for _ in stream:
+            with pytest.raises(UserError, match='enqueued messages would be dropped') as exc_info:
                 ctx.enqueue('later')
+            enqueue_errors.append(str(exc_info.value))
 
     async def handled_tool() -> str:
         return 'handled'
@@ -2995,8 +2998,9 @@ async def test_dbos_durability_event_stream_handler_rejects_enqueue(dbos: DBOS) 
         return (await agent.run('Hello')).output
 
     with SetWorkflowID(str(uuid.uuid4())):
-        with pytest.raises(UserError, match='enqueued messages would be dropped'):
-            await run_durable_agent()
+        await run_durable_agent()
+    # Guarded on both the model-event (model-request step) and graph-event (dispatch step) paths.
+    assert len(enqueue_errors) > 1
 
 
 async def test_dbos_durability_event_stream_handler_outside_workflow(dbos: DBOS) -> None:
