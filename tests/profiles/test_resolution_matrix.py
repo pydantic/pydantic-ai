@@ -121,6 +121,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_reasoning_enabled_by_default': False,
     'openai_supports_reasoning_effort_none': False,
     'openai_responses_supports_reasoning_mode': False,
+    'openai_responses_supports_reasoning_context': False,
     'openai_responses_requires_function_call_status_none': False,
     'openai_supports_phase': False,
     'openai_supports_prompt_cache_breakpoints': False,
@@ -308,6 +309,7 @@ def test_openai_gpt_5_6():
             'openai_reasoning_enabled_by_default': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_mode': True,
+            'openai_responses_supports_reasoning_context': True,
             'openai_supports_phase': True,
             'openai_supports_prompt_cache_breakpoints': True,
         }
@@ -322,6 +324,7 @@ def test_openai_gpt_5_6_reasoning_mode(model_name: str):
     profile = OpenAIProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_mode') is True
+    assert profile.get('openai_responses_supports_reasoning_context') is True
 
 
 @pytest.mark.parametrize(
@@ -335,6 +338,7 @@ def test_openrouter_openai_gpt_5_6_reasoning_mode(model_name: str):
     profile = OpenRouterProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_mode') is True
+    assert profile.get('openai_responses_supports_reasoning_context') is True
 
 
 @pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
@@ -345,6 +349,7 @@ def test_azure_gpt_5_6_reasoning_mode(model_name: str):
     profile = AzureProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_mode') is True
+    assert profile.get('openai_responses_supports_reasoning_context') is True
 
 
 def test_openai_gpt_4o():

@@ -699,6 +699,25 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     for more details.
     """
 
+    openai_reasoning_context: Literal['auto', 'current_turn', 'all_turns']
+    """Controls which prior-turn reasoning items are rendered back to the model, for models that support it (currently the GPT-5.6 family).
+
+    `auto` uses the model's default, and is equivalent to omitting the setting. `current_turn` makes
+    reasoning from the active turn available without rendering reasoning from earlier turns into the
+    next sample. `all_turns` renders available, compatible reasoning items from earlier turns into
+    the next sample.
+
+    `all_turns` only has an effect when the request has access to earlier response items, e.g. via
+    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]
+    or replayed message history; on a first request it behaves the same as `current_turn`. The
+    response's `reasoning.context` field reports the effective mode used. This setting is ignored
+    when the resolved model profile does not support reasoning context
+    ([`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context]).
+
+    See [OpenAI's reasoning documentation](https://developers.openai.com/api/docs/guides/reasoning)
+    for more details.
+    """
+
     openai_reasoning_summary: Literal['detailed', 'concise', 'auto']
     """A summary of the reasoning performed by the model.
 
@@ -2660,6 +2679,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> Reasoning | Omit:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
         reasoning_mode = model_settings.get('openai_reasoning_mode', None)
+        reasoning_context = model_settings.get('openai_reasoning_context', None)
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)
 
         # Fall back to unified thinking when openai_reasoning_effort is not set
@@ -2671,6 +2691,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             reasoning['effort'] = reasoning_effort  # type: ignore[typeddict-item]
         if reasoning_mode and self.profile.get('openai_responses_supports_reasoning_mode', False):
             reasoning['mode'] = reasoning_mode
+        if reasoning_context and self.profile.get('openai_responses_supports_reasoning_context', False):
+            reasoning['context'] = reasoning_context
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT

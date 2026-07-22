@@ -215,6 +215,75 @@ async def test_openai_responses_reasoning_mode(
     assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == expected_reasoning
 
 
+@pytest.mark.parametrize(
+    ('model_settings', 'expected_reasoning'),
+    [
+        ({'openai_reasoning_context': 'auto'}, {'context': 'auto'}),
+        ({'openai_reasoning_context': 'current_turn'}, {'context': 'current_turn'}),
+        ({'openai_reasoning_context': 'all_turns'}, {'context': 'all_turns'}),
+        (
+            {
+                'openai_reasoning_effort': 'high',
+                'openai_reasoning_mode': 'pro',
+                'openai_reasoning_context': 'all_turns',
+                'openai_reasoning_summary': 'concise',
+            },
+            {'effort': 'high', 'mode': 'pro', 'context': 'all_turns', 'summary': 'concise'},
+        ),
+    ],
+)
+async def test_openai_responses_reasoning_context(
+    allow_model_requests: None,
+    model_settings: 'OpenAIResponsesModelSettings',
+    expected_reasoning: dict[str, str],
+) -> None:
+    """Not a VCR test: this pins the exact typed `reasoning` request object."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model=model, model_settings=model_settings).run('Solve this carefully.')
+
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == expected_reasoning
+
+
+@pytest.mark.parametrize('provider_name', ['openai', 'openrouter'])
+async def test_openai_responses_reasoning_context_omitted_when_unsupported(
+    allow_model_requests: None, provider_name: Literal['openai', 'openrouter']
+):
+    """Not a VCR test: unsupported paths must omit `reasoning.context` before sending."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    if provider_name == 'openai':
+        model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    else:
+        model = OpenAIResponsesModel('openai/gpt-5.4', provider=OpenRouterProvider(openai_client=mock_client))
+
+    await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_context='all_turns')).run('Hello')
+
+    assert 'reasoning' not in get_mock_responses_kwargs(mock_client)[0]
+
+
 async def test_openrouter_responses_reasoning_mode(allow_model_requests: None) -> None:
     """Not a VCR test: exact request kwargs prove the OpenRouter Responses profile enables mode."""
     c = response_message(
