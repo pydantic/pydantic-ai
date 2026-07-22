@@ -1,0 +1,55 @@
+# Azure OpenAI Realtime
+
+[`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel] connects to Azure OpenAI's GA
+realtime protocol with the server-side Pydantic AI agent loop. See the [realtime overview](index.md).
+
+## Installation
+
+```bash
+pip install "pydantic-ai-slim[realtime,openai]"
+```
+
+## Configuration
+
+Azure exposes the GA protocol at `/openai/v1/realtime`. Set `AZURE_OPENAI_ENDPOINT` and
+`AZURE_OPENAI_API_KEY`, then use the `azure:` prefix:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+agent = Agent(instructions='You are a helpful voice assistant.')
+
+
+async def main():
+    async with agent.realtime_session(model='azure:gpt-realtime') as session:
+        await session.send('Say hello.')
+        async for event in session:
+            ...
+```
+
+You can also configure the resource explicitly:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.providers.azure import AzureProvider
+from pydantic_ai.realtime.azure import AzureRealtimeModel
+
+provider = AzureProvider(
+    azure_endpoint='https://my-resource.openai.azure.com',
+    api_key='...',
+)
+model = AzureRealtimeModel('gpt-realtime', provider=provider)
+```
+
+[`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel] reuses
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] for endpoint and API key, and uses the
+same settings/event protocol as
+[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel]. API-key authentication is
+supported; Microsoft Entra ID is not supported for realtime connections. Noise reduction, output
+speed, server/semantic VAD, and truncation use
+[`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]. Azure
+realtime does not expose `temperature`. Input transcription defaults to `'auto'`; see
+[Transcribing user input](index.md#transcribing-user-input).
+
+## Azure AI Voice Live support is coming soon
+
+Azure AI Voice Live support is coming soon.

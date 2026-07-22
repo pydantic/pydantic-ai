@@ -24,7 +24,12 @@ nav:
           - tools.md
           - output.md
           - Multimodal Input: input.md
-          - Realtime (speech-to-speech): realtime.md
+          - Realtime (speech-to-speech):
+              - realtime/index.md
+              - OpenAI: realtime/openai.md
+              - Azure: realtime/azure.md
+              - xAI: realtime/xai.md
+              - Google Gemini: realtime/gemini.md
           - Hooks: hooks.md
           - Agent Specs: agent-spec.md
           - message-history.md
