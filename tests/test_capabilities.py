@@ -6979,7 +6979,7 @@ class TestWebSearchCapability:
 
     def test_websearch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
         """WebSearch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch()])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -7020,7 +7020,7 @@ class TestWebSearchCapability:
 
     def test_websearch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -7040,7 +7040,7 @@ class TestWebSearchCapability:
 
     def test_websearch_requires_native_with_constraints(self, allow_model_requests: None):
         """WebSearch(allowed_domains=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch(allowed_domains=['example.com'], local='duckduckgo')])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -7314,7 +7314,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
         """WebFetch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch()])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -7366,7 +7366,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebFetch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -7385,7 +7385,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_max_uses_requires_native(self, allow_model_requests: None):
         """WebFetch(max_uses=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch(max_uses=5, local=True)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -19627,8 +19627,8 @@ class TestOutputHookEdgeCases:
 
         ctx = RunContext(
             deps=None,
-            model=None,  # type: ignore
-            usage=None,  # type: ignore
+            model=None,  # pyright: ignore[reportArgumentType]
+            usage=None,  # pyright: ignore[reportArgumentType]
             prompt='test',
             run_step=0,
             retry=0,
@@ -19648,8 +19648,8 @@ class TestOutputHookEdgeCases:
 
         ctx = RunContext(
             deps=None,
-            model=None,  # type: ignore
-            usage=None,  # type: ignore
+            model=None,  # pyright: ignore[reportArgumentType]
+            usage=None,  # pyright: ignore[reportArgumentType]
             prompt='test',
             run_step=0,
             retry=0,
@@ -19677,8 +19677,8 @@ class TestOutputHookEdgeCases:
         async def run():
             ctx = RunContext(
                 deps=None,
-                model=None,  # type: ignore
-                usage=None,  # type: ignore
+                model=None,  # pyright: ignore[reportArgumentType]
+                usage=None,  # pyright: ignore[reportArgumentType]
                 prompt='test',
                 run_step=0,
                 retry=0,

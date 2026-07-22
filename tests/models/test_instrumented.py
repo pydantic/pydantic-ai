@@ -93,7 +93,7 @@ class MyModel(Model):
                 ToolCallPart('tool1', 'args1', 'tool_call_1'),
                 ToolCallPart('tool2', {'args2': 3}, 'tool_call_2'),
                 TextPart('text2'),
-                {},  # test unexpected parts  # type: ignore
+                {},  # test unexpected parts  # pyright: ignore[reportArgumentType]
             ],
             usage=RequestUsage(
                 input_tokens=100,
@@ -169,7 +169,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 ToolReturnPart('tool3', 'tool_return_content', 'tool_call_3'),
                 RetryPromptPart('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
                 RetryPromptPart('retry_prompt2'),
-                {},  # test unexpected parts  # type: ignore
+                {},  # test unexpected parts  # pyright: ignore[reportArgumentType]
             ],
             timestamp=IsDatetime(),
         ),
@@ -562,7 +562,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                 ToolReturnPart('tool3', 'tool_return_content', 'tool_call_3'),
                 RetryPromptPart('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
                 RetryPromptPart('retry_prompt2'),
-                {},  # test unexpected parts  # type: ignore
+                {},  # test unexpected parts  # pyright: ignore[reportArgumentType]
             ],
             timestamp=IsDatetime(),
         ),

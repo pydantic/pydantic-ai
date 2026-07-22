@@ -40,7 +40,10 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApp
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr, iter_message_parts, message, message_part
+from .conftest import IsDatetime, IsStr, iter_message_parts, message, message_part, try_import
+
+with try_import() as google_genai_available:
+    from pydantic_ai.models.google import _function_declaration_from_tool
 
 
 def test_tool_no_ctx():
@@ -4576,11 +4579,9 @@ def test_prepare_return_schemas():
     assert result.function_tools[0].description.startswith('Return schema:')
 
 
+@pytest.mark.skipif(not google_genai_available(), reason='google.genai not installed')
 def test_return_schema_google_native():
     """Google model passes return_schema as response_json_schema."""
-    pytest.importorskip('google.genai')
-    from pydantic_ai.models.google import _function_declaration_from_tool
-
     td = ToolDefinition(
         name='test',
         description='A test tool',

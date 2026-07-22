@@ -413,7 +413,7 @@ def test_url_with_query_parameters() -> None:
 
 
 def test_thinking_part_delta_apply_to_thinking_part_delta():
-    """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
+    """Apply ThinkingPartDelta to another ThinkingPartDelta (delta-on-delta merge)."""
     original_delta = ThinkingPartDelta(
         content_delta='original',
         signature_delta='sig1',

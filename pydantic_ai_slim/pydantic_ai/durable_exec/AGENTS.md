@@ -7,3 +7,4 @@ Durable execution integrations are first-class compatibility targets.
 - Avoid hidden ordering assumptions, non-serializable state, and runtime-only closures unless the durable wrapper explicitly owns them.
 - Prefer generic capabilities/toolsets/models extension points over engine-specific escape hatches.
 - When changing graph/tool/output/streaming/MCP behavior, check whether durable wrappers need matching updates and add workflow-level tests where external runtime behavior matters.
+- Sync stream (`run_stream_sync`) inherits via `self.run_stream`; missing wrapper override is intentional — workflows are async and SyncStreamBridge rejects a running event loop.

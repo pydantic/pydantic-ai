@@ -508,7 +508,7 @@ def mock_vcr_aiohttp_content(mocker: MockerFixture):
     # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
     # So we turn `content` into a cached property to return the same one each time.
     # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
-    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # type: ignore
+    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # pyright: ignore[reportArgumentType, reportUnknownVariableType]
     cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
     mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
     mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)

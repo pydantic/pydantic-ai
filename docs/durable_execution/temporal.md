@@ -228,6 +228,8 @@ As the streaming model request activity, workflow, and workflow execution call a
 
 Because the model stream is consumed inside the activity, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary. To stop an in-flight model request, cancel the Temporal workflow: the cancellation is delivered to the activity (via its heartbeats), which cancels any server-side job before the activity completes.
 
+[`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for workflow code: it requires no running event loop and wraps `run_stream()`. Inside a durable workflow use the async streaming APIs above (buffered) or `agent.run()` with an event stream handler. Outside a workflow, an agent with `TemporalDurability` behaves like a normal agent, so `run_stream_sync()` works as usual.
+
 ### Suspended Turns and Background Mode
 
 Some providers can pause a model turn mid-flight (Anthropic `pause_turn`) or run it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)). Pydantic AI transparently continues such a suspended turn until it completes. Each segment runs in a separate model request activity, while the workflow checkpoints the suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and its background job ID between segments. The final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response resumes with that response passed to the first activity.

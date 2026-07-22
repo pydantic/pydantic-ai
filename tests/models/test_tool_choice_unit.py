@@ -315,13 +315,18 @@ def test_resolve_tool_choice_partial_invalid_warns(case: dict[str, Any]):
 
 
 @pytest.mark.parametrize('tool_choice', ['required', ['my_tool']], ids=['required', 'list'])
-@pytest.mark.parametrize('provider_name', ['anthropic', 'bedrock'])
+@pytest.mark.parametrize(
+    'provider_name',
+    [
+        pytest.param('anthropic', marks=pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')),
+        pytest.param('bedrock', marks=pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')),
+    ],
+)
 async def test_thinking_with_forced_tool_choice_raises(
     provider_name: str, tool_choice: Any, allow_model_requests: None
 ):
     """Providers don't support forcing tool use with thinking mode enabled."""
     if provider_name == 'anthropic':
-        pytest.importorskip('anthropic')
         m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
         settings: Any = {
             'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
@@ -329,7 +334,6 @@ async def test_thinking_with_forced_tool_choice_raises(
         }
         match = 'Anthropic does not support .* with thinking mode'
     else:  # bedrock
-        pytest.importorskip('boto3')
         mock_client = MagicMock()
         provider = BedrockProvider(bedrock_client=mock_client)
         profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
@@ -346,19 +350,23 @@ async def test_thinking_with_forced_tool_choice_raises(
 
 
 @pytest.mark.parametrize('tool_choice', ['required', ['my_tool']], ids=['required', 'list'])
-@pytest.mark.parametrize('provider_name', ['bedrock', 'openai'])
+@pytest.mark.parametrize(
+    'provider_name',
+    [
+        pytest.param('bedrock', marks=pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')),
+        pytest.param('openai', marks=pytest.mark.skipif(not openai_available(), reason='openai not installed')),
+    ],
+)
 async def test_unsupported_profile_with_forced_tool_choice_raises(
     provider_name: str, tool_choice: Any, allow_model_requests: None
 ):
     """Models without tool_choice support raise UserError when forcing tool use."""
     mock_client = MagicMock()
     if provider_name == 'bedrock':
-        pytest.importorskip('boto3')
         provider = BedrockProvider(bedrock_client=mock_client)
         profile = BedrockModelProfile(bedrock_supports_tool_choice=False)
         m = BedrockConverseModel('us.amazon.nova-lite-v1:0', provider=provider, profile=profile)
     else:  # openai
-        pytest.importorskip('openai')
         provider = OpenAIProvider(openai_client=mock_client)
         profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
         m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
@@ -382,17 +390,21 @@ FORCING_CASES = [
     FORCING_CASES,
     ids=['required', 'tuple_required', 'tuple_auto', 'auto', 'none'],
 )
-@pytest.mark.parametrize('provider_name', ['anthropic', 'bedrock'])
+@pytest.mark.parametrize(
+    'provider_name',
+    [
+        pytest.param('anthropic', marks=pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')),
+        pytest.param('bedrock', marks=pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')),
+    ],
+)
 def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_tool_choice: Any):
     """With thinking enabled but no explicit tool_choice, returns based on resolved value."""
     expected = resolved_tool_choice in ('auto', 'none')
 
     if provider_name == 'anthropic':
-        pytest.importorskip('anthropic')
         settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
         result = anthropic_support_tool_forcing(settings, ModelRequestParameters(), resolved_tool_choice)
     else:  # bedrock
-        pytest.importorskip('boto3')
         profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
         settings_bedrock: BedrockModelSettings = {
             'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}

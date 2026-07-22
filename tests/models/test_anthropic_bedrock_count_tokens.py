@@ -44,6 +44,11 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
+with try_import() as botocore_available:
+    import importlib
+
+    importlib.import_module('botocore')
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
     pytest.mark.anyio,
@@ -58,7 +63,8 @@ def bedrock_client() -> AsyncAnthropicBedrock:
     `AsyncAnthropicBedrock`'s SigV4 signer imports `botocore` at request-prep time, which only
     ships under the `bedrock` extra (not in the default `pydantic-ai` install on v2).
     """
-    pytest.importorskip('botocore')
+    if not botocore_available():
+        pytest.skip('botocore not installed')
 
     return AsyncAnthropicBedrock(
         aws_access_key=os.environ.get('AWS_ACCESS_KEY_ID', 'test-access-key'),

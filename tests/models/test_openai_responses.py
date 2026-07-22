@@ -3024,7 +3024,7 @@ async def test_openai_previous_response_id(allow_model_requests: None, openai_ap
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
     result = await agent.run('The secret key is sesame')
-    settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.all_messages()[-1].provider_response_id)  # type: ignore
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.all_messages()[-1].provider_response_id)  # pyright: ignore[reportArgumentType, reportAttributeAccessIssue, reportUnknownMemberType]
     result = await agent.run('What is the secret code?', model_settings=settings)
     assert result.output == snapshot('sesame')
 
@@ -3099,7 +3099,7 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # type: ignore
+    previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
     assert not previous_response_id
     assert messages == snapshot(
         [
@@ -3160,7 +3160,7 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # type: ignore
+    previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id == 'resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b'
     assert messages == snapshot(
         [
@@ -3174,7 +3174,7 @@ async def test_openai_previous_response_id_concrete_seed_without_history(openai_
     history = [ModelRequest(parts=[UserPromptPart(content='Continue')])]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # pyright: ignore[reportArgumentType, reportPrivateUsage]
     assert previous_response_id == 'resp_seed_from_prior_turn'
     assert messages is history
 
@@ -3198,7 +3198,7 @@ async def test_openai_previous_response_id_concrete_seed_overridden_by_history(o
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id == 'resp_from_first_call'
     assert messages == snapshot(
         [
@@ -3223,7 +3223,7 @@ async def test_openai_previous_response_id_concrete_seed_with_mixed_provider_his
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id == 'resp_seed_from_prior_turn'
     assert messages is history
 
@@ -3247,7 +3247,7 @@ async def test_openai_previous_response_id_concrete_seed_broken_by_compaction(op
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id is None
     assert messages is history
 
@@ -3266,7 +3266,7 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id('auto', history)  # type: ignore
+    previous_response_id, messages = model._resolve_previous_response_id('auto', history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id is None
     assert messages is history
 
@@ -3285,7 +3285,7 @@ async def test_openai_previous_response_id_unset_never_chains(openai_api_key: st
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id(None, history)  # type: ignore
+    previous_response_id, messages = model._resolve_previous_response_id(None, history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id is None
     assert messages is history
 

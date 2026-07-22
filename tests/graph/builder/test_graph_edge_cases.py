@@ -117,7 +117,7 @@ async def test_decision_no_matching_branch():
     # we have the `# type: ignore` below
     g.add(
         g.edge_from(g.start_node).to(return_unexpected),
-        g.edge_from(return_unexpected).to(g.decision().branch(g.match(str).to(handle_str))),  # type: ignore
+        g.edge_from(return_unexpected).to(g.decision().branch(g.match(str).to(handle_str))),  # pyright: ignore[reportArgumentType]
         g.edge_from(handle_str).to(g.end_node),
     )
 
@@ -172,7 +172,7 @@ async def test_map_non_iterable():
     # We have a `# type: ignore` below because we are testing behavior when you ignore the type error
     g.add(
         g.edge_from(g.start_node).to(return_non_iterable),
-        g.edge_from(return_non_iterable).map().to(process_item),  # type: ignore
+        g.edge_from(return_non_iterable).map().to(process_item),  # pyright: ignore[reportAttributeAccessIssue, reportUnknownArgumentType, reportUnknownMemberType]
         g.edge_from(process_item).to(sum_items),
         g.edge_from(sum_items).to(g.end_node),
     )

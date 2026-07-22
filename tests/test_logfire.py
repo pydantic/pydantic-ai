@@ -26,7 +26,7 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics
+from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics, try_import
 
 try:
     import logfire
@@ -35,6 +35,11 @@ except ImportError:  # pragma: lax no cover
     logfire_installed = False
 else:
     logfire_installed = True
+
+with try_import() as handlebars_available:
+    import importlib
+
+    importlib.import_module('pydantic_handlebars')
 
 
 class SpanSummary(TypedDict):
@@ -3616,12 +3621,12 @@ def test_agent_instrument_setter(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.skipif(not handlebars_available(), reason='pydantic-handlebars not installed')
 def test_instrumentation_capability_template_description(
     capfire: CaptureLogfire,
 ) -> None:
     """Test that TemplateStr descriptions are rendered in agent run spans."""
     # `TemplateStr` rendering requires the `[spec]` extra (pydantic-handlebars); not in default v2 deps.
-    pytest.importorskip('pydantic_handlebars')
     from dataclasses import dataclass
 
     from pydantic_ai._template import TemplateStr

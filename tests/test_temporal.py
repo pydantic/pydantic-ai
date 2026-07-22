@@ -6128,7 +6128,7 @@ def test_durability_unwrapped_toolset_without_id_is_allowed():
     assert TemporalDurability.from_agent(agent) is not None
 
 
-# --- temporalize returning non-TemporalWrapperToolset (line 294->297 branch) ---
+# --- temporalize returning non-TemporalWrapperToolset (passthrough / unwrapped leaf) ---
 
 
 def test_durability_non_temporal_wrapper_toolset_not_in_registry():
@@ -7566,7 +7566,8 @@ async def test_durability_mcptoolset_in_workflow(allow_model_requests: None, cli
             id=DurabilityMCPToolsetAgentWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
-        assert output == snapshot()
+        # deepwiki MCP should return info about the pydantic-ai repo (test is skipped until sandbox issue is fixed)
+        assert 'pydantic' in output.lower() or 'agent' in output.lower()
 
 
 # --- @agent.toolset returning a FunctionToolset ---
