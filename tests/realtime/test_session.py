@@ -1449,24 +1449,15 @@ async def test_send_enforces_model_profile_guard() -> None:
     assert conn.sent == []
 
 
-async def test_send_dispatches_control_inputs_through_helpers() -> None:
-    # Every control `RealtimeSessionInput` variant routes through its typed helper (which applies the
-    # model-profile guards) rather than reaching the connection raw.
+async def test_send_rejects_control_verbs() -> None:
+    # Turn-control verbs are connection-level vocabulary excluded from `RealtimeSessionInput`; `send()`
+    # rejects them at runtime and directs callers to the dedicated methods (which apply profile guards).
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
-    await session.send(CommitAudio())
-    await session.send(ClearAudio())
-    await session.send(CreateResponse())
-    await session.send(TruncateOutput(audio_end_ms=120))
-    await session.send(CancelResponse())
-    assert conn.sent == [
-        CommitAudio(),
-        ClearAudio(),
-        CreateResponse(),
-        TruncateOutput(audio_end_ms=120),
-        CancelResponse(),
-        CancelResponse(),
-    ]
+    for verb in (CommitAudio(), ClearAudio(), CreateResponse(), CancelResponse(), TruncateOutput(audio_end_ms=120)):
+        with pytest.raises(UserError, match=r'Turn-control verbs cannot be sent.*commit_audio'):
+            await session.send(verb)  # type: ignore[arg-type]
+    assert conn.sent == []
 
 
 async def test_send_rejects_tool_result() -> None:

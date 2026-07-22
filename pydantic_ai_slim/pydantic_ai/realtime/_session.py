@@ -552,17 +552,19 @@ class RealtimeSession:
     ) -> None:
         """Feed content into the session.
 
-        Accepts a precise [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput], plain
-        text as a `str`, image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], or a
-        sequence of these inputs, dispatched in order. Text and retained images are recorded in
-        session history; audio is recorded later through its transcript and/or `audio_retention`.
-        `retain_images_every_n=1` records every image, while larger values keep the first image and
-        then one of every `N`. Profile-gated operations use the same guards as the dedicated control
-        methods.
+        Accepts a precise [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput] (audio,
+        image, or text), plain text as a `str`, image/audio
+        [`BinaryContent`][pydantic_ai.messages.BinaryContent], or a sequence of these inputs, dispatched
+        in order. Text and retained images are recorded in session history; audio is recorded later
+        through its transcript and/or `audio_retention`. `retain_images_every_n=1` records every image,
+        while larger values keep the first image and then one of every `N`. Sending an image is gated on
+        the model profile's image-input support and raises `UserError` when it is unsupported.
 
-        [`ToolResult`][pydantic_ai.realtime.ToolResult] is deliberately excluded (`RealtimeSessionInput`
-        is [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput] minus `ToolResult`): the session sends
-        tool results itself as each tool completes (see `_execute_tool`).
+        `send()` accepts session content only. Turn-control verbs (`CommitAudio`, `ClearAudio`,
+        `CreateResponse`, `CancelResponse`, `TruncateOutput`) are driven through the dedicated methods
+        (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
+        [`ToolResult`][pydantic_ai.realtime.ToolResult] is sent by the session itself as each tool
+        completes (see `_execute_tool`) — neither is accepted here.
         """
         if isinstance(content, str):
             await self._connection.send(TextInput(text=content))
@@ -599,8 +601,13 @@ class RealtimeSession:
             )
         elif isinstance(content, ImageInput):
             await self._send_image(BinaryContent(data=content.data, media_type=content.media_type))
-        elif isinstance(content, (CommitAudio, ClearAudio, CreateResponse, TruncateOutput, CancelResponse)):
-            await self._send_control(content)
+        elif isinstance(content, (CommitAudio, ClearAudio, CreateResponse, CancelResponse, TruncateOutput)):
+            # Turn-control verbs are connection-level vocabulary, excluded from `RealtimeSessionInput`.
+            # Direct callers to the dedicated methods, which apply the model-profile capability guards.
+            raise UserError(
+                'Turn-control verbs cannot be sent via `session.send()`; use the dedicated methods '
+                '`commit_audio()`, `clear_audio()`, `create_response()`, or `interrupt()`.'
+            )
         elif isinstance(content, (bytes, bytearray)):
             # `bytes` is a `Sequence[int]`, so guard it before the sequence branch below — otherwise it
             # iterates into a confusing per-byte error. Raw input audio goes through `send_audio()`.
@@ -615,21 +622,6 @@ class RealtimeSession:
             raise UserError(
                 'Tool results are sent automatically by the realtime session and cannot be sent via `session.send()`.'
             )
-
-    async def _send_control(
-        self, content: CommitAudio | ClearAudio | CreateResponse | TruncateOutput | CancelResponse
-    ) -> None:
-        """Dispatch a manual turn-control / interrupt verb to its session method."""
-        if isinstance(content, CommitAudio):
-            await self.commit_audio()
-        elif isinstance(content, ClearAudio):
-            await self.clear_audio()
-        elif isinstance(content, CreateResponse):
-            await self.create_response()
-        elif isinstance(content, TruncateOutput):
-            await self.interrupt(audio_end_ms=content.audio_end_ms)
-        else:
-            await self.interrupt()  # CancelResponse
 
     async def _send_image(self, content: BinaryContent) -> None:
         """Forward an image and retain it according to the session's sampling policy."""

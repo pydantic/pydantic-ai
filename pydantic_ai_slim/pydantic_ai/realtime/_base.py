@@ -264,22 +264,25 @@ class TruncateOutput:
     """Milliseconds of the current output audio that were actually played before the interruption."""
 
 
-RealtimeSessionInput = TypeAliasType(
-    'RealtimeSessionInput',
-    'AudioInput | ImageInput | TextInput | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput',
-)
+RealtimeSessionInput = TypeAliasType('RealtimeSessionInput', 'AudioInput | ImageInput | TextInput')
 """The content types a caller feeds into [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send].
 
-This is [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput] minus [`ToolResult`][pydantic_ai.realtime.ToolResult]:
-the session sends tool results itself (see `RealtimeSession`), so a caller never sends one.
+Session content only: audio, images, and text. Turn-control verbs (`CommitAudio`, `ClearAudio`,
+`CreateResponse`, `CancelResponse`, `TruncateOutput`) are connection-level vocabulary driven through the
+dedicated `RealtimeSession` methods (`commit_audio()`, `clear_audio()`, `create_response()`,
+`interrupt()`), and [`ToolResult`][pydantic_ai.realtime.ToolResult] is sent by the session itself when a
+tool completes — neither is accepted by `send()`.
 """
 
-RealtimeInput = TypeAliasType('RealtimeInput', 'RealtimeSessionInput | ToolResult')
+RealtimeInput = TypeAliasType(
+    'RealtimeInput',
+    'RealtimeSessionInput | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult',
+)
 """Union of content types accepted by [`RealtimeConnection.send`][pydantic_ai.realtime.RealtimeConnection.send].
 
 A superset of [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput]: the low-level
-connection additionally accepts [`ToolResult`][pydantic_ai.realtime.ToolResult], which the session sends
-on the caller's behalf when a tool completes.
+connection additionally accepts the turn-control verbs and [`ToolResult`][pydantic_ai.realtime.ToolResult],
+which [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] sends on the caller's behalf.
 """
 
 KnownRealtimeTranscriptionModelName = TypeAliasType(
