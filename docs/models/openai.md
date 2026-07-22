@@ -191,6 +191,24 @@ agent = Agent(model, model_settings=settings)
 
 The setting is ignored on models that don't support reasoning mode, per [`OpenAIModelProfile.openai_responses_supports_reasoning_mode`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_mode].
 
+### Reasoning context
+
+Models that support it (currently the GPT-5.6 family) can use OpenAI's [reasoning context](https://developers.openai.com/api/docs/guides/reasoning#reasoning-context) to control which prior-turn reasoning items are available to the model when sampling. `auto` uses the model's default, `current_turn` makes only the active turn's reasoning available, and `all_turns` renders compatible reasoning items from earlier turns into the next sample. `all_turns` requires access to earlier response items via [`previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id], a conversation, or replayed history; on a first request it behaves like `current_turn`.
+
+Configure the context with [`openai_reasoning_context`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_context]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-5.6-sol')
+settings = OpenAIResponsesModelSettings(openai_reasoning_context='all_turns')
+agent = Agent(model, model_settings=settings)
+...
+```
+
+The setting is ignored on models that don't support reasoning context, per [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context].
+
 ### Native tools
 
 The Responses API has native tools that you can use instead of building your own:
