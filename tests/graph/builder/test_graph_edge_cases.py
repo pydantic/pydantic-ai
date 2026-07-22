@@ -448,24 +448,26 @@ async def test_run_requires_state():
 
     graph = g.build()
     with pytest.raises(TypeError, match='A state instance is required'):
-        await graph.run()
+        await graph.run()  # type: ignore[reportArgumentType]
 
 
 async def test_run_optional_state():
     """Test that run() accepts state=None when state_type is Optional."""
-    g = GraphBuilder(state_type=SimpleState | None, output_type=int)
+    g = GraphBuilder(state_type=SimpleState | None, output_type=int)  # type: ignore[reportArgumentType]
 
-    @g.step
-    async def return_42(ctx: StepContext[SimpleState | None, None, None]) -> int:
+    @g.step  # type: ignore[reportUnknownMemberType]
+    async def return_42(
+        ctx: StepContext[SimpleState | None, None, None],
+    ) -> int:
         return 42
 
-    g.add(
-        g.edge_from(g.start_node).to(return_42),
-        g.edge_from(return_42).to(g.end_node),
+    g.add(  # type: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        g.edge_from(g.start_node).to(return_42),  # type: ignore[reportUnknownMemberType]
+        g.edge_from(return_42).to(g.end_node),  # type: ignore[reportUnknownMemberType]
     )
 
-    graph = g.build()
-    result = await graph.run(state=None)
+    graph = g.build()  # type: ignore[reportUnknownMemberType]
+    result = await graph.run(state=None)  # type: ignore[reportArgumentType]
     assert result == 42
 
 
