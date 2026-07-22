@@ -1583,6 +1583,52 @@ async def test_connection_send_cancel_when_idle_does_not_send() -> None:
 
 
 @pytest.mark.anyio
+async def test_connection_drops_deltas_from_a_cancelled_response() -> None:
+    # After a barge-in cancel, the server keeps streaming the cancelled response's trailing audio and
+    # transcript deltas before its `response.done`. Those must be dropped (the user already interrupted
+    # that speech), while the cancelled response's own `response.done` still closes the turn, and a fresh
+    # response that follows streams normally.
+    audio_straggler = json.dumps(
+        {
+            'type': 'response.output_audio.delta',
+            'response_id': 'resp-1',
+            'item_id': 'item-1',
+            'delta': base64.b64encode(b'\x01').decode('ascii'),
+        }
+    )
+    transcript_straggler = json.dumps(
+        {'type': 'response.output_audio_transcript.delta', 'response_id': 'resp-1', 'item_id': 'item-1', 'delta': 'no'}
+    )
+    cancelled_done = json.dumps({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'cancelled'}})
+    new_created = json.dumps({'type': 'response.created', 'response': {'id': 'resp-2'}})
+    new_audio = json.dumps(
+        {
+            'type': 'response.output_audio.delta',
+            'response_id': 'resp-2',
+            'item_id': 'item-2',
+            'delta': base64.b64encode(b'\x02').decode('ascii'),
+        }
+    )
+    ws = FakeWebSocket([audio_straggler, transcript_straggler, cancelled_done, new_created, new_audio])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    conn._active_response_id = 'resp-1'  # pyright: ignore[reportPrivateUsage]
+    await conn.send(CancelResponse())  # cancels resp-1 and starts suppressing its stragglers
+
+    events = [event async for event in conn]
+    assert events == [
+        TurnCompleteEvent(
+            interrupted=True,
+            provider_response_id='resp-1',
+            finish_reason=None,
+            provider_details={'status': 'cancelled'},
+        ),
+        AudioDelta(data=b'\x02', item_id='item-2'),  # the next response is unaffected
+    ]
+    assert conn._cancelled_response_id is None  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
 async def test_response_done_emits_usage_then_turn_complete() -> None:
     done = json.dumps(
         {

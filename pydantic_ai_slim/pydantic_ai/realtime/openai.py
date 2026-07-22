@@ -264,6 +264,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._response_active = False
         self._active_response_id: str | None = None
         self._pending_response = False
+        # Id of a response we cancelled (barge-in): the server keeps streaming a few straggler deltas
+        # before its `response.done`, and mapping them would surface speech the user already interrupted.
+        # Drop frames carrying this id until its `response.done` closes it. `None` when nothing is being
+        # cancelled, or when the cancelled response had no id (defensive/compat path — then not suppressed).
+        self._cancelled_response_id: str | None = None
         # The current output audio item, tracked from output-audio deltas so a `TruncateOutput` can
         # name it. These are mutated by `__aiter__` and read by `send` from a separate task; under a
         # single cooperative event loop the plain reads/writes are safe and eventually consistent.
@@ -349,6 +354,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # already cancelled on the user's barge-in, and a redundant cancel raises a session error.
             if self._response_active:
                 await self._send_event({'type': 'response.cancel'})
+                # Suppress the cancelled response's trailing deltas until its `response.done` arrives.
+                self._cancelled_response_id = self._active_response_id
             self._response_active = False
             self._active_response_id = None
             self._pending_response = False
@@ -416,6 +423,23 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 )
                 return
 
+    def _is_cancelled_straggler(self, event_type: str | None, data: dict[str, Any]) -> bool:
+        """Whether this frame is a trailing delta from a response cancelled on barge-in (drop it).
+
+        Its own `response.done` is excluded so the response still closes cleanly; frames for any other
+        response carry a different `response_id`.
+        """
+        return (
+            self._cancelled_response_id is not None
+            and event_type != 'response.done'
+            and data.get('response_id') == self._cancelled_response_id
+        )
+
+    def _close_cancelled_response(self, response_id: str | None) -> None:
+        """Stop suppressing stragglers once a cancelled response's `response.done` arrives."""
+        if response_id == self._cancelled_response_id:
+            self._cancelled_response_id = None
+
     async def _decode_frame(self, raw: str) -> list[RealtimeCodecEvent]:
         """Parse one text frame into events, updating tracked response state.
 
@@ -423,6 +447,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         """
         data = loads_obj(raw)
         event_type = data.get('type')
+        # Drop trailing frames from a response we cancelled on barge-in (its audio/transcript deltas,
+        # output-item events, etc.); its own `response.done` still passes through below to close the
+        # response, emit usage, and clear the suppression.
+        if self._is_cancelled_straggler(event_type, data):
+            return []
         events: list[RealtimeCodecEvent] = []
         if event_type == 'response.created':
             response_data = data.get('response')
@@ -443,6 +472,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             done = ResponseDoneEvent.construct(**data)
             response = done.response
             response_id = response.id
+            # The cancelled response is now closed; stop suppressing its stragglers (its own usage still
+            # emits below). A no-op for any other response.
+            self._close_cancelled_response(response_id)
             # OpenAI response events always carry an ID. Keep the ID-less fallback for compatible
             # protocol implementations and defensive unit inputs that predate response tracking.
             matches_active_response = not isinstance(response_id, str) or (
