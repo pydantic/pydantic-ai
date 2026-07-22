@@ -9,12 +9,27 @@ from dirty_equals import IsJson, IsList
 from pydantic import BaseModel
 from typing_extensions import NotRequired, Self, TypedDict
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Hooks, WrapperCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    SkipToolExecution,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -1441,20 +1456,27 @@ Fix the errors and try again.\
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.parametrize('failure_source', ['schema', 'validator', 'unknown'])
+@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('failure_source', ['schema', 'validator'])
 def test_tool_argument_validation_error_emits_span(
     get_logfire_summary: Callable[[], LogfireSummary],
-    failure_source: Literal['schema', 'validator', 'unknown'],
+    failure_source: Literal['schema', 'validator'],
+    include_content: bool,
 ) -> None:
+    """A tool call rejected at argument validation emits an ERROR span (regression, #6555).
+
+    `Instrumentation.wrap_tool_validate` opens a near-zero-width `execute_tool` span marked ERROR
+    only when validation ultimately fails, recording the retry prompt the model will see. The
+    execute-stage span still covers the following successful call, so there is no duplicate span
+    on success. Execute-stage hooks fire only for the successfully validated call.
+    """
     model_calls = 0
 
     def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         nonlocal model_calls
         model_calls += 1
         if model_calls == 1:
-            if failure_source == 'unknown':
-                return ModelResponse(parts=[ToolCallPart('missing', {})])
-            x: Any = 'not-an-int' if failure_source == 'schema' and model_calls == 1 else 2
+            x: Any = 'not-an-int' if failure_source == 'schema' else 2
             return ModelResponse(parts=[ToolCallPart('double', {'x': x})])
         if model_calls == 2:
             return ModelResponse(parts=[ToolCallPart('double', {'x': 2})])
@@ -1481,7 +1503,7 @@ def test_tool_argument_validation_error_emits_span(
 
     agent = Agent(
         FunctionModel(call_tool),
-        capabilities=[Instrumentation(settings=InstrumentationSettings()), hooks],
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=include_content)), hooks],
     )
 
     tool_calls: list[int] = []
@@ -1500,18 +1522,20 @@ def test_tool_argument_validation_error_emits_span(
         if attributes.get('gen_ai.operation.name') == 'execute_tool'
     ]
     assert tool_calls == [2]
+    # Execute-stage hooks fire only for the validated call, never for the failed one.
     assert wrapped_calls == [('double', {'x': 2})]
     assert len(tool_spans) == 2
-    first_tool_name = 'missing' if failure_source == 'unknown' else 'double'
-    assert [tool_span['gen_ai.tool.name'] for tool_span in tool_spans] == [first_tool_name, 'double']
+    assert [tool_span['gen_ai.tool.name'] for tool_span in tool_spans] == ['double', 'double']
+    # The validation-failure span is ERROR; the following successful execute span is not.
     assert tool_spans[0]['logfire.level_num'] == 17
-    expected_error = {
-        'schema': 'int_parsing',
-        'validator': 'reject 2',
-        'unknown': 'Unknown tool name',
-    }[failure_source]
-    assert expected_error in tool_spans[0]['gen_ai.tool.call.result']
-    assert tool_spans[1]['gen_ai.tool.call.result'] == '4'
+    assert 'logfire.level_num' not in tool_spans[1]
+    if include_content:
+        expected_error = {'schema': 'int_parsing', 'validator': 'reject 2'}[failure_source]
+        assert expected_error in tool_spans[0]['gen_ai.tool.call.result']
+        assert tool_spans[1]['gen_ai.tool.call.result'] == '4'
+    else:
+        assert 'gen_ai.tool.call.result' not in tool_spans[0]
+        assert 'gen_ai.tool.call.result' not in tool_spans[1]
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -1588,6 +1612,116 @@ def test_tool_span_wraps_recovered_and_modified_lifecycle(capfire: CaptureLogfir
     assert public_span['parent']['span_id'] == tool_span['context']['span_id']
     assert tool_span['attributes'].get('logfire.level_num', 0) < 17
     assert tool_span['attributes']['gen_ai.tool.call.result'] == 'modified recovered'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('skip_phase', ['before', 'wrap'])
+def test_skip_tool_execution_span_is_not_error(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    skip_phase: Literal['before', 'wrap'],
+    include_content: bool,
+) -> None:
+    """`SkipToolExecution` yields a successful replacement result, so its span is not ERROR.
+
+    `ToolManager` converts `SkipToolExecution` (raised from `before_tool_execute` or a user
+    `wrap_tool_execute`) into a successful tool result. The execute-stage span must record that
+    replacement result and leave its status unset rather than marking ERROR (regression: the
+    exception used to bubble through the span as an error).
+    """
+
+    @dataclass
+    class SkipCap(AbstractCapability[Any]):
+        async def before_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+            if skip_phase == 'before':
+                raise SkipToolExecution('replacement')
+            return kwargs['args']
+
+        async def wrap_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+            if skip_phase == 'wrap':
+                raise SkipToolExecution('replacement')
+            return await kwargs['handler'](kwargs['args'])
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('double', {'x': 2})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=include_content)), SkipCap()],
+    )
+
+    executed: list[int] = []
+
+    @agent.tool_plain
+    def double(x: int) -> int:
+        executed.append(x)  # pragma: no cover
+        return x * 2
+
+    result = agent.run_sync('Use the tool')
+
+    # The tool body never ran; the replacement result is what surfaced as the tool return.
+    assert executed == []
+    tool_returns = [
+        part.content for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
+    assert tool_returns == ['replacement']
+
+    summary = get_logfire_summary()
+    tool_spans = [
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    assert len(tool_spans) == 1
+    assert 'logfire.level_num' not in tool_spans[0]
+    if include_content:
+        assert tool_spans[0]['gen_ai.tool.call.result'] == 'replacement'
+    else:
+        assert 'gen_ai.tool.call.result' not in tool_spans[0]
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_recovered_tool_validation_emits_no_error_span(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    """When `on_tool_validate_error` recovers, no validate-stage ERROR span is emitted.
+
+    Recovery happens inside `wrap_tool_validate`'s handler, so `Instrumentation.wrap_tool_validate`
+    never sees the error and emits no span — only the single successful execute-stage span remains.
+    """
+
+    @dataclass
+    class RecoverCap(AbstractCapability[Any]):
+        async def on_tool_validate_error(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+            return {'x': 2}
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('double', {'x': 'not-an-int'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RecoverCap()],
+    )
+
+    @agent.tool_plain
+    def double(x: int) -> int:
+        return x * 2
+
+    agent.run_sync('Use the tool')
+
+    summary = get_logfire_summary()
+    tool_spans = [
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    assert len(tool_spans) == 1
+    assert 'logfire.level_num' not in tool_spans[0]
+    assert tool_spans[0]['gen_ai.tool.call.result'] == '4'
 
 
 class WeatherInfo(BaseModel):

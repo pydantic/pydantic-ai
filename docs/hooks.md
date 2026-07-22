@@ -174,9 +174,6 @@ To skip validation, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.Sk
 | `tool_execute_error` | `tool_execute_error=` | `on_tool_execute_error` |
 
 Execution hooks fire when the tool function runs. `args` is always the validated `dict[str, Any]`.
-The `tool_execute` decorator is not called for failed validation; subclass
-[`AbstractCapability.wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]
-directly to wrap both stored validation failures and validated execution.
 
 To skip execution, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `tool_execute` (wrap).
 

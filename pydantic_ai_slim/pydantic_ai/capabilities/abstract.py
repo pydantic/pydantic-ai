@@ -73,7 +73,7 @@ ValidatedToolArgs: TypeAlias = dict[str, Any]
 WrapToolValidateHandler: TypeAlias = Callable[[RawToolArgs], Awaitable[ValidatedToolArgs]]
 """Handler type for [`wrap_tool_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_validate]."""
 
-WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs | None], Awaitable[Any]]
+WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs], Awaitable[Any]]
 """Handler type for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]."""
 
 RawOutput: TypeAlias = str | dict[str, Any]
@@ -699,7 +699,21 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: RawToolArgs,
         handler: WrapToolValidateHandler,
     ) -> ValidatedToolArgs:
-        """Wraps tool argument validation. handler() runs the validation."""
+        """Wrap tool argument validation, enclosing the other validate-stage hooks.
+
+        Unlike the generic lifecycle where `wrap_*` sits between `before_*` and the operation,
+        `wrap_tool_validate` is the **outermost** validate-stage hook: `handler(args)` runs
+        [`before_tool_validate`][pydantic_ai.capabilities.AbstractCapability.before_tool_validate],
+        then the Pydantic validation (recovering via
+        [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error]
+        on `ValidationError` / `ModelRetry`), then
+        [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate].
+
+        `args` is therefore the raw pre-`before_tool_validate` args, and the return value is the
+        post-`after_tool_validate` validated args. A `ValidationError` / `ModelRetry` reaches this
+        hook only when `on_tool_validate_error` re-raised it. Only ever called for a resolved tool
+        (an unknown tool name fails before any validate-stage hooks run).
+        """
         return await handler(args)
 
     async def on_tool_validate_error(
@@ -763,15 +777,25 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        tool_def: ToolDefinition | None,
-        args: ValidatedToolArgs | None,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
-        """Wrap settling a tool call.
+        """Wrap tool execution, enclosing the other execute-stage hooks.
 
-        `handler(args)` raises a stored validation error, or runs the before, execute,
-        error, and after hooks for a successfully validated tool call. `tool_def` is
-        `None` only for an unknown tool, and `args` is `None` when validation failed.
+        Unlike the generic lifecycle where `wrap_*` sits between `before_*` and the operation,
+        `wrap_tool_execute` is the **outermost** execute-stage hook: `handler(args)` runs
+        [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute],
+        then the tool body (recovering via
+        [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error]
+        on failure), then
+        [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute].
+
+        `args` is therefore the raw pre-`before_tool_execute` validated args, and the return value
+        is the post-`after_tool_execute` result. Raise
+        [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] to skip execution
+        with a replacement result. Only ever called for a successfully validated tool call:
+        unknown tools and calls that failed argument validation never reach execution.
         """
         return await handler(args)
 

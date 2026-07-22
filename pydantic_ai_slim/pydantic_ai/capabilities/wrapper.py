@@ -339,8 +339,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        tool_def: ToolDefinition | None,
-        args: ValidatedToolArgs | None,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
         return await self.wrapped.wrap_tool_execute(ctx, call=call, tool_def=tool_def, args=args, handler=handler)

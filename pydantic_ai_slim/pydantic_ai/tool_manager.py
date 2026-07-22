@@ -257,7 +257,13 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         allow_partial: bool,
     ) -> dict[str, Any]:
-        """Run validation with before/wrap/after tool_validate hooks."""
+        """Run validation with `wrap_tool_validate` enclosing the before/error/after hooks.
+
+        `wrap_tool_validate` is the outermost validate-stage hook: its handler runs
+        `before_tool_validate` → Pydantic validation (recovering via `on_tool_validate_error`) →
+        `after_tool_validate`, so a wrapping capability observes the raw pre-`before` args, the
+        final (post-`after`) validated args, and any hook errors.
+        """
         cap = self.root_capability
 
         async def do_validate(args: str | dict[str, Any]) -> dict[str, Any]:
@@ -270,22 +276,21 @@ class ToolManager(Generic[AgentDepsT]):
         if cap is not None and tool.tool_def.kind != 'output':
             tool_def = tool.tool_def
 
-            # before_tool_validate
+            async def run_validation(args: str | dict[str, Any]) -> dict[str, Any]:
+                # The lifecycle enclosed by `wrap_tool_validate`: before → validation (+ error recovery) → after.
+                args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=args)
+                try:
+                    validated_args = await do_validate(args)
+                except (ValidationError, ModelRetry) as e:
+                    validated_args = await cap.on_tool_validate_error(
+                        ctx, call=call, tool_def=tool_def, args=args, error=e
+                    )
+                return await cap.after_tool_validate(ctx, call=call, tool_def=tool_def, args=validated_args)
+
             raw_args: str | dict[str, Any] = call.args if call.args is not None else {}
-            raw_args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=raw_args)
-
-            # wrap_tool_validate wraps the validation; on_tool_validate_error on failure
-            try:
-                validated_args = await cap.wrap_tool_validate(
-                    ctx, call=call, tool_def=tool_def, args=raw_args, handler=do_validate
-                )
-            except (ValidationError, ModelRetry) as e:
-                validated_args = await cap.on_tool_validate_error(
-                    ctx, call=call, tool_def=tool_def, args=raw_args, error=e
-                )
-
-            # after_tool_validate
-            validated_args = await cap.after_tool_validate(ctx, call=call, tool_def=tool_def, args=validated_args)
+            validated_args = await cap.wrap_tool_validate(
+                ctx, call=call, tool_def=tool_def, args=raw_args, handler=run_validation
+            )
         else:
             validated_args = await do_validate(call.args if call.args is not None else {})
 
@@ -298,7 +303,14 @@ class ToolManager(Generic[AgentDepsT]):
         usage: RunUsage,
         wrap_validation_errors: bool = True,
     ) -> Any:
-        """Run execution with before/after/error tool_execute hooks."""
+        """Run execution with `wrap_tool_execute` enclosing the before/error/after hooks.
+
+        `wrap_tool_execute` is the outermost execute-stage hook: its handler runs
+        `before_tool_execute` → tool body (recovering via `on_tool_execute_error`) →
+        `after_tool_execute`, so a wrapping capability observes the final (post-`after`)
+        result and any hook errors, and its own errors are not eligible for
+        `on_tool_execute_error` recovery.
+        """
         assert validated.tool is not None
         assert validated.validated_args is not None
 
@@ -318,28 +330,28 @@ class ToolManager(Generic[AgentDepsT]):
         if cap is not None and validated.tool.tool_def.kind != 'output':
             tool_def = validated.tool.tool_def
 
-            try:
-                # before_tool_execute
-                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=validated.validated_args)
-
-                # on_tool_execute_error handles failures from the tool body
+            async def run_execution(args: dict[str, Any]) -> Any:
+                # The lifecycle enclosed by `wrap_tool_execute`: before → body (+ error recovery) → after.
+                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
                 try:
                     tool_result = await do_execute(args)
                 except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError):
                     raise  # Control flow, not errors
                 except ModelRetry:
-                    raise  # Propagate to outer handler
+                    raise  # Propagate to the wrap-stage handler
                 except Exception as e:
                     tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
+                return await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result=tool_result)
 
-                # after_tool_execute
-                tool_result = await cap.after_tool_execute(
-                    ctx, call=call, tool_def=tool_def, args=args, result=tool_result
+            try:
+                tool_result = await cap.wrap_tool_execute(
+                    ctx, call=call, tool_def=tool_def, args=validated.validated_args, handler=run_execution
                 )
             except (ValidationError, ModelRetry) as e:
-                # Hook raised ValidationError or ModelRetry (e.g. before/after_tool_execute
-                # doing additional Pydantic validation on args/result) — convert to
-                # ToolRetryError for retry handling, unless the caller asked for raw errors.
+                # A hook raised ValidationError or ModelRetry (e.g. before/after_tool_execute
+                # doing additional Pydantic validation on args/result, or the tool body under
+                # `wrap_validation_errors=False`) — convert to ToolRetryError for retry handling,
+                # unless the caller asked for raw errors.
                 if not wrap_validation_errors:
                     raise
                 name = call.tool_name
@@ -494,39 +506,9 @@ class ToolManager(Generic[AgentDepsT]):
         if self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
-        ctx = self.ctx
-
-        async def settle_tool_call(args: dict[str, Any] | None) -> Any:
-            return await self._execute_tool_call_impl(
-                replace(validated, validated_args=args),
-                usage=ctx.usage,
-                wrap_validation_errors=wrap_validation_errors,
-            )
-
-        cap = self.root_capability
-        tool_def = validated.tool.tool_def if validated.tool is not None else None
-        if cap is None or (tool_def is not None and tool_def.kind in ('output', 'external')):
-            return await settle_tool_call(validated.validated_args)
-
-        try:
-            return await cap.wrap_tool_execute(
-                validated.ctx,
-                call=validated.call,
-                tool_def=tool_def,
-                args=validated.validated_args,
-                handler=settle_tool_call,
-            )
-        except SkipToolExecution as e:
-            ctx.usage.tool_calls += 1
-            return e.result
-        except (ValidationError, ModelRetry) as e:
-            if not wrap_validation_errors:
-                raise
-            name = validated.call.tool_name
-            max_retries = validated.tool.max_retries if validated.tool is not None else self.default_max_retries
-            self._check_max_retries(name, max_retries, e)
-            self.failed_tools.add(name)
-            raise self._wrap_error_as_retry(name, validated.call, e) from e
+        return await self._execute_tool_call_impl(
+            validated, usage=self.ctx.usage, wrap_validation_errors=wrap_validation_errors
+        )
 
     # --- Output tool methods (output hooks, no tool hooks) ---
 

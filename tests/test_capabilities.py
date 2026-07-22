@@ -5133,8 +5133,8 @@ class LoggingCapability(AbstractCapability[Any]):
         ctx: RunContext[Any],
         *,
         call: ToolCallPart,
-        tool_def: ToolDefinition | None,
-        args: dict[str, Any] | None,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
         handler: Any,
     ) -> Any:
         self.log.append(f'wrap_tool_execute:{call.tool_name}:before')
@@ -5589,6 +5589,67 @@ class TestToolValidateHooks:
         assert td.description == 'Say hello'
         assert td.kind == 'function'
 
+    @pytest.mark.parametrize('validation_fails', [False, True])
+    async def test_wrap_tool_validate_wraps_validate_lifecycle(self, validation_fails: bool):
+        """`wrap_tool_validate` is the outermost validate-stage hook.
+
+        Its handler runs `before_tool_validate` → validation (recovering via
+        `on_tool_validate_error`) → `after_tool_validate`, so the wrap sees the raw pre-`before`
+        args and the recovery happens inside the wrap.
+        """
+        events: list[str] = []
+        wrap_saw_args: list[Any] = []
+
+        @dataclass
+        class LifecycleCap(AbstractCapability[Any]):
+            async def before_tool_validate(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+                events.append('before')
+                return kwargs['args']
+
+            async def wrap_tool_validate(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+                events.append('wrap:before')
+                wrap_saw_args.append(kwargs['args'])
+                result = await kwargs['handler'](kwargs['args'])
+                events.append('wrap:after')
+                return result
+
+            async def on_tool_validate_error(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+                events.append('on_error')
+                return {'x': 99}
+
+            async def after_tool_validate(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+                events.append('after')
+                return kwargs['args']
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            x: Any = 'bad' if validation_fails else 1
+            return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args={'x': x}, tool_call_id='call-1')])
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[LifecycleCap()])
+
+        received: list[int] = []
+
+        @agent.tool_plain
+        def my_tool(x: int) -> str:
+            received.append(x)
+            return 'ok'
+
+        await agent.run('call tool')
+        assert events == [
+            'wrap:before',
+            'before',
+            *(['on_error'] if validation_fails else []),
+            'after',
+            'wrap:after',
+        ]
+        # The wrap sees the raw pre-`before_tool_validate` args, exactly as the model sent them.
+        assert wrap_saw_args == [{'x': 'bad' if validation_fails else 1}]
+        assert received == [99 if validation_fails else 1]
+
 
 class TestToolExecuteHooks:
     async def test_tool_execute_hooks_fire(self):
@@ -5653,8 +5714,8 @@ class TestToolExecuteHooks:
                 ctx: RunContext[Any],
                 *,
                 call: ToolCallPart,
-                tool_def: ToolDefinition | None,
-                args: dict[str, Any] | None,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
                 handler: Any,
             ) -> Any:
                 if skip_phase == 'wrap':
@@ -5696,8 +5757,8 @@ class TestToolExecuteHooks:
                 ctx: RunContext[Any],
                 *,
                 call: ToolCallPart,
-                tool_def: ToolDefinition | None,
-                args: dict[str, Any] | None,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
                 handler: Any,
             ) -> Any:
                 try:
@@ -5762,6 +5823,47 @@ class TestToolExecuteHooks:
         ]
         assert wrapped_results == [f'modified {"recovered" if tool_fails else "tool result"}']
 
+    @pytest.mark.parametrize('scenario', ['unknown', 'invalid'])
+    async def test_wrap_tool_execute_not_called_for_unresolved_call(self, scenario: Literal['unknown', 'invalid']):
+        """`wrap_tool_execute` only ever runs for a successfully validated call.
+
+        Unknown tool names fail at resolution and invalid arguments fail at validation, both
+        before the execute stage, so a wrapping capability must not observe them — the
+        validation/execution boundary is what users rely on for access control. The wrap sees
+        only the retried, valid call.
+        """
+        wrap_calls: list[str] = []
+
+        @dataclass
+        class SpyCap(AbstractCapability[Any]):
+            async def wrap_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+                wrap_calls.append(kwargs['call'].tool_name)
+                return await kwargs['handler'](kwargs['args'])
+
+        attempts = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal attempts
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response('done')
+            attempts += 1
+            if attempts == 1:
+                if scenario == 'unknown':
+                    return ModelResponse(parts=[ToolCallPart('missing', {}, tool_call_id='c1')])
+                return ModelResponse(parts=[ToolCallPart('double', {'x': 'bad'}, tool_call_id='c1')])
+            return ModelResponse(parts=[ToolCallPart('double', {'x': 2}, tool_call_id='c2')])
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[SpyCap()])
+
+        @agent.tool_plain
+        def double(x: int) -> int:
+            return x * 2
+
+        await agent.run('go')
+        assert wrap_calls == ['double']
+
     async def test_hooks_receive_dict_args_for_single_base_model_tool(self):
         """Validate and execute hooks receive dict-shaped args when the tool has a single BaseModel parameter.
 
@@ -5789,11 +5891,10 @@ class TestToolExecuteHooks:
                 ctx: RunContext[Any],
                 *,
                 call: ToolCallPart,
-                tool_def: ToolDefinition | None,
-                args: dict[str, Any] | None,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
                 handler: Any,
             ) -> Any:
-                assert args is not None
                 captured_args.append(('execute', args))
                 return await handler(args)
 
@@ -13697,8 +13798,8 @@ class TestModelRetryFromHooks:
                 ctx: RunContext[Any],
                 *,
                 call: ToolCallPart,
-                tool_def: ToolDefinition | None,
-                args: dict[str, Any] | None,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
                 handler: Any,
             ) -> Any:
                 raise ModelRetry('Wrap says retry tool')

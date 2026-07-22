@@ -578,21 +578,18 @@ All tool hooks receive a `tool_def` parameter with the [`ToolDefinition`][pydant
 
 To skip validation and provide pre-validated args, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.SkipToolValidation] from `before_tool_validate` or `wrap_tool_validate`.
 
-**Execution hooks** — `args` is the validated `dict[str, Any]` for the before, after, and error hooks.
-`wrap_tool_execute` also wraps stored validation failures, where `args` is `None`; `tool_def` is
-also `None` when the tool name is unknown.
+**Execution hooks** — `args` is always the validated `dict[str, Any]`:
 
 | Hook | Signature | Purpose |
 |---|---|---|
 | [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs]`) -> `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs] | Modify args before execution |
 | [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs]`, result: Any) -> Any` | Modify execution result |
-| [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]` \| None, args: `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs]` \| None, handler: `[`WrapToolExecuteHandler`][pydantic_ai.capabilities.WrapToolExecuteHandler]`) -> Any` | Wrap a stored validation failure or the complete execution lifecycle |
+| [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs]`, handler: `[`WrapToolExecuteHandler`][pydantic_ai.capabilities.WrapToolExecuteHandler]`) -> Any` | Wrap the execution lifecycle |
 | [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs]`, error: Exception) -> Any` | Handle execution errors (see [error hooks](#error-hooks)) |
 
 To skip execution and provide a replacement result, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `wrap_tool_execute`.
 
-`wrap_tool_execute` encloses either the stored validation error, or `before_tool_execute`,
-the tool body, `on_tool_execute_error`, and `after_tool_execute` for a valid call.
+Unlike the [generic lifecycle](#error-hooks), the tool validate and execute stages make `wrap_*` the **outermost** hook: `wrap_tool_validate` encloses `before_tool_validate` → validation (recovering via `on_tool_validate_error`) → `after_tool_validate`, and `wrap_tool_execute` encloses `before_tool_execute` → the tool body (recovering via `on_tool_execute_error`) → `after_tool_execute`. A wrapping capability therefore sees the raw pre-`before` args and the final post-`after` result, and its own errors are not eligible for `on_*_error` recovery. Both wraps only ever run for a successfully resolved tool; `wrap_tool_execute` additionally never runs for a call that failed argument validation.
 
 ### Output hooks
 
@@ -721,7 +718,7 @@ For building web UIs that transform streamed events into protocol-specific forma
 
 ### Error hooks
 
-Each lifecycle point has an `on_*_error` hook — the error counterpart to `after_*`. While `after_*` hooks fire on success, `on_*_error` hooks fire on failure. Most lifecycle points call the error hook after `wrap_*` has had its chance to recover:
+Each lifecycle point has an `on_*_error` hook — the error counterpart to `after_*`. While `after_*` hooks fire on success, `on_*_error` hooks fire on failure (after `wrap_*` has had its chance to recover):
 
 ```text
 before_X → wrap_X(handler)
@@ -731,7 +728,7 @@ before_X → wrap_X(handler)
         └─ recover ───→ after_X (modify recovered result)
 ```
 
-Tool execution is the exception: [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute] encloses the other execution hooks.
+The tool validate and execute stages are the exception to this diagram: `wrap_tool_validate` and `wrap_tool_execute` enclose their stage's other hooks (`before_*` → operation → `on_*_error` → `after_*` all run inside the wrap's handler), so a wrapping capability sees hook mutations and any error recovered in `after_*`.
 
 Error hooks use **raise-to-propagate, return-to-recover** semantics:
 
@@ -1080,8 +1077,8 @@ class VerboseLogging(AbstractCapability[Any]):
         ctx: RunContext[Any],
         *,
         call: ToolCallPart,
-        tool_def: ToolDefinition | None,
-        args: dict[str, Any] | None,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
         handler: WrapToolExecuteHandler,
     ) -> Any:
         print(f'  Tool call: {call.tool_name}({args})')

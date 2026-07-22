@@ -538,9 +538,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        tool_def: ToolDefinition | None,
-        args: dict[str, Any] | None,
-        handler: Callable[[dict[str, Any] | None], Awaitable[Any]],
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: Callable[[dict[str, Any]], Awaitable[Any]],
     ) -> Any:
         chain = handler
         for capability in reversed(self.capabilities):
@@ -785,10 +785,10 @@ def _make_tool_execute_wrap(
     cap: AbstractCapability[AgentDepsT],
     ctx: RunContext[AgentDepsT],
     call: ToolCallPart,
-    tool_def: ToolDefinition | None,
-    inner: Callable[[dict[str, Any] | None], Awaitable[Any]],
-) -> Callable[[dict[str, Any] | None], Awaitable[Any]]:
-    async def wrapped(args: dict[str, Any] | None) -> Any:
+    tool_def: ToolDefinition,
+    inner: Callable[[dict[str, Any]], Awaitable[Any]],
+) -> Callable[[dict[str, Any]], Awaitable[Any]]:
+    async def wrapped(args: dict[str, Any]) -> Any:
         return await cap.wrap_tool_execute(
             _ctx_for_cap(cap, ctx), call=call, tool_def=tool_def, args=args, handler=inner
         )

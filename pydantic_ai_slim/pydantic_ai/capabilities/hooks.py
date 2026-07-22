@@ -185,7 +185,7 @@ class AfterToolExecuteHookFunc(Protocol):
 
 class WrapToolExecuteHookFunc(Protocol):
     """Protocol for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute] hook functions."""
-    def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, handler: Callable[[ValidatedToolArgs], Awaitable[Any]]) -> Any | Awaitable[Any]: ...
+    def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, handler: WrapToolExecuteHandler) -> Any | Awaitable[Any]: ...
 
 class OnToolExecuteErrorHookFunc(Protocol):
     """Protocol for [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] hook functions."""
@@ -1089,13 +1089,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        tool_def: ToolDefinition | None,
-        args: ValidatedToolArgs | None,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
-        if tool_def is None or args is None:
-            return await handler(args)
-
         entries = _filter_tool_entries(self._get('wrap_tool_execute'), call=call)
         if not entries:
             return await handler(args)
