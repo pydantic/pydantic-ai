@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import InputTranscriptionFailedEvent, TurnCompleteEvent
+from pydantic_ai.realtime import RealtimeError, TurnCompleteEvent
 from pydantic_ai.realtime._base import SessionErrorEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
@@ -276,11 +276,10 @@ async def test_audio_in_server_vad_transcription_requires_deployment(
 
     Unlike OpenAI, where the default `gpt-realtime-whisper` is hosted, Azure GA realtime resolves the
     input-transcription model against the resource's own deployments — so the default fails with
-    `DeploymentNotFound` unless a transcription model is deployed and configured. This cassette (recorded
-    against a resource without one) proves that failure is handled gracefully: the codec's shared status
-    guard surfaces a recoverable [`InputTranscriptionFailedEvent`][pydantic_ai.realtime.InputTranscriptionFailedEvent],
-    the session keeps running, and the assistant still replies. Without a transcription deployment the
-    spoken turn isn't transcribed, so it does not land in history — see the Azure realtime docs.
+    `DeploymentNotFound` on every turn unless a transcription model is deployed and configured. That's a
+    misconfiguration, not a transient per-utterance failure, so the shared codec raises it as a
+    non-recoverable error with a fix-it message (rather than silently dropping user turns via a recoverable
+    event). This cassette was recorded against a resource without a transcription deployment.
     """
     provider, _ = azure_ws_cassette
     model = AzureRealtimeModel('gpt-realtime', provider=provider)
@@ -288,35 +287,14 @@ async def test_audio_in_server_vad_transcription_requires_deployment(
     pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
 
     events: list[Any] = []
-    async with agent.realtime_session(model=model) as session:
-        # Stream the clip in ~100 ms chunks like a live mic; the trailing silence lets server VAD end it.
-        for start in range(0, len(pcm), 4800):
-            await session.send_audio(pcm[start : start + 4800])
-        with anyio.fail_after(45):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
-                events.append(event)
-                if isinstance(event, TurnCompleteEvent):
-                    break
+    with pytest.raises(RealtimeError, match='transcription model is not deployed'):
+        async with agent.realtime_session(model=model) as session:
+            # Stream the clip in ~100 ms chunks like a live mic; the trailing silence lets server VAD end it.
+            for start in range(0, len(pcm), 4800):
+                await session.send_audio(pcm[start : start + 4800])
+            with anyio.fail_after(45):
+                async for event in session:
+                    events.append(event)
 
-    # Server VAD brackets the speech, transcription fails (recoverably), and the assistant still answers.
-    assert collapse_event_types(events) == snapshot(
-        [
-            'InputSpeechStartEvent',
-            'InputSpeechEndEvent',
-            'InputTranscriptionFailedEvent',
-            'PartStartEvent',
-            'PartDeltaEvent',
-            'PartEndEvent',
-            'TurnCompleteEvent',
-        ]
-    )
-    failures = [event for event in events if isinstance(event, InputTranscriptionFailedEvent)]
-    assert len(failures) == 1 and failures[0].message
-
-    # The failure is recoverable: the session did not raise, and the assistant's reply is recorded. The
-    # untranscribed user turn is not in history (no transcript, and audio retention is off by default).
-    messages = session.all_messages()
-    assert [type(m).__name__ for m in messages] == snapshot(['ModelResponse'])
-    reply = messages[0]
-    assert isinstance(reply, ModelResponse)
-    assert isinstance(reply.parts[0], SpeechPart)
+    # Server VAD brackets the user's speech; the deployment error then ends the session before any reply.
+    assert collapse_event_types(events) == snapshot(['InputSpeechStartEvent', 'InputSpeechEndEvent'])

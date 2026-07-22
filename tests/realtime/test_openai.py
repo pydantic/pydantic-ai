@@ -75,7 +75,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import try_import
+from ..conftest import IsStr, try_import
 from .test_session import make_tool_manager
 
 with try_import() as imports_successful:
@@ -512,6 +512,16 @@ def test_map_unhandled_event_returns_none() -> None:
                 item_id='u',
                 content_index=2,
             ),
+        ),
+        (
+            # A `DeploymentNotFound` transcription failure is a misconfiguration (the transcription model
+            # isn't deployed on the Azure resource), not a transient failure, so it maps to a
+            # non-recoverable error the session raises — unlike `audio_unintelligible` above.
+            {
+                'type': 'conversation.item.input_audio_transcription.failed',
+                'error': {'message': 'x', 'type': 'server_error', 'code': 'DeploymentNotFound'},
+            },
+            SessionErrorEvent(message=IsStr(regex=r'.*transcription model is not deployed.*'), recoverable=False),
         ),
     ],
 )

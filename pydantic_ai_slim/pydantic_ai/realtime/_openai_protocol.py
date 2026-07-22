@@ -592,7 +592,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
 def _map_input_transcription_event(
     data: dict[str, Any], event_type: str
-) -> InputTranscript | InputTranscriptionFailedEvent | None:
+) -> InputTranscript | InputTranscriptionFailedEvent | SessionErrorEvent | None:
     """Map input transcription progress and failure events."""
     if event_type == 'conversation.item.input_audio_transcription.delta':
         event = ConversationItemInputAudioTranscriptionDeltaEvent.construct(**data)
@@ -609,6 +609,19 @@ def _map_input_transcription_event(
     if not is_str_dict(data.get('error')):
         raise ValueError('`error` must be an object')
     event = ConversationItemInputAudioTranscriptionFailedEvent.construct(**data)
+    if event.error.code == 'DeploymentNotFound':
+        # A misconfiguration, not a transient per-utterance failure: Azure resolves the transcription
+        # model against the resource's own deployments, so the default fails on every turn until fixed —
+        # silently dropping user turns. Fail loudly instead of surfacing a recoverable event nobody reads.
+        return SessionErrorEvent(
+            message=(
+                'Input transcription failed: the transcription model is not deployed on this Azure '
+                'resource (DeploymentNotFound). Deploy a transcription model and set '
+                '`input_transcription_model` in the realtime model settings, or disable input '
+                'transcription with `input_transcription_model=None`.'
+            ),
+            recoverable=False,
+        )
     return InputTranscriptionFailedEvent(
         message=event.error.message or '',
         type=event.error.type or None,
