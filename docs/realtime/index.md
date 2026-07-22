@@ -817,11 +817,12 @@ if model.profile['supports_interruption']:
 
 #### Routing through a gateway
 
-Gateway routing currently covers OpenAI realtime.
+Gateway routing covers OpenAI realtime (`gateway/openai`) and Gemini Live (`gateway/google`, which
+proxies the Vertex upstream — see [Gemini gateway](gemini.md#routing-through-the-gateway)).
 
 Realtime models take a `provider=` just like standard models, so you can route a session through the
-[Pydantic AI Gateway](../gateway.md) (or any OpenAI-compatible endpoint that
-exposes a realtime API) by naming the upstream provider:
+[Pydantic AI Gateway](../gateway.md) (or, for OpenAI, any OpenAI-compatible endpoint that exposes a
+realtime API) by naming the upstream provider:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel

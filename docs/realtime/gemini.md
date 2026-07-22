@@ -71,6 +71,29 @@ custom Google Cloud credentials, project, or region.
 Gemini uses `google_input_transcription`, enabled by default; there is no separate transcription
 model. See [Transcribing user input](index.md#transcribing-user-input).
 
+### Routing through the gateway
+
+Route a session through the [Pydantic AI Gateway](../gateway.md) by naming the upstream provider. The
+gateway credentials come from [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider]:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.realtime.google import GoogleRealtimeModel
+
+model = GoogleRealtimeModel('gemini-live-2.5-flash', provider='gateway/google')
+```
+
+Or infer it from a gateway-prefixed identifier:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.realtime import infer_realtime_model
+
+model = infer_realtime_model('gateway/google:gemini-live-2.5-flash')
+```
+
+The gateway proxies Gemini Live over **Vertex** (the `google-vertex` route), so the provider row it
+routes to must be in a region that supports the Live API. `gateway/google-cloud` is an alias for the
+same route. See the shared [gateway notes](index.md#gateway) for trace propagation over the handshake.
+
 ### Session resumption
 
 Set `google_enable_session_resumption=True` together with

@@ -19,7 +19,7 @@ from __future__ import annotations as _annotations
 import json
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
 from dataclasses import InitVar, dataclass, field
 from typing import Any, Literal, cast
 from weakref import WeakKeyDictionary
@@ -81,6 +81,7 @@ from ..models.google import (
 from ..native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..providers import Provider, infer_provider
+from ..providers.gateway import is_gateway_provider
 from ..settings import ThinkingEffort, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -550,6 +551,36 @@ def _ws_trace_context(client: Client) -> Generator[None]:
             headers.pop(key, None)
 
 
+@contextmanager
+def _ws_gateway_auth(client: Client) -> Generator[None]:
+    """Add the Pydantic AI Gateway bearer auth to the Gemini Live handshake headers for the connect only.
+
+    The gateway authenticates on `Authorization: Bearer <key>`, added to REST calls by its `httpx`
+    request hook. That hook can't cover the Live handshake: `google-genai` dials the WebSocket with the
+    `websockets` library, bypassing the provider's `httpx` client, and on the Vertex Express-mode client
+    the gateway `GoogleCloudProvider` builds, the SDK carries the key only as `x-goog-api-key`. So the
+    gateway key (`client._api_client.api_key`) is mirrored into an `Authorization` header on the shared
+    HTTP options — which the SDK forwards as the handshake's `additional_headers` — and removed after the
+    connect so the shared client's later REST requests fall back to the request hook. A pre-existing
+    `Authorization` header (or an absent key) is left untouched. Guarded like `_single_ws_user_agent`:
+    custom/fake clients without the private HTTP options simply skip injection.
+    """
+    raw_headers = getattr(getattr(getattr(client, '_api_client', None), '_http_options', None), 'headers', None)
+    api_key = getattr(getattr(client, '_api_client', None), 'api_key', None)
+    if not isinstance(raw_headers, dict) or not api_key:
+        yield
+        return
+    headers = cast('dict[str, str]', raw_headers)
+    if 'Authorization' in headers:
+        yield
+        return
+    headers['Authorization'] = f'Bearer {api_key}'
+    try:
+        yield
+    finally:
+        headers.pop('Authorization', None)
+
+
 @dataclass
 class GoogleRealtimeModel(RealtimeModel):
     """Gemini Live API model.
@@ -583,11 +614,13 @@ class GoogleRealtimeModel(RealtimeModel):
     settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[Client] = field(init=False, repr=False)
+    _gateway: bool = field(init=False, default=False, repr=False)
 
     def __post_init__(self, provider: Provider[Client] | str) -> None:
         if isinstance(provider, str):
             provider = cast('Provider[Client]', infer_provider(provider))
         self._provider = provider
+        self._gateway = is_gateway_provider(provider)
 
     @property
     def client(self) -> Client:
@@ -798,7 +831,13 @@ class GoogleRealtimeModel(RealtimeModel):
             )
             opening = client.aio.live.connect(model=self.model, config=config)
             async with _ws_connect_lock(client):
-                with _single_ws_user_agent(client), _ws_trace_context(client):
+                with ExitStack() as stack:
+                    stack.enter_context(_single_ws_user_agent(client))
+                    stack.enter_context(_ws_trace_context(client))
+                    # A gateway provider dials the WS itself and can't run the gateway's httpx auth hook,
+                    # so the bearer key is added to the handshake headers only when routing through it.
+                    if self._gateway:
+                        stack.enter_context(_ws_gateway_auth(client))
                     session = await opening.__aenter__()
             cm = opening
             return session
