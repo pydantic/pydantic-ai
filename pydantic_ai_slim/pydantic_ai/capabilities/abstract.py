@@ -300,6 +300,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return self
 
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        """Validate capabilities contributed specifically for this run.
+
+        Deliberately private: whether this becomes part of the public runtime extension
+        surface (and in what shape) will be decided as part of
+        [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
+        """
+
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Return instructions to include in the system prompt, or None.
 

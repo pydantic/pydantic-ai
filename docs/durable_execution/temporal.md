@@ -66,6 +66,8 @@ See the [Temporal documentation](https://docs.temporal.io/evaluate/understanding
 
 ## Durable Agent
 
+To make a run durable, call `agent.run()` inside a Temporal workflow executed on a worker; outside one, the agent runs as a normal, non-durable agent.
+
 Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] [capability](../capabilities/overview.md). The agent stays a normal `Agent` everywhere — outside a workflow it behaves transparently, and inside a workflow the capability routes model requests, tool calls, and MCP server communication through Temporal activities.
 
 !!! warning "A run is durable only inside a workflow"
@@ -163,10 +165,12 @@ Because Temporal workflows need to be defined at the top level of the file and t
 
 For more information on how to use Temporal in Python applications, see their [Python SDK guide](https://docs.temporal.io/develop/python).
 
-### Wrapper-agent path
+### Wrapper-agent path (deprecated)
 
-!!! warning "Migration compatibility"
-    Some workflow histories recorded with [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent], including streamed model activity results, do not currently replay under [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. Continue using `TemporalAgent` for existing workflows until migration compatibility is restored.
+!!! warning "Deprecated"
+    [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] is the original wrapper-agent path for Temporal integration and will be removed in v3. New code should use the [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability shown above.
+
+    [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] accepts the activity names and payload shapes recorded by `TemporalAgent` (as long as the agent's `name`, toolset `id`s, and `models=` registry keys stay the same, and `event_stream_handler=` remains on `TemporalDurability` while `TemporalAgent`-era workflows are still in flight), so workflows started under `TemporalAgent` will replay correctly after switching — there's no need to drain or version your workflows first. Histories recorded with an event stream handler registered a per-event activity; migrating to [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] before those workflows finish breaks replay.
 
 Any agent can be wrapped in a [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] to get a durable agent variant that can be used inside a Temporal workflow. At the time of wrapping, the agent's model and toolsets are frozen, activities are dynamically created for each, and the original model and toolsets are wrapped to call on the worker to execute the corresponding activities instead of directly performing the actions inside the workflow. The original agent can still be used as normal outside the Temporal workflow, but any changes to its model or toolsets after wrapping will not be reflected in the durable agent.
 
@@ -190,7 +194,7 @@ To ensure that Temporal knows what code to run when an activity fails or is inte
 
 When [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] dynamically creates activities for the agent's model requests and toolsets (specifically those that implement their own tool listing and calling, i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]), their names are derived from the agent's [`name`][pydantic_ai.agent.AbstractAgent.name] and the toolsets' [`id`s][pydantic_ai.toolsets.AbstractToolset.id]. These fields are normally optional, but are required to be set when using Temporal. They should not be changed once the durable agent has been deployed to production as this would break active workflows.
 
-For dynamic toolsets created with the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator, the `id` parameter must be set explicitly. Note that with Temporal, `per_run_step=False` is not respected, as the toolset always needs to be created on-the-fly in the activity.
+[`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] and toolsets contributed by [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] are supported. Their factory is re-resolved inside activities when tools are listed and called, so it must be deterministic given the run dependencies. Like other wrapped toolsets, every `DynamicToolset` requires an explicit `id`: pass `id=` when constructing one directly, set the `id` parameter of the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator, or set a stable capability `id` on `DynamicCapability`. Note that with Temporal, `per_run_step=False` is not respected, as the toolset always needs to be created on-the-fly in the activity.
 
 [Capabilities](../capabilities/overview.md) that contribute a toolset — a [`Capability`][pydantic_ai.capabilities.Capability] with `tools=`, or an [`MCP`][pydantic_ai.capabilities.MCP] server running locally — derive the toolset's `id` from the capability's own [`id`][pydantic_ai.capabilities.AbstractCapability.id], so set `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')`. (`MCP` falls back to an id derived from the server URL's host and path when no `id` is given.) A toolset passed to a capability via `toolsets=` keeps its own `id`, which must be set on the toolset itself.
 

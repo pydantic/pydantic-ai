@@ -30,6 +30,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import (
+    format_inlined_text_file as _format_inlined_text_file,
     guard_tool_call_id as _guard_tool_call_id,
     is_str_dict as _is_str_dict,
     is_text_like_media_type as _is_text_like_media_type,
@@ -161,7 +162,11 @@ try:
         WebSearchToolParam,
     )
     from openai.types.responses.response_compaction_item_param_param import ResponseCompactionItemParamParam
-    from openai.types.responses.response_create_params import ContextManagement, ToolChoice as ResponsesToolChoice
+    from openai.types.responses.response_create_params import (
+        ContextManagement,
+        Moderation as ResponsesModeration,
+        ToolChoice as ResponsesToolChoice,
+    )
     from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
     from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
     from openai.types.responses.response_input_item_param import ToolSearchCall as ToolSearchCallParam
@@ -811,6 +816,17 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     When enabled, this setting passes `background=True` to the Responses API and opts into
     automatic polling for completion. If the response is still pending (`'queued'` or
     `'in_progress'`), the agent automatically polls for completion using `retrieve()`.
+    """
+
+    openai_moderation: ResponsesModeration
+    """Run moderation on the input and output of the request, e.g. `{'model': 'omni-moderation-latest'}`.
+
+    The moderation results returned by the API are exposed in
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details]
+    under the `'moderation'` key.
+
+    See the [OpenAI moderation documentation](https://platform.openai.com/docs/guides/moderation)
+    for more details.
     """
 
 
@@ -1798,14 +1814,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     @staticmethod
     def _inline_text_file_part(text: str, *, media_type: str, identifier: str) -> ChatCompletionContentPartTextParam:
-        text = '\n'.join(
-            [
-                f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
-                text,
-                f'-----END FILE id="{identifier}"-----',
-            ]
+        return ChatCompletionContentPartTextParam(
+            text=_format_inlined_text_file(text, media_type=media_type, identifier=identifier),
+            type='text',
         )
-        return ChatCompletionContentPartTextParam(text=text, type='text')
 
 
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
@@ -2299,6 +2311,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # `cancel_suspended_response`), independent of the `continuation_delay` poll interval.
             provider_details['background'] = True
 
+        if response.moderation:
+            provider_details['moderation'] = response.moderation.model_dump()
+
         state = _response_status_to_state(response.status, background=bool(response.background))
         if refusal_text is not None:
             items = []
@@ -2527,6 +2542,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     prompt_cache_retention=prompt_cache_retention,
                     prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
                     background=model_settings.get('openai_background', OMIT),
+                    moderation=model_settings.get('openai_moderation', OMIT),
                     timeout=timeout,
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
@@ -2559,11 +2575,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             cast(OpenAIModelName | None, last.model_name),
         )
 
-    def _build_include(self, model_settings: OpenAIResponsesModelSettings) -> list[responses.ResponseIncludable]:
+    def _build_include(
+        self, model_settings: OpenAIResponsesModelSettings, *, is_retrieve: bool = False
+    ) -> list[responses.ResponseIncludable]:
         """Build the include list for retrieve/create requests."""
         profile = self.profile
         include: list[responses.ResponseIncludable] = []
-        if profile.get('openai_supports_encrypted_reasoning_content', False):
+        if profile.get('openai_supports_encrypted_reasoning_content', False) and not is_retrieve:
+            # OpenAI rejects `reasoning.encrypted_content` on any retrieve of a background
+            # response ('Encrypted content cannot be requested for persisted responses'),
+            # so only request it on create. Nothing is lost: a retrieved background response
+            # never carries encrypted content, and continuation works via `previous_response_id`.
             include.append('reasoning.encrypted_content')
         if model_settings.get('openai_include_code_execution_outputs'):
             include.append('code_interpreter_call.outputs')
@@ -2604,7 +2626,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         starting_after: int | None = None,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
         """Retrieve a background response by ID, optionally streaming."""
-        include = self._build_include(model_settings)
+        include = self._build_include(model_settings, is_retrieve=True)
         extra_headers, timeout = self._build_request_options(model_settings)
         with _map_api_errors(self.model_name):
             try:
@@ -3843,6 +3865,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                                 'finish_reason': raw_finish_reason,
                             }
                             self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+
+                    if chunk.response.moderation:
+                        self.provider_details = {
+                            **(self.provider_details or {}),
+                            'moderation': chunk.response.moderation.model_dump(),
+                        }
 
                 elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                     pass  # there's nothing we need to do here

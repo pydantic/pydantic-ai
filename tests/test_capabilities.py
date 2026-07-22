@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import inspect
 import re
 import threading
 import warnings
@@ -35,6 +36,7 @@ from pydantic_ai.capabilities import (
     MCP,
     Capability,
     CapabilityOrdering,
+    DynamicCapability,
     HandleDeferredToolCalls,
     ImageGeneration,
     IncludeToolReturnSchemas,
@@ -58,6 +60,7 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
     XSearch,
 )
+from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
@@ -5289,6 +5292,72 @@ class TestModelRequestHooks:
         await agent.run('hello')
         assert 'before_model_request' in cap.log
 
+    @pytest.mark.parametrize(
+        ('mode', 'streaming'),
+        [('run', False), ('run_stream', True), ('event_stream_handler', True)],
+    )
+    async def test_before_model_request_sees_selection_context(self, mode: str, streaming: bool):
+        """`before_model_request` sees the selected model ID and effective streaming mode."""
+        contexts: list[ModelRequestContext] = []
+
+        @dataclass
+        class CaptureContext(AbstractCapability[None]):
+            async def before_model_request(
+                self,
+                ctx: RunContext[None],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                contexts.append(request_context)
+                return request_context
+
+        agent = Agent('test', deps_type=type(None), capabilities=[CaptureContext()], defer_model_check=True)
+        if mode == 'run_stream':
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+        elif mode == 'event_stream_handler':
+
+            async def handle_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+                async for _ in stream:
+                    pass
+
+            await agent.run('hello', event_stream_handler=handle_events)
+        else:
+            await agent.run('hello')
+
+        assert [(context.model_id, context.streaming) for context in contexts] == [('test', streaming)]
+
+    async def test_withdrawn_bootstrap_model_id_does_not_leak_to_default(self):
+        """A bootstrap model contribution withdrawn by `for_run` must not leak its selection string as provenance."""
+        model_ids: list[str | None] = []
+
+        @dataclass
+        class BootstrapModel(AbstractCapability[None]):
+            def get_model(self) -> str:
+                return 'bootstrap-alias'
+
+            async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+                return AbstractCapability()
+
+            async def resolve_model_id(
+                self, ctx: ModelResolutionContext[None], *, model_id: KnownModelName | str
+            ) -> Model | None:
+                return TestModel() if model_id == 'bootstrap-alias' else None
+
+        @dataclass
+        class CaptureModelId(AbstractCapability[None]):
+            async def before_model_request(
+                self,
+                ctx: RunContext[None],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                model_ids.append(request_context.model_id)
+                return request_context
+
+        agent = Agent(TestModel(), deps_type=NoneType, capabilities=[BootstrapModel(), CaptureModelId()])
+        await agent.run('hello')
+
+        assert model_ids == [None]
+
     async def test_after_model_request(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
@@ -8645,18 +8714,26 @@ from-spec\
         with pytest.warns(UserWarning, match='end_strategy'):
             await agent.run('hello', spec={'end_strategy': 'exhaustive'})
 
-    async def test_spec_tool_retry_override_warns(self):
-        """Run-time specs can only override the output retry budget."""
+    async def test_spec_tool_retry_override(self):
+        """A run-time spec's tool-retry budget replaces the agent default (3 here, not the agent's 1)."""
+        call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response('ok')
+            return ModelResponse(parts=[ToolCallPart('flaky', {})])
 
-        agent = Agent(FunctionModel(model_fn))
+        agent = Agent(FunctionModel(model_fn), retries={'tools': 1})
 
-        with pytest.warns(UserWarning, match=r"retry field 'tools'.*ignored"):
-            result = await agent.run('hello', spec={'retries': {'tools': 5}})
+        @agent.tool_plain
+        def flaky() -> str:
+            nonlocal call_count
+            call_count += 1
+            raise ModelRetry('again')
 
-        assert result.output == 'ok'
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'flaky' exceeded max retries count of 3"):
+            await agent.run('hello', spec={'retries': {'tools': 3}})
+
+        # initial call + 3 retries, following the spec budget (3), not the agent default (1)
+        assert call_count == 4
 
 
 @dataclass
@@ -14828,6 +14905,30 @@ def test_ordering_mixed_type_and_instance_refs():
 
     combined = CombinedCapability([PlainCapA(), target_instance, MixedRefs()])
     assert combined.capabilities[0].__class__ is MixedRefs
+
+
+async def test_ordering_survives_dynamic_capability_resolution():
+    """A factory-returned capability's ordering constraints survive the per-run wrapper.
+
+    `CombinedCapability.for_run` re-sorts the replaced capabilities, so the
+    `ResolvedDynamicCapability` wrapper must delegate `get_ordering` to the resolved
+    capability for its `outermost`/`innermost`/`wraps` declarations to be honored.
+    """
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return OutermostCap()
+
+    combined = CombinedCapability([PlainCapA(), DynamicCapability(factory)])
+    # At construction, the unresolved wrapper has no ordering of its own.
+    assert _cap_names(combined) == ['PlainCapA', 'DynamicCapability']
+
+    ctx = _build_run_context()
+    ctx.agent = Agent(TestModel())
+    run_capability = await combined.for_run(ctx)
+    assert isinstance(run_capability, CombinedCapability)
+    assert _cap_names(run_capability) == ['ResolvedDynamicCapability', 'PlainCapA']
+    assert isinstance(run_capability.capabilities[0], ResolvedDynamicCapability)
+    assert isinstance(run_capability.capabilities[0].wrapped, OutermostCap)
 
 
 async def test_runtime_capability_with_mixed_position_root():
@@ -22844,7 +22945,7 @@ class _RecordingCapability(AbstractCapability[Any]):
 
 
 async def test_dynamic_capability_factory_called_with_run_context() -> None:
-    """The factory receives the run's RunContext (with deps) once per run."""
+    """The factory receives the run's `RunContext` (with deps) once per run."""
     seen: list[Any] = []
 
     def factory(ctx: RunContext[str]) -> AbstractCapability[Any] | None:
@@ -22910,6 +23011,29 @@ async def test_dynamic_capability_returning_none_contributes_nothing() -> None:
     request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
     assert request.instructions is None
 
+    dynamic = DynamicCapability(factory)
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    assert await dynamic.for_run(ctx) is dynamic
+
+    # Direct toolset-factory call (unit-style): the standalone fallback — a context without the
+    # run's capability registry, as inside a durable unit — re-resolves the factory, and an async
+    # factory returning `None` still contributes nothing.
+    async def async_none_factory(ctx: RunContext[Any]) -> AbstractCapability[Any] | None:
+        return None
+
+    async_dynamic = DynamicCapability(async_none_factory)
+    resolved = async_dynamic.get_toolset().toolset_func(ctx)
+    assert inspect.isawaitable(resolved)
+    assert await resolved is None
+
+
+def test_dynamic_capability_toolset_is_cached_and_inherits_id() -> None:
+    dynamic = DynamicCapability(lambda ctx: None, id='x')
+    toolset = dynamic.get_toolset()
+
+    assert toolset.id == 'x'
+    assert dynamic.get_toolset() is toolset
+
 
 async def test_dynamic_capability_contributes_instructions_per_run() -> None:
     """Resolved capability's instructions flow through to the model request."""
@@ -22931,7 +23055,8 @@ async def test_dynamic_capability_contributes_instructions_per_run() -> None:
 
 
 async def test_dynamic_capability_contributes_toolset() -> None:
-    """Resolved capability's toolset is exposed to the model and its tools execute."""
+    """The resolved toolset is exposed once while instructions and settings still apply."""
+    calls = 0
     toolset = FunctionToolset()
 
     @toolset.tool_plain
@@ -22940,16 +23065,26 @@ async def test_dynamic_capability_contributes_toolset() -> None:
 
     @dataclass
     class ToolCap(AbstractCapability):
-        def get_toolset(self):
+        def get_instructions(self) -> str:
+            return 'Use the special tool.'
+
+        def get_model_settings(self) -> _ModelSettings:
+            return _ModelSettings(temperature=0.25)
+
+        def get_toolset(self) -> AbstractToolset[Any]:
             return toolset
 
     def factory(ctx: RunContext[bool]) -> AbstractCapability[Any] | None:
+        nonlocal calls
+        calls += 1
         return ToolCap() if ctx.deps else None
 
     seen_tools: list[str] = []
+    seen_temperatures: list[float | None] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen_tools.append(','.join(sorted(t.name for t in info.function_tools)))
+        seen_temperatures.append(info.model_settings.get('temperature') if info.model_settings else None)
         # On the first request call the tool if it's available; on the follow-up
         # request after the tool return, finish.
         already_called = any(
@@ -22970,9 +23105,141 @@ async def test_dynamic_capability_contributes_toolset() -> None:
         if isinstance(p, ToolReturnPart)
     ]
     assert tool_returns == ['used']
+    first_request = next(m for m in with_tool.all_messages() if isinstance(m, ModelRequest))
+    assert first_request.instructions == 'Use the special tool.'
 
     await agent.run('hi', deps=False)
     assert seen_tools == ['special', 'special', '']
+    assert seen_temperatures == [0.25, 0.25, None]
+    assert calls == 2
+
+
+async def test_dynamic_capability_contributes_toolset_function() -> None:
+    """A resolved capability may contribute a toolset *function*; it's evaluated with the run context."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def func_tool() -> str:
+        return 'from func'  # pragma: no cover — the tool listing is what's asserted
+
+    @dataclass
+    class AsyncToolFuncCap(AbstractCapability):
+        def get_toolset(self):
+            async def toolset_func(ctx: RunContext[Any]) -> AbstractToolset[Any] | None:
+                return toolset if ctx.deps else None
+
+            return toolset_func
+
+    @dataclass
+    class SyncToolFuncCap(AbstractCapability):
+        def get_toolset(self):
+            def toolset_func(ctx: RunContext[Any]) -> AbstractToolset[Any] | None:
+                return toolset
+
+            return toolset_func
+
+    seen_tools: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tools.append(','.join(sorted(t.name for t in info.function_tools)))
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        deps_type=bool,
+        capabilities=[DynamicCapability(lambda ctx: AsyncToolFuncCap())],
+    )
+    await agent.run('hi', deps=True)
+    await agent.run('hi', deps=False)
+
+    sync_agent = Agent(
+        FunctionModel(respond),
+        deps_type=bool,
+        capabilities=[DynamicCapability(lambda ctx: SyncToolFuncCap())],
+    )
+    await sync_agent.run('hi', deps=True)
+    assert seen_tools == ['func_tool', '', 'func_tool']
+
+
+async def test_dynamic_capability_instructions_and_tools_share_resolved_state() -> None:
+    """Instructions and tools observe the *same* resolved capability instance per run.
+
+    The factory allocates fresh state on every call, so if the contributed toolset were
+    resolved through a second factory invocation, the tool would see different state than
+    the instructions.
+    """
+    resolution_count = 0
+
+    @dataclass
+    class StatefulCap(AbstractCapability):
+        token: str = ''
+
+        def get_instructions(self) -> str:
+            return f'Token is {self.token}.'
+
+        def get_toolset(self):
+            toolset = FunctionToolset()
+
+            @toolset.tool_plain
+            def read_token() -> str:
+                return self.token
+
+            return toolset
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        nonlocal resolution_count
+        resolution_count += 1
+        return StatefulCap(token=f'run-{resolution_count}')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not tool_returns:
+            return ModelResponse(parts=[ToolCallPart(tool_name='read_token', args={}, tool_call_id='read')])
+        return make_text_response(str(tool_returns[0].content))
+
+    agent = Agent(FunctionModel(respond), capabilities=[factory])
+    result = await agent.run('hi')
+    first_request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert first_request.instructions == 'Token is run-1.'
+    assert result.output == 'run-1'
+    assert resolution_count == 1
+
+
+async def test_dynamic_capability_returning_deferred_capability() -> None:
+    """A factory-returned deferred capability keeps its tools hidden until `load_capability`."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def hidden_tool() -> str:
+        return 'now visible'
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return Capability(
+            id='skills',
+            description='Deferred skills.',
+            toolsets=[toolset],
+            defer_loading=True,
+        )
+
+    seen_defer_flags: list[bool] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        hidden_def = next(t for t in info.function_tools if t.name == 'hidden_tool')
+        # `defer_loading=True` is what keeps the tool off the provider wire until loaded.
+        seen_defer_flags.append(hidden_def.defer_loading)
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'skills'}, tool_call_id='load')]
+            )
+        if not any(part.tool_name == 'hidden_tool' for part in tool_returns):
+            return ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='use')])
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(respond), capabilities=[factory])
+    result = await agent.run('hi')
+    assert result.output == 'done'
+    assert seen_defer_flags == [True, False, False]
 
 
 async def test_dynamic_capability_hooks_fire() -> None:
@@ -23189,13 +23456,12 @@ async def test_dynamic_capability_wraps_func_in_constructor() -> None:
 
 def test_dynamic_capability_rejects_wrapper_fields() -> None:
     """`defer_loading` on the wrapper would otherwise be silently ignored — reject at construction."""
-    from pydantic_ai.capabilities import DynamicCapability
 
     def factory(ctx: RunContext) -> AbstractCapability[Any]:
         return _RecordingCapability(label='x')  # pragma: no cover
 
     with pytest.raises(UserError, match='not supported on `DynamicCapability`'):
-        DynamicCapability(capability_func=factory, defer_loading=True)
+        DynamicCapability(factory, defer_loading=True)
 
 
 # endregion

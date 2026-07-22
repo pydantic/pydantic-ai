@@ -61,6 +61,8 @@ def get_user_by_name(ctx: RunContext[dict[str, int]], name: str) -> int:
 
 Use retries for recoverable model mistakes, not application crashes.
 
+Set the agent-wide tool-retry default with `Agent(retries={'tools': N})`, and override it for a single run (or `iter`) with `agent.run(retries={'tools': N})` — explicit per-tool `retries=` and per-toolset `FunctionToolset(max_retries=N)` still win. A bare `int` at run time overrides both budgets (matching construction), so pass a dict like `{'tools': N}` or `{'output': N}` to change just one.
+
 ## Report a Failed Tool Result
 
 Not every failure is a retry. Choose the exception by what you want the model to do next:
