@@ -50,6 +50,19 @@ No findings → `APPROVE`. **Cap inline comments at 30 per run** — if
 more findings survive, keep the highest-severity 30 inline and list
 the rest briefly in the review body.
 
+## Targeted checks
+
+Beyond free-form review, run this check proactively on every model-touching PR:
+
+- **Profile-flag test pinning.** When the diff adds or modifies a
+  `profile.get(...)` read under `pydantic_ai_slim/pydantic_ai/models/`, verify
+  the tests and cassettes added by the same diff exercise a model on *each*
+  side of that flag, not just one. The mechanical trigger, how to evaluate the
+  flag per pinned model, and the "flag this / do not flag this" calibration
+  pair are in `/tmp/gh-aw/.review-context/review-instructions.md` (Example 4).
+  Cap this finding at **MEDIUM**: it is advisory and must never drive
+  `REQUEST_CHANGES`.
+
 ## Review process
 
 ### Step 1 — Orient
@@ -174,6 +187,9 @@ bot reviewing another bot's PR. If the PR author is a bot, submit a
   it.
 - Don't post speculative "this might break" findings without a concrete
   trigger.
+- Don't flag coverage-gate or `# pragma: no cover` outcomes — the
+  `fail_under = 100` CI job reports uncovered lines (and wrongly-placed
+  pragmas) deterministically; predicting them is noise.
 - Don't comment on lines without an `NL:` prefix in the per-file diff.
 - Don't write to the workspace — every output is a safe-output call.
 - Don't exceed 30 inline comments — pick the top-severity 30 and put the

@@ -222,12 +222,31 @@ print(result2.all_messages())
 
 _(This example is complete, it can be run "as is")_
 
-### Correlating runs with `conversation_id`
+### Making histories provider-valid
+
+Model providers reject a request whose message history has broken tool-call/tool-result pairing — a tool call with no result, or a result with no call. A run that is cancelled or crashes partway through can leave the history in exactly this state, and so can a hand-built, truncated, or context-evicted history. You don't need to clean these up yourself: before each model request, Pydantic AI repairs the history it was given so the provider accepts it.
+
+The guiding rule is to massage the history into a shape the provider accepts without ever discarding something you meant to send. Repairs only **add** synthesized parts or **remove** parts that are fundamentally unsendable (no provider could accept them); nothing meaningful is silently dropped. Concretely, before each request Pydantic AI:
+
+- **Adds** a synthesized [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] for a tool call that has no result, telling the model the call was interrupted before a result was produced. It has [`outcome='interrupted'`][pydantic_ai.messages.BaseToolReturnPart.outcome] — a neutral outcome that (unlike `'failed'`) is not surfaced as a provider error — and carries `{'pydantic_ai_synthesized_tool_return': True}` in its [`metadata`][pydantic_ai.messages.BaseToolReturnPart.metadata] so your code can tell it apart from real tool results. This also covers a call whose arguments were cut off mid-stream: the call is kept as-is and closed out the same way.
+- **Removes** an orphaned tool result — a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] whose tool call is absent from the history (including a result placed before its call). If this empties an interior [`ModelRequest`][pydantic_ai.messages.ModelRequest] the request is removed; if it empties the last message, an empty request is kept so the history still ends on a `ModelRequest`.
+
+After the invalid parts are handled, consecutive compatible messages are **merged** into one (two adjacent [`ModelRequest`][pydantic_ai.messages.ModelRequest]s become a single turn, with tool results ordered ahead of user parts). This changes message boundaries but preserves all content, so processed history you inspect afterwards may have fewer messages than you passed in.
+
+The repair is deterministic and idempotent: repairing the same history always produces the same output, running a repaired history through another run leaves it untouched, and synthesized parts contain no wall-clock data, so reuse doesn't invalidate provider prompt caches.
+
+Tool calls that can still receive a real result are left alone: when the history ends on a `ModelResponse` with tool calls, running without a new `user_prompt` executes them, and [deferred tool calls](deferred-tools.md) are matched to their `deferred_tool_results` — including when a 'complete' `ModelRequest` with the already-executed results follows the response. Repair of that live frontier only happens when the interruption is evident: a final response with [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] or a trailing request with [`state='interrupted'`][pydantic_ai.messages.ModelRequest.state] (e.g. from a [cancelled stream](output.md#cancelling-streams) or a crash during tool execution) whose tool calls will never be executed.
+
+This pipeline handles regular, locally-executed tool calls only. Builtin (server-side) tool parts — produced and resulted by the provider inline — are left untouched and repaired by each model's own serializer instead. Some other provider-invalid shapes are also out of scope and may be rejected: duplicate tool results for one call, and provider-specific ordering rules beyond call/result pairing.
+
+### Correlating runs with `run_id` and `conversation_id`
 
 Each `ModelRequest` and `ModelResponse` carries two identifiers:
 
-- [`run_id`][pydantic_ai.messages.ModelRequest.run_id] — unique per agent run; emitted on the OpenTelemetry agent run span as `gen_ai.agent.call.id`.
-- [`conversation_id`][pydantic_ai.messages.ModelRequest.conversation_id] — shared across all runs that build on the same `message_history`; emitted as `gen_ai.conversation.id`.
+- [`run_id`][pydantic_ai.messages.ModelRequest.run_id] — unique per agent run. Also available as [`RunContext.run_id`][pydantic_ai.tools.RunContext.run_id] and [`AgentRunResult.run_id`][pydantic_ai.agent.AgentRunResult.run_id], and emitted on the OpenTelemetry agent run span as `gen_ai.agent.call.id`.
+- [`conversation_id`][pydantic_ai.messages.ModelRequest.conversation_id] — shared across all runs that build on the same `message_history`. Also available as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id], and emitted as `gen_ai.conversation.id`.
+
+A fresh `run_id` is generated for every agent run (or you can pass `run_id='<your-id>'` to use an ID minted by your application — e.g. one created, stored, or handed out to a client before the run starts). Unlike `conversation_id`, `run_id` is **never** inherited from `message_history`. Each [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] call — including a [deferred-tool resume](deferred-tools.md) — is a separate run with its own `run_id`. Passing an empty `run_id=''`, or a `run_id` that already appears on `message_history`, raises [`UserError`][pydantic_ai.exceptions.UserError], because both break [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] boundary detection. Correlate pause/resume or multi-turn work with `conversation_id` instead. When retrying a failed run with the same `run_id`, rebuild `message_history` without the failed attempt's messages.
 
 A fresh `conversation_id` is generated on the first run, stamped onto every message produced by that run, and inherited by subsequent runs that pass the messages back via `message_history`. This means you can correlate traces from a multi-turn conversation in [Logfire](logfire.md) (or any OpenTelemetry backend) without tracking anything yourself — as long as the message history round-trips, the conversation ID does too.
 
@@ -240,12 +259,26 @@ result1 = agent.run_sync('Tell me a joke.')
 result2 = agent.run_sync('Explain?', message_history=result1.all_messages())
 
 assert result1.conversation_id == result2.conversation_id
+assert result1.run_id != result2.run_id
 ```
 
-To override or fork:
+```python {title="pass a pre-minted run_id"}
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+
+agent = Agent(TestModel())
+
+result = agent.run_sync('Tell me a joke.', run_id='run-from-api-42')
+assert result.run_id == 'run-from-api-42'
+```
+
+To override or fork `conversation_id`:
 
 - Pass `conversation_id='<your-id>'` to use an ID from your own application (e.g. a chat thread ID stored in your database).
 - Pass `conversation_id='new'` to start a fresh conversation that ignores any `conversation_id` already on `message_history` — useful for branching off an existing thread without making the caller generate an ID.
+
+!!! note "`'new'` is not a `run_id` sentinel"
+    `'new'` is a sentinel for `conversation_id` only. Passing `run_id='new'` uses the literal string `"new"` as that run's id.
 
 ```python {title="forking a conversation"}
 from pydantic_ai import Agent
@@ -262,7 +295,7 @@ forked = agent.run_sync(
 assert forked.conversation_id != result1.conversation_id
 ```
 
-The [UI adapters](ui/overview.md) auto-populate `conversation_id` from the protocol's own thread/chat ID, so frontends using these protocols get correlation for free.
+The [UI adapters](ui/overview.md) auto-populate `conversation_id` from the protocol's own thread/chat ID, so frontends using these protocols get conversation correlation for free. Protocol-level run IDs (for example AG-UI's `runId`) are **not** mapped into the agent's `run_id` — pass `run_id=` explicitly on [`AGUIAdapter.run_stream`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] / [`dispatch_request`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] (or a plain `Agent.run`) if you need them to match.
 
 ## Storing and loading messages (to JSON)
 
@@ -461,7 +494,7 @@ _(This example is complete, it can be run "as is")_
     `system_prompt` is different: system prompt parts are part of the message
     history. If the receiving agent has its own `system_prompt` and you need to
     ensure it is present when reusing history, see
-    [`ReinjectSystemPrompt`](capabilities.md#reinjectsystemprompt). Use
+    [`ReinjectSystemPrompt`](capabilities/reinject-system-prompt.md). Use
     `replace_existing=True` when a system prompt from another agent should not
     remain authoritative.
 
@@ -493,6 +526,8 @@ A `priority` controls when the enqueued content is delivered:
 - a complete [`ModelRequest`][pydantic_ai.messages.ModelRequest] or [`ModelResponse`][pydantic_ai.messages.ModelResponse], to control request-level fields like `instructions`/`metadata` or to inject a synthetic prior turn.
 
 Adjacent part-style items (user content and [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s) are coalesced into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete messages stay separate. This lets a single call inject an interleaved exchange — for example a synthetic tool call (a [`ModelResponse`][pydantic_ai.messages.ModelResponse]) followed by its result (a [`ModelRequest`][pydantic_ai.messages.ModelRequest]). The content must end in a request, so the agent has something to respond to.
+
+Both `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered messages (exactly as they landed in history), so a client can observe when its steering message took effect. The event carries the delivered message objects themselves — the same objects held in the run's message history. A history processor that replaces history with new message objects does not affect the event, but in-place mutation of a delivered message will be visible through it.
 
 ### From inside a tool or hook
 
@@ -708,7 +743,7 @@ This allows for more sophisticated message processing based on the current state
 
 #### Summarize Old Messages
 
-Use an LLM to summarize older messages to preserve context while reducing tokens.
+Use an LLM to summarize older messages to preserve context while reducing tokens. This is one of several ways to keep a conversation within the context window — see [Compaction](capabilities/compaction.md) for the full picture, including provider-native compaction and ready-made strategies from [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/compaction/).
 
 ```python {title="summarize_old_messages.py"}
 from pydantic_ai import Agent, ModelMessage

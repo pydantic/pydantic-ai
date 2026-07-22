@@ -10,6 +10,8 @@ import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict
 
+from pydantic_ai.messages import UploadedFile
+
 __all__ = (
     'AbstractNativeTool',
     'WebSearchTool',
@@ -304,6 +306,17 @@ class CodeExecutionTool(AbstractNativeTool):
     * Google
     * Bedrock (Nova2.0)
     * xAI
+    """
+
+    files: list[UploadedFile] | None = None
+    """Uploaded files to make available in the code execution environment.
+
+    Only files matching the model provider are used; files from other providers are ignored.
+
+    Supported by:
+
+    * Anthropic
+    * OpenAI Responses
     """
 
     kind: str = 'code_execution'

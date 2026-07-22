@@ -11,13 +11,28 @@ from pydantic_ai import (
     ModelMessage,
     ModelResponse,
 )
+from pydantic_ai._utils import fill_run_metadata
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.models import ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
+from pydantic_ai.models import CompletedStreamedResponse, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
 from ._types import TaskConfig, default_task_config
+
+
+def _stamp_response_provenance(response: ModelResponse, messages: list[ModelMessage]) -> None:
+    """Stamp the producing run's `run_id`/`conversation_id` on the response before Prefect persists it.
+
+    The agent graph only fills these after the task returns, so without this the cached payload has
+    them unset and a cache replay in a different conversation would be re-stamped as if it were
+    produced there. Server-side state guards (e.g. OpenAI `openai_conversation_id='auto'`) rely on a
+    replayed response keeping its original `conversation_id` to avoid continuing another
+    conversation's provider-side state.
+    """
+    if messages:  # pragma: no branch
+        final_request = messages[-1]
+        fill_run_metadata(response, run_id=final_request.run_id, conversation_id=final_request.conversation_id)
 
 
 class PrefectModel(WrapperModel):
@@ -44,6 +59,7 @@ class PrefectModel(WrapperModel):
             model_request_parameters: ModelRequestParameters,
         ) -> ModelResponse:
             response = await super(PrefectModel, self).request(messages, model_settings, model_request_parameters)
+            _stamp_response_provenance(response, messages)
             return response
 
         self._wrapped_request = wrapped_request
@@ -70,9 +86,16 @@ class PrefectModel(WrapperModel):
                 async for _ in streamed_response:
                     pass
             response = streamed_response.get()
+            _stamp_response_provenance(response, messages)
             return response
 
         self._wrapped_request_stream = request_stream_task
+
+        @task
+        async def cancel_suspended_response_task(response: ModelResponse) -> None:
+            await super(PrefectModel, self).cancel_suspended_response(response)
+
+        self._wrapped_cancel_suspended_response = cancel_suspended_response_task
 
     async def request(
         self,
@@ -84,6 +107,16 @@ class PrefectModel(WrapperModel):
         return await self._wrapped_request.with_options(
             name=f'Model Request: {self.wrapped.model_name}', **self.task_config
         )(messages, model_settings, model_request_parameters)
+
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        """Cancel a server-side suspended/background response, wrapped as a Prefect task.
+
+        The teardown performs a raw HTTP call to the provider, so it runs as a task (durable,
+        retried) rather than inline in the flow.
+        """
+        await self._wrapped_cancel_suspended_response.with_options(
+            name=f'Model Cancel Suspended Response: {self.wrapped.model_name}', **self.task_config
+        )(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -113,4 +146,13 @@ class PrefectModel(WrapperModel):
         response = await self._wrapped_request_stream.with_options(
             name=f'Model Request (Streaming): {self.wrapped.model_name}', **self.task_config
         )(messages, model_settings, model_request_parameters, run_context)
-        yield CompletedStreamedResponse(model_request_parameters, response)
+        # Without an `event_stream_handler`, the task drained and discarded the real stream's events
+        # (e.g. `agent.iter` inside a flow, where the caller drives the flow-side stream via
+        # `node.stream(...)`/`stream_text()`). Replay the response's parts as events so that stream
+        # produces content. With a handler, events were already delivered inside the task, so the
+        # flow-side stream stays empty to avoid delivering them twice.
+        yield CompletedStreamedResponse(
+            response,
+            model_request_parameters=model_request_parameters,
+            replay_events=self._get_event_stream_handler() is None,
+        )

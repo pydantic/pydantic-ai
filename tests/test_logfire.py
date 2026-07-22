@@ -14,7 +14,7 @@ from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -435,6 +435,7 @@ def test_logfire(
                                 'metadata': None,
                                 'timeout': None,
                                 'defer_loading': False,
+                                'toolset_id': None,
                                 'unless_native': None,
                                 'with_native': None,
                                 'tool_kind': None,
@@ -474,6 +475,24 @@ def _test_logfire_metadata_values_callable_dict(ctx: RunContext[Any]) -> dict[st
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_logfire_explicit_run_id(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
+    """An explicit `run_id=` is emitted as `gen_ai.agent.call.id` on the agent run span."""
+    agent = Agent(
+        model=TestModel(custom_output_text='ok'),
+        name='run_id_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+    result = agent.run_sync('Hello', run_id='run-from-api-42')
+    assert result.run_id == 'run-from-api-42'
+
+    summary = get_logfire_summary()
+    agent_run_attrs = next(
+        attrs for attrs in summary.attributes.values() if attrs.get('gen_ai.operation.name') == 'invoke_agent'
+    )
+    assert agent_run_attrs['gen_ai.agent.call.id'] == 'run-from-api-42'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize(
     ('metadata', 'expected'),
     [
@@ -509,6 +528,38 @@ def test_logfire_metadata_override(get_logfire_summary: Callable[[], LogfireSumm
 
     summary = get_logfire_summary()
     assert summary.attributes[0]['metadata'] == '{"env":"override"}'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_logfire_streaming_records_time_to_first_chunk(capfire: CaptureLogfire) -> None:
+    """A streaming agent run records `gen_ai.client.operation.time_to_first_chunk` on the
+    model-request span and as a histogram metric (value is non-deterministic, so assert shape)."""
+    agent = Agent(
+        model=TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+    async with agent.run_stream('Hello') as result:
+        async for _ in result.stream_text(delta=True):
+            pass
+
+    chat_spans = [
+        s for s in capfire.exporter.exported_spans_as_dict() if s['attributes'].get('gen_ai.operation.name') == 'chat'
+    ]
+    assert chat_spans
+    for span in chat_spans:
+        ttft = span['attributes'].get('gen_ai.client.operation.time_to_first_chunk')
+        assert isinstance(ttft, float)
+
+    # Pin the histogram emission through the agent-flow path (capability handler -> req_ctx ->
+    # finish), not just the metric name, so a regression that drops the value between the handler
+    # and `finish` can't slip through.
+    ttft_metrics = [
+        m for m in capfire.get_collected_metrics() if m['name'] == 'gen_ai.client.operation.time_to_first_chunk'
+    ]
+    assert len(ttft_metrics) == 1
+    assert ttft_metrics[0]['unit'] == 's'
+    assert len(ttft_metrics[0]['data']['data_points']) == 1
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -963,6 +1014,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'metadata': None,
                                 'timeout': None,
                                 'defer_loading': False,
+                                'toolset_id': '<output>',
                                 'unless_native': None,
                                 'with_native': None,
                                 'tool_kind': None,
@@ -1404,6 +1456,46 @@ Fix the errors and try again.\
                     'gen_ai.agent.call.id': IsStr(),
                 }
             )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_tool_failed_span_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    """A tool raising `ToolFailed` records the failure as the tool result on the span, like `ModelRetry`.
+
+    Parallel to the retry case in `test_include_tool_args_span_attributes`: the model-visible failure
+    message is recorded as `gen_ai.tool.call.result` when content is included (with no "Fix the errors
+    and try again." suffix, since it's a failure rather than a retry), and excluded when content is off.
+    """
+    my_agent = Agent(
+        model=TestModel(seed=42),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=include_content))],
+    )
+
+    @my_agent.tool_plain
+    async def add_numbers(x: int, y: int) -> int:
+        """Add two numbers together."""
+        raise ToolFailed('numbers service unavailable')
+
+    my_agent.run_sync('Add 42 and 42')
+
+    summary = get_logfire_summary()
+    tool_attributes = next(
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'add_numbers'
+    )
+
+    # Guards the documented "traced as an error in telemetry" behavior for `ToolFailed`
+    # (level 17 = error); this goes through a different branch than `ModelRetry`'s, so it
+    # isn't covered by the retry test. `level_num` is fine here — this file inspects the
+    # Logfire-captured view of the spans.
+    assert tool_attributes['logfire.level_num'] == 17
+    if include_content:
+        assert tool_attributes.get('gen_ai.tool.call.result') == 'numbers service unavailable'
+    else:
+        assert 'gen_ai.tool.call.result' not in tool_attributes
 
 
 class WeatherInfo(BaseModel):

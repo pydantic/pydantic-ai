@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -12,7 +12,7 @@ from pydantic_ai.providers import Provider, infer_provider, infer_provider_class
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from google.auth.exceptions import GoogleAuthError
+    from google.auth.exceptions import DefaultCredentialsError, GoogleAuthError
     from openai import OpenAIError
 
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -47,6 +47,7 @@ with try_import() as imports_successful:
         ('vercel', VercelProvider, 'VERCEL_AI_GATEWAY_API_KEY'),
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),
         ('azure', AzureProvider, 'AZURE_OPENAI'),
+        ('azure-responses', AzureProvider, 'AZURE_OPENAI'),
         ('google', GoogleProvider, 'GOOGLE_API_KEY'),
         ('google-cloud', GoogleCloudProvider, 'Your default credentials were not found'),
         ('groq', GroqProvider, 'GROQ_API_KEY'),
@@ -84,18 +85,24 @@ def empty_env():
 
 
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
-def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
+def test_infer_provider(
+    provider: str, provider_cls: type[Provider[Any]], exception_has: str | None, monkeypatch: pytest.MonkeyPatch
+):
+    """Validate provider construction and the mocked Google ADC guard without making provider API requests."""
     if provider == 'google-cloud':
-        try:
-            infer_provider(provider)
-        except (GoogleAuthError, UserError, ValueError):  # pragma: no branch
-            pytest.skip('Google credentials not available')
+        default_credentials = Mock(side_effect=DefaultCredentialsError('Your default credentials were not found'))
+        monkeypatch.setattr('google.auth.default', default_credentials)
+    else:
+        default_credentials = None
 
     if exception_has is not None:
         with pytest.raises((UserError, OpenAIError, GoogleAuthError), match=rf'.*{exception_has}.*'):
             infer_provider(provider)
     else:
         assert isinstance(infer_provider(provider), provider_cls)
+
+    if default_credentials is not None:
+        default_credentials.assert_called_once()
 
 
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)

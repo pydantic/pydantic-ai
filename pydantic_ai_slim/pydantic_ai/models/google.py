@@ -96,6 +96,7 @@ try:
         ImageConfigDict,
         MediaResolution,
         Modality,
+        ModelArmorConfigDict,
         Part,
         PartDict,
         SafetySettingDict,
@@ -138,13 +139,12 @@ LatestGoogleModelNames = Literal[
     'gemini-2.5-flash-preview-09-2025',
     'gemini-2.5-flash-image',
     'gemini-2.5-flash-lite',
-    'gemini-2.5-flash-lite-preview-09-2025',
     'gemini-2.5-pro',
     'gemini-3-flash-preview',
     'gemini-3-pro-image-preview',
     'gemini-3-pro-preview',
     'gemini-3.1-flash-image-preview',
-    'gemini-3.1-flash-lite-preview',
+    'gemini-3.1-flash-lite',
     'gemini-3.1-pro-preview',
     'gemini-3.5-flash',
 ]
@@ -289,6 +289,18 @@ class GoogleModelSettings(ModelSettings, total=False):
 
     See [`GoogleCloudServiceTier`][pydantic_ai.models.google.GoogleCloudServiceTier] for all values,
     headers sent, and links to Google docs.
+    """
+
+    google_model_armor_config: ModelArmorConfigDict
+    """Model Armor configuration for screening prompts and responses. Only supported by the Vertex AI API.
+
+    Specifies the Model Armor templates to use for sanitizing user prompts and model responses.
+    Both fields are optional — omit either to skip screening for that direction.
+
+    Mutually exclusive with `google_safety_settings`: Vertex AI rejects a request that sets both,
+    since Model Armor replaces the built-in safety filters for that request.
+
+    See the [Model Armor docs](https://cloud.google.com/security-command-center/docs/model-armor-overview) for use cases and limitations.
     """
 
 
@@ -526,7 +538,7 @@ class GoogleModel(Model[Client]):
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
             # The Vertex `countTokens` endpoint accepts native/server-side tools (e.g. Google Search grounding), so we
             # forward `tools` as-is to mirror the real request for an accurate count. This intentionally differs from
-            # `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects them (#5704);
+            # `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects them (https://github.com/pydantic/pydantic-ai/issues/5704);
             # don't copy that strip here.
             config.update(
                 system_instruction=generation_config.get('system_instruction'),
@@ -896,6 +908,7 @@ class GoogleModel(Model[Client]):
             response_json_schema=response_schema,
             response_modalities=modalities,
             image_config=image_config,
+            model_armor_config=model_settings.get('google_model_armor_config'),
         )
 
         if gla_service_tier is not None:
@@ -1099,9 +1112,18 @@ class GoogleModel(Model[Client]):
                 file_part = await self._map_file_to_part(file)
                 fallback_parts.append(file_part)
 
-        response = part.model_response_object()
-        if fallback_refs:
-            response = {'output': [response, *fallback_refs]}
+        if part.outcome == 'failed':
+            # Google's function-response schema prescribes an `error` key (mirroring the `output` key
+            # used for success) for reporting a failed tool call, so this is Gemini's native error
+            # channel, not the generic `{"error": ...}` wrapper other providers fall back to — hence
+            # `wrap_if_error=False` and the hand-built dict. Gemini surfaces the value as the failure
+            # message, so it stays a plain string: file references are sent as the file parts below
+            # rather than folded into the error text (the success branch nests them under `output`).
+            response = {'error': part.model_response_str(wrap_if_error=False)}
+        else:
+            response = part.model_response_object(wrap_if_error=False)
+            if fallback_refs:
+                response = {'output': [response, *fallback_refs]}
 
         function_response_dict: FunctionResponseDict = {
             'name': part.tool_name,
@@ -1175,8 +1197,16 @@ class GoogleModel(Model[Client]):
             part_dict = {'inline_data': BlobDict(data=resolved[1], mime_type=resolved[2])}
         else:
             part_dict = {'file_data': FileDataDict(file_uri=resolved[1], mime_type=resolved[2])}
-        if isinstance(file, (BinaryContent, VideoUrl, UploadedFile)) and file.vendor_metadata:
-            part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+        if file.vendor_metadata:
+            # `media_resolution` is a per-Part field (not part of `video_metadata`) that applies to
+            # any file type; only per-part resolution supports `MEDIA_RESOLUTION_ULTRA_HIGH`
+            # (Gemini 3), see https://ai.google.dev/gemini-api/docs/media-resolution
+            vendor_metadata = dict(file.vendor_metadata)  # copy to avoid mutating user dict
+            if 'media_resolution' in vendor_metadata:
+                part_dict['media_resolution'] = vendor_metadata.pop('media_resolution')
+            # The remaining keys map to `video_metadata`, which only applies to video parts.
+            if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
+                part_dict['video_metadata'] = VideoMetadataDict(**vendor_metadata)
         return part_dict
 
     async def _map_file_to_function_response_part(
@@ -1241,6 +1271,12 @@ class GeminiStreamedResponse(StreamedResponse):
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
     _has_tool_invocations: bool = field(default=False, init=False)
+    # Empty file_search returns whose contexts are still to arrive in `grounding_metadata` (see
+    # `_fill_empty_file_search_return_content`). Each is reserved in the parts manager keyed by its
+    # `tool_call_id`, with its `PartStartEvent` deferred until it's filled — or until the stream ends.
+    _pending_file_search_returns: list[NativeToolReturnPart] = field(
+        default_factory=list[NativeToolReturnPart], init=False
+    )
 
     async def close_stream(self) -> None:
         try:
@@ -1417,7 +1453,16 @@ class GeminiStreamedResponse(StreamedResponse):
                     elif part.tool_response:
                         tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
                         tool_response_part.provider_details = provider_details
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
+                        if tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None:
+                            # Reserve the part's slot but defer its `PartStartEvent` until it's filled below,
+                            # so consumers see a single populated file_search result rather than an empty one
+                            # followed by a filled duplicate.
+                            self._pending_file_search_returns.append(tool_response_part)
+                            self._parts_manager.handle_part(
+                                vendor_part_id=tool_response_part.tool_call_id, part=tool_response_part
+                            )
+                        else:
+                            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
                     elif part.executable_code is not None:
                         part_obj = self._handle_executable_code_streaming(part.executable_code)
                         part_obj.provider_details = provider_details
@@ -1438,6 +1483,28 @@ class GeminiStreamedResponse(StreamedResponse):
                     )
                     if file_search_part is not None:
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
+                elif self._pending_file_search_returns:
+                    # Fill every reserved file_search return from the (aggregate) `grounding_metadata`,
+                    # matching the non-streaming path, and emit each filled part's deferred `PartStartEvent`
+                    # under its reserved slot. This relies on the grounding arriving on a chunk that also
+                    # carries a text part (as Gemini does today) so the `candidate.content.parts` guard above
+                    # doesn't `continue` past it; on a hypothetical part-less grounding chunk the fill would be
+                    # deferred to the end-of-stream flush below, surfacing the return with empty content.
+                    still_pending: list[NativeToolReturnPart] = []
+                    for pending in self._pending_file_search_returns:
+                        _fill_empty_file_search_return_content(pending, candidate.grounding_metadata)
+                        if pending.content is None:
+                            still_pending.append(pending)
+                        else:
+                            yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
+                    self._pending_file_search_returns = still_pending
+
+            # Grounding never arrived (or carried no retrieved contexts) for these reserved returns: emit
+            # their deferred `PartStartEvent`s with empty content, so streaming consumers still see every
+            # part present in the final response.
+            for pending in self._pending_file_search_returns:
+                yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
+            self._pending_file_search_returns = []
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 raise ModelHTTPError(
@@ -1786,6 +1853,8 @@ def _process_response_from_parts(
     for part in parts:
         item, code_execution_tool_call_id = _process_part(part, code_execution_tool_call_id, provider_name)
         if item is not None:
+            if isinstance(item, NativeToolReturnPart):
+                _fill_empty_file_search_return_content(item, grounding_metadata)
             items.append(item)
 
     return ModelResponse(
@@ -1858,7 +1927,7 @@ def _metadata_as_usage(
             details[f'{detail.modality.lower()}_{prefix}_tokens'] = detail.token_count
 
     # Gemini streams usage as cumulative snapshots, but a field reported on an earlier chunk can be
-    # absent from a later one (e.g. `cached_content_token_count` when streamed through a gateway, see #5205).
+    # absent from a later one (e.g. `cached_content_token_count` when streamed through a gateway, see https://github.com/pydantic/pydantic-ai/issues/5205).
     # Merge with the usage accumulated so far so those values survive instead of being overwritten with 0.
     if existing_usage:
         details = {**existing_usage.details, **details}
@@ -1970,7 +2039,7 @@ def _extract_file_search_retrieved_contexts(
 
     Returns an empty list if no retrieved contexts are found.
     """
-    if not grounding_chunks:  # pragma: no cover
+    if not grounding_chunks:
         return []
     retrieved_contexts: list[dict[str, Any]] = []
     for chunk in grounding_chunks:
@@ -1991,6 +2060,25 @@ def _extract_file_search_retrieved_contexts(
             context_dict['file_search_store'] = file_search_store
         retrieved_contexts.append(context_dict)
     return retrieved_contexts
+
+
+def _fill_empty_file_search_return_content(
+    item: NativeToolReturnPart, grounding_metadata: GroundingMetadata | None
+) -> None:
+    """Fill an empty file_search `NativeToolReturnPart` from `grounding_metadata` in place.
+
+    On Gemini 3+ the API returns explicit file_search `tool_call`/`tool_response` parts but leaves the
+    `tool_response` content empty, delivering the retrieved contexts in `grounding_metadata` instead — in
+    streaming, several chunks later. Metadata reconstruction is skipped when explicit parts are present (to
+    avoid duplicate parts), so the contexts are recovered by filling the explicit part here. No-op for other
+    tools or when the content is already set.
+    """
+    if item.tool_name != FileSearchTool.kind or item.content is not None:
+        return
+    grounding_chunks = grounding_metadata.grounding_chunks if grounding_metadata else None
+    retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
+    if retrieved_contexts:
+        item.content = retrieved_contexts
 
 
 def _map_file_search_grounding_metadata(

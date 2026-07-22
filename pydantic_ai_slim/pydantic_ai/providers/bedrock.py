@@ -17,7 +17,9 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers._bedrock_model_names import (
     BEDROCK_GEO_PREFIXES as BEDROCK_GEO_PREFIXES,  # re-exported for backwards compatibility
@@ -149,7 +151,7 @@ class BedrockModelProfile(ModelProfile, total=False):
     and video next to a `toolResult`, while Llama and Mistral reject *any* content sharing the turn (the
     `toolResult` must be alone). When a merge would co-locate a `toolResult` with a kind not listed here,
     the adapter splits the turns and separates them with a synthetic assistant message (Bedrock re-merges
-    consecutive same-role turns, so a bare split doesn't suffice). See #6081.
+    consecutive same-role turns, so a bare split doesn't suffice). See https://github.com/pydantic/pydantic-ai/issues/6081.
 
     Default: all kinds (no restriction); the model receives merged turns unchanged.
     """
@@ -166,6 +168,15 @@ class BedrockModelProfile(ModelProfile, total=False):
 
     Default: `False` (strict — synthesize a leading user message when history starts with an
     assistant turn).
+    """
+    bedrock_supports_tool_result_status: bool
+    """Whether this model accepts the `status` field on a `toolResult` block in Bedrock's Converse API.
+
+    Most families accept (and pydantic-ai emits) `status: 'success'`/`'error'` on `toolResult` blocks, but
+    Writer Palmyra rejects it (`"This model doesn't support the status field. Remove status and try again."`),
+    so the field is omitted for it. Verified against Bedrock `us-east-1`.
+
+    Default: `True`.
     """
     bedrock_supports_strict_tool_definition: bool
     """Whether this model accepts `strict: true` on `toolSpec` in Bedrock's Converse API.
@@ -245,7 +256,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_tool_caching=True,
             bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
             # Anthropic on Bedrock rejects a `toolResult` co-located with a document or video block, but
-            # accepts text and images alongside it. See #6081.
+            # accepts text and images alongside it. See https://github.com/pydantic/pydantic-ai/issues/6081.
             bedrock_tool_result_colocatable_content=frozenset({'text', 'image'}),
             bedrock_supports_leading_assistant_message=True,
             bedrock_thinking_variant='anthropic',
@@ -307,7 +318,7 @@ def bedrock_meta_model_profile(model_name: str) -> ModelProfile | None:
         _strip_builtin_tools(meta_model_profile(model_name)),
         BedrockModelProfile(
             # Llama on Bedrock requires a `toolResult` to be alone in its user message; it rejects
-            # any co-located text or attachment block. See #6081.
+            # any co-located text or attachment block. See https://github.com/pydantic/pydantic-ai/issues/6081.
             bedrock_tool_result_colocatable_content=frozenset(),
             # Llama on Bedrock accepts both images and documents inside a `toolResult`'s content; it has
             # no video support. Verified live against `us.meta.llama4-maverick-17b-instruct-v1:0`.
@@ -332,7 +343,7 @@ def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
             # Mistral on Bedrock requires a `toolResult` to be alone in its user message; it rejects
-            # any co-located text or attachment block. See #6081.
+            # any co-located text or attachment block. See https://github.com/pydantic/pydantic-ai/issues/6081.
             bedrock_tool_result_colocatable_content=frozenset(),
             # Mistral (pixtral) on Bedrock accepts documents inside a `toolResult`'s content but rejects
             # images there — even though it accepts images in a plain user message — and has no video
@@ -389,11 +400,60 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
     )
 
 
-# MiniMax and NVIDIA don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
+def bedrock_zai_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Z.AI (Zhipu) GLM model used via Bedrock."""
+    return merge_profile(
+        _strip_builtin_tools(zai_model_profile(model_name)),
+        BedrockModelProfile(
+            bedrock_supports_tool_choice=True,
+            bedrock_supports_leading_assistant_message=True,
+            json_schema_transformer=BedrockJsonSchemaTransformer,
+            supports_json_schema_output=True,
+            bedrock_supports_strict_tool_definition=True,
+        ),
+    )
+
+
+def bedrock_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Moonshot AI Kimi model used via Bedrock.
+
+    Registered for both the `moonshot.` and `moonshotai.` Bedrock provider prefixes.
+    """
+    return merge_profile(
+        _strip_builtin_tools(moonshotai_model_profile(model_name)),
+        BedrockModelProfile(
+            bedrock_supports_tool_choice=True,
+            bedrock_supports_leading_assistant_message=True,
+            json_schema_transformer=BedrockJsonSchemaTransformer,
+            supports_json_schema_output=True,
+            bedrock_supports_strict_tool_definition=True,
+            # Kimi (kimi-k2.5) accepts an image in a plain user message but rejects any media inside a
+            # `toolResult`'s content (both images and documents), so multimodal tool returns are delivered
+            # as a following user message instead. Verified live against `moonshotai.kimi-k2.5`.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset(),
+        ),
+    )
+
+
+# MiniMax, NVIDIA, and Writer don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
 # these profile fns build a `BedrockModelProfile` from scratch instead of composing with an
 # upstream profile via `_strip_builtin_tools(<upstream>_model_profile(model_name))` like the
 # other `bedrock_<vendor>_model_profile` fns do. The inline `'openai'` lambda in
 # `BedrockProvider.model_profile` follows the same from-scratch pattern for the same reason.
+
+
+def bedrock_writer_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Writer Palmyra model used via Bedrock."""
+    return BedrockModelProfile(
+        supported_native_tools=frozenset(),
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+        # Writer Palmyra on Bedrock requires a `toolResult` to be alone in its user message; it rejects
+        # any co-located text or attachment block (like Llama and Mistral). Verified live against
+        # `writer.palmyra-x4-v1:0` and `writer.palmyra-x5-v1:0`. See https://github.com/pydantic/pydantic-ai/issues/6081.
+        bedrock_tool_result_colocatable_content=frozenset(),
+        # Writer Palmyra also rejects the `status` field on a `toolResult` block, unlike every other family.
+        bedrock_supports_tool_result_status=False,
+    )
 
 
 def bedrock_minimax_model_profile(model_name: str) -> ModelProfile | None:
@@ -437,6 +497,7 @@ class BedrockProvider(Provider[BaseClient]):
 
     @property
     def client(self) -> BaseClient:
+        """The boto3 client used to make requests to the Bedrock API."""
         return self._client
 
     @client.setter
@@ -468,6 +529,11 @@ class BedrockProvider(Provider[BaseClient]):
             'google': bedrock_google_model_profile,
             'minimax': bedrock_minimax_model_profile,
             'nvidia': bedrock_nvidia_model_profile,
+            'writer': bedrock_writer_model_profile,
+            'zai': bedrock_zai_model_profile,
+            # Moonshot AI's Kimi models ship under both provider prefixes on Bedrock.
+            'moonshot': bedrock_moonshotai_model_profile,
+            'moonshotai': bedrock_moonshotai_model_profile,
         }
 
         # Bedrock model IDs are `<provider>.<model-name>-v<n>(:<m>)?`, optionally with a

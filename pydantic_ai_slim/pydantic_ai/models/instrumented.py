@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import time
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -15,6 +16,7 @@ from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
+    TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES,
     TOKEN_HISTOGRAM_BOUNDARIES,
     get_instructions,
     open_model_request_span,
@@ -64,6 +66,7 @@ class InstrumentationSettings:
     tracer: Tracer = field(repr=False)
     include_binary_content: bool = True
     include_content: bool = True
+    include_model_request_parameters: bool = True
     version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = True
 
@@ -74,6 +77,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
+        include_model_request_parameters: bool = True,
         version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION,
         use_aggregated_usage_attribute_names: bool = True,
     ):
@@ -89,6 +93,13 @@ class InstrumentationSettings:
             include_binary_content: Whether to include binary content in the instrumentation events.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
+            include_model_request_parameters: Whether to emit the `model_request_parameters` span attribute on
+                model request spans. This serializes the full `ModelRequestParameters` (output configuration
+                and every tool definition, including fields that are not sent to the model such as tool
+                `metadata` and, when not requested, `return_schema`). Defaults to `True`. Set to `False` to
+                omit it entirely, which is useful when large tool output schemas make the attribute big enough
+                to strain span export. The OpenTelemetry `gen_ai.tool.definitions` attribute (tool name,
+                description, and parameters) is always emitted regardless of this setting.
             version: Version of the data format. This is unrelated to the Pydantic AI package version.
                 Defaults to version 5. Versions 2, 3, and 4 are deprecated compatibility formats
                 and emit a `PydanticAIDeprecationWarning` when used.
@@ -120,6 +131,7 @@ class InstrumentationSettings:
         self.meter = meter_provider.get_meter(scope_name, __version__)
         self.include_binary_content = include_binary_content
         self.include_content = include_content
+        self.include_model_request_parameters = include_model_request_parameters
 
         if version not in (2, 3, 4, 5):
             raise ValueError('Instrumentation version must be one of 2, 3, 4, or 5.')
@@ -154,6 +166,21 @@ class InstrumentationSettings:
             unit='{USD}',
             description='Monetary cost',
         )
+        time_to_first_chunk_histogram_kwargs = dict(
+            name='gen_ai.client.operation.time_to_first_chunk',
+            unit='s',
+            description='Time from issuing a streaming request to the first chunk being surfaced to the consumer',
+        )
+        try:
+            self.time_to_first_chunk_histogram = self.meter.create_histogram(
+                **time_to_first_chunk_histogram_kwargs,
+                explicit_bucket_boundaries_advisory=TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES,
+            )
+        except TypeError:  # pragma: lax no cover
+            # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
+            self.time_to_first_chunk_histogram = self.meter.create_histogram(
+                **time_to_first_chunk_histogram_kwargs,  # pyright: ignore
+            )
 
     def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
         result: list[_otel_messages.ChatMessage] = []
@@ -200,7 +227,11 @@ class InstrumentationSettings:
                         'gen_ai.input.messages': {'type': 'array'},
                         'gen_ai.output.messages': {'type': 'array'},
                         **({'gen_ai.system_instructions': {'type': 'array'}} if system_instructions_attributes else {}),
-                        'model_request_parameters': {'type': 'object'},
+                        **(
+                            {'model_request_parameters': {'type': 'object'}}
+                            if self.include_model_request_parameters
+                            else {}
+                        ),
                     },
                 }
             ).decode(),
@@ -221,6 +252,7 @@ class InstrumentationSettings:
         response: ModelResponse,
         price_calculation: PriceCalculation | None,
         attributes: dict[str, AttributeValue],
+        time_to_first_chunk: float | None = None,
     ):
         for typ in ['input', 'output']:
             if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no cover
@@ -230,6 +262,8 @@ class InstrumentationSettings:
         if price_calculation:
             cost = float(price_calculation.total_price)
             self.cost_histogram.record(cost, attributes)
+        if time_to_first_chunk is not None:
+            self.time_to_first_chunk_histogram.record(time_to_first_chunk, attributes)
 
 
 @dataclass(init=False)
@@ -285,6 +319,10 @@ class InstrumentedModel(WrapperModel):
         )
         with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
             response_stream: StreamedResponse | None = None
+            # Stamp the request-issue instant before the wrapped model opens the stream, so the
+            # `time_to_first_chunk` delta spans from when we issue the request to when the first
+            # chunk is surfaced to the consumer.
+            request_start = time.perf_counter()
             try:
                 async with self.wrapped.request_stream(
                     prepared_rc.messages,
@@ -295,4 +333,7 @@ class InstrumentedModel(WrapperModel):
                     yield response_stream
             finally:
                 if response_stream:  # pragma: no branch
-                    finish(response_stream.get())
+                    finish(
+                        response_stream.get(),
+                        time_to_first_chunk=response_stream.time_to_first_chunk(request_start),
+                    )

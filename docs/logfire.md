@@ -249,6 +249,21 @@ The following providers have dedicated documentation on Pydantic AI:
 
 ## Advanced usage
 
+### Emitted metrics
+
+In addition to spans, the instrumentation records the following [OpenTelemetry metrics](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/), all histograms:
+
+| Metric | Unit | Description |
+|--------|------|-------------|
+| `gen_ai.client.token.usage` | `{token}` | Number of tokens used per model or embedding request, split by the `gen_ai.token.type` attribute (`input` or `output`). Defined by the GenAI semantic conventions. |
+| `operation.cost` | `{USD}` | Estimated monetary cost of each model or embedding request, recorded when a price is known for the model. |
+| `gen_ai.client.operation.time_to_first_chunk` | `s` | Time from issuing a streaming request to the first chunk being surfaced to the consumer. Only recorded for streaming requests; the same value is also set as an attribute of the same name on the model request span. |
+
+Each metric point carries the `gen_ai.provider.name` (and legacy `gen_ai.system`), `gen_ai.operation.name`, `gen_ai.request.model`, and `gen_ai.response.model` attributes, so histograms can be broken down by provider and model.
+
+!!! note "Stability and histogram buckets"
+    `gen_ai.client.operation.time_to_first_chunk` is currently at **Development** stability in the [GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-metrics.md#metric-gen_aiclientoperationtime_to_first_chunk), so its name or shape may change before stabilization. Both `gen_ai.client.token.usage` and `gen_ai.client.operation.time_to_first_chunk` advise the explicit bucket boundaries specified by the conventions. These are only advisories: you can override them by configuring a [View](https://opentelemetry.io/docs/specs/otel/metrics/sdk/#view) on your `MeterProvider`, and SDKs configured for exponential histogram aggregation (such as Logfire) ignore them entirely.
+
 ### Aggregated usage attribute names
 
 By default, model request spans use the standard `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes, while agent run spans use `gen_ai.aggregated_usage.input_tokens`, `gen_ai.aggregated_usage.output_tokens`, and `gen_ai.aggregated_usage.details.*`.
@@ -374,6 +389,24 @@ Agent.instrument_all(instrumentation_settings)
 ```
 
 This setting is particularly useful in production environments where compliance requirements or data sensitivity concerns make it necessary to limit what content is sent to your observability platform.
+
+### Excluding model request parameters
+
+By default, each model request span carries a `model_request_parameters` attribute that serializes the full [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters], including the output configuration and every tool definition. Tools that carry large output schemas (some MCP toolsets, for example) can make this attribute big enough to strain span export and inflate memory use. Set `include_model_request_parameters=False` to omit it entirely:
+
+```python {title="excluding_model_request_parameters.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.models.instrumented import InstrumentationSettings
+
+instrumentation_settings = InstrumentationSettings(include_model_request_parameters=False)
+
+agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+# or to instrument all agents:
+Agent.instrument_all(instrumentation_settings)
+```
+
+The `gen_ai.tool.definitions` attribute (tool name, description, and parameters) is emitted regardless of this setting, so observability platforms that read the available tools from it are unaffected.
 
 ### Adding Custom Metadata
 

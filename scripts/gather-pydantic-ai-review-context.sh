@@ -435,10 +435,23 @@ the surrounding code before posting.
 
 - **Style / formatting** — ruff handles it.
 - **Type nits already covered by pyright** — `make typecheck` runs in CI.
+- **Coverage-gate / `# pragma: no cover` predictions** — coverage is
+  deterministic and CI reports it exactly: the `fail_under = 100` job names
+  every uncovered `file:line`, and a strict-no-cover audit flags a
+  `# pragma: no cover` sitting on a line that was actually covered. Don't
+  flag "this drops below 100%", "removing this pragma breaks coverage", or
+  "this pragma is wrong/unneeded" — CI catches all of these clearly. (A
+  missing test for genuinely *new* behavior or public API is still fair
+  game — that's about correctness, not the coverage number. A profile-gated
+  branch whose added tests all pin one side of the flag is fair game too
+  (Example 4): the branch line can read at 100% while the flag-on and
+  flag-off *combination* stays unverified, so it is a value-combination gap,
+  not a coverage-percentage prediction.)
 - **"Missing tests" for pure refactor** — if the PR moves or renames
   existing code and existing tests still exercise the behavior, no new
   test is needed. Only flag missing tests for new behavior or new public
-  API.
+  API, which includes a newly added or modified `profile.get(...)` branch
+  under `models/` (Example 4): that is new behavior, not a move.
 - **`None` / `Optional` access guarded upstream** — internal helpers
   often assume a precondition the caller enforces (or a type narrows the
   value via an `assert` / `isinstance` / early-return). Read the caller
@@ -526,6 +539,41 @@ a deprecation shim breaks every user on upgrade.
 ```
 *Why:* Leading underscore = private. Internal refactors don't need
 deprecation.
+
+### Example 4 — profile-flag test pinning
+
+Trigger: the diff adds or modifies a `profile.get(...)` read under
+`pydantic_ai_slim/pydantic_ai/models/`, and the tests plus cassettes the same
+diff adds pin that flag to a single value. Decide it by calling the provider's
+profile function for each pinned model and reading the flag.
+
+**Flag this (MEDIUM):**
+```python
+# PR adds a background-mode include gated on a profile flag under models/...
+if profile.get('openai_supports_encrypted_reasoning_content'):
+    include.append('reasoning.encrypted_content')
+# ...and every test and cassette the same PR adds pins `gpt-4o`.
+```
+*Why:* The new branch only runs when the flag is on, but
+`openai_model_profile('gpt-4o').get('openai_supports_encrypted_reasoning_content')`
+is `False`, so every added test sits on the flag-off side and the flag-on
+branch ships unverified. Coverage does not catch this: the line is exercised
+by other tests and reads at 100%, yet the (flag on) × (this path) combination
+is never visited. Ask for one added test pinning a model on the other side (a
+reasoning model, e.g. `gpt-5.6` or `o3`, for which the flag is `True`), or an
+in-test note saying why that side is unreachable on this path. MEDIUM and
+advisory: post the comment, never `REQUEST_CHANGES`.
+
+**Don't flag this:**
+```python
+# Same branch, and the PR adds one test pinning `gpt-4o` plus one pinning `o3`.
+```
+*Why:* The added tests pin a model on each side of the flag
+(`openai_model_profile('gpt-4o')` is `False`, `openai_model_profile('o3')` is
+`True`), so both paths are covered. Also don't flag when the diff pins one
+value but a comment in the added test explains why the other side is
+unreachable on this path, or when the touched `profile.get(...)` read is not a
+new or modified branch (a pure move or rename).
 
 ## Sub-agent finding format
 

@@ -14,3 +14,10 @@
             - capture_run_messages
             - InstrumentationSettings
             - EventStreamHandler
+            - AgentSpec
+            - AgentModelSettings
+            - AgentInstructions
+            - UserPromptNode
+            - ModelRequestNode
+            - CallToolsNode
+            - PydanticAIDeprecationWarning

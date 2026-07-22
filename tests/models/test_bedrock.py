@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+from collections.abc import Iterator
 from datetime import date, datetime, timezone
 from itertools import count
 from types import SimpleNamespace
@@ -52,7 +53,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool
-from pydantic_ai.output import ToolOutput
+from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -835,6 +836,91 @@ async def test_bedrock_unified_service_tier_auto_omits(
 
     _, kwargs = mock_converse.call_args
     assert 'serviceTier' not in kwargs
+
+
+async def test_bedrock_usage_with_cached_tokens(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """Mocked because synthetic fields are needed to isolate the internal usage mapping."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {
+            'inputTokens': 13,
+            'outputTokens': 5,
+            'totalTokens': 1529,
+            'cacheReadInputTokens': 1504,
+            'cacheWriteInputTokens': 7,
+            'cacheDetails': [],
+            'futureBillableTokens': 11,
+        },
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    result = await agent.run('hello')
+
+    assert result.output == 'hello'
+    assert result.usage == snapshot(
+        RunUsage(
+            input_tokens=1524,
+            cache_write_tokens=7,
+            cache_read_tokens=1504,
+            output_tokens=5,
+            requests=1,
+            details={'futureBillableTokens': 11},
+        )
+    )
+
+
+async def test_bedrock_stream_usage_with_cached_tokens(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """Mocked because synthetic stream metadata is needed to isolate the internal usage mapping."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hello'}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'end_turn'}}
+        yield {
+            'metadata': {
+                'usage': {
+                    'inputTokens': 13,
+                    'outputTokens': 5,
+                    'totalTokens': 1529,
+                    'cacheReadInputTokens': 1504,
+                    'cacheWriteInputTokens': 7,
+                    'cacheDetails': [],
+                    'futureBillableTokens': 11,
+                }
+            }
+        }
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {
+        'stream': _stream(),
+        'ResponseMetadata': {'RequestId': 'stub'},
+    }
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+
+    assert result.usage == snapshot(
+        RunUsage(
+            input_tokens=1524,
+            cache_write_tokens=7,
+            cache_read_tokens=1504,
+            output_tokens=5,
+            requests=1,
+            details={'futureBillableTokens': 11},
+        )
+    )
 
 
 async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -2572,6 +2658,44 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
                     {'toolResult': {'toolUseId': 'id1', 'content': [{'text': 'result1'}], 'status': 'success'}},
                     {'toolResult': {'toolUseId': 'id2', 'content': [{'text': 'result2'}], 'status': 'success'}},
                     {'toolResult': {'toolUseId': 'id3', 'content': [{'text': 'result3'}], 'status': 'success'}},
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_failed_tool_return_uses_error_status(bedrock_provider: BedrockProvider):
+    """A `ToolReturnPart` with `outcome='failed'` maps to Bedrock's `toolResult.status='error'`."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    req = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_weather',
+                    content='Weather service is unavailable.',
+                    tool_call_id='id1',
+                    outcome='failed',
+                    timestamp=datetime.now(),
+                ),
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'id1',
+                            'content': [{'text': 'Weather service is unavailable.'}],
+                            'status': 'error',
+                        }
+                    },
                 ],
             },
         ]
@@ -5384,6 +5508,112 @@ async def test_bedrock_llama_tool_result_followed_by_text_accepted(
     )
 
     assert result.output == snapshot('DONE')
+
+
+@pytest.mark.vcr()
+async def test_bedrock_writer_tool_result_followed_by_text_accepted(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Writer Palmyra rejects any content sharing a `toolResult` turn; the reshaped history must be accepted (#6081).
+
+    VCR (not unit) because only a real Converse request proves the reshaped history is accepted: Writer
+    returns a `ValidationException` ("Conversation blocks and tool result blocks cannot be provided in the
+    same turn") if the `toolResult` isn't isolated into its own turn.
+    """
+    model = BedrockConverseModel('us.writer.palmyra-x4-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_expenses() -> str:
+        return 'ok'  # pragma: no cover
+
+    result = await agent.run(
+        'Thanks. Now just say the word DONE.',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='get_expenses', args={}, tool_call_id='t1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='get_expenses', content='ok', tool_call_id='t1')]),
+        ],
+    )
+
+    assert result.output == snapshot('DONE')
+
+
+async def test_bedrock_writer_omits_tool_result_status(bedrock_provider: BedrockProvider):
+    """Writer Palmyra rejects the `status` field on a `toolResult`, so it's omitted from both success and error results.
+
+    Unit test (not VCR): our Bedrock cassette matcher isn't sensitive to the request body, so a `status` field
+    slipping back in could still match a recording and pass green. Asserting the mapped shape pins it.
+    """
+    model = BedrockConverseModel('us.writer.palmyra-x4-v1:0', provider=bedrock_provider)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='call the tools')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='ok_tool', args={}, tool_call_id='okcall1'),
+                ToolCallPart(tool_name='bad_tool', args={}, tool_call_id='badcall1'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='ok_tool', content='done', tool_call_id='okcall1'),
+                RetryPromptPart(content='boom', tool_name='bad_tool', tool_call_id='badcall1'),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    tool_results = [
+        block['toolResult'] for message in bedrock_messages for block in message['content'] if 'toolResult' in block
+    ]
+    assert tool_results == snapshot(
+        [
+            {'toolUseId': 'okcall1', 'content': [{'text': 'done'}]},
+            {
+                'toolUseId': 'badcall1',
+                'content': [{'text': 'boom\n\nFix the errors and try again.'}],
+            },
+        ]
+    )
+    assert all('status' not in result for result in tool_results)
+
+
+@pytest.mark.vcr()
+async def test_bedrock_zai_native_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Z.AI GLM via Bedrock supports native structured output (`supports_json_schema_output=True`).
+
+    `NativeOutput` exercises Bedrock's `outputConfig` path rather than the default tool-output mode, so
+    the response arrives as structured output with no `final_result` output-tool call in the history.
+    """
+    model = BedrockConverseModel('zai.glm-4.7-flash', provider=bedrock_provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries={'output': 5})
+
+    class City(TypedDict):
+        city: str
+        country: str
+
+    result = await agent.run('Where is the Eiffel Tower?', output_type=NativeOutput(City))
+    assert result.output == snapshot({'city': 'Paris', 'country': 'France'})
+    # Native output travels via `outputConfig`, so there is no output-tool call in the message history.
+    assert not any(isinstance(part, ToolCallPart) for message in result.all_messages() for part in message.parts)
+
+
+@pytest.mark.vcr()
+async def test_bedrock_moonshotai_tool_call(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Moonshot AI Kimi via Bedrock supports tool calls (registered under the `moonshot.` prefix here)."""
+    model = BedrockConverseModel('moonshot.kimi-k2-thinking', provider=bedrock_provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot. Use tools when helpful.')
+
+    @agent.tool_plain
+    async def get_temperature(city: str) -> str:
+        """Get the current temperature in a city."""
+        return '30°C'
+
+    result = await agent.run('What is the temperature in London? Use the tool.')
+    assert '30' in result.output
+    assert any(isinstance(part, ToolCallPart) for message in result.all_messages() for part in message.parts)
 
 
 def _tool_return_image_history(count: int = 1) -> list[ModelMessage]:

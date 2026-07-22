@@ -20,12 +20,18 @@ rules:
       - ci.yml
       - docs-preview.yml
       - manually-deploy-docs.yml
+      # `pr-guard.yml` reads `GH_AW_GITHUB_TOKEN` as job-level env solely to
+      # confirm private org membership via `gh api orgs/.../members/{author}`;
+      # it's used as a `gh` credential, never interpolated into a run script,
+      # and the job checks out no fork code, so shell-injection exposure is nil.
+      - pr-guard.yml
       # gh-aw-generated agentic workflow lockfiles (see
       # .github/workflows/README-pydantic-ai-agents.md). gh-aw injects API /
       # GitHub secrets as job-level env by design; they are held by the AWF
       # proxy sidecar and excluded from the agent container, not exposed to
       # shell interpolation. The *.lock.yml files are compiled artifacts —
       # the corresponding .md sources are the editable surface.
+      - pydantic-ai-attention-triage.lock.yml
       - pydantic-ai-bug-hunter.lock.yml
       - pydantic-ai-docs-drift.lock.yml
       - pydantic-ai-pr-review.lock.yml
