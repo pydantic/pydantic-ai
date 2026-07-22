@@ -53,7 +53,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._utils import PeekableAsyncStream
-from pydantic_ai.capabilities import Advisor, NativeTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -7171,24 +7171,6 @@ def test_anthropic_advisor_tool_profile_gating():
     assert supported == snapshot({'direct': True, 'bedrock': False, 'vertex': False, 'foundry': False, 'mantle': True})
 
 
-def test_anthropic_advisor_capability():
-    """The `Advisor` capability builds an `AdvisorTool` and requires a model."""
-    cap = Advisor(model='claude-opus-4-8', max_uses=3, max_tokens=2048, caching='5m')
-    native_tools = cap.get_native_tools()
-    assert native_tools == snapshot([AdvisorTool(model='claude-opus-4-8', max_uses=3, max_tokens=2048, caching='5m')])
-    # No local fallback exists for the advisor tool.
-    assert cap.get_toolset() is None
-    # With only `model` set, the optional fields are omitted from the built tool.
-    assert Advisor(model='claude-fable-5').get_native_tools() == [AdvisorTool(model='claude-fable-5')]
-    # An explicit `AdvisorTool` instance passes through unchanged.
-    assert Advisor(native=AdvisorTool(model='claude-fable-5')).get_native_tools() == [
-        AdvisorTool(model='claude-fable-5')
-    ]
-    # `native=True` (the default) without a model is a clear `UserError`.
-    with pytest.raises(UserError, match='requires an advisor'):
-        Advisor()
-
-
 def _advisor_response(
     result_content: BetaAdvisorResultBlock | BetaAdvisorRedactedResultBlock | BetaAdvisorToolResultError,
     *,
@@ -7208,22 +7190,20 @@ def _advisor_response(
 
 
 @pytest.mark.parametrize(
-    'result_content,expected_content',
+    'variant,expected_content',
     [
         pytest.param(
-            BetaAdvisorResultBlock(text='The answer is 4.', type='advisor_result', stop_reason='max_tokens'),
+            'plaintext',
             {'stop_reason': 'max_tokens', 'text': 'The answer is 4.', 'type': 'advisor_result'},
             id='plaintext',
         ),
         pytest.param(
-            BetaAdvisorRedactedResultBlock(
-                encrypted_content='ENCRYPTED_BLOB', type='advisor_redacted_result', stop_reason='end_turn'
-            ),
+            'redacted',
             {'encrypted_content': 'ENCRYPTED_BLOB', 'stop_reason': 'end_turn', 'type': 'advisor_redacted_result'},
             id='redacted',
         ),
         pytest.param(
-            BetaAdvisorToolResultError(error_code='max_uses_exceeded', type='advisor_tool_result_error'),
+            'error',
             {'error_code': 'max_uses_exceeded', 'type': 'advisor_tool_result_error'},
             id='error',
         ),
@@ -7231,10 +7211,21 @@ def _advisor_response(
 )
 async def test_anthropic_advisor_result_variants(
     allow_model_requests: None,
-    result_content: BetaAdvisorResultBlock | BetaAdvisorRedactedResultBlock | BetaAdvisorToolResultError,
+    variant: Literal['plaintext', 'redacted', 'error'],
     expected_content: dict[str, Any],
 ):
     """Plaintext, redacted, and error advisor results all map through one path, stored verbatim."""
+    if variant == 'plaintext':
+        result_content = BetaAdvisorResultBlock(
+            text='The answer is 4.', type='advisor_result', stop_reason='max_tokens'
+        )
+    elif variant == 'redacted':
+        result_content = BetaAdvisorRedactedResultBlock(
+            encrypted_content='ENCRYPTED_BLOB', type='advisor_redacted_result', stop_reason='end_turn'
+        )
+    else:
+        result_content = BetaAdvisorToolResultError(error_code='max_uses_exceeded', type='advisor_tool_result_error')
+
     mock_client = MockAnthropic.create_mock(_advisor_response(result_content))
     m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8', max_tokens=1024))])

@@ -34,7 +34,6 @@ from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
-    Advisor,
     Capability,
     CapabilityOrdering,
     DynamicCapability,
@@ -150,7 +149,6 @@ def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
             'NativeTool': NativeTool,
-            'Advisor': Advisor,
             'RaiseContentFilterError': RaiseContentFilterError,
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
@@ -1612,13 +1610,6 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_IncludeToolReturnSchemas',
                     'type': 'object',
                 },
-                'spec_Advisor': {
-                    'additionalProperties': False,
-                    'properties': {'Advisor': {'$ref': '#/$defs/spec_params_Advisor'}},
-                    'required': ['Advisor'],
-                    'title': 'spec_Advisor',
-                    'type': 'object',
-                },
                 'short_spec_SetToolMetadata': {
                     'additionalProperties': False,
                     'properties': {
@@ -1713,41 +1704,6 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'WebSearch': {'$ref': '#/$defs/spec_params_WebSearch'}},
                     'required': ['WebSearch'],
                     'title': 'spec_WebSearch',
-                    'type': 'object',
-                },
-                'spec_params_Advisor': {
-                    'additionalProperties': False,
-                    'properties': {
-                        'native': {'anyOf': [{'$ref': '#/$defs/AdvisorTool'}, {'type': 'boolean'}], 'title': 'Native'},
-                        'model': {
-                            'anyOf': [
-                                {
-                                    'enum': [
-                                        'claude-fable-5',
-                                        'claude-mythos-5',
-                                        'claude-opus-4-8',
-                                        'claude-opus-4-7',
-                                        'claude-opus-4-6',
-                                        'claude-sonnet-4-6',
-                                    ],
-                                    'type': 'string',
-                                },
-                                {'type': 'string'},
-                                {'type': 'null'},
-                            ],
-                            'title': 'Model',
-                        },
-                        'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
-                        'max_tokens': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Tokens'},
-                        'caching': {
-                            'anyOf': [{'enum': ['5m', '1h'], 'type': 'string'}, {'type': 'null'}],
-                            'title': 'Caching',
-                        },
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
-                    },
-                    'title': 'spec_params_Advisor',
                     'type': 'object',
                 },
                 'spec_XSearch': {
@@ -1913,8 +1869,6 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [
                                 {'const': 'NativeTool', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_NativeTool'},
-                                {'const': 'Advisor', 'type': 'string'},
-                                {'$ref': '#/$defs/spec_Advisor'},
                                 {'const': 'RaiseContentFilterError', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
@@ -2131,8 +2085,6 @@ def test_model_json_schema_with_capabilities():
                         'anyOf': [
                             {'const': 'NativeTool', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_NativeTool'},
-                            {'const': 'Advisor', 'type': 'string'},
-                            {'$ref': '#/$defs/spec_Advisor'},
                             {'const': 'RaiseContentFilterError', 'type': 'string'},
                             {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                             {'const': 'ImageGeneration', 'type': 'string'},

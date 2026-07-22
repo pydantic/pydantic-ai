@@ -27,10 +27,10 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.capabilities import Advisor
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.native_tools import AdvisorTool, WebSearchTool
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
@@ -1075,7 +1075,7 @@ async def test_openrouter_advisor_tool_request(
     """
     mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
     model = OpenRouterModel(executor, provider=OpenRouterProvider(openai_client=mock_client))
-    agent = Agent(model, capabilities=[Advisor(**advisor_kwargs)])
+    agent = Agent(model, capabilities=[NativeTool(AdvisorTool(**advisor_kwargs))])
 
     result = await agent.run('hello')
 
@@ -1097,7 +1097,7 @@ async def test_openrouter_advisor_tool_unsupported_fields(
     c = _openrouter_completion('done')
     mock_client = MockOpenAI.create_mock(c)
     model = OpenRouterModel('openai/gpt-4.1', provider=OpenRouterProvider(openai_client=mock_client))
-    agent = Agent(model, capabilities=[Advisor(model='anthropic/claude-opus-4.8', **field_kwargs)])
+    agent = Agent(model, capabilities=[NativeTool(AdvisorTool(model='anthropic/claude-opus-4.8', **field_kwargs))])
 
     with pytest.raises(UserError, match=r'`caching` and `max_uses` are not supported by OpenRouter for Advisor tools.'):
         await agent.run('hello')
@@ -1117,7 +1117,7 @@ async def test_openrouter_advisor_tool(allow_model_requests: None, openrouter_ap
     """
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/gpt-4o-mini', provider=provider)
-    agent = Agent(model, capabilities=[Advisor(model='~anthropic/claude-opus-latest', max_tokens=1024)])
+    agent = Agent(model, capabilities=[NativeTool(AdvisorTool(model='~anthropic/claude-opus-latest', max_tokens=1024))])
 
     result = await agent.run(
         'Consult your advisor tool for a recommendation first, then answer in one sentence: '
@@ -1140,7 +1140,7 @@ async def test_openrouter_advisor_tool_stream(allow_model_requests: None, openro
     """
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/gpt-4o-mini', provider=provider)
-    agent = Agent(model, capabilities=[Advisor(model='~anthropic/claude-opus-latest', max_tokens=1024)])
+    agent = Agent(model, capabilities=[NativeTool(AdvisorTool(model='~anthropic/claude-opus-latest', max_tokens=1024))])
 
     async with agent.run_stream(
         'Consult your advisor tool for a recommendation first, then answer in one sentence: '

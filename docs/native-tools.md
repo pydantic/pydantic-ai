@@ -798,29 +798,27 @@ See Anthropic's [Advisor tool](https://platform.claude.com/docs/en/agents-and-to
 ### Usage
 
 ```py {title="advisor_anthropic.py" test="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import Advisor
+from pydantic_ai import AdvisorTool, Agent
+from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
-    capabilities=[Advisor(model='claude-opus-4-8')],
+    capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8'))],
 )
 
 result = agent.run_sync('Design a caching strategy for our API. Consult your advisor first.')
 print(result.output)
 ```
 
-You can also configure the tool directly with [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] wrapped in [`NativeTool`][pydantic_ai.capabilities.NativeTool].
-
-The same capability works on OpenRouter with any executor model — pass the advisor as an OpenRouter catalog slug:
+The same tool works on OpenRouter with any executor model — pass the advisor as an OpenRouter catalog slug:
 
 ```py {title="advisor_openrouter.py" test="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import Advisor
+from pydantic_ai import AdvisorTool, Agent
+from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
     'openrouter:openai/gpt-4o-mini',
-    capabilities=[Advisor(model='anthropic/claude-opus-4.8')],
+    capabilities=[NativeTool(AdvisorTool(model='anthropic/claude-opus-4.8'))],
 )
 
 result = agent.run_sync('Design a caching strategy for our API. Consult your advisor first.')
