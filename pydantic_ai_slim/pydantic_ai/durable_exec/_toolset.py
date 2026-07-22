@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag
@@ -191,11 +191,11 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
 
 
 class EnqueueGuard(list[PendingMessage]):
-    """Replaces `ctx.pending_messages` inside durable-unit-wrapped tools, where enqueueing can't be supported.
+    """Replaces `ctx.pending_messages` inside a durable unit, where enqueueing can't be supported.
 
-    A durable unit's recorded output is replayed on recovery (DBOS) or cache hit (Prefect)
-    without re-executing the tool, so messages enqueued inside it would be silently dropped;
-    enqueueing raises the engine's explanatory `UserError` instead.
+    A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
+    across the activity boundary (Temporal) without re-running the code, so messages enqueued
+    inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
     """
 
     def __init__(self, message: str):
@@ -204,6 +204,32 @@ class EnqueueGuard(list[PendingMessage]):
 
     def append(self, pending: PendingMessage) -> None:
         raise UserError(self._message)
+
+
+def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:
+    """The shared `ctx.enqueue()` error, worded for one engine's durable unit and container.
+
+    `unit_noun` is the engine's durable unit (`'activity'`/`'step'`/`'task'`) and
+    `container_noun` is its durable container (`'workflow'`/`'flow'`), so every engine
+    raises the same explanation with its own vocabulary.
+    """
+    return (
+        f'`ctx.enqueue()` is not supported inside a durable {unit_noun}: the durable runtime replays '
+        f"the {unit_noun}'s recorded result without re-running your code, so the enqueued messages "
+        f'would be dropped. Enqueue messages from {container_noun}-level code instead.'
+    )
+
+
+def guard_run_context_enqueue(
+    ctx: RunContext[AgentDepsT], *, unit_noun: str, container_noun: str
+) -> RunContext[AgentDepsT]:
+    """Return a copy of `ctx` whose `enqueue()` raises, for running user code inside a durable unit.
+
+    Used by the in-process engines (DBOS steps, Prefect tasks) that pass the live context into
+    the durable unit. Temporal reconstructs its context across the activity boundary and installs
+    the same guard in `deserialize_run_context` instead.
+    """
+    return replace(ctx, pending_messages=EnqueueGuard(enqueue_not_supported_message(unit_noun, container_noun)))
 
 
 def unwrap_recorded_tool_call_result(result: Any) -> Any:
