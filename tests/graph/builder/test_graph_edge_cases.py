@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 import pytest
 
 from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph.exceptions import GraphSetupError
 from pydantic_graph.join import ReduceFirstValue, ReducerContext, reduce_sum
 
 from ..._inline_snapshot import snapshot
@@ -425,3 +426,58 @@ stateDiagram-v2
   inner_process --> reduce_sum
   reduce_sum --> [*]\
 """)
+
+
+@dataclass
+class SimpleState:
+    value: int = 0
+
+
+async def test_run_requires_state():
+    """Test that run()/iter() raises TypeError when state is required but not provided."""
+    g = GraphBuilder(state_type=SimpleState, output_type=int)
+
+    @g.step
+    async def return_42(ctx: StepContext[SimpleState, None, None]) -> int:
+        return 42  # pragma: no cover
+
+    g.add(
+        g.edge_from(g.start_node).to(return_42),
+        g.edge_from(return_42).to(g.end_node),
+    )
+
+    graph = g.build()
+    with pytest.raises(TypeError, match='A state instance is required'):
+        await graph.run()
+
+
+async def test_run_optional_state():
+    """Test that run() accepts state=None when state_type is Optional."""
+    g = GraphBuilder(state_type=SimpleState | None, output_type=int)
+
+    @g.step
+    async def return_42(ctx: StepContext[SimpleState | None, None, None]) -> int:
+        return 42
+
+    g.add(
+        g.edge_from(g.start_node).to(return_42),
+        g.edge_from(return_42).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=None)
+    assert result == 42
+
+
+async def test_disconnected_start_node():
+    """Test that running a graph with a disconnected start node raises GraphSetupError."""
+    g = GraphBuilder(state_type=SimpleState, output_type=int)
+
+    @g.step
+    async def unreachable(ctx: StepContext[SimpleState, None, None]) -> int:
+        return 42  # pragma: no cover
+
+    # No edges from start_node - it's disconnected
+    graph = g.build(validate_graph_structure=False)
+    with pytest.raises(GraphSetupError, match='start node has no outgoing edges'):
+        await graph.run(state=SimpleState())
