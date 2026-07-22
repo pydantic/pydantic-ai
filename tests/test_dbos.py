@@ -2380,7 +2380,7 @@ async def test_dbos_mcp_step_rejects_enqueue_in_workflow(dbos: DBOS, monkeypatch
     async def run_workflow() -> None:
         await durable.call_tool('hook', {}, run_context, tool)
 
-    with pytest.raises(UserError, match='recovery replays the recorded step output'):
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
         await run_workflow()
 
     # Outside a workflow the step degrades to a plain call and enqueueing keeps working.
@@ -2413,7 +2413,7 @@ async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None
     async def run_workflow() -> None:
         await agent.run('run')
 
-    with pytest.raises(UserError, match='recovery replays the recorded step output'):
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
         await run_workflow()
 
     await agent.run('run')

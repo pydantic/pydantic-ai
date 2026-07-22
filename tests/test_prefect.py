@@ -2652,7 +2652,7 @@ async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
     async def run_agent() -> None:
         await agent.run('run')
 
-    with pytest.raises(UserError, match='task-cache replay would drop the enqueued messages'):
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
         await run_agent()
 
     # Outside a flow the tool runs inline and enqueueing keeps working.
@@ -2683,7 +2683,7 @@ async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest
     async def run_tool() -> None:
         await durable.call_tool('hook', {}, ctx, tool)
 
-    with pytest.raises(UserError, match='task-cache replay would drop the enqueued messages'):
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
         await run_tool()
 
     # Outside a flow the call runs inline and enqueueing keeps working.
