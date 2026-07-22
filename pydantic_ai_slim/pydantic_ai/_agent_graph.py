@@ -69,6 +69,7 @@ from .tools import (
 if TYPE_CHECKING:
     from .agent import Agent
     from .models.instrumented import InstrumentationSettings
+    from .sandbox import Sandbox
 
 __all__ = (
     'GraphAgentState',
@@ -369,6 +370,10 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     # would silently break in-step capability loads / tool reveals.
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
+
+    # Set once before the graph starts — from the `sandbox=` run argument or a capability's
+    # `get_sandbox` contribution — and never changes during the run.
+    sandbox: Sandbox | None
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -2111,6 +2116,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         pending_messages=ctx.state.pending_messages,
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
+        sandbox=ctx.deps.sandbox,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared

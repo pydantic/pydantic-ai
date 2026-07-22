@@ -255,7 +255,7 @@ def test_docs_examples(
     # `from bank_database import DatabaseConn` wrongly sorted in imports
     # waiting for https://github.com/pydantic/pytest-examples/issues/43
     # and https://github.com/pydantic/pytest-examples/issues/46
-    if 'import DatabaseConn' in example.source:
+    if 'import DatabaseConn' in example.source or 'from my_sandboxes import' in example.source:
         ruff_ignore.append('I001')
 
     if noqa:
@@ -841,6 +841,30 @@ async def model_logic(  # noqa: C901
                     FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
                 ]
             )
+        elif m.content == 'Write fizzbuzz to fizzbuzz.py and run it.':
+            assert any(t.name == 'execute' for t in info.function_tools)
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='execute',
+                        args={
+                            'command': 'printf \'%s\\n\' \'for i in range(1, 16): print("fizz"*(i%3==0) + "buzz"*(i%5==0) or i)\' > fizzbuzz.py && python fizzbuzz.py'
+                        },
+                        tool_call_id='pyd_ai_tool_call_id',
+                    )
+                ]
+            )
+        elif m.content == 'Profile the script and fix the hot spot.':
+            assert any(t.name == 'execute' for t in info.function_tools)
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='execute',
+                        args={'command': 'python -m cProfile app.py'},
+                        tool_call_id='pyd_ai_tool_call_id',
+                    )
+                ]
+            )
         elif m.content == 'Calculate the factorial of 15.':
             return ModelResponse(
                 parts=[
@@ -882,6 +906,20 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
         elif 'Yashar' in m.content:
             return ModelResponse(parts=[TextPart('Tough luck, Yashar, you rolled a 4. Better luck next time.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'execute':
+        prompts = [
+            part.content
+            for message in messages
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        ]
+        # The examples' `execute` tool reports failures as '[exit N] ...'; the command
+        # really ran in the sandbox, so require it to have succeeded.
+        assert isinstance(m.content, str) and not m.content.startswith('[exit '), m.content
+        if 'Write fizzbuzz to fizzbuzz.py and run it.' in prompts:
+            return ModelResponse(parts=[TextPart('fizzbuzz.py is written and runs clean.')])
+        if 'Profile the script and fix the hot spot.' in prompts:
+            return ModelResponse(parts=[TextPart('Optimized the hot loop; the profile is clean now.')])
     if (
         isinstance(m, RetryPromptPart)
         and isinstance(m.content, str)

@@ -7,7 +7,7 @@ import re
 import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractAsyncContextManager, contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -102,6 +102,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.sandbox import Sandbox
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
@@ -2647,6 +2648,86 @@ async def test_temporal_agent_run_in_workflow_with_executing_toolsets(allow_mode
             )
 
 
+class WorkflowFakeSandbox:
+    """Minimal stand-in for a live sandbox handle; the rejection fires before any protocol member is touched."""
+
+    provider = 'fake'
+    sandbox_id = 'fake-sandbox'
+
+
+@workflow.defn
+class SimpleAgentWorkflowWithRunSandbox:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt, sandbox=cast(Sandbox, WorkflowFakeSandbox()))
+        return result.output  # pragma: no cover
+
+
+async def test_temporal_agent_run_in_workflow_with_sandbox(allow_model_requests: None, client: Client):
+    # A live sandbox handle would exist in workflow code (where I/O is forbidden) and can't cross into
+    # activities, so passing one to an in-workflow run is rejected up front.
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflowWithRunSandbox],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                'A live sandbox handle cannot be passed to an agent run inside a Temporal workflow: it would exist in workflow code where I/O is forbidden and cannot cross into activities. Pass a serializable reference on `deps` instead and re-open the sandbox inside your tools.'
+            ),
+        ):
+            await client.execute_workflow(
+                SimpleAgentWorkflowWithRunSandbox.run,
+                args=['What is the capital of Mexico?'],
+                id=SimpleAgentWorkflowWithRunSandbox.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+class SandboxContributingCapability(AbstractCapability[Any]):
+    """Capability whose contributed sandbox would be entered as workflow code inside Temporal."""
+
+    def get_sandbox(self, ctx: RunContext[Any]) -> AbstractAsyncContextManager[Sandbox] | None:
+        return None  # pragma: no cover
+
+
+sandbox_capability_agent = Agent(model, name='sandbox_capability_agent', capabilities=[SandboxContributingCapability()])
+sandbox_capability_temporal_agent = TemporalAgent(sandbox_capability_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
+
+
+@workflow.defn
+class SandboxCapabilityAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await sandbox_capability_temporal_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_temporal_agent_run_in_workflow_with_sandbox_capability(allow_model_requests: None, client: Client):
+    # A contributed sandbox would be entered as workflow code, where I/O is forbidden — rejected
+    # before the run starts. Outside workflows the same wrapped agent may use the capability freely.
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SandboxCapabilityAgentWorkflow],
+        plugins=[AgentPlugin(sandbox_capability_temporal_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run inside a Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. Create the sandbox in an activity and pass a serializable reference on `deps` instead.'
+            ),
+        ):
+            await client.execute_workflow(
+                SandboxCapabilityAgentWorkflow.run,
+                args=['What is the capital of Mexico?'],
+                id=SandboxCapabilityAgentWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
 def request_runtime_external_tool(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')])
 
@@ -3737,6 +3818,41 @@ def test_temporal_run_context_serializes_usage_limits():
     assert reconstructed.usage_limits == ctx.usage_limits
 
 
+def test_temporal_run_context_sandbox_unavailable():
+    """`ctx.sandbox` must raise with guidance inside an activity: a live handle can't cross the boundary."""
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert 'sandbox' not in serialized
+
+    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
+            "the activity boundary. Carry a serializable reference (for example the sandbox's `sandbox_id` on "
+            "`deps` or `metadata`) and re-open the sandbox inside the tool using your sandbox implementation's "
+            'own reconnection API.'
+        ),
+    ):
+        _ = reconstructed.sandbox
+
+
+def test_temporal_run_context_unavailable_attribute_errors():
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape("'TemporalRunContext' object has no attribute 'model'. To make the attribute available"),
+    ):
+        _ = reconstructed.model
+
+    with pytest.raises(AttributeError, match="'TemporalRunContext' object has no attribute 'unknown_attribute'"):
+        getattr(reconstructed, 'unknown_attribute')
+
+
 def test_temporal_run_context_serialization_is_exhaustive():
     """Every `RunContext` field must be consciously categorized for Temporal serialization.
 
@@ -3764,6 +3880,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'conversation_id',  # not currently exposed inside activities
         'model_settings',  # not currently exposed inside activities
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
+        'sandbox',  # live sandbox handle, can't cross the boundary; accessing it raises UserError with guidance
         '_event_stream_buffer',  # run-local event buffer drained in workflow code; a public emit surface for activities is a follow-up
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())

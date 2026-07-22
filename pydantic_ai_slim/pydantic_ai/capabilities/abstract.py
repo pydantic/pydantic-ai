@@ -22,6 +22,8 @@ from pydantic_ai.tools import (
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
+
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
@@ -35,6 +37,7 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
+    from pydantic_ai.sandbox import Sandbox
     from pydantic_graph import End
 
 # --- Handler type aliases for use in hook method signatures ---
@@ -415,6 +418,27 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
         [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset],
         or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
+        """
+        return None
+
+    def get_sandbox(self, ctx: RunContext[AgentDepsT]) -> AbstractAsyncContextManager[Sandbox] | None:
+        """Return a [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, as an async context manager, or `None`.
+
+        Consulted once per run, only when no `sandbox=` was passed to the run method (the run
+        argument wins and this hook is then never called). Among capabilities, the one latest
+        in the resolved chain wins; earlier ones are only consulted if it returns `None`, and
+        [deferred][pydantic_ai.capabilities.AbstractCapability.defer_loading] capabilities are
+        never consulted. The run enters the returned context manager when the run starts and
+        exits it when the run ends — exactly like a capability
+        [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset] — so
+        [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox] is live from `before_run`
+        through `after_run`/`on_run_error`, and teardown is guaranteed even when the run
+        fails to start.
+
+        Return a per-run sandbox as a fresh context manager (e.g. the result of an
+        `@asynccontextmanager` factory, or a sandbox object that manages its own lifecycle as
+        an async context manager). Return a warm sandbox shared across runs as
+        `contextlib.nullcontext(sandbox)` — its no-op exit leaves the sandbox running.
         """
         return None
 

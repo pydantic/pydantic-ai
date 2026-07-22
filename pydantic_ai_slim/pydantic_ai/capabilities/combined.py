@@ -34,12 +34,15 @@ from .abstract import (
 )
 
 if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
+
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
+    from pydantic_ai.sandbox import Sandbox
     from pydantic_graph import End
 
 
@@ -240,6 +243,20 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 wrapped = result
                 any_wrapped = True
         return wrapped if any_wrapped else None
+
+    def get_sandbox(self, ctx: RunContext[AgentDepsT]) -> AbstractAsyncContextManager[Sandbox] | None:
+        # The capability latest in the resolved chain wins, matching the reversed dispatch of
+        # `after_run`/`get_wrapper_toolset` and the later-wins model-settings merge. A losing
+        # capability's hook is never called, so it never even builds a context manager.
+        # Deferred capabilities are skipped: their contributions are inert until loaded, and
+        # the run's sandbox is resolved once, before the first model request.
+        for capability in reversed(self.capabilities):
+            if capability.defer_loading is True:
+                continue
+            sandbox_cm = capability.get_sandbox(_ctx_for_cap(capability, ctx))
+            if sandbox_cm is not None:
+                return sandbox_cm
+        return None
 
     # --- Tool preparation hooks ---
 

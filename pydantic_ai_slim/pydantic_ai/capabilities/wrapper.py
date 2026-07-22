@@ -38,10 +38,13 @@ from .abstract import (
 )
 
 if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
+
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
+    from pydantic_ai.sandbox import Sandbox
 
 
 @dataclass
@@ -144,6 +147,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
+
+    def get_sandbox(self, ctx: RunContext[AgentDepsT]) -> AbstractAsyncContextManager[Sandbox] | None:
+        return self.wrapped.get_sandbox(ctx)
 
     async def prepare_tools(
         self,

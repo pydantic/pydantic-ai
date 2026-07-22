@@ -95,6 +95,7 @@ if TYPE_CHECKING:
     from ...capabilities import AbstractCapability
     from ...models import KnownModelName, Model
     from ...output import OutputSpec
+    from ...sandbox import Sandbox
     from ...settings import ModelSettings
     from ...tools import DeferredToolApprovalResult
     from ...toolsets import AbstractToolset
@@ -217,6 +218,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[DispatchDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -249,6 +251,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             infer_name=infer_name,
             toolsets=toolsets,
             capabilities=capabilities,
+            sandbox=sandbox,
             on_complete=on_complete,
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,

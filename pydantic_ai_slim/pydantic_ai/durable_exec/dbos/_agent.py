@@ -26,12 +26,13 @@ from pydantic_ai.agent import (
     WrapperAgent,
 )
 from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, RunOutputDataT
-from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.run import AgentRunResultEvent
+from pydantic_ai.sandbox import Sandbox
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -42,6 +43,7 @@ from pydantic_ai.tools import (
 )
 
 from .._runtime_toolsets import reject_unsupported_runtime_toolsets
+from .._sandbox import contributes_sandbox
 from ._model import DBOSModel
 from ._utils import StepConfig
 
@@ -365,6 +367,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -389,6 +392,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -412,6 +416,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -454,6 +459,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
+                before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
+                arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -464,6 +473,27 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
             )
         self._reject_unsupported_runtime_toolsets(toolsets)
+        # A `get_sandbox` contribution would be entered as replayed workflow code, which is not
+        # replay-safe. Checked statically over the bound chain and per-run capabilities; a
+        # contributor produced at run time by a dynamic capability function cannot be caught here.
+        if contributes_sandbox(self.wrapped.root_capability) or any(
+            isinstance(capability, AbstractCapability)
+            and contributes_sandbox(cast(AbstractCapability[Any], capability))
+            for capability in capabilities or ()
+        ):
+            raise UserError(
+                'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run in a DBOS durable '
+                'workflow: the sandbox would be entered in workflow code, which is replayed during recovery. '
+                'Pass a serializable reference on `deps` and re-open the sandbox inside a DBOS step instead.'
+            )
+        # Checked before entering the workflow, whose arguments are pickled; the sandbox is deliberately
+        # not forwarded into (and so never part of) the durable workflow inputs.
+        if sandbox is not None:
+            raise UserError(
+                'A live sandbox handle cannot be passed to a DBOS durable agent run: run arguments are pickled as '
+                'workflow inputs for recovery, and a live handle does not survive pickling or recovery. Pass a '
+                'serializable reference on `deps` instead.'
+            )
         return await self.dbos_wrapped_run_workflow(
             user_prompt,
             output_type=output_type,
@@ -506,6 +536,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -530,6 +561,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -553,6 +585,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -594,6 +627,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
+                before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
+                arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -604,6 +641,27 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
             )
         self._reject_unsupported_runtime_toolsets(toolsets)
+        # A `get_sandbox` contribution would be entered as replayed workflow code, which is not
+        # replay-safe. Checked statically over the bound chain and per-run capabilities; a
+        # contributor produced at run time by a dynamic capability function cannot be caught here.
+        if contributes_sandbox(self.wrapped.root_capability) or any(
+            isinstance(capability, AbstractCapability)
+            and contributes_sandbox(cast(AbstractCapability[Any], capability))
+            for capability in capabilities or ()
+        ):
+            raise UserError(
+                'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run in a DBOS durable '
+                'workflow: the sandbox would be entered in workflow code, which is replayed during recovery. '
+                'Pass a serializable reference on `deps` and re-open the sandbox inside a DBOS step instead.'
+            )
+        # Checked before entering the workflow, whose arguments are pickled; the sandbox is deliberately
+        # not forwarded into (and so never part of) the durable workflow inputs.
+        if sandbox is not None:
+            raise UserError(
+                'A live sandbox handle cannot be passed to a DBOS durable agent run: run arguments are pickled as '
+                'workflow inputs for recovery, and a live handle does not survive pickling or recovery. Pass a '
+                'serializable reference on `deps` instead.'
+            )
         return self.dbos_wrapped_run_sync_workflow(
             user_prompt,
             output_type=output_type,
@@ -646,6 +704,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
@@ -670,6 +729,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
@@ -694,6 +754,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
@@ -733,6 +794,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
+                before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
+                arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -762,6 +827,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
             capabilities=capabilities,
+            sandbox=sandbox,
             spec=spec,
         ) as result:
             yield result
@@ -786,6 +852,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]]: ...
 
@@ -809,6 +876,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[
         AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]
@@ -833,6 +901,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
@@ -892,6 +961,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
+                before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
+                arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -931,6 +1004,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -954,6 +1028,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -977,6 +1052,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1064,6 +1140,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
+                before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
+                arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1093,6 +1173,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 infer_name=infer_name,
                 toolsets=None,
                 capabilities=capabilities,
+                sandbox=sandbox,
                 spec=spec,
             ) as run:
                 yield run

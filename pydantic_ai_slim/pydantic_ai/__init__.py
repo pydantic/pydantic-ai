@@ -44,6 +44,7 @@ from .exceptions import (
     UserError,
 )
 from .format_prompt import format_as_xml
+from .local_sandbox import LocalSandbox
 from .messages import (
     AgentStreamEvent,
     AudioFormat,
@@ -132,6 +133,7 @@ from .profiles import (
     ModelProfileSpec,
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
+from .sandbox import Sandbox
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .template import TemplateStr
 from .tools import (
@@ -316,6 +318,9 @@ __all__ = (
     # capabilities
     'AgentCapability',
     'CapabilityFunc',
+    # sandbox
+    'LocalSandbox',
+    'Sandbox',
     # output
     'ToolOutput',
     'NativeOutput',

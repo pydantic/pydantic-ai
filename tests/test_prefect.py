@@ -8,7 +8,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, I
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -57,6 +57,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.sandbox import Sandbox
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -1611,6 +1612,99 @@ async def test_cache_policy_empty_inputs():
     assert result is None
 
 
+class FakeCacheSandbox:
+    """Minimal stand-in carrying only the identity the cache key needs."""
+
+    provider = 'fake'
+
+    def __init__(self, sandbox_id: str):
+        self.sandbox_id = sandbox_id
+
+
+def _ctx_with_sandbox(sandbox_id: str | None) -> RunContext[None]:
+    sandbox = cast(Sandbox, FakeCacheSandbox(sandbox_id)) if sandbox_id is not None else None
+    return RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        sandbox=sandbox,
+    )
+
+
+async def test_cache_policy_includes_sandbox_identity():
+    """Two runs identical except for their attached sandbox must not share a cache entry."""
+    projected = _replace_run_context({'ctx': _ctx_with_sandbox('sandbox-1')})['ctx']
+    # Provider-qualified: `sandbox_id` is only unique within a provider.
+    assert projected['sandbox'] == ('fake', 'sandbox-1')
+    # No sandbox -> no key at all, so pre-existing no-sandbox cache keys are unchanged.
+    assert 'sandbox' not in _replace_run_context({'ctx': _ctx_with_sandbox(None)})['ctx']
+
+
+async def test_prefect_flow_forwards_sandbox_to_tools():
+    sandbox = cast(Sandbox, FakeCacheSandbox('flow-sandbox'))
+    seen: list[Sandbox | None] = []
+
+    def call_tool_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('observe_sandbox', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(call_tool_then_finish), name='sandbox_flow_agent')
+
+    @agent.tool
+    def observe_sandbox(ctx: RunContext[object]) -> str:
+        seen.append(ctx.sandbox)
+        return 'ok'
+
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    @flow
+    async def run_agent() -> str:
+        return (await prefect_agent.run('Use the sandbox tool.', sandbox=sandbox)).output
+
+    assert await run_agent() == 'done'
+    assert seen == [sandbox]
+
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    keys = {
+        cache_policy.compute_key(
+            task_ctx=mock_task_ctx,
+            inputs={'ctx': _ctx_with_sandbox(sandbox_id)},
+            flow_parameters={},
+        )
+        for sandbox_id in ('sandbox-1', 'sandbox-2', None)
+    }
+    assert len(keys) == 3
+
+    # Same id under a different provider is a different environment -> different key.
+    class OtherProviderSandbox(FakeCacheSandbox):
+        provider = 'other'
+
+    other = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        sandbox=cast(Sandbox, OtherProviderSandbox('sandbox-1')),
+    )
+    assert cache_policy.compute_key(
+        task_ctx=mock_task_ctx, inputs={'ctx': other}, flow_parameters={}
+    ) != cache_policy.compute_key(
+        task_ctx=mock_task_ctx, inputs={'ctx': _ctx_with_sandbox('sandbox-1')}, flow_parameters={}
+    )
+
+    # Same sandbox identity produces the same key: the live handle itself is not hashed.
+    assert cache_policy.compute_key(
+        task_ctx=mock_task_ctx,
+        inputs={'ctx': _ctx_with_sandbox('sandbox-1')},
+        flow_parameters={},
+    ) == cache_policy.compute_key(
+        task_ctx=mock_task_ctx,
+        inputs={'ctx': _ctx_with_sandbox('sandbox-1')},
+        flow_parameters={},
+    )
+
+
 def test_cache_key_run_context_projection_is_exhaustive():
     """Every `RunContext` field must be consciously categorized for Prefect cache-key hashing.
 
@@ -1643,14 +1737,20 @@ def test_cache_key_run_context_projection_is_exhaustive():
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
         '_event_stream_buffer',  # live per-run event buffer drained in workflow code, not a tool-execution input
     }
+    # Fields carried into the projection under a derived key rather than verbatim.
+    projected_via_derived_key = {
+        'sandbox',  # projected as (provider, sandbox_id), only when a sandbox is attached
+    }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
+    assert 'sandbox' in set(_replace_run_context({'ctx': _ctx_with_sandbox('sb')})['ctx'])
+
     all_fields = set(RunContext.__dataclass_fields__)
 
     overlap = projected & cache_irrelevant
     assert not overlap, f'Fields both projected and marked irrelevant: {overlap}'
 
-    uncategorized = all_fields - (projected | cache_irrelevant)
+    uncategorized = all_fields - (projected | cache_irrelevant | projected_via_derived_key)
     assert not uncategorized, (
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to the `_replace_run_context` '
         'projection (if it should fork the cache key) or to `cache_irrelevant` (with a reason).'

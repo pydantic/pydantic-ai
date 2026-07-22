@@ -9,7 +9,7 @@ import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from pydantic import BaseModel
@@ -74,6 +74,7 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT
+from pydantic_ai.sandbox import Sandbox
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -3247,6 +3248,25 @@ async def test_adapter_run_stream_native_capabilities_kwarg_merged_into_run() ->
         pass
 
     assert seen_tool_defs, 'PrepareTools capability passed via run_stream_native(capabilities=...) should fire'
+
+
+async def test_adapter_run_stream_native_forwards_sandbox() -> None:
+    seen: list[Sandbox | None] = []
+    agent = Agent(TestModel())
+
+    @agent.tool
+    def observe_sandbox(ctx: RunContext[Any]) -> str:
+        seen.append(ctx.sandbox)
+        return 'ok'
+
+    sandbox = cast(Sandbox, object())
+    run_input = create_input(UserMessage(id='msg0', content='Use the available tool.'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
+
+    async for _ in adapter.transform_stream(adapter.run_stream_native(sandbox=sandbox)):
+        pass
+
+    assert seen == [sandbox]
 
 
 async def test_callback_async() -> None:

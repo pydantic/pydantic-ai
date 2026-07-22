@@ -11,6 +11,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
+    from pydantic_ai.sandbox import Sandbox
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
@@ -29,6 +30,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
     By default, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, `partial_output`, `loaded_capability_ids`, `discovered_tool_names`, and `capability_loaded` attributes will be available.
 
     The `capabilities` registry is intentionally excluded: it holds live capability objects (toolsets, hooks, callables) that aren't serializable across the activity boundary, like `tool_manager`. As a result `available_capability_ids` (which reads `capabilities`) is unavailable inside an activity, while `available_tool_names` still works via its `discovered_tool_names` fallback.
+    `sandbox` is likewise unavailable: a live sandbox handle cannot cross the activity boundary. Carry a serializable reference (for example the sandbox's `sandbox_id`) on `deps` or `metadata` and re-open the sandbox inside the tool.
     To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent].
     """
 
@@ -48,7 +50,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
     def __getattribute__(self, name: str) -> Any:
         try:
             return super().__getattribute__(name)
-        except AttributeError as e:  # pragma: no cover
+        except AttributeError as e:
             if name in RunContext.__dataclass_fields__:
                 raise UserError(
                     f'{self.__class__.__name__!r} object has no attribute {name!r}. '
@@ -56,6 +58,20 @@ class TemporalRunContext(RunContext[AgentDepsT]):
                 )
             else:
                 raise e
+
+    @property
+    def sandbox(self) -> Sandbox | None:  # pyright: ignore[reportIncompatibleVariableOverride] — deliberately raises instead of silently returning None
+        """Not available inside a Temporal activity; see [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
+
+        A live sandbox handle cannot be serialized across the activity boundary, so unlike other
+        attributes it can't be made available via a `serialize_run_context` override either.
+        """
+        raise UserError(
+            'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
+            "the activity boundary. Carry a serializable reference (for example the sandbox's `sandbox_id` on "
+            "`deps` or `metadata`) and re-open the sandbox inside the tool using your sandbox implementation's "
+            'own reconnection API.'
+        )
 
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:

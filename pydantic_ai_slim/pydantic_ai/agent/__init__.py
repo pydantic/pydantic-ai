@@ -68,6 +68,7 @@ from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
+from ..sandbox import Sandbox
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -954,6 +955,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -977,6 +979,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1000,6 +1003,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1089,6 +1093,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
+                and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
+                The caller owns its lifecycle (create it before the run, tear it down after), and it wins over any
+                sandbox a capability would contribute via
+                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1344,6 +1353,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             pending_messages=state.pending_messages,
             run_id=state.run_id,
             conversation_id=state.conversation_id,
+            sandbox=sandbox,
         )
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
@@ -1610,6 +1620,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=capabilities_dict,
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
+            sandbox=sandbox,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,
@@ -1636,6 +1647,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
             if capability_owns_current_model:
                 await enter_model(model_used)
+            # A capability-contributed sandbox is resolved once per run and bracketed by the
+            # run's own exit stack — mirroring capability toolsets, whose enter/exit the run
+            # also owns. Entered before the graph run, so it exits after toolset `__aexit__`
+            # and `after_run`/`on_run_error`: `ctx.sandbox` is live for the whole run and
+            # teardown is guaranteed even when the run fails to start. Skipped entirely when
+            # the caller passed `sandbox=` — the caller then owns the lifecycle.
+            if sandbox is None and (sandbox_cm := run_capability.get_sandbox(initial_ctx)) is not None:
+                graph_deps.sandbox = await stack.enter_async_context(sandbox_cm)
             graph_run = await stack.enter_async_context(
                 graph.iter(
                     inputs=user_prompt_node,
@@ -1728,10 +1747,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             stack.callback(_restore_context_vars)
 
-            # Enter toolset AFTER context vars are propagated so that
-            # toolset __aenter__/__aexit__ run inside the run span context
-            # (set by the Instrumentation capability's wrap_run).
-            await stack.enter_async_context(toolset)
+            try:
+                # Enter toolset AFTER context vars are propagated so that
+                # toolset __aenter__/__aexit__ run inside the run span context
+                # (set by the Instrumentation capability's wrap_run).
+                await stack.enter_async_context(toolset)
+            except BaseException as exc:
+                # A failure here (e.g. a toolset `__aenter__` raising) would otherwise leave
+                # `_do_run` parked on `_run_done.wait()` forever: the wrap chain never unwinds,
+                # capability `wrap_run` cleanup (`finally` blocks holding run-scoped resources)
+                # never runs, and `_wrap_task` leaks as a permanently pending task. Mirror the
+                # readiness-wait failure path above: unpark `_do_run`, drain the wrap chain,
+                # then re-raise.
+                _run_error = exc
+                _run_done.set()
+                await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
+                raise
 
             async def _finalize_result(r: AgentRunResult[Any]) -> None:
                 """Call after_run, store the result override, and clear any pending error."""
