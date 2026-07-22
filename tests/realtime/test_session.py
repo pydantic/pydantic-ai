@@ -3176,7 +3176,7 @@ async def test_agent_realtime_session_dynamic_instructions_see_message_history()
     agent: Agent[None, str] = Agent()
 
     @agent.instructions
-    def prior_count(ctx: RunContext[None]) -> str:
+    def prior_count(ctx: RunContext) -> str:
         return f'{len(ctx.messages)} prior messages'
 
     seed = [
