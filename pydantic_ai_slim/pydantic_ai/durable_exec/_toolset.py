@@ -451,7 +451,7 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        if not self._in_durable_context():  # pragma: no cover
+        if not self._in_durable_context():
             return await self._mcp_toolset.call_tool(name, tool_args, ctx, tool)
         config = self._resolve_tool_config(tool, name)
         if config is False:  # pragma: no cover — no engine's resolver currently permits inline MCP tools
