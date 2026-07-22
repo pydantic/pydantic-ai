@@ -108,12 +108,14 @@ Because the same agent works inside and outside a Prefect flow, [`PrefectDurabil
 
 For more information on how to use Prefect in Python applications, see their [Python documentation](https://docs.prefect.io/v3/how-to-guides/workflows/write-and-run).
 
-### Wrapper-agent path
+### Wrapper-agent path (deprecated)
 
-[`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] remains supported as the wrapper-agent alternative to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability].
+!!! warning "Deprecated"
+    [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] is the original wrapper-agent path for Prefect integration and will be removed in v3. New code should use the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] capability shown above.
 
-!!! warning "Migration"
     **When migrating, you must wrap the run in a flow yourself.** `PrefectAgent` wrapped `run` / `run_sync` as a Prefect flow automatically; `PrefectDurability` deliberately does not — a run is only durable when `agent.run()` is called inside your own `@flow`. Porting the constructor arguments but calling `agent.run()` directly produces a run that works but is **not durable**.
+
+    **In-flight flow runs won't resume from cache across the migration.** Task results recorded under `PrefectAgent` key on the task's source code, so a flow run that retries after you deploy the migration re-executes its model requests and tool calls live instead of replaying the recorded results. Let in-flight flow runs finish before switching if re-execution matters to you.
 
 Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] to get a durable agent variant that routes model requests, tool calls, and MCP communication through Prefect tasks:
 
@@ -146,7 +148,7 @@ When using Prefect with Pydantic AI agents, there are a few important considerat
 
 Each agent instance must have a unique `name` so Prefect can correctly identify and track its flows and tasks.
 
-Toolsets that implement their own tool listing and calling (i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id] set, which is used to identify their tasks within the flow.
+Toolsets that implement their own tool listing and calling (i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]) must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id] set, which is used to identify their tasks within the flow.
 
 ### Model Selection at Runtime
 
@@ -161,6 +163,8 @@ Agent tools are automatically wrapped as Prefect tasks, which means they benefit
 * **Retry logic**: Failed tool calls can be retried automatically
 * **Caching**: Tool results are cached based on their inputs
 * **Observability**: Tool execution is tracked in the Prefect UI
+
+For a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset], including one contributed by a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], each tool call runs as a task and resolves and enters the toolset inside that task, so a task retry re-resolves it. Tool discovery runs in flow code and is re-executed when the flow retries, like the rest of the flow — including a `DynamicCapability`'s factory, which should therefore be deterministic given the run's `deps`. A `DynamicCapability` reuses the capability resolved for the run inside its tool tasks.
 
 A default [`TaskConfig`][pydantic_ai.durable_exec.prefect.TaskConfig] for all tools can be passed as `tool_task_config` to the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] constructor. Per-tool config lives on the tool's [`metadata`][pydantic_ai.toolsets.FunctionToolset.tool] field — `PrefectDurability` looks for a `'prefect'` key. You can set the metadata directly on the tool definition, or apply it across a selection of tools via the [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability. See the [capabilities documentation][pydantic_ai.capabilities.SetToolMetadata] for the full selector vocabulary.
 

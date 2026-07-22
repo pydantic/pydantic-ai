@@ -94,10 +94,6 @@
         "slug": "capabilities/custom"
       },
       {
-        "label": "Third-Party Capabilities",
-        "slug": "capabilities/third-party"
-      },
-      {
         "label": "Thinking",
         "slug": "capabilities/thinking"
       },
@@ -213,6 +209,10 @@
             "slug": "durable_execution/airflow"
           }
         ]
+      },
+      {
+        "label": "Third-Party Capabilities",
+        "slug": "capabilities/third-party"
       }
     ]
   },

@@ -62,7 +62,6 @@ nav:
           - Overview: capabilities/overview.md
           - On-Demand Capabilities: capabilities/on-demand.md
           - Building Custom Capabilities: capabilities/custom.md
-          - Third-Party Capabilities: capabilities/third-party.md
           - Thinking: capabilities/thinking.md
           - Instrumentation: capabilities/instrumentation.md
           - Web Search: capabilities/web-search.md
@@ -92,6 +91,7 @@ nav:
               - Restate: durable_execution/restate.md
               - Kitaru: durable_execution/kitaru.md
               - Apache Airflow: durable_execution/airflow.md
+          - Third-Party Capabilities: capabilities/third-party.md
       - MCP:
           - Overview: mcp/overview.md
           - mcp/client.md
