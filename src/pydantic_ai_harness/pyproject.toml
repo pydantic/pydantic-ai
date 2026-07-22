@@ -50,6 +50,9 @@ logfire = [
     'logfire>=4.31.0',
     "pydantic-ai-slim[spec]>=2.14.1",
 ]
+modal = [
+    "modal>=1.5.0",
+]
 dynamic-workflow = [
     "pydantic-monty>=0.0.16",
 ]
@@ -139,6 +142,7 @@ executionEnvironments = [
 [tool.pytest.ini_options]
 testpaths = ['tests']
 xfail_strict = true
+markers = ['modal_live: runs against a real Modal control plane; needs credentials']
 filterwarnings = [
     'error',
     # DBOS's run_sync triggers this on Python 3.12+ — not our code.
@@ -151,6 +155,7 @@ anyio_mode = 'auto'
 [tool.coverage.run]
 branch = true
 source = ['pydantic_ai_harness', 'tests']
+omit = ['tests/**/test_modal_live.py']
 
 [tool.coverage.paths]
 source = ['.', '/home/runner/work/pydantic-ai-harness/pydantic-ai-harness']

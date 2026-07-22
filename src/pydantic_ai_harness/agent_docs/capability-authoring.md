@@ -78,6 +78,13 @@ warnings where practical.
 - Keep defaults conservative and easy to explain.
 - Do not add package dependencies without a clear issue and package-manager
   command.
+- New remote-execution capabilities cap tool output with
+  `max_output_bytes` / `max_output_lines` (the `modal_sandbox` names), not a new
+  spelling. The released `max_output_chars` (shell) and `max_read_lines`
+  (filesystem) predate this convention and stay for compatibility.
+- Line offsets in model-facing file tools are 1-indexed, matching `grep -n`,
+  editors, and stack traces (`modal_sandbox` is the reference; `filesystem` is
+  0-based pending migration).
 
 ## Composition Checks
 

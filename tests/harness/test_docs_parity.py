@@ -116,6 +116,7 @@ _CAPABILITY_PAGE_META = {
     'shell.md': ('shell', 'Shell'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
+    'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
     'context.md': ('context', 'Context'),
     'pydantic-ai-docs.md': ('docs', 'Pydantic AI Docs'),
     'exa-search.md': ('exa', 'Exa Search'),

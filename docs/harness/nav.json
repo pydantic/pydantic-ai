@@ -18,6 +18,7 @@
       { "label": "Dynamic Workflow", "slug": "dynamic-workflow" },
       { "label": "Planning", "slug": "planning" },
       { "label": "Memory", "slug": "memory" },
+      { "label": "Modal Sandbox", "slug": "modal-sandbox" },
       { "label": "Runtime Authoring", "slug": "runtime-authoring" },
       { "label": "Guardrails", "slug": "guardrails" },
       { "label": "Managed Prompt", "slug": "managed-prompt" },
