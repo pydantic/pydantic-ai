@@ -362,7 +362,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Native Output
 
-Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, Gemini cannot use tools at the same time as structured output, and attempting to do so will result in an error.
+Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools.
 
 To use this mode, you can wrap the output type(s) in the [`NativeOutput`][pydantic_ai.output.NativeOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient.
 
@@ -700,7 +700,7 @@ Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip
 
 ## Optional output (allowing `None`) {#optional-output}
 
-Some agents perform their work entirely through tool calls and don't need to produce a final output — for example, an agent that updates a record via a tool and then stops. But with `str` in the `output_type` — including the default — the model is required to end its final turn with text. If it considers its work finished and has nothing left to say, it will return an empty response, or one containing only [thinking](thinking.md) content (as [Anthropic](models/anthropic.md) models notably do), and Pydantic AI will ask it to produce text anyway.
+Some agents perform their work entirely through tool calls and don't need to produce a final output — for example, an agent that updates a record via a tool and then stops. But with `str` in the `output_type` — including the default — the model is required to end its final turn with text. If it considers its work finished and has nothing left to say, it will return an empty response, or one containing only [thinking](capabilities/thinking.md) content (as [Anthropic](models/anthropic.md) models notably do), and Pydantic AI will ask it to produce text anyway.
 
 Include `None` in the `output_type` when finishing without a final message is a valid outcome for your agent, and you'd rather receive `None` than have the model say something for the sake of saying it:
 
@@ -723,7 +723,7 @@ print(result.output)
 
 When the model returns an empty response and `None` is an allowed output type, the agent will return `None` instead of retrying. [Output validator functions](#output-validator-functions) still run with `None` as the argument, so you can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject it if needed.
 
-`output_type=str | None` is the canonical case: it's handled as regular text output, and the **only** way the model signals `None` is by returning a response with no text output — either an empty response, or one containing only [thinking](thinking.md) content, which some reasoning models emit after completing their work through a tool call. There's no output tool or structured schema involved. This mirrors how plain `str` is already treated specially as free-form text output rather than a structured tool call.
+`output_type=str | None` is the canonical case: it's handled as regular text output, and the **only** way the model signals `None` is by returning a response with no text output — either an empty response, or one containing only [thinking](capabilities/thinking.md) content, which some reasoning models emit after completing their work through a tool call. There's no output tool or structured schema involved. This mirrors how plain `str` is already treated specially as free-form text output rather than a structured tool call.
 
 `None` is also supported in the other output modes, with an extra structured commit path in addition to (or in place of) the empty-response fallback:
 
@@ -734,7 +734,7 @@ When the model returns an empty response and `None` is an allowed output type, t
     `output_type=None` on its own is not valid — at least one other output type must be provided alongside `None`.
 
 !!! note
-    When using [`agent.run_stream()`][pydantic_ai.Agent.run_stream] with an optional output type, an empty model response has no intermediate values to yield, so [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] produces an empty iterator in this case. Use [`get_output()`][pydantic_ai.result.StreamedRunResult.get_output] to retrieve the final `None` value instead.
+    When using [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] with an optional output type, an empty model response has no intermediate values to yield, so [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] produces an empty iterator in this case. Use [`get_output()`][pydantic_ai.result.StreamedRunResult.get_output] to retrieve the final `None` value instead.
 
 ## Streamed Results
 
@@ -852,7 +852,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-As setting an `output_type` uses the [Tool Output](#tool-output) mode by default, this will only work if the model supports streaming tool arguments. For models that don't, like Gemini, try [Native Output](#native-output) or [Prompted Output](#prompted-output) instead.
+As setting an `output_type` uses the [Tool Output](#tool-output) mode by default, this will only work if the model supports streaming tool arguments. For models that don't, try [Native Output](#native-output) or [Prompted Output](#prompted-output) instead. With Gemini 3, use Native Output; with earlier Gemini models that also use function tools, use Prompted Output.
 
 ### Streaming Model Responses
 
@@ -970,7 +970,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 If you `break` out of `stream_text()` and then leave the surrounding `async with` block, the stream is cleaned up as the context exits. Use `cancel()` when you want to stop generation immediately instead of only stopping local consumption.
 
 !!! warning "Interrupted tool calls"
-    Cancelling or breaking out of a model response stream can leave the final [`ModelResponse`][pydantic_ai.messages.ModelResponse] with incomplete tool-call arguments. Pydantic AI records the response with `state='interrupted'`, but it does not filter incomplete tool calls, synthesize tool returns, or otherwise define run-resumption behavior for those partial responses. If you are controlling the graph with [`agent.iter()`][pydantic_ai.agent.Agent.iter], stop the outer run loop as well, or check `response.state == 'interrupted'` before allowing the run to continue into tool execution.
+    Cancelling or breaking out of a model response stream can leave the final [`ModelResponse`][pydantic_ai.messages.ModelResponse] with incomplete tool-call arguments. Pydantic AI records the response with `state='interrupted'`, and when the history is reused in another run the partial tool calls are [repaired automatically](message-history.md#making-histories-provider-valid). If you are controlling the graph with [`agent.iter()`][pydantic_ai.agent.Agent.iter], stop the outer run loop as well, or check `response.state == 'interrupted'` before allowing the run to continue into tool execution.
 
 #### Cancelling with `iter`
 
@@ -1023,8 +1023,8 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
-!!! warning "Reusing interrupted history"
-    Pydantic AI does not clean up incomplete tool calls in interrupted responses. Passing interrupted history directly into another run can therefore fail or lead to retries if the model was in the middle of emitting a tool call when cancellation happened. For now, applications that reuse interrupted history should inspect `state='interrupted'` responses and apply their own policy.
+!!! note "Reusing interrupted history"
+    Interrupted history can be passed directly into another run. Before the next model request, Pydantic AI [repairs the transcript](message-history.md#making-histories-provider-valid): any tool call that never received a result — including one whose arguments were cut off mid-stream — is answered with a synthesized [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] telling the model it was interrupted.
 
 !!! info "Usage tracking for cancelled streams"
     Token usage reported by `usage` after cancellation is partial and provider-dependent. Pydantic AI stops pulling from the stream immediately, so final usage events may never arrive; some provider SDKs may also continue generation server-side after the local stream is closed. Do not rely on cancelled-stream usage for cost-critical accounting.

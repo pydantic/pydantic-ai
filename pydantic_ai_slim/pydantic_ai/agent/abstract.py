@@ -37,12 +37,12 @@ from .. import (
 )
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
-from .._template import TemplateStr
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
+from ..template import TemplateStr
 from ..tool_manager import ToolManager
 from ..tools import (
     AgentDepsT,
@@ -96,17 +96,14 @@ class AgentRetries(TypedDict, total=False):
 
     Pass to `Agent(retries=...)` as a dict to set different budgets per category.
 
-    `int` semantics differ by call site:
-
-    - At `Agent(retries=N)` construction time, an `int` sets both `tools` and `output`
-      to `N`.
-    - At `run()` / `iter()` / `override()` time, an `int` overrides only the `output`
-      budget. Tool retries cannot be overridden per run or via `override()` — passing
-      `retries={'tools': ...}` at those call sites raises a `UserError`, since the tool
-      manager is built once at agent construction.
+    A bare `int` is shorthand for setting both `tools` and `output` to that value — the same at
+    every call site (`Agent(retries=N)`, `run()`, `iter()`, `override()`, and a run-time `spec`).
+    To set only one budget, pass a dict, e.g. `retries={'tools': ...}` or `retries={'output': ...}`.
 
     Keys:
-        tools: Default number of retries for tool calls before raising an error.
+        tools: Default number of retries for tool calls before raising an error. Applies to function
+            tools and output tools; MCP tools registered through a durable-exec wrapper do not yet
+            honor it (see [#5180](https://github.com/pydantic/pydantic-ai/issues/5180)).
         output: Maximum number of retries for output validation. On the text path
             this is a global per-run budget; on the tool path it is the default
             per-tool `max_retries` for each output tool, overridable via
@@ -126,12 +123,12 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
 
     Lazily starts a background `run()` task on the first `__anext__()` and forwards its events over a memory
     object stream, ending with a single trailing `AgentRunResultEvent` that carries the run's result. Entering
-    the context manager without iterating therefore never starts a run (#6162).
+    the context manager without iterating therefore never starts a run (https://github.com/pydantic/pydantic-ai/issues/6162).
 
     This is a hand-written iterator class rather than an `async def` generator on purpose: generator cleanup
     runs by throwing `GeneratorExit` into the suspended frame during finalization, which on Python 3.10/3.11
     can resume the frame under a different `Context` and raise the `pydantic_ai.current_run_context` token
-    error (#5132). Driving cleanup explicitly through `aclose()` keeps teardown in the caller's task and
+    error (https://github.com/pydantic/pydantic-ai/issues/5132). Driving cleanup explicitly through `aclose()` keeps teardown in the caller's task and
     context.
     """
 
@@ -321,7 +318,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Resolve the agent's configured system prompts into `SystemPromptPart`s.
 
         Returns a list suitable for prepending to a `ModelRequest`. Static strings and
-        runners decorated with [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt]
+        runners decorated with [`@agent.system_prompt`][pydantic_ai.agent.Agent.system_prompt]
         are evaluated using a minimal `RunContext` built from the provided kwargs — useful
         when reconstructing a `message_history` that should carry the agent's configured
         system prompt (e.g. in UI adapters or after history compaction).
@@ -466,15 +463,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both
+                the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to
+                override just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -655,15 +651,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both
+                the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to
+                override just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -807,17 +802,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both
+                the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to
+                override just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -877,7 +871,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                         async def stream_to_final(
                             stream: AgentStream,
-                        ) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
+                        ) -> AsyncIterator[_messages.AgentStreamEvent]:
                             nonlocal final_result_event
                             async for event in stream:
                                 yield event
@@ -1063,12 +1057,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Run the agent with a user prompt in sync streaming mode.
 
         This is a convenience method that wraps [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream],
-        running all of the agent's async work on a dedicated event loop thread.
+        running all of the agent's async work on the caller's event loop while keeping context-manager and
+        iterator lifecycles in stable tasks.
         You therefore can't use this method inside async code or if there's an active event loop.
 
         The returned [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] is a synchronous
-        context manager and should be used with a `with` block so the stream and event loop thread are
-        cleaned up when you're done.
+        context manager and should be used and closed on the thread where it was created. Use a `with` block
+        so the stream is cleaned up when you're done.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then
         runs the graph until the model produces output matching the `output_type`, for example text or structured data.
@@ -1108,17 +1103,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both
+                the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to
+                override just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1276,14 +1270,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both
+                the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to
+                override just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1466,14 +1459,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both
+                the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to
+                override just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1514,9 +1506,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
             retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
-                override the output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries]
-                dict for finer control. When set, any per-run `retries` argument is ignored. Tool retries
-                cannot be overridden via `override()`.
+                override both the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries]
+                dict to override just one (e.g. `retries={'tools': 3}`).
+                When set, any per-run `retries` argument is ignored.
             spec: Optional agent spec providing defaults for override.
         """
         raise NotImplementedError
@@ -1589,6 +1581,19 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             executor: The executor to use for running sync functions.
         """
         with _utils.using_thread_executor(executor):
+            yield
+
+    @staticmethod
+    @contextmanager
+    def using_sleep(sleep_func: _agent_graph.AgentGraphSleepFunc) -> Generator[None]:
+        """Use a custom async sleep function for agent-graph delays during the context.
+
+        By default the agent graph uses `asyncio.sleep` when it needs to wait during a run (e.g. between
+        polls of a suspended/background model response). Durable execution frameworks (Temporal, Prefect,
+        DBOS, ...) register their own durable sleep here so delays survive workflow replays and don't
+        waste activity time.
+        """
+        with _agent_graph.set_agent_graph_sleep(sleep_func):
             yield
 
     @staticmethod

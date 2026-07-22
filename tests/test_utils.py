@@ -23,6 +23,7 @@ from pydantic_ai._utils import (
     PeekableAsyncStream,
     check_object_json_schema,
     dataclasses_no_defaults_repr,
+    format_inlined_text_file,
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
@@ -1017,3 +1018,12 @@ def test_dataclasses_no_defaults_repr_omits_defaults():
     _items_factory.calls = 0
     assert repr(instance) == '_HasMixedFields(required=1, flag=True, items=[])'
     assert _items_factory.calls == 0
+
+
+def test_format_inlined_text_file() -> None:
+    result = format_inlined_text_file('hello\nworld', media_type='text/plain', identifier='abc123')
+    assert result == (
+        '-----BEGIN FILE id="abc123" type="text/plain"-----\nhello\nworld\n-----END FILE id="abc123"-----'
+    )
+    assert 'text/plain' in result
+    assert 'abc123' in result

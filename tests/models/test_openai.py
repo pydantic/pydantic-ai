@@ -21,7 +21,6 @@ from pydantic_ai import (
     Agent,
     AudioUrl,
     BinaryContent,
-    CachePoint,
     DocumentUrl,
     ImageUrl,
     ModelAPIError,
@@ -245,7 +244,12 @@ async def test_request_simple_success(allow_model_requests: None):
 async def test_request_simple_usage(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
-        usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
+        usage=CompletionUsage(
+            completion_tokens=1,
+            prompt_tokens=2,
+            total_tokens=3,
+            prompt_tokens_details=PromptTokensDetails(cached_tokens=1, cache_write_tokens=1),
+        ),
     )
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -257,6 +261,8 @@ async def test_request_simple_usage(allow_model_requests: None):
         RunUsage(
             requests=1,
             input_tokens=2,
+            cache_write_tokens=1,
+            cache_read_tokens=1,
             output_tokens=1,
         )
     )
@@ -591,13 +597,12 @@ async def test_stream_text(allow_model_requests: None):
 def test_run_stream_sync_streams_real_model(allow_model_requests: None, openai_api_key: str):
     """`run_stream_sync` must stream and complete against a real, recorded streaming model.
 
-    End-to-end coverage for the portal-based implementation (#3716, refs #3714, #5975): the whole
-    run -- including a tool call, so the agent graph crosses node boundaries -- executes on a single
-    dedicated event-loop thread, and text streams incrementally before `get_output()` returns the
-    final result. This path can't be exercised with `TestModel` or a mock client (no real async
-    stream), so it's a VCR test.
+    End-to-end coverage for the task-stable implementation (#3716, refs #3714, #5975): the whole run,
+    including a tool call so the agent graph crosses node boundaries, keeps each async lifecycle in one
+    task, and text streams incrementally before `get_output()` returns the final result. This path can't
+    be exercised with `TestModel` or a mock client because they have no real async stream, so it's a VCR test.
 
-    Note: the pre-portal implementation pumped the stream via repeated
+    Note: the previous task-unstable implementation pumped the stream via repeated
     `loop.run_until_complete(anext(...))` calls, each in a different asyncio task. That could raise
     `RuntimeError: Attempted to exit cancel scope in a different task than it was entered in`, but the
     straddle is timing-dependent and does not reliably reproduce against a fixed cassette (or even a
@@ -4431,38 +4436,6 @@ async def test_openai_model_cerebras_provider_harmony(allow_model_requests: None
     assert result.output == snapshot('The capital of France is **Paris**.')
 
 
-async def test_cache_point_filtering(allow_model_requests: None):
-    """Test that CachePoint is filtered out in OpenAI Chat Completions requests."""
-    c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
-    mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-
-    # Test the instance method directly to trigger line 864
-    msg = await m._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
-
-    # CachePoint should be filtered out, only text content should remain
-    assert msg['role'] == 'user'
-    assert len(msg['content']) == 2  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
-
-
-async def test_cache_point_filtering_responses_model():
-    """Test that CachePoint is filtered out in OpenAI Responses API requests."""
-    m = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(api_key='test-key'))
-
-    # Test the instance method directly to ensure CachePoint filtering
-    msg = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
-        UserPromptPart(content=['text before', CachePoint(), 'text after'])
-    )
-
-    # CachePoint should be filtered out, only text content should remain
-    assert msg['role'] == 'user'
-    assert len(msg['content']) == 2
-    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
-
-
 async def test_openai_custom_reasoning_field_sending_back_in_thinking_tags(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage.model_construct(content='response', reasoning_content='reasoning', role='assistant')
@@ -4947,10 +4920,10 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 },
                 'provider_response_id': None,
                 'finish_reason': 'content_filter',
+                'state': 'complete',
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
-                'state': 'complete',
             }
         ]
     )
@@ -5431,6 +5404,67 @@ def test_transformer_adds_properties_to_object_schemas():
     result = OpenAIJsonSchemaTransformer(schema, strict=None).walk()
 
     assert result['properties'] == {}
+
+
+@pytest.mark.parametrize(
+    'array_schema',
+    [
+        pytest.param({'type': 'array', 'items': {}}, id='empty-items'),
+        pytest.param({'type': 'array'}, id='missing-items'),
+        pytest.param({'type': 'array', 'items': True}, id='boolean-items'),
+        pytest.param({'type': 'array', 'items': {'description': 'values'}}, id='metadata-only-items'),
+    ],
+)
+def test_transformer_untyped_array_not_strict_compatible(array_schema: dict[str, Any]):
+    """An untyped array isn't strict-compatible.
+
+    This covers a bare `list` (`items: {}`), no `items` key at all, a boolean `items: true`
+    (JSON Schema shape for `list[Any]`), and a metadata-only `items` node with no type-bearing
+    keyword. OpenAI strict mode requires the `items` schema to have a `type`, so with `strict=None`
+    we must infer that the schema can't be sent in strict mode.
+    See https://github.com/pydantic/pydantic-ai/issues/4425
+    """
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'items': array_schema},
+        'required': ['items'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is False
+
+
+@pytest.mark.parametrize(
+    'items_schema',
+    [
+        pytest.param({'type': 'string'}, id='type'),
+        pytest.param({'$ref': '#/$defs/Foo'}, id='ref'),
+        pytest.param({'anyOf': [{'type': 'string'}, {'type': 'integer'}]}, id='anyOf'),
+    ],
+)
+def test_transformer_typed_array_strict_compatible(items_schema: dict[str, Any]):
+    """An array whose `items` carries a type-bearing keyword stays strict-compatible."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'values': {'type': 'array', 'items': items_schema}},
+        'required': ['values'],
+        '$defs': {'Foo': {'type': 'object', 'properties': {'x': {'type': 'string'}}, 'required': ['x']}},
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is True
+
+
+def test_transformer_untyped_array_explicit_strict_raises():
+    """With `strict=True` explicitly requested, an untyped array can't be repaired, so we raise a
+    clear error instead of letting OpenAI reject the request with an opaque 400."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'items': {'type': 'array', 'items': {}}},
+        'required': ['items'],
+    }
+    with pytest.raises(UserError, match='OpenAI strict mode requires array items to have a type'):
+        OpenAIJsonSchemaTransformer(schema, strict=True).walk()
 
 
 def chunk_with_usage(

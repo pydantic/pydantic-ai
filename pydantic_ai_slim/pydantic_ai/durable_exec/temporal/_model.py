@@ -15,27 +15,36 @@ from pydantic_ai import ModelMessage, ModelResponse, models
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, infer_model_profile, parse_model_id
-from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
+from pydantic_ai.models import (
+    CompletedStreamedResponse,
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    infer_model_profile,
+    parse_model_id,
+)
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+from ._durability import _RequestParams  # pyright: ignore[reportPrivateUsage]
 from ._run_context import TemporalRunContext, deserialize_run_context
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
+__all__ = [
+    'TemporalModel',
+    'TemporalProviderFactory',
+]
+
 
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
-class _RequestParams:
-    messages: list[ModelMessage]
-    # `model_settings` can't be a `ModelSettings` because Temporal would end up dropping fields only defined on its subclasses.
-    model_settings: dict[str, Any] | None
-    model_request_parameters: ModelRequestParameters
-    serialized_run_context: Any
+class _CancelParams:
+    response: ModelResponse
     model_id: str | None = None
 
 
@@ -125,9 +134,22 @@ class TemporalModel(WrapperModel):
             request_stream_activity
         )
 
+        async def cancel_suspended_response_activity(params: _CancelParams) -> None:
+            # Resolve the model that produced the response (mirrors `request_activity`'s use of
+            # `model_id`) so a multi-model registry cancels on the right client. The teardown is a
+            # raw HTTP call to the provider, so it must run in an activity rather than the workflow
+            # sandbox. No `deps`/`run_context` is needed: cancellation targets an already-produced
+            # response by `model_id`, and the provider-factory inference path isn't reachable here.
+            model_for_request = self._resolve_model_id(params.model_id)
+            await model_for_request.cancel_suspended_response(params.response)
+
+        self.cancel_suspended_response_activity = activity.defn(
+            name=f'{activity_name_prefix}__model_cancel_suspended_response'
+        )(cancel_suspended_response_activity)
+
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
-        return [self.request_activity, self.request_stream_activity]
+        return [self.request_activity, self.request_stream_activity, self.cancel_suspended_response_activity]
 
     async def request(
         self,
@@ -210,7 +232,23 @@ class TemporalModel(WrapperModel):
             ],
             **activity_config,
         )
-        yield CompletedStreamedResponse(model_request_parameters, response)
+        yield CompletedStreamedResponse(response, model_request_parameters=model_request_parameters)
+
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        if not workflow.in_workflow():
+            return await super().cancel_suspended_response(response)
+
+        model_id = self._current_model_id()
+        model_name = model_id or self.model_id
+        activity_config: ActivityConfig = {
+            'summary': f'cancel suspended response: {model_name}',
+            **self.activity_config,
+        }
+        await workflow.execute_activity(
+            activity=self.cancel_suspended_response_activity,
+            args=[_CancelParams(response=response, model_id=model_id)],
+            **activity_config,
+        )
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
@@ -255,7 +293,7 @@ class TemporalModel(WrapperModel):
         if isinstance(model, Model):
             return model
 
-        # For strings and None, use _get_model_id + _resolve_model
+        # For strings and None, use _get_model_id + _resolve_model_id
         model_id = self._get_model_id(model)
         return self._resolve_model_id(model_id)
 

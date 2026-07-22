@@ -66,6 +66,7 @@ class InstrumentationSettings:
     tracer: Tracer = field(repr=False)
     include_binary_content: bool = True
     include_content: bool = True
+    include_model_request_parameters: bool = True
     version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = True
 
@@ -76,6 +77,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
+        include_model_request_parameters: bool = True,
         version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION,
         use_aggregated_usage_attribute_names: bool = True,
     ):
@@ -91,6 +93,13 @@ class InstrumentationSettings:
             include_binary_content: Whether to include binary content in the instrumentation events.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
+            include_model_request_parameters: Whether to emit the `model_request_parameters` span attribute on
+                model request spans. This serializes the full `ModelRequestParameters` (output configuration
+                and every tool definition, including fields that are not sent to the model such as tool
+                `metadata` and, when not requested, `return_schema`). Defaults to `True`. Set to `False` to
+                omit it entirely, which is useful when large tool output schemas make the attribute big enough
+                to strain span export. The OpenTelemetry `gen_ai.tool.definitions` attribute (tool name,
+                description, and parameters) is always emitted regardless of this setting.
             version: Version of the data format. This is unrelated to the Pydantic AI package version.
                 Defaults to version 5. Versions 2, 3, and 4 are deprecated compatibility formats
                 and emit a `PydanticAIDeprecationWarning` when used.
@@ -122,6 +131,7 @@ class InstrumentationSettings:
         self.meter = meter_provider.get_meter(scope_name, __version__)
         self.include_binary_content = include_binary_content
         self.include_content = include_content
+        self.include_model_request_parameters = include_model_request_parameters
 
         if version not in (2, 3, 4, 5):
             raise ValueError('Instrumentation version must be one of 2, 3, 4, or 5.')
@@ -217,7 +227,11 @@ class InstrumentationSettings:
                         'gen_ai.input.messages': {'type': 'array'},
                         'gen_ai.output.messages': {'type': 'array'},
                         **({'gen_ai.system_instructions': {'type': 'array'}} if system_instructions_attributes else {}),
-                        'model_request_parameters': {'type': 'object'},
+                        **(
+                            {'model_request_parameters': {'type': 'object'}}
+                            if self.include_model_request_parameters
+                            else {}
+                        ),
                     },
                 }
             ).decode(),

@@ -161,6 +161,14 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
+        # Announce any tool call whose args were streamed but never made available: `tool-input-available`
+        # normally fires at the call/result event, but a mid-stream error aborts the run before either,
+        # leaving the client stuck in `input-streaming`. The base class synthesizes the open part's
+        # `PartEndEvent` on error, which `handle_tool_call_end` stashes here, so flush whatever remains.
+        for part in self._streamed_call_parts.values():
+            yield self._tool_input_available_chunk(part)
+        self._streamed_call_parts.clear()
+
         # No `MessageMetadataChunk` here: an errored run has no `AgentRunResultEvent` to source
         # `timestamp` from, so any partial assistant message rendered on the client is persisted
         # without one. A future opt-in that broadens the roundtrip should revisit this path.
@@ -268,12 +276,27 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseChunk]:
         # Stash the streamed part. `_handle_tool_call` (post-validation) takes over emission
         # in the normal flow and pops the stash. If the agent raises before the call event
-        # fires (e.g. output-tool `UnexpectedModelBehavior` with no `final_result`), the
-        # stash survives and `_handle_tool_result` uses it to backfill `tool-input-available`
-        # before the synthesized `tool-output-error`.
+        # fires (e.g. output-tool `UnexpectedModelBehavior` with no `final_result`, or a
+        # mid-stream error while the call is still streaming), the stash survives and the
+        # `tool-input-available` is backfilled by `_handle_tool_result` or, for an interrupted
+        # run with no result event, flushed by `on_error`.
         self._streamed_call_parts[part.tool_call_id] = part
         return
         yield  # pragma: no cover  # mark this as an async generator
+
+    def _tool_input_available_chunk(self, part: ToolCallPart) -> ToolInputAvailableChunk:
+        """Build the `tool-input-available` chunk announcing a streamed tool call's input."""
+        return ToolInputAvailableChunk(
+            tool_call_id=part.tool_call_id,
+            tool_name=part.tool_name,
+            input=part.args_as_dict(),
+            provider_metadata=dump_provider_metadata(
+                id=part.id,
+                provider_name=part.provider_name,
+                provider_details=part.provider_details,
+                tool_kind=part.tool_kind,
+            ),
+        )
 
     async def handle_function_tool_call(self, event: FunctionToolCallEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_call(event):
@@ -306,17 +329,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             self._invalidated_tool_calls[part.tool_call_id] = part
             return
 
-        yield ToolInputAvailableChunk(
-            tool_call_id=part.tool_call_id,
-            tool_name=part.tool_name,
-            input=part.args_as_dict(),
-            provider_metadata=dump_provider_metadata(
-                id=part.id,
-                provider_name=part.provider_name,
-                provider_details=part.provider_details,
-                tool_kind=part.tool_kind,
-            ),
-        )
+        yield self._tool_input_available_chunk(part)
 
     async def handle_builtin_tool_call_end(self, part: NativeToolCallPart) -> AsyncIterator[BaseChunk]:
         yield ToolInputAvailableChunk(
@@ -338,6 +351,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         elif part.outcome == 'failed':
             yield ToolOutputErrorChunk(tool_call_id=part.tool_call_id, error_text=part.model_response_str())
         else:
+            # `'success'` and `'interrupted'` both render as neutral tool output. Only `'failed'` is
+            # an error; `'interrupted'` (a call cut off before it produced a result) must never be.
             yield ToolOutputAvailableChunk(
                 tool_call_id=part.tool_call_id,
                 output=tool_return_output(part),
@@ -371,17 +386,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # `invalidated_part is not None` means `_handle_tool_call` deliberately suppressed
         # the chunk for the v6 invalidated path — don't backfill in that case.
         if streamed_part is not None and invalidated_part is None:
-            yield ToolInputAvailableChunk(
-                tool_call_id=tool_call_id,
-                tool_name=streamed_part.tool_name,
-                input=streamed_part.args_as_dict(),
-                provider_metadata=dump_provider_metadata(
-                    id=streamed_part.id,
-                    provider_name=streamed_part.provider_name,
-                    provider_details=streamed_part.provider_details,
-                    tool_kind=streamed_part.tool_kind,
-                ),
-            )
+            yield self._tool_input_available_chunk(streamed_part)
 
         if self.sdk_version >= 6 and isinstance(part, ToolReturnPart) and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
@@ -409,6 +414,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         elif isinstance(part, ToolReturnPart) and part.outcome == 'failed':
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response_str())
         else:
+            # `'success'` and `'interrupted'` both render as neutral tool output. Only `'failed'` is
+            # an error; a synthesized `'interrupted'` return (from message-history repair) must never
+            # be surfaced as one — its content string carries the interruption message as the output.
             yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=tool_return_output(part))
 
         # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
