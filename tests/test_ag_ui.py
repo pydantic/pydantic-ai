@@ -3313,6 +3313,24 @@ async def test_adapter_run_stream_native_capabilities_kwarg_merged_into_run() ->
     assert seen_tool_defs, 'PrepareTools capability passed via run_stream_native(capabilities=...) should fire'
 
 
+async def test_adapter_explicit_run_id_propagates() -> None:
+    """Passing `run_id` explicitly to `run_stream_native` stamps agent messages and the run result."""
+    captured_results: list[AgentRunResult[Any]] = []
+
+    agent = Agent(TestModel())
+    run_input = create_input(UserMessage(id='msg0', content='Hello!'), thread_id='thread-abc')
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
+
+    async for _ in adapter.transform_stream(
+        adapter.run_stream_native(run_id='run-from-adapter'),
+        on_complete=captured_results.append,
+    ):
+        pass
+
+    assert captured_results[0].run_id == 'run-from-adapter'
+    assert all(m.run_id == 'run-from-adapter' for m in captured_results[0].new_messages())
+
+
 async def test_callback_async() -> None:
     """Test that async callbacks work correctly."""
 

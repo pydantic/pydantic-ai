@@ -14,7 +14,7 @@ To support these use cases, Pydantic AI provides the concept of deferred tools, 
 When the model calls a deferred tool, there are two ways to resolve it:
 
 - **Resolve it inline**, using a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] [capability](capabilities/overview.md) with a handler that resolves some or all of the pending calls. The agent run continues in a single call without needing to end and restart — use this when the resolver (e.g. an approval gate, an external service client) lives in the same process as the agent. See [Resolving deferred calls with a handler](#resolving-deferred-calls-with-a-handler).
-- **End the run** with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object containing information about the deferred tool calls; the caller gathers approvals/results and then starts a new agent run with the original run's [message history](message-history.md) plus a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object. Use this when the resolver lives outside the agent process — e.g. a UI adapter that surfaces pending calls to a user and starts a follow-up run once it has their response.
+- **End the run** with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object containing information about the deferred tool calls; the caller gathers approvals/results and then starts a new agent run with the original run's [message history](message-history.md) plus a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object. That follow-up is a separate agent run with its own [`run_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id) (do not reuse the paused run's); keep pause/resume correlation via `conversation_id`. Use this when the resolver lives outside the agent process — e.g. a UI adapter that surfaces pending calls to a user and starts a follow-up run once it has their response.
 
 The two flows compose: a handler can resolve a subset of calls and let the rest bubble up as `DeferredToolRequests` output for an outer caller to handle.
 
@@ -507,4 +507,4 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 - [Function Tools](tools.md) - Basic tool concepts and registration
 - [Advanced Tool Features](tools-advanced.md) - Custom schemas, dynamic tools, and execution details
 - [Toolsets](toolsets.md) - Managing collections of tools, including `ExternalToolset` for external tools
-- [Message History](message-history.md) - Understanding how to work with message history for deferred tools
+- [Message History](message-history.md) - Working with message history for deferred tools, including [`run_id` / `conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id)

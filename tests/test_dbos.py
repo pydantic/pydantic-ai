@@ -1409,6 +1409,16 @@ def toggle(ctx: RunContext[ToggleableDeps]):
 dynamic_dbos_agent = DBOSAgent(dynamic_agent)  # pyright: ignore[reportDeprecated]
 
 
+def test_dbos_agent_explicit_run_id(dbos: DBOS):
+    """A pre-minted `run_id=` is preserved through DBOSAgent.run_sync."""
+    agent = Agent(TestModel(custom_output_text='ok'), name='run_id_dbos_agent')
+    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    result = dbos_agent.run_sync('Hello', run_id='run-from-dbos')
+    assert result.run_id == 'run-from-dbos'
+    assert all(m.run_id == 'run-from-dbos' for m in result.all_messages())
+
+
 def test_dynamic_toolset(dbos: DBOS):
     weather_deps = ToggleableDeps('weather')
 
