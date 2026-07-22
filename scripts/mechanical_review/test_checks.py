@@ -32,9 +32,9 @@ class TestDenylist(unittest.TestCase):
             shutil.copy(TESTDATA / 'bad_denylist.py', target)
             findings = denylist.run(_ctx(repo))
             rules = {f.rule_id for f in findings}
-            self.assertIn('denylist.load_mcp_servers', rules)
-            self.assertIn('denylist.BuiltinToolCallPart', rules)
-            self.assertIn('denylist.ag_ui_import', rules)
+            self.assertTrue('denylist.load_mcp_servers' in rules)
+            self.assertTrue('denylist.BuiltinToolCallPart' in rules)
+            self.assertTrue('denylist.ag_ui_import' in rules)
             errors = [f for f in findings if f.severity == Severity.ERROR]
             self.assertTrue(errors, 'expected error severity for production use')
 
@@ -48,10 +48,10 @@ class TestPatterns(unittest.TestCase):
             shutil.copy(TESTDATA / 'bad_patterns.py', target)
             findings = patterns.run(_ctx(repo))
             rules = {f.rule_id for f in findings}
-            self.assertIn('patterns.bare_type_ignore', rules)
-            self.assertIn('patterns.line_number_ref', rules)
-            self.assertIn('patterns.empty_snapshot', rules)
-            self.assertIn('patterns.importorskip_in_function', rules)
+            self.assertTrue('patterns.bare_type_ignore' in rules)
+            self.assertTrue('patterns.line_number_ref' in rules)
+            self.assertTrue('patterns.empty_snapshot' in rules)
+            self.assertTrue('patterns.importorskip_in_function' in rules)
 
 
 class TestCassettes(unittest.TestCase):
@@ -75,8 +75,8 @@ class TestDocsRefs(unittest.TestCase):
             shutil.copy(TESTDATA / 'docs_removed.md', target)
             findings = docs_refs.run(_ctx(repo))
             rules = {f.rule_id for f in findings}
-            self.assertIn('docs_refs.load_mcp_servers', rules)
-            self.assertIn('docs_refs.to_ag_ui', rules)
+            self.assertTrue('docs_refs.load_mcp_servers' in rules)
+            self.assertTrue('docs_refs.to_ag_ui' in rules)
 
 
 class TestRunnerSmoke(unittest.TestCase):
