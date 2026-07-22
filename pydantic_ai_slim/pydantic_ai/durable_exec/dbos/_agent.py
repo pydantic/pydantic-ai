@@ -58,7 +58,7 @@ DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 - With the capability, call `agent.run()` inside a `@DBOS.workflow`; the wrapper did this automatically.
 - `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[DBOSDurability(...)])`.
 - `name=` → set `name=` on `Agent`, or `name=` on `DBOSDurability`.
-- `event_stream_handler=` → pass `event_stream_handler=` to `DBOSDurability`; it runs inside steps, exactly like before.
+- `event_stream_handler=` → pass `event_stream_handler=` to `DBOSDurability`; model events are still handled live inside model-request steps, and each tool event now runs in its own checkpointed step (the wrapper called it in workflow code).
 - `mcp_step_config=` → set `mcp_step_config=` on `DBOSDurability`.
 - `model_step_config=` → set `model_step_config=` on `DBOSDurability`.
 - `parallel_execution_mode=` → set `parallel_execution_mode=` on `DBOSDurability`.

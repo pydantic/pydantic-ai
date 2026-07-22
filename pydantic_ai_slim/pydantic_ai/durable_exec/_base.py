@@ -149,10 +149,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
         """The handler in-boundary event delivery targets for the current run.
 
-        Engines may override to consult per-run state — e.g. DBOS routes the
-        `event_stream_handler` recorded in a wrapper-era workflow's inputs through
-        the same steps as a constructor handler, so recovery replays the recorded
-        step sequence.
+        Engines may override to consult per-run state — e.g. DBOS honors the
+        `event_stream_handler` recorded in a wrapper-era workflow's inputs, delivering
+        it exactly the way the wrapper did so recovery replays the recorded step
+        sequence.
         """
         return self._event_stream_handler
 

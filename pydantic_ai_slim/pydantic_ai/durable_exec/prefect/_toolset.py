@@ -5,11 +5,22 @@ from collections.abc import Mapping
 from typing import Any, Literal, cast
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool
+from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._types import TaskConfig
+
+
+class EnqueueGuard(list[PendingMessage]):
+    """Replaces `ctx.pending_messages` inside task-wrapped tools, where enqueueing can't be supported."""
+
+    def append(self, pending: PendingMessage) -> None:
+        raise UserError(
+            '`ctx.enqueue()` is not supported inside Prefect task-wrapped tools because task-cache replay '
+            'would drop the enqueued messages. Enqueue messages from flow-level code instead.'
+        )
 
 
 def with_non_retryable_errors(config: TaskConfig) -> TaskConfig:

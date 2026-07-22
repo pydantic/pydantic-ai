@@ -117,16 +117,28 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._event_stream_handler_step: Any = None
         self._legacy_run_workflow: Any = None
         self._legacy_run_sync_workflow: Any = None
+        self._init_legacy_context_vars()
+
+    def _init_legacy_context_vars(self) -> None:
         # A wrapper-era workflow recorded `event_stream_handler=` as a workflow input; the legacy
-        # workflows stash it here so it's delivered through the same steps as a constructor handler.
+        # workflows stash it here so the model-request steps deliver model events to it live,
+        # exactly like the wrapper's `ContextVar`-stashed per-run handler.
         self._legacy_run_event_stream_handler: ContextVar[EventStreamHandler[AgentDepsT] | None] = ContextVar(
             '_legacy_run_event_stream_handler', default=None
         )
+        # Whether the current run entered through a legacy `{name}.run`/`{name}.run_sync` workflow,
+        # whose recorded step sequence must be preserved on recovery.
+        self._in_legacy_workflow: ContextVar[bool] = ContextVar('_in_legacy_workflow', default=False)
 
     def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
         return self._legacy_run_event_stream_handler.get() or self._event_stream_handler
 
     def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        # `for_agent` shallow-copies the user's instance, so without fresh `ContextVar`s here,
+        # one capability instance attached to several agents would leak one agent's per-run
+        # legacy state into another's runs.
+        self._init_legacy_context_vars()
+
         # --- Model request steps ---
 
         @DBOS.step(name=f'{self.name}__model.request', **self._model_step_config)
@@ -175,10 +187,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
         self._cancel_suspended_response_step = cancel_suspended_response_step
 
-        # Also registered under `register_legacy_workflows`: a recovered wrapper-era workflow's
-        # recorded inputs may carry a per-run handler, which must run inside this step for the
-        # recorded step sequence to replay.
-        if self._event_stream_handler is not None or self._register_legacy_workflows:
+        if self._event_stream_handler is not None:
 
             @DBOS.step(name=f'{self.name}__event_stream_handler', **self._event_stream_handler_step_config)
             async def event_stream_handler_step(
@@ -194,18 +203,23 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._register_toolsets(agent)
 
         if self._register_legacy_workflows:
-            # `DBOSAgent.run` recorded `event_stream_handler=` as a workflow input and ran it inside
-            # the `__event_stream_handler` step; a recorded handler is routed the same way so
-            # recovery replays the recorded step sequence instead of re-running the handler (and its
-            # side effects) at graph level.
+            # A wrapper-era workflow recorded only model and MCP steps: `DBOSAgent` delivered model
+            # events to the handler live inside the `__model.request_stream` step, and graph-level
+            # events with a *direct* workflow-level handler call that consumed no step at all.
+            # Legacy runs flag themselves via `_in_legacy_workflow` so `_dispatch_event_stream_event`
+            # mirrors that delivery — routing graph events through the `__event_stream_handler` step
+            # would insert step ids the recording doesn't have and fail recovery with
+            # `DBOSUnexpectedStepError`.
 
             @DBOS.workflow(name=f'{self.name}.run')
             async def legacy_run_workflow(*args: Any, **kwargs: Any) -> AgentRunResult[Any]:
                 handler = kwargs.pop('event_stream_handler', None)
+                legacy_token = self._in_legacy_workflow.set(True)
                 token = self._legacy_run_event_stream_handler.set(handler) if handler is not None else None
                 try:
                     return await agent.run(*args, **kwargs)
                 finally:
+                    self._in_legacy_workflow.reset(legacy_token)
                     if token is not None:
                         self._legacy_run_event_stream_handler.reset(token)
 
@@ -214,10 +228,12 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             @DBOS.workflow(name=f'{self.name}.run_sync')
             def legacy_run_sync_workflow(*args: Any, **kwargs: Any) -> AgentRunResult[Any]:
                 handler = kwargs.pop('event_stream_handler', None)
+                legacy_token = self._in_legacy_workflow.set(True)
                 token = self._legacy_run_event_stream_handler.set(handler) if handler is not None else None
                 try:
                     return agent.run_sync(*args, **kwargs)
                 finally:
+                    self._in_legacy_workflow.reset(legacy_token)
                     if token is not None:
                         self._legacy_run_event_stream_handler.reset(token)
 
@@ -228,6 +244,14 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         return DBOS.workflow_id is not None and DBOS.step_id is None
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        if self._in_legacy_workflow.get():
+            # Wrapper-era recordings contain no `__event_stream_handler` steps (the wrapper called
+            # the handler directly in workflow code), so a legacy run must do the same to keep the
+            # recorded step sequence replayable.
+            handler = self._effective_event_stream_handler()
+            assert handler is not None
+            await handler(ctx, self._single_event_stream(event))
+            return
         # Route the handler through a DBOS step so its side effects are checkpointed and
         # don't re-run when the workflow recovers.
         assert self._event_stream_handler_step is not None

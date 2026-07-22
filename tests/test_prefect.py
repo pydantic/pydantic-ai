@@ -1462,8 +1462,15 @@ def test_cache_policy_keeps_user_dataclass_fields():
         timestamp: str
         run_id: str
         conversation_id: str
+        tool_call_id: str
 
-    deps = CacheDeps(timestamp='user-time', run_id='user-run', conversation_id='user-conversation')
+    deps = CacheDeps(
+        timestamp='user-time',
+        run_id='user-run',
+        conversation_id='user-conversation',
+        # A user field whose value happens to look framework-generated must not be normalized.
+        tool_call_id='pyd_ai_user_value',
+    )
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
     projected = _strip_cache_excluded_fields(_replace_run_context({'ctx': ctx}))
@@ -1472,6 +1479,7 @@ def test_cache_policy_keeps_user_dataclass_fields():
         'timestamp': 'user-time',
         'run_id': 'user-run',
         'conversation_id': 'user-conversation',
+        'tool_call_id': 'pyd_ai_user_value',
     }
 
 
@@ -2619,6 +2627,32 @@ async def test_prefect_tool_model_retry_is_not_retried_by_task_engine() -> None:
         TestModel(),
         name='prefect_model_retry',
         tools=[retry_once],
+        capabilities=[PrefectDurability(tool_task_config={'retries': 3})],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('run')).output
+
+    await run_agent()
+    assert calls == 2
+
+
+async def test_prefect_dynamic_tool_model_retry_is_not_retried_by_task_engine() -> None:
+    """`ModelRetry` from a `DynamicToolset` tool crosses the task as a value, like static tools."""
+    calls = 0
+
+    async def retry_once() -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ModelRetry('again')
+        return 'done'
+
+    agent = Agent(
+        TestModel(),
+        name='prefect_dynamic_model_retry',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([retry_once]), id='dyn_retry')],
         capabilities=[PrefectDurability(tool_task_config={'retries': 3})],
     )
 

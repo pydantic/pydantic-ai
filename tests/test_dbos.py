@@ -64,6 +64,7 @@ try:
         DBOSModel,
         StepConfig,
     )
+    from pydantic_ai.durable_exec.dbos._dynamic_toolset import dbosify_dynamic_toolset
     from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
     from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
@@ -2169,7 +2170,7 @@ async def _legacy_workflow_event_handler(ctx: RunContext[Any], stream: AsyncIter
 
 def test_dbos_durability_legacy_run_sync_workflow(dbos: DBOS) -> None:
     """The opt-in legacy `run_sync` workflow executes the agent like `DBOSAgent.run_sync` did,
-    including routing a recorded per-run `event_stream_handler` input through steps."""
+    including honoring a recorded per-run `event_stream_handler` input."""
     _legacy_handler_events.clear()
     agent = Agent(
         TestModel(custom_output_text='legacy sync'),
@@ -2183,12 +2184,14 @@ def test_dbos_durability_legacy_run_sync_workflow(dbos: DBOS) -> None:
     assert _legacy_handler_events
 
 
-async def test_dbos_durability_legacy_workflow_routes_event_stream_handler_through_steps(dbos: DBOS) -> None:
-    """A per-run `event_stream_handler` recorded in a wrapper-era workflow's inputs runs inside steps.
+async def test_dbos_durability_legacy_workflow_matches_wrapper_step_sequence(dbos: DBOS) -> None:
+    """A legacy run delivers handler events exactly the way `DBOSAgent` did, so recovery replays.
 
-    `DBOSAgent.run` recorded the handler as a workflow input and invoked it inside the
-    `__event_stream_handler` step; the compat workflow must replay that recorded step
-    sequence rather than re-running the handler (and its side effects) at graph level.
+    Wrapper-era recordings contain only model and MCP steps: model events reached the handler
+    live inside the `__model.request_stream` step, and graph-level events through a direct
+    workflow-level call that consumed no step. Dispatching graph events through the capability's
+    `__event_stream_handler` step would insert step ids the recording doesn't have and fail
+    recovery with `DBOSUnexpectedStepError`.
     """
     _legacy_handler_events.clear()
 
@@ -2211,12 +2214,15 @@ async def test_dbos_durability_legacy_workflow_routes_event_stream_handler_throu
 
     events = [event for event, _ in _legacy_handler_events]
     assert events
-    assert all(in_step for _, in_step in _legacy_handler_events)
     assert sum(isinstance(event, FunctionToolCallEvent) for event in events) == 1
+    # Model events arrive live inside the model-request step; graph events at workflow level.
+    assert all(in_step for event, in_step in _legacy_handler_events if isinstance(event, PartStartEvent))
+    assert not any(in_step for event, in_step in _legacy_handler_events if isinstance(event, FunctionToolCallEvent))
 
     steps = await dbos.list_workflow_steps_async(wfid)
     step_names = [step['function_name'] for step in steps]
-    assert 'legacy_workflow_handler__event_stream_handler' in step_names
+    assert 'legacy_workflow_handler__model.request_stream' in step_names
+    assert 'legacy_workflow_handler__event_stream_handler' not in step_names
 
 
 async def test_unwrap_recorded_tool_call_result_handles_both_generations() -> None:
@@ -2272,6 +2278,38 @@ async def test_dbos_mcp_model_retry_crosses_step_without_engine_retries(
     async def run_workflow() -> int:
         with pytest.raises(ModelRetry, match='try again'):
             await durable.call_tool('boom', {}, run_context, tool)
+        return calls
+
+    assert await run_workflow() == 1
+
+
+async def test_dbos_dynamic_tool_model_retry_crosses_step_without_engine_retries(dbos: DBOS) -> None:
+    """`ModelRetry` from a `DynamicToolset` tool crosses the step as a value, like MCP and function tools."""
+    calls = 0
+
+    async def raise_model_retry() -> str:
+        nonlocal calls
+        calls += 1
+        raise ModelRetry('try again')
+
+    dynamic = DynamicToolset[None](lambda ctx: FunctionToolset([raise_model_retry]), id='retry_dynamic')
+    durable = dbosify_dynamic_toolset(
+        dynamic,
+        step_name_prefix='retry_dynamic_agent',
+        step_config=StepConfig(retries_allowed=True, max_attempts=3),
+    )
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='raise_model_retry'),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> int:
+        with pytest.raises(ModelRetry, match='try again'):
+            await durable.call_tool('raise_model_retry', {}, run_context, tool)
         return calls
 
     assert await run_workflow() == 1
