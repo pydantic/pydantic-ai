@@ -588,7 +588,8 @@ class OpenAIRealtimeModel(RealtimeModel):
                 )
         return config
 
-    def _realtime_url(self) -> str:
+    def _realtime_url(self, model_settings: OpenAIRealtimeModelSettings | None = None) -> str:
+        del model_settings
         base_url = self._provider.base_url
         if self._gateway:
             base_url = f'{base_url.rstrip("/")}/v1'
@@ -602,6 +603,10 @@ class OpenAIRealtimeModel(RealtimeModel):
         api_key = await self._provider.client._refresh_api_key()  # pyright: ignore[reportPrivateUsage]
         return {'Authorization': f'Bearer {api_key}'}
 
+    def _connection_class(self, model_settings: OpenAIRealtimeModelSettings) -> type[OpenAIRealtimeConnection]:
+        del model_settings
+        return OpenAIRealtimeConnection
+
     @asynccontextmanager
     async def connect(
         self,
@@ -610,13 +615,13 @@ class OpenAIRealtimeModel(RealtimeModel):
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
-        url = self._realtime_url()
+        settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        url = self._realtime_url(settings)
         headers = await self._auth_headers()
         # Propagate trace context over the handshake so a proxy (e.g. the Pydantic AI Gateway) can nest
         # its realtime spans under this session's trace; the raw WebSocket bypasses the provider's
         # `httpx` client, which would otherwise inject it.
         inject_trace_context(headers)
-        settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         instructions = get_instructions(messages) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
@@ -654,7 +659,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             # re-seed: server state is lost on drop and a `ReconnectedEvent` starts a fresh turn.
             for item in await seed_items(messages, profile=self.profile, provider_name=self.system):
                 await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
-            yield OpenAIRealtimeConnection(
+            yield self._connection_class(settings)(
                 ws,
                 dial=dial,
                 reconnect=self.reconnect,

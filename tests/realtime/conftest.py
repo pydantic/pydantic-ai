@@ -140,3 +140,16 @@ def azure_ws_cassette(
     endpoint, api_key = azure_config
     with _ws_cassette(request, 'openai') as cassette:
         yield AzureProvider(azure_endpoint=f'{endpoint.rstrip("/")}/openai/v1', api_key=api_key), cassette
+
+
+@pytest.fixture
+def azure_voice_live_ws_cassette(
+    request: pytest.FixtureRequest, azure_config: tuple[str, str]
+) -> Iterator[tuple[AzureProvider, RealtimeCassette]]:
+    """An `AzureProvider` whose Azure AI Voice Live WebSocket is cassette-backed."""
+    if not azure_imports_successful():  # pragma: no cover
+        pytest.skip('openai / websockets not installed')
+    endpoint, api_key = azure_config
+    endpoint = endpoint.partition('/openai/')[0].rstrip('/')
+    with _ws_cassette(request, 'openai') as cassette:
+        yield AzureProvider(azure_endpoint=endpoint, api_version='2026-04-10', api_key=api_key), cassette
