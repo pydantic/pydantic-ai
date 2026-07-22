@@ -206,6 +206,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == '__main__':
-    # Allow `python3 runner.py` when cwd / path includes parent of package
-    # Prefer: python3 -m mechanical from parent of mechanical/
+    # Allow `python3 runner.py` when cwd / path includes parent of package.
+    # Prefer: PYTHONPATH=scripts python3 -m mechanical_review
     raise SystemExit(main())

@@ -91,18 +91,14 @@ def _iter_scan_files(repo: Path) -> list[Path]:
     return out
 
 
-def _is_code_use_line(line: str) -> bool:
-    stripped = line.strip()
-    if not stripped:
-        return False
+def _code_portion(line: str) -> str:
+    """Text before an inline `#` comment (full line for pure comments → empty)."""
     if _COMMENT_ONLY.match(line):
-        return False
-    # Inline comment after code still counts as code use if symbol appears before #.
-    code = line.split('#', 1)[0]
-    return bool(code.strip())
+        return ''
+    return line.split('#', 1)[0]
 
 
-def _severity_for(rel: str, line: str, rule_id: str) -> Severity | None:
+def _severity_for(rel: str, line: str, rule_id: str, matched_in_code: bool) -> Severity | None:
     """Classify hit. Return None to drop (noise)."""
     is_md = rel.endswith('.md')
     is_py = rel.endswith('.py')
@@ -125,15 +121,10 @@ def _severity_for(rel: str, line: str, rule_id: str) -> Severity | None:
         return Severity.INFO
 
     if is_py:
-        if not _is_code_use_line(line):
-            # Comment-only mention
-            if is_slim:
-                return Severity.INFO
+        # Token only in a trailing comment → not a code use (INFO at most).
+        if not matched_in_code:
             return Severity.INFO
-        # Actual code use
-        if is_slim:
-            return Severity.ERROR
-        if is_test:
+        if is_slim or is_test:
             return Severity.ERROR
         # examples, scripts, etc.
         return Severity.WARNING
@@ -157,14 +148,18 @@ def run(ctx: ScanContext) -> list[Finding]:
         except OSError:
             continue
         for lineno, line in enumerate(text.splitlines(), start=1):
-            if ctx.added_lines and not ctx.is_added_line(rel, lineno):
-                # Diff mode: only added lines for denylist on code; still whole file for docs? Spec says
-                # "added-line aware if --diff". Apply to all.
+            if not ctx.is_added_line(rel, lineno):
                 continue
+            code = _code_portion(line)
             for rule_id, pat, message in _RULES:
-                if not pat.search(line):
+                # Prefer match in code portion; fall back to full line for md / comment-only.
+                if pat.search(code):
+                    matched_in_code = True
+                elif pat.search(line):
+                    matched_in_code = False
+                else:
                     continue
-                sev = _severity_for(rel, line, rule_id)
+                sev = _severity_for(rel, line, rule_id, matched_in_code)
                 if sev is None:
                     continue
                 findings.append(

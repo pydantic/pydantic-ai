@@ -1,39 +1,35 @@
 # Mechanical review checks
 
-Fast, **stdlib-only** mechanical scan for pydantic-ai worktrees. High-confidence rules only — designed to stay under ~10s on a full tree (worst case &lt;30s).
+Fast, **stdlib-only** mechanical scan for pydantic-ai. High-confidence rules only —
+designed to stay under ~10s on a full tree (worst case &lt;30s).
 
-Local + `/review-branch` pre-pass for now — **not** wired into pydantic-ai CI.
+Wired into CI as the `mechanical-review` job (fails on `error` severity only).
 
 ## Run
 
-From a pydantic-ai worktree (package present under `.claude/skills/review-branch/mechanical/`):
+From a pydantic-ai checkout:
 
 ```bash
 # full tree (silent-issues audit)
-python3 -m mechanical --repo . --all
-# or via absolute path to runner / package
-python3 /path/to/mechanical/runner.py --repo /path/to/pydantic-ai --all
+python3 scripts/mechanical_review/runner.py --repo . --all
+
+# or as a module (parent of package on PYTHONPATH)
+PYTHONPATH=scripts python3 -m mechanical_review --repo . --all
 
 # PR / branch mode (changed files + added lines only)
-python3 -m mechanical --repo . --diff "$(git merge-base origin/main HEAD)"
+python3 scripts/mechanical_review/runner.py --repo . --diff "$(git merge-base origin/main HEAD)"
 
 # subset + machine output
-python3 -m mechanical --repo . --all --checks denylist,patterns --json
+python3 scripts/mechanical_review/runner.py --repo . --all --checks denylist,patterns --json
 ```
 
-Thin launcher from the **tooling** repo:
+Or via Make:
 
 ```bash
-scripts/pyai-review-checks --repo /path/to/pydantic-ai --all
+make mechanical-review
 ```
 
 Exit code **1** if any `error` severity findings; **0** if clean or only warning/info.
-
-When invoking `python3 -m mechanical`, ensure the **parent** of the `mechanical/` package is on `PYTHONPATH` (the launcher and README examples set this).
-
-```bash
-PYTHONPATH=.claude/skills/review-branch python3 -m mechanical --repo . --all
-```
 
 ## Checks
 
@@ -41,8 +37,8 @@ PYTHONPATH=.claude/skills/review-branch python3 -m mechanical --repo . --all
 |---|---|
 | `denylist` | Removed APIs (`load_mcp_servers`, `BuiltinToolCallPart`, `to_ag_ui`, `pydantic_ai.ag_ui`, durable `value_to_type`, stale restate paths). **error** for production/test *code use*; **info/warning** for docs/changelogs. |
 | `patterns` | High-signal subset of review-patterns: bare type/pyright ignores, line-number refs in comments, `warnings.warn` without `stacklevel`, empty `snapshot()`, `pytest.importorskip` in function bodies, capped `Any` sample. |
-| `mode_b` | Durable dual-path: `_agent.py` + `_durability.py` for temporal/dbos/prefect; sibling wrapper method gaps; high-signal Agent methods missing from wrappers/durability; restate dir presence. |
-| `cassettes` | Cassette size &gt;1MB; likely secrets (`sk-…`, Bearer, AKIA, Authorization). Streams first 200KB. |
+| `mode_b` | Durable dual-path: `_agent.py` + `_durability.py` for temporal/dbos/prefect; sibling wrapper method gaps; high-signal Agent methods missing from wrappers/durability; restate dir presence. In `--diff` mode only runs when durable/agent/mcp paths are in the changed-file set. |
+| `cassettes` | Cassette size &gt;1MB; likely secrets (`sk-…`, Bearer, AKIA, Authorization). Streams first 200KB. In `--diff` mode only flags matches on **added** lines. |
 | `docs_refs` | Docs still naming removed APIs (`load_mcp_servers`, `BuiltinToolCallPart`, `to_ag_ui`, …). |
 | `missing_tests` | **Diff-only**: new/changed public symbols in `pydantic_ai_slim` with no name mention under `tests/`. Skipped on `--all`. |
 
@@ -57,7 +53,7 @@ Human summary: counts by check, severity totals, top findings.
 ## Self-test
 
 ```bash
-cd mechanical && python3 -m unittest test_checks.py -v
+PYTHONPATH=scripts python3 -m unittest mechanical_review.test_checks -v
 ```
 
 ## Design notes

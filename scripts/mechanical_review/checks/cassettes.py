@@ -96,19 +96,25 @@ def run(ctx: ScanContext) -> list[Finding]:
         # Line numbers approximate for first chunk only
         lines = text.splitlines()
         for lineno, line in enumerate(lines, start=1):
+            if not ctx.is_added_line(rel, lineno):
+                continue
             for rule_id, pat, message in _SECRET_PATTERNS:
-                if pat.search(line):
-                    # Skip obvious redactions
-                    if re.search(r'(?i)redacted|dummy|fake|example|placeholder|xxxx|\*\*\*', line):
-                        continue
-                    findings.append(
-                        Finding(
-                            check=CHECK,
-                            severity=Severity.ERROR,
-                            path=rel,
-                            line=lineno,
-                            message=message,
-                            rule_id=rule_id,
-                        )
+                m = pat.search(line)
+                if not m:
+                    continue
+                # Only suppress when the *matched credential* looks redacted —
+                # not when an unrelated word (e.g. "example") appears elsewhere.
+                matched = m.group(0)
+                if re.search(r'(?i)redacted|dummy|fake|example|placeholder|xxxx|\*\*\*', matched):
+                    continue
+                findings.append(
+                    Finding(
+                        check=CHECK,
+                        severity=Severity.ERROR,
+                        path=rel,
+                        line=lineno,
+                        message=message,
+                        rule_id=rule_id,
                     )
+                )
     return findings

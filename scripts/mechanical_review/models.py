@@ -56,8 +56,10 @@ class ScanContext:
         return rel_path in self.file_filter
 
     def is_added_line(self, rel_path: str, line: int) -> bool:
-        if not self.added_lines:
-            return True  # --all: treat every line as in-scope
+        # --all: every line is in-scope. In --diff mode an empty added_lines map
+        # means the change was delete-only — do not treat all lines as added.
+        if self.mode_all:
+            return True
         lines = self.added_lines.get(rel_path)
         if lines is None:
             return False

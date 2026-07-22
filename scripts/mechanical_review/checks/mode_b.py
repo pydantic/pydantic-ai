@@ -95,7 +95,28 @@ def _package_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def _durable_in_scope(ctx: ScanContext) -> bool:
+    """Whether this scan should emit mode_b structural findings.
+
+    --all always runs. In --diff mode only run when durable-exec / agent /
+    mcp surfaces (or mode_b itself) appear in the changed-file set — avoids
+    pre-existing mode_b ERRORs failing unrelated PRs.
+    """
+    if ctx.mode_all or ctx.file_filter is None:
+        return True
+    prefixes = (
+        'pydantic_ai_slim/pydantic_ai/durable_exec/',
+        'pydantic_ai_slim/pydantic_ai/agent/',
+        'pydantic_ai_slim/pydantic_ai/mcp.py',
+        'scripts/mechanical_review/',
+    )
+    return any(any(p.startswith(pref) or p == pref.rstrip('/') for pref in prefixes) for p in ctx.file_filter)
+
+
 def run(ctx: ScanContext) -> list[Finding]:
+    if not _durable_in_scope(ctx):
+        return []
+
     findings: list[Finding] = []
     repo = ctx.repo
     de = repo / 'pydantic_ai_slim/pydantic_ai/durable_exec'
