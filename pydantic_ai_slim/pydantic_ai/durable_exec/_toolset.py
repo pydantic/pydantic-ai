@@ -11,7 +11,7 @@ from typing_extensions import Self, assert_never
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -119,6 +119,12 @@ class _ModelRetry:
     kind: Literal['model_retry'] = 'model_retry'
 
 
+@dataclass
+class _ToolFailed:
+    message: str
+    kind: Literal['tool_failed'] = 'tool_failed'
+
+
 def _result_discriminator(value: Any) -> str:
     if isinstance(value, ToolReturn) or (is_str_dict(value) and value.get('kind') == 'tool-return'):
         return 'tool-return'
@@ -149,7 +155,7 @@ class _ToolContentResult:
 
 
 CallToolResult = Annotated[
-    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn | _ToolContentResult,
+    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn | _ToolContentResult | _ToolFailed,
     Discriminator('kind'),
 ]
 
@@ -166,6 +172,8 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
         return _CallDeferred(metadata=exc.metadata)
     except ModelRetry as exc:
         return _ModelRetry(message=exc.message)
+    except ToolFailed as exc:
+        return _ToolFailed(message=exc.message)
 
 
 def unwrap_tool_call_result(result: CallToolResult) -> Any:
@@ -177,6 +185,8 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
         raise CallDeferred(metadata=result.metadata)
     if isinstance(result, _ModelRetry):
         raise ModelRetry(result.message)
+    if isinstance(result, _ToolFailed):
+        raise ToolFailed(result.message)
     assert_never(result)
 
 
@@ -203,7 +213,9 @@ def unwrap_recorded_tool_call_result(result: Any) -> Any:
     caches) may hold outputs recorded before the unit wrapped control-flow exceptions as
     values; those recordings are the raw tool result and are returned unchanged.
     """
-    if isinstance(result, _ToolReturn | _ToolContentResult | _ApprovalRequired | _CallDeferred | _ModelRetry):
+    if isinstance(
+        result, _ToolReturn | _ToolContentResult | _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolFailed
+    ):
         return unwrap_tool_call_result(result)
     return result
 

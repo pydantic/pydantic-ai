@@ -43,7 +43,14 @@ from pydantic_ai.capabilities import MCP, Capability, DynamicCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    ToolFailed,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.models import ModelRequestContext, ModelResolutionContext, create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -1881,6 +1888,30 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
             ),
         ]
     )
+
+
+tool_failed_agent = Agent(TestModel(call_tools=['failing_tool']), name='tool_failed_agent')
+
+
+@tool_failed_agent.tool_plain
+@DBOS.step()
+def failing_tool() -> str:
+    raise ToolFailed('Disk full')
+
+
+tool_failed_dbos_agent = DBOSAgent(tool_failed_agent)  # pyright: ignore[reportDeprecated]
+
+
+async def test_dbos_agent_with_tool_failed(dbos: DBOS):
+    result = await tool_failed_dbos_agent.run('Call the failing tool')
+    tool_returns = [
+        (part.tool_name, part.content, part.outcome)
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+
+    assert tool_returns == [('failing_tool', 'Disk full', 'failed')]
 
 
 class CustomModelSettings(ModelSettings, total=False):
