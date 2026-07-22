@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from prefect import task
@@ -17,7 +18,7 @@ from pydantic_ai.durable_exec._toolset import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from ._toolset import with_non_retryable_errors
+from ._toolset import enqueue_guard, with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
 
 if TYPE_CHECKING:
@@ -32,7 +33,9 @@ def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfi
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> Any:
-        return await wrap_tool_call_result(wrapped.call_tool(tool_name, tool_args, ctx, tool))
+        # The context is guarded because a `process_tool_call=` hook receives it and could enqueue.
+        task_ctx = replace(ctx, pending_messages=enqueue_guard())
+        return await wrap_tool_call_result(wrapped.call_tool(tool_name, tool_args, task_ctx, tool))
 
     async def call_tool_operation(
         name: str,

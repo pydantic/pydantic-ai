@@ -58,8 +58,9 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 try:
@@ -81,6 +82,7 @@ try:
         _replace_run_context,  # pyright: ignore[reportPrivateUsage]
         _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.durable_exec.prefect._mcp_toolset import prefectify_mcp_toolset
     from pydantic_ai.durable_exec.prefect._toolset import with_non_retryable_errors
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
@@ -2611,6 +2613,34 @@ async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
 
     # Outside a flow the tool runs inline and enqueueing keeps working.
     await agent.run('run')
+
+
+async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The MCP task path guards enqueue too: a `process_tool_call=` hook receives the run context."""
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='enqueue_mcp')
+
+    async def enqueue_call_tool(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        ctx.enqueue('later')
+        return 'done'
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', enqueue_call_tool)
+    durable = prefectify_mcp_toolset(mcp_toolset, task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='hook'),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @flow
+    async def run_tool() -> None:
+        await durable.call_tool('hook', {}, ctx, tool)
+
+    with pytest.raises(UserError, match='task-cache replay would drop the enqueued messages'):
+        await run_tool()
 
 
 async def test_prefect_tool_model_retry_is_not_retried_by_task_engine() -> None:

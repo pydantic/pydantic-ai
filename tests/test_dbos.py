@@ -2315,6 +2315,34 @@ async def test_dbos_dynamic_tool_model_retry_crosses_step_without_engine_retries
     assert await run_workflow() == 1
 
 
+async def test_dbos_mcp_step_rejects_enqueue_in_workflow(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The MCP step path guards enqueue too: a `process_tool_call=` hook receives the run context."""
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='enqueue_mcp')
+
+    async def enqueue_call_tool(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        ctx.enqueue('later')
+        return 'done'
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', enqueue_call_tool)
+    durable = dbosify_mcp_toolset(mcp_toolset, step_name_prefix='enqueue_mcp_agent', step_config={})
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='hook'),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await durable.call_tool('hook', {}, run_context, tool)
+
+    with pytest.raises(UserError, match='recovery replays the recorded step output'):
+        await run_workflow()
+
+
 async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None:
     """`ctx.enqueue()` inside a step-wrapped dynamic tool raises instead of silently dropping.
 

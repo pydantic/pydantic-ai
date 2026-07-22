@@ -15,7 +15,7 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.mcp import MCPToolset, ToolResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
-from ._utils import StepConfig
+from ._utils import StepConfig, guard_enqueue_in_workflow
 
 
 def dbosify_mcp_toolset(
@@ -40,9 +40,12 @@ def dbosify_mcp_toolset(
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> CallToolResult:
+        # The context is guarded because a `process_tool_call=` hook receives it and could enqueue.
         # DBOS has no selective non-retryable-exception support, so control-flow
         # exceptions must cross the step boundary as successful values.
-        return await wrap_tool_call_result(wrapped.call_tool(tool_name, tool_args, ctx, tool))
+        return await wrap_tool_call_result(
+            wrapped.call_tool(tool_name, tool_args, guard_enqueue_in_workflow(ctx), tool)
+        )
 
     async def call_tool_operation(
         tool_name: str,
