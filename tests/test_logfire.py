@@ -37,9 +37,8 @@ else:
     logfire_installed = True
 
 with try_import() as handlebars_available:
-    import importlib
-
-    importlib.import_module('pydantic_handlebars')
+    # Availability only — TemplateStr pulls it in at runtime when rendering.
+    import pydantic_handlebars  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
 
 class SpanSummary(TypedDict):
