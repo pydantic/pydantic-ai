@@ -20,19 +20,21 @@ from pydantic_ai.common_tools.exa import (
 
 
 def test_exa_factory_tools_deprecated():
-    with pytest.warns(PydanticAIDeprecationWarning, match='`exa_search_tool` is deprecated'):
+    # `match` pins both the symbol name and the `ExaSearch` migration target, so a message that
+    # dropped or misdirected the migration guidance would fail the test.
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`exa_search_tool` is deprecated.*`ExaSearch`'):
         exa_search_tool(api_key='x')  # pyright: ignore[reportDeprecated]
-    with pytest.warns(PydanticAIDeprecationWarning, match='`exa_find_similar_tool` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`exa_find_similar_tool` is deprecated.*`ExaSearch`'):
         exa_find_similar_tool(api_key='x')  # pyright: ignore[reportDeprecated]
-    with pytest.warns(PydanticAIDeprecationWarning, match='`exa_get_contents_tool` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`exa_get_contents_tool` is deprecated.*`ExaSearch`'):
         exa_get_contents_tool(api_key='x')  # pyright: ignore[reportDeprecated]
-    with pytest.warns(PydanticAIDeprecationWarning, match='`exa_answer_tool` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`exa_answer_tool` is deprecated.*`ExaSearch`'):
         exa_answer_tool(api_key='x')  # pyright: ignore[reportDeprecated]
 
 
 def test_exa_toolset_deprecated_emits_single_warning():
     """`ExaToolset` warns once; the per-factory warnings it triggers internally are suppressed."""
-    with pytest.warns(PydanticAIDeprecationWarning, match='`ExaToolset` is deprecated') as records:
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`ExaToolset` is deprecated.*`ExaSearch`') as records:
         toolset = ExaToolset(api_key='x')  # pyright: ignore[reportDeprecated]
 
     exa_warnings = [r for r in records if issubclass(r.category, PydanticAIDeprecationWarning)]
