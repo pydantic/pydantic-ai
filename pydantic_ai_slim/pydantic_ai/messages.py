@@ -1275,7 +1275,8 @@ class BaseToolReturnPart:
     """The outcome of the tool call.
 
     - `'success'`: The tool executed successfully.
-    - `'failed'`: The tool raised an error during execution.
+    - `'failed'`: The tool call failed — the tool raised an error during execution (the common case), or
+      an args validator or tool hook reported a failure via [`ToolFailed`][pydantic_ai.exceptions.ToolFailed].
     - `'denied'`: The tool call was denied — either by the approval mechanism or by a
       [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler
       returning [`ToolDenied`][pydantic_ai.tools.ToolDenied].
@@ -1335,13 +1336,15 @@ class BaseToolReturnPart:
     def content_items(self, *, mode: Literal['raw'] = 'raw') -> list[ToolReturnContent]: ...
 
     @overload
-    def content_items(self, *, mode: Literal['str']) -> list[str | MultiModalContent]: ...
+    def content_items(self, *, mode: Literal['str'], wrap_if_error: bool = True) -> list[str | MultiModalContent]: ...
 
     @overload
-    def content_items(self, *, mode: Literal['jsonable']) -> list[Any | MultiModalContent]: ...
+    def content_items(
+        self, *, mode: Literal['jsonable'], wrap_if_error: bool = True
+    ) -> list[Any | MultiModalContent]: ...
 
     def content_items(
-        self, *, mode: Literal['raw', 'str', 'jsonable'] = 'raw'
+        self, *, mode: Literal['raw', 'str', 'jsonable'] = 'raw', wrap_if_error: bool = True
     ) -> list[ToolReturnContent] | list[str | MultiModalContent] | list[Any | MultiModalContent]:
         """Return content as a flat list for iteration, with optional serialization.
 
@@ -1352,6 +1355,11 @@ class BaseToolReturnPart:
                   File items (`MultiModalContent`) pass through unchanged.
                 - `'jsonable'`: Non-file items are serialized to JSON-compatible Python objects
                   via `tool_return_ta`. File items pass through unchanged.
+            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object (ignored in
+                `'raw'` mode). When `True` (the default), a failed return's non-file data collapses into a
+                single wrapped error item so providers without a native error channel still see the failure
+                explicitly; files pass through unchanged. Set this to `False` when the provider has a native
+                error channel (e.g. Anthropic `is_error`) and should receive the content unwrapped.
         """
         items: list[ToolReturnContent]
         if isinstance(self.content, list):
@@ -1361,6 +1369,10 @@ class BaseToolReturnPart:
 
         if mode == 'raw':
             return items
+
+        if wrap_if_error and self.outcome == 'failed':
+            wrapped = self.model_response_str() if mode == 'str' else self.model_response_object()
+            return [wrapped, *self.files]
 
         result: list[str | MultiModalContent] | list[Any | MultiModalContent] = []
         for item in items:
@@ -1458,7 +1470,7 @@ class BaseToolReturnPart:
         tool_content_parts: list[str] = []
         file_content: list[UserContent] = []
 
-        for item in self.content_items(mode='str'):
+        for item in self.content_items(mode='str', wrap_if_error=False):
             if is_multi_modal_content(item):
                 tool_content_parts.append(f'See file {item.identifier}.')
                 file_content.append(f'This is file {item.identifier}:')

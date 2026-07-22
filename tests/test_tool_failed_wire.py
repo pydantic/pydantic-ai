@@ -424,7 +424,7 @@ async def test_bedrock_framed_failure_preserves_file_content(bedrock_provider: B
 
 @pytest.mark.skipif(not bedrock_imports_successful(), reason='boto3 not installed')
 async def test_bedrock_framed_failure_defers_unsupported_media(bedrock_provider: BedrockProvider) -> None:
-    """A media kind unsupported in `toolResult` still rides a later turn; the framed error drops the file ref."""
+    """A media kind unsupported in `toolResult` still rides a later turn; the framed error keeps its file ref."""
     pdf = BinaryContent(data=b'%PDF-1.4', media_type='application/pdf', identifier='report')
     model = BedrockConverseModel('us.writer.palmyra-x4-v1:0', provider=bedrock_provider)
     part = ToolReturnPart(tool_name='tool', content=[_TOOL_CONTENT, pdf], tool_call_id='call_1', outcome='failed')
@@ -436,7 +436,14 @@ async def test_bedrock_framed_failure_defers_unsupported_media(bedrock_provider:
     assert wire == [
         {
             'role': 'user',
-            'content': [{'toolResult': {'toolUseId': 'call_1', 'content': [{'text': _FAILED_WIRE_CONTENT}]}}],
+            'content': [
+                {
+                    'toolResult': {
+                        'toolUseId': 'call_1',
+                        'content': [{'text': _FAILED_WIRE_CONTENT}, {'text': 'See file report.'}],
+                    }
+                }
+            ],
         },
         {'role': 'assistant', 'content': [{'text': '.'}]},
         {

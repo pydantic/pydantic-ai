@@ -1099,10 +1099,12 @@ class GoogleModel(Model[Client]):
                 fallback_parts.append(file_part)
 
         if part.outcome == 'failed':
-            # Gemini reads the `error` value as the failure message verbatim, so it must stay a
-            # plain string — folding file-reference strings in (as the success branch does under
-            # `output`) pollutes the message. A hand-constructed failed return with files still
-            # sends the file parts below; we just don't anchor them inside the error payload.
+            # Google's function-response schema prescribes an `error` key (mirroring the `output` key
+            # used for success) for reporting a failed tool call, so this is Gemini's native error
+            # channel, not the generic `{"error": ...}` wrapper other providers fall back to — hence
+            # `wrap_if_error=False` and the hand-built dict. Gemini surfaces the value as the failure
+            # message, so it stays a plain string: file references are sent as the file parts below
+            # rather than folded into the error text (the success branch nests them under `output`).
             response = {'error': part.model_response_str(wrap_if_error=False)}
         else:
             response = part.model_response_object(wrap_if_error=False)

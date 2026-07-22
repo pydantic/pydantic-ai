@@ -1066,16 +1066,28 @@ class BedrockConverseModel(Model[BaseClient]):
                         )
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
-                        failed_without_status = part.outcome == 'failed' and not supports_tool_result_status
                         tool_result_content: list[Any] = []
-                        if failed_without_status:
-                            tool_result_content.append({'text': part.model_response_str()})
                         colocated_media_content: list[ContentBlockUnionTypeDef] = []
 
                         content_mode: Literal['str', 'jsonable'] = (
                             'str' if profile.get('bedrock_tool_result_format', 'text') == 'text' else 'jsonable'
                         )
-                        for item in part.content_items(mode=content_mode):
+
+                        # Two mutually exclusive ways to render a failed return, picked here so the loop
+                        # below stays free of per-item failure guards:
+                        # - No native error status: fold the failure into one wrapped `{'error': ...}` text
+                        #   block, then iterate only the files. Each file still gets its "See file X."
+                        #   reference below so the model can cross-reference the media with the result.
+                        # - Otherwise (success, or failed with `status='error'` set below): send every
+                        #   content item verbatim; the status field carries the failure signal unwrapped.
+                        items: Sequence[Any]
+                        if part.outcome == 'failed' and not supports_tool_result_status:
+                            tool_result_content.append({'text': part.model_response_str()})
+                            items = part.files
+                        else:
+                            items = part.content_items(mode=content_mode, wrap_if_error=False)
+
+                        for item in items:
                             if isinstance(item, UploadedFile):
                                 self._validate_uploaded_file_provider(item)
                                 if not item.file_id.startswith('s3://'):
@@ -1109,8 +1121,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 ):
                                     tool_result_content.append(file_block)
                                 else:
-                                    if not failed_without_status:
-                                        tool_result_content.append({'text': f'See file {item.identifier}.'})
+                                    tool_result_content.append({'text': f'See file {item.identifier}.'})
                                     media_note: ContentBlockUnionTypeDef = {'text': f'This is file {item.identifier}:'}
                                     if kind in colocatable_content:
                                         # This model allows the media alongside the `toolResult`; keep it in the same turn.
@@ -1120,9 +1131,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                         # The media can't share the `toolResult`'s turn; defer it to a later user turn.
                                         deferred_media_content.append(media_note)
                                         deferred_media_content.append(file_block)
-                            elif not failed_without_status:
-                                # A failed no-status return already carries this data in its framed
-                                # `{'error': ...}` block, so non-file items aren't re-sent; files still ride along.
+                            else:
                                 tool_result_content.append({'text': item} if isinstance(item, str) else {'json': item})
                         if not tool_result_content:
                             tool_result_content.append(

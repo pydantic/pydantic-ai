@@ -351,7 +351,7 @@ class FunctionStreamedResponse(StreamedResponse):
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
                         yield self._parts_manager.handle_part(vendor_part_id=dtc_index, part=delta)
                     elif isinstance(delta, NativeToolReturnPart):
-                        if content := delta.model_response_str(wrap_if_error=False):  # pragma: no branch
+                        if content := delta.model_response_str():  # pragma: no branch
                             response_tokens = _estimate_string_tokens(content)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
                         yield self._parts_manager.handle_part(vendor_part_id=dtc_index, part=delta)
@@ -397,7 +397,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                 if isinstance(part, SystemPromptPart | UserPromptPart):
                     request_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolReturnPart):
-                    request_tokens += _estimate_string_tokens(part.model_response_str(wrap_if_error=False))
+                    request_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
                     request_tokens += _estimate_string_tokens(part.model_response())
                 else:
@@ -411,7 +411,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                 elif isinstance(part, ToolCallPart | NativeToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
                 elif isinstance(part, NativeToolReturnPart):
-                    response_tokens += _estimate_string_tokens(part.model_response_str(wrap_if_error=False))
+                    response_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, FilePart):
                     response_tokens += _estimate_string_tokens([part.content])
                 elif isinstance(part, CompactionPart):

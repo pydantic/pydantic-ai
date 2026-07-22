@@ -1506,7 +1506,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             user_content_params.append(tool_result_block_param)
                             continue
 
-                        for item in request_part.content_items(mode='str'):
+                        for item in request_part.content_items(mode='str', wrap_if_error=False):
                             if isinstance(item, UploadedFile):
                                 self._validate_uploaded_file_provider(item)
                                 if item.media_type.startswith('image/'):

@@ -3486,18 +3486,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam
         ] = []
 
-        if part.outcome == 'failed':
-            output.append(
-                ResponseInputTextContentParam(
-                    type='input_text',
-                    text=part.model_response_str(),
-                )
-            )
-            content_items = part.files
-        else:
-            content_items = part.content_items(mode='str')
-
-        for item in content_items:
+        for item in part.content_items(mode='str'):
             if isinstance(item, UploadedFile):
                 output.append(self._map_uploaded_file_to_response_content(item))
             elif is_multi_modal_content(item):
