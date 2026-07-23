@@ -3913,6 +3913,134 @@ async def test_event_stream_back_to_back_text():
     )
 
 
+async def test_event_stream_stray_tool_call_delta_after_end_is_dropped():
+    """A tool call args delta arriving after the call's `PartEndEvent` must not emit `TOOL_CALL_ARGS`.
+
+    Non-standard OpenAI Responses-compatible endpoints can emit such a stray delta (#4733). The AG-UI
+    protocol forbids `TOOL_CALL_ARGS` after `TOOL_CALL_END`, which crashes `@ag-ui/client`.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(
+            index=0,
+            part=ToolCallPart(tool_name='tool_call_1', args='', tool_call_id='tool_call_1'),
+        )
+        yield PartDeltaEvent(
+            index=0, delta=ToolCallPartDelta(args_delta='{"query": "Hello"}', tool_call_id='tool_call_1')
+        )
+        yield PartEndEvent(
+            index=0,
+            part=ToolCallPart(tool_name='tool_call_1', args='{"query": "Hello"}', tool_call_id='tool_call_1'),
+        )
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta=' STRAY', tool_call_id='tool_call_1'))
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Tell me about Hello World',
+        ),
+    )
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    # Full-payload snapshot: the surviving `TOOL_CALL_ARGS` must carry the real delta and the
+    # stray ` STRAY` delta must be absent — asserting `type` alone would not catch payload drift.
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'tool_call_1',
+                'toolCallName': 'tool_call_1',
+                'parentMessageId': IsStr(),
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'tool_call_1',
+                'delta': '{"query": "Hello"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'tool_call_1'},
+            {'type': 'RUN_FINISHED', 'timestamp': IsInt(), 'threadId': thread_id, 'runId': run_id},
+        ]
+    )
+
+
+async def test_event_stream_stray_builtin_tool_call_delta_after_end_is_dropped():
+    """The stray-delta drop must also cover the builtin/native tool-call path (the one #4733 reported).
+
+    `handle_builtin_tool_call_delta` resolves the raw `tool_call_id` through `_builtin_tool_call_ids`
+    to the mapped builtin id before the ended-set check, and `handle_builtin_tool_call_end` tracks that
+    same mapped id; a stray delta after the builtin `TOOL_CALL_END` must therefore emit no `TOOL_CALL_ARGS`.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(
+            index=0,
+            part=NativeToolCallPart(
+                tool_name=WebSearchTool.kind, args='', tool_call_id='search_1', provider_name='function'
+            ),
+        )
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='{"query": "Hello"}', tool_call_id='search_1'))
+        yield PartEndEvent(
+            index=0,
+            part=NativeToolCallPart(
+                tool_name=WebSearchTool.kind,
+                args='{"query": "Hello"}',
+                tool_call_id='search_1',
+                provider_name='function',
+            ),
+        )
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta=' STRAY', tool_call_id='search_1'))
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Tell me about Hello World',
+        ),
+    )
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'pyd_ai_builtin|function|search_1',
+                'toolCallName': 'web_search',
+                'parentMessageId': IsStr(),
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'pyd_ai_builtin|function|search_1',
+                'delta': '{"query": "Hello"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'pyd_ai_builtin|function|search_1'},
+            {'type': 'RUN_FINISHED', 'timestamp': IsInt(), 'threadId': thread_id, 'runId': run_id},
+        ]
+    )
+
+
 async def test_event_stream_multiple_responses_with_tool_calls():
     async def event_generator():
         yield PartStartEvent(index=0, part=TextPart(content='Hello'))

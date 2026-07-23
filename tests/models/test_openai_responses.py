@@ -12316,6 +12316,107 @@ async def test_openai_responses_null_text_stream(allow_model_requests: None):
     )
 
 
+async def test_openai_responses_stray_function_call_args_delta_dropped(allow_model_requests: None):
+    """A `function_call_arguments.delta` arriving after the item is done (non-conforming endpoints)
+    must not corrupt the final tool-call args (https://github.com/pydantic/pydantic-ai/issues/5757).
+
+    Uses a mock stream rather than a VCR cassette because a conforming OpenAI Responses endpoint never
+    emits a post-done delta, so the scenario cannot be recorded against the real API.
+    """
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    function_call = resp.ResponseFunctionToolCall(
+        id='fc_001',
+        call_id='call_001',
+        name='get_weather',
+        arguments='{"city": "Mexico City"}',
+        status='completed',
+        type='function_call',
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base_response, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=function_call.model_copy(update={'arguments': '', 'status': 'in_progress'}),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseFunctionCallArgumentsDeltaEvent(
+            delta='{"city": "Mexico City"}',
+            item_id='fc_001',
+            output_index=0,
+            type='response.function_call_arguments.delta',
+            sequence_number=3,
+        ),
+        resp.ResponseFunctionCallArgumentsDoneEvent(
+            arguments='{"city": "Mexico City"}',
+            item_id='fc_001',
+            name='get_weather',
+            output_index=0,
+            type='response.function_call_arguments.done',
+            sequence_number=4,
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=function_call,
+            output_index=0,
+            type='response.output_item.done',
+            sequence_number=5,
+        ),
+        # Stray post-done arguments delta from a non-conforming endpoint; appending it would make
+        # the final args invalid JSON (`'{...}' + '}'`).
+        resp.ResponseFunctionCallArgumentsDeltaEvent(
+            delta='}',
+            item_id='fc_001',
+            output_index=0,
+            type='response.function_call_arguments.delta',
+            sequence_number=6,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=7,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    response: ModelResponse | None = None
+    async with agent.iter('What is the weather in Mexico City?') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as response_stream:
+                    async for _ in response_stream:
+                        pass
+                response = response_stream.response
+                break
+
+    assert response is not None
+    assert response.parts == snapshot(
+        [
+            ToolCallPart(
+                tool_name='get_weather',
+                args='{"city": "Mexico City"}',
+                tool_call_id='call_001',
+                id='fc_001',
+                provider_name='openai',
+            )
+        ]
+    )
+
+
 async def test_openai_responses_text_content_input(allow_model_requests: None, openai_api_key: str):
     """Test that text content in ModelRequest is correctly mapped to OpenAI messages."""
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))

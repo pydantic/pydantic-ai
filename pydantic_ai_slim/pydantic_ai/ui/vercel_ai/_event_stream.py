@@ -268,6 +268,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseChunk]:
         tool_call_id = delta.tool_call_id or ''
         assert tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
+        # Unlike AG-UI (https://github.com/pydantic/pydantic-ai/issues/4733), no post-end drop is
+        # needed here: this adapter emits no tool-call end-boundary chunk, and the Vercel client
+        # tolerates a `tool-input-delta` before `tool-input-available` overwrites the input.
         yield ToolInputDeltaChunk(
             tool_call_id=tool_call_id,
             input_text_delta=delta.args_delta if isinstance(delta.args_delta, str) else _json_dumps(delta.args_delta),
