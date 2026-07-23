@@ -273,7 +273,7 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
         slf: The usage to increment.
         incr_usage: The usage to increment by.
     """
-    for k in slf.__dict__.keys() | incr_usage.__dict__.keys():
+    for k in (slf.__dict__.keys() | incr_usage.__dict__.keys()) - {'requests', 'tool_calls', 'details'}:
         slf_value = getattr(slf, k, 0)
         incr_value = getattr(incr_usage, k, 0)
         if isinstance(slf_value, (int, float)) and isinstance(incr_value, (int, float)):
