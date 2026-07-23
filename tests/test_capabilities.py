@@ -23473,3 +23473,69 @@ def test_dynamic_capability_rejects_wrapper_fields() -> None:
 
 
 # endregion
+
+
+async def test_combined_capability_subclass_custom_init_for_run() -> None:
+    """`CombinedCapability` subclasses with a custom `__init__` don't crash in `for_run` when a child returns a fresh instance.
+
+    Regression test for #6674: `dataclasses.replace` reconstructed through the subclass
+    `__init__`, which does not accept the `capabilities` kwarg.
+    """
+
+    @dataclass
+    class PerRunLeaf(AbstractCapability[Any]):
+        n: int = 0
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            return PerRunLeaf(n=self.n + 1)
+
+        def get_instructions(self) -> str:
+            return f'leaf {self.n}'
+
+    class CombinedSubclass(CombinedCapability[Any]):
+        """Bundle a leaf behind a friendly constructor without exposing `capabilities`."""
+
+        def __init__(self, *, size: int = 3) -> None:
+            super().__init__(capabilities=[PerRunLeaf(n=size)])
+
+    combined = CombinedSubclass(size=5)
+    ctx = _build_run_context()
+
+    result = await combined.for_run(ctx)
+
+    assert isinstance(result, CombinedSubclass)
+    assert result is not combined
+    leaf = result.capabilities[0]
+    assert isinstance(leaf, PerRunLeaf)
+    assert leaf.n == 6
+    # Exercising `get_instructions` also covers the leaf's instruction emission.
+    assert leaf.get_instructions() == 'leaf 6'
+
+
+def test_combined_capability_subclass_custom_init_for_agent() -> None:
+    """`CombinedCapability` subclasses with a custom `__init__` don't crash in `for_agent` when a child returns a fresh instance.
+
+    Regression test for #6674.
+    """
+
+    @dataclass
+    class BindingLeaf(AbstractCapability[Any]):
+        bound: bool = False
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            return replace(self, bound=True)
+
+    class CombinedSubclass(CombinedCapability[Any]):
+        def __init__(self, *, size: int = 3) -> None:
+            super().__init__(capabilities=[BindingLeaf()])
+
+    combined = CombinedSubclass(size=5)
+    agent = Agent('test')
+
+    bound = combined.for_agent(agent)
+
+    assert isinstance(bound, CombinedSubclass)
+    assert bound is not combined
+    bound_leaf = bound.capabilities[0]
+    assert isinstance(bound_leaf, BindingLeaf)
+    assert bound_leaf.bound is True
