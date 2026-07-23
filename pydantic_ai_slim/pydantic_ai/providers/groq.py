@@ -12,10 +12,11 @@ from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
+from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
@@ -47,6 +48,29 @@ def meta_groq_model_profile(model_name: str) -> ModelProfile | None:
         return meta_model_profile(model_name)
 
 
+def groq_gpt_oss_model_profile(model_name: str) -> ModelProfile:
+    """Get the model profile for an OpenAI GPT-OSS model used with the Groq provider.
+
+    `gpt-oss-20b` and `gpt-oss-120b` support strict native structured output with 100% schema
+    adherence; `gpt-oss-safeguard-20b` supports best-effort native structured output. Groq's API
+    requires OpenAI-compatible JSON schemas (strict mode: `additionalProperties: false` on every
+    object), so native output is paired with the `OpenAIJsonSchemaTransformer`.
+    """
+    # The registered prefix keeps the `openai/` namespace (the prefix key doesn't end in `/`), so strip
+    # it before `harmony_model_profile` — otherwise `openai_model_profile` reads the leading `o` as an
+    # o-series reasoning model and sets the wrong reasoning flags.
+    bare_name = model_name.split('/', 1)[-1]
+    return merge_profile(
+        harmony_model_profile(bare_name),
+        ModelProfile(
+            supports_json_object_output=True,
+            supports_json_schema_output=True,
+            default_structured_output_mode='native',
+            json_schema_transformer=OpenAIJsonSchemaTransformer,
+        ),
+    )
+
+
 class GroqProvider(Provider[AsyncGroq]):
     """Provider for Groq API."""
 
@@ -73,6 +97,9 @@ class GroqProvider(Provider[AsyncGroq]):
             'mistral': mistral_model_profile,
             'moonshotai/': groq_moonshotai_model_profile,
             'compound-': groq_model_profile,
+            'openai/gpt-oss-20b': groq_gpt_oss_model_profile,
+            'openai/gpt-oss-120b': groq_gpt_oss_model_profile,
+            'openai/gpt-oss-safeguard-20b': groq_gpt_oss_model_profile,
             'openai/': openai_model_profile,
         }
 

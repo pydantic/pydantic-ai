@@ -1,0 +1,93 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '404'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      response_format:
+        json_schema:
+          name: CityLocation
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+          strict: true
+        type: json_schema
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1028'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '{"city":"Paris","country":"France"}'
+          reasoning: 'The user asks: "What is the capital of France?" We need to respond according to the response format:
+            CityLocation JSON with fields city and country. The capital of France is Paris, country is France. So output JSON:
+            {"city":"Paris","country":"France"} Ensure compact JSON, no extra fields.'
+          role: assistant
+      created: 1770418502
+      id: chatcmpl-6f2d9825-b5ca-465c-8762-b7cde23623fa
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_c652c0ffaa
+      usage:
+        completion_time: 0.18499532
+        completion_tokens: 85
+        completion_tokens_details:
+          reasoning_tokens: 64
+        prompt_time: 0.008625153
+        prompt_tokens: 170
+        queue_time: 0.006862138
+        total_time: 0.193620473
+        total_tokens: 255
+      usage_breakdown: null
+      x_groq:
+        id: req_01kgtjmyb6ea5rscsfz0m3xcf4
+        seed: 709511127
+    status:
+      code: 200
+      message: OK
+version: 1
