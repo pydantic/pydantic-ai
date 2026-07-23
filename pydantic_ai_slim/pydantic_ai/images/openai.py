@@ -12,6 +12,7 @@ from pydantic_ai.models import download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
+from ._media_type import image_media_type_from_bytes
 from ._openai_geometry import is_gpt_image_2, resolve_openai_geometry
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
@@ -205,8 +206,7 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         if not response_data:
             raise UnexpectedModelBehavior('OpenAI image generation response did not contain any images')
 
-        output_format = response.output_format or settings.get('output_format') or 'png'
-        media_type = _media_type_from_output_format(output_format)
+        echoed_output_format = response.output_format or settings.get('output_format') or 'png'
         images: list[GeneratedImage] = []
         for image in response_data:
             if not image.b64_json:
@@ -221,6 +221,16 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                     'OpenAI image generation response did not contain valid base64 image data',
                     response.model_dump_json(exclude_none=True),
                 ) from e
+
+            # OpenAI echoes the requested `output_format` even when it returns bytes in a different
+            # format (openai-node#1850), so trust the actual bytes and fall back to the echo only when
+            # they're unrecognized. `content.media_type` and `output_format` stay consistent either way.
+            if (sniffed_media_type := image_media_type_from_bytes(image_data)) is not None:
+                media_type = sniffed_media_type
+                output_format = sniffed_media_type.removeprefix('image/')
+            else:
+                output_format = echoed_output_format
+                media_type = _media_type_from_output_format(output_format)
 
             images.append(
                 GeneratedImage(

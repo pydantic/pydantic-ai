@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import warnings
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -1756,6 +1757,58 @@ async def test_openai_image_generation_response_mapping():
     assert mock_client.images.generate.await_args.kwargs['output_format'] == 'webp'
 
 
+_JPEG_MAGIC_BYTES = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01' + b'\x00' * 8
+_WEBP_MAGIC_BYTES = b'RIFF\x00\x00\x00\x00WEBPVP8 '
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize(
+    ('image_bytes', 'echoed_output_format', 'expected_media_type', 'expected_output_format'),
+    [
+        pytest.param(TINY_PNG, 'webp', 'image/png', 'png', id='webp-echo-lies-png-bytes-win'),
+        pytest.param(TINY_PNG, 'png', 'image/png', 'png', id='png-echo-and-bytes-agree'),
+        pytest.param(_JPEG_MAGIC_BYTES, 'jpeg', 'image/jpeg', 'jpeg', id='jpeg-sniffed'),
+        pytest.param(_WEBP_MAGIC_BYTES, 'webp', 'image/webp', 'webp', id='webp-sniffed'),
+        pytest.param(b'not really an image', 'webp', 'image/webp', 'webp', id='unknown-bytes-fall-back-to-echo'),
+        pytest.param(b'not really an image', 'jpeg', 'image/jpeg', 'jpeg', id='unknown-bytes-fall-back-to-jpeg-echo'),
+    ],
+)
+async def test_openai_media_type_reflects_actual_bytes(
+    image_bytes: bytes,
+    echoed_output_format: str,
+    expected_media_type: str,
+    expected_output_format: str,
+):
+    """`media_type` and `output_format` come from the returned bytes, not the provider's echo.
+
+    gpt-image-2 silently ignores `output_format='webp'` and returns PNG bytes while the response still
+    echoes `output_format: webp`, so trusting the echo makes `GeneratedImage.content.media_type` lie and
+    breaks downstream content-type handling. We sniff PNG/JPEG/WebP magic bytes and prefer the sniffed
+    type, keeping `content.media_type` and `output_format` consistent with each other; the echo is used
+    only as a fallback for bytes we can't recognize.
+
+    https://github.com/openai/openai-node/issues/1850
+    See `local-notes/image-gen-research/openai-images-api.md` §1c, §7.
+    """
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+        data=[Image.model_construct(b64_json=base64.b64encode(image_bytes).decode())],
+        output_format=echoed_output_format,
+    )
+    model = OpenAIImageGenerationModel(
+        'gpt-image-2',
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+    )
+
+    result = await model.generate('a robot')
+
+    image = result.images[0]
+    assert image.content.media_type == expected_media_type
+    assert image.content.data == image_bytes
+    assert image.output_format == expected_output_format
+
+
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 async def test_openai_image_generation_usage_falls_back_to_sdk_totals(monkeypatch: pytest.MonkeyPatch):
     mock_client = AsyncMock()
@@ -1929,6 +1982,36 @@ async def test_openai_gpt_image_2_generation_vcr(openai_api_key: str):
     assert result.provider_url == 'https://api.openai.com/v1/'
     assert result.usage.input_tokens > 0
     assert result.usage.output_tokens > 0
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.vcr
+async def test_openai_gpt_image_2_webp_generation_vcr(openai_api_key: str):
+    """gpt-image-2 honors `output_format='webp'` and the media type is sniffed from the real bytes.
+
+    A live regression guard for the sniff success path against a real provider response: the returned
+    payload is real WebP (`RIFF....WEBP`), so `content.media_type` and `output_format` both reflect WebP.
+    openai-node#1850 documents a historical case where gpt-image-2 downgraded webp to PNG while still
+    echoing `output_format: webp`; sniffing the bytes keeps us correct whichever the provider does.
+
+    https://github.com/openai/openai-node/issues/1850
+    """
+    provider = OpenAIProvider(api_key=openai_api_key)
+    model = OpenAIImageGenerationModel('gpt-image-2', provider=provider)
+
+    result = await model.generate(
+        'A small red circle centered on a plain white background.',
+        settings=OpenAIImageGenerationSettings(dimensions=(1024, 1024), output_format='webp', quality='low'),
+    )
+
+    assert len(result.images) == 1
+    generated_image = result.images[0]
+    assert generated_image.content.data[:4] == b'RIFF'
+    assert generated_image.content.data[8:12] == b'WEBP'
+    assert generated_image.content.media_type == 'image/webp'
+    assert generated_image.output_format == 'webp'
+    assert generated_image.size == '1024x1024'
+    assert result.model_name == 'gpt-image-2'
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -2213,6 +2296,182 @@ async def test_openai_image_generation_connection_error():
 
     with pytest.raises(ModelAPIError, match='connection failed'):
         await model.generate('generate this image')
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_image_generation_rate_limited():
+    """A 429 rate-limit surfaces as `ModelHTTPError` with the status and body preserved.
+
+    Image models are rate-limited by images/min and images/day, and a Tier-1 org (~5 images/min) can hit
+    the limit before its first successful generation, so this is a common first-call failure, not an edge case.
+
+    See `local-notes/image-gen-research/openai-images-api.md` §4 (rate limits) and
+    https://platform.openai.com/docs/guides/rate-limits.
+    """
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    rate_limit_body = {'error': {'code': 'rate_limit_exceeded', 'type': 'requests', 'message': 'Rate limit reached'}}
+    mock_client.images.generate.side_effect = APIStatusError(
+        'Rate limit reached',
+        response=httpx.Response(
+            status_code=429, request=httpx.Request('POST', 'https://example.com/v1/images/generations')
+        ),
+        body=rate_limit_body,
+    )
+    model = OpenAIImageGenerationModel(
+        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.generate('a robot')
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == rate_limit_body
+    mock_client.images.generate.assert_awaited_once()
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_image_generation_moderation_blocked():
+    """A `moderation_blocked` 400 keeps its structured body and is never auto-retried.
+
+    OpenAI returns HTTP 400 with `error.code == 'moderation_blocked'` and a `moderation_details` object
+    (`moderation_stage`, `categories`). The wrapper must preserve that structure as data — so callers can
+    branch on the code and inspect the categories — rather than flattening it into a string. A moderation
+    block reflects the prompt, so retrying the identical request is wrong; we assert a single attempt.
+
+    See `local-notes/image-gen-research/openai-images-api.md` §4 (content policy / moderation) and
+    https://platform.openai.com/docs/guides/image-generation.
+    """
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    moderation_body = {
+        'error': {
+            'code': 'moderation_blocked',
+            'type': 'image_generation_user_error',
+            'message': 'Your request was rejected as a result of our safety system.',
+            'moderation_details': {'moderation_stage': 'input', 'categories': ['violence', 'self-harm']},
+        }
+    }
+    mock_client.images.generate.side_effect = APIStatusError(
+        'moderation_blocked',
+        response=httpx.Response(
+            status_code=400, request=httpx.Request('POST', 'https://example.com/v1/images/generations')
+        ),
+        body=moderation_body,
+    )
+    model = OpenAIImageGenerationModel(
+        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.generate('a blocked prompt')
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.body == snapshot(
+        {
+            'error': {
+                'code': 'moderation_blocked',
+                'type': 'image_generation_user_error',
+                'message': 'Your request was rejected as a result of our safety system.',
+                'moderation_details': {'moderation_stage': 'input', 'categories': ['violence', 'self-harm']},
+            }
+        }
+    )
+    mock_client.images.generate.assert_awaited_once()
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_image_generation_does_not_override_timeout():
+    """The adapter never smuggles its own request timeout into the OpenAI SDK call.
+
+    Generations run 30-130s against a ~180s infra ceiling, and users configure timeouts on the client they
+    pass in. Injecting a per-request `timeout` would silently override the user's client and truncate long
+    generations, so the contract is: we forward no `timeout` for either generate or edit.
+
+    See `local-notes/image-gen-research/openai-images-api.md` §4 (timeouts / long generations).
+    """
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
+    )
+    mock_client.images.edit.return_value = ImagesResponse.model_construct(
+        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
+    )
+    model = OpenAIImageGenerationModel(
+        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    )
+
+    await model.generate('a robot')
+    assert 'timeout' not in mock_client.images.generate.await_args.kwargs
+
+    await model.generate('edit this', images=[BinaryImage(data=TINY_PNG, media_type='image/png')])
+    assert 'timeout' not in mock_client.images.edit.await_args.kwargs
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_image_generation_tolerates_unknown_response_fields():
+    """Unknown top-level and per-image response fields are tolerated (SDK forward compat).
+
+    Providers add response fields without notice; the wrapper must parse successfully and still return the
+    images rather than choking on fields it doesn't model. Recorded through the real SDK over a mock
+    transport so the SDK's own (extra-allowing) parsing is exercised, not a hand-built response object.
+    """
+    requests: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                'created': 123,
+                'output_format': 'png',
+                'data': [{'b64_json': base64.b64encode(TINY_PNG).decode(), 'unexpected_image_field': 'ignored'}],
+                'unexpected_top_level_field': {'nested': True},
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    openai_client = AsyncOpenAI(api_key='test-api-key', base_url='https://example.com/v1', http_client=http_client)
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=openai_client))
+
+    try:
+        result = await model.generate('a robot')
+    finally:
+        await http_client.aclose()
+
+    assert len(requests) == 1
+    assert result.images[0].content == BinaryImage(data=TINY_PNG, media_type='image/png')
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_image_generation_supported_settings_emit_no_warning():
+    """A fully-supported settings combination emits no warning.
+
+    Over-warning erodes the signal of the warning channel; warnings are reserved for settings a request
+    genuinely ignores or overrides. Every setting here is supported by `gpt-image-1` generation, so the call
+    must be silent.
+    """
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
+    )
+    model = OpenAIImageGenerationModel(
+        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    )
+    settings = OpenAIImageGenerationSettings(
+        n=1,
+        size='1024x1024',
+        quality='high',
+        background='opaque',
+        moderation='low',
+        output_format='png',
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        await model.generate('a robot', settings=settings)
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
