@@ -24,6 +24,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.xai import XaiModelName
     from pydantic_ai.models.zai import ZaiModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
+    from pydantic_ai.providers.inception import InceptionModelName
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
 
 if not imports_successful():  # pragma: lax no cover
@@ -32,7 +33,7 @@ if not imports_successful():  # pragma: lax no cover
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
     DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
-    DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = None
+    DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = InceptionModelName = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -70,6 +71,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'xai': XaiModelName,
     'groq': GroqModelName,
     'huggingface': HuggingFaceModelName,
+    'inception': InceptionModelName,
     'mistral': MistralModelName,
     'moonshotai': MoonshotAIModelName,
     'openai': OpenAIModelName,

@@ -59,3 +59,5 @@
 ::: pydantic_ai.providers.sambanova.SambaNovaProvider
 
 ::: pydantic_ai.providers.zai.ZaiProvider
+
+::: pydantic_ai.providers.inception.InceptionProvider

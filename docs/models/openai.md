@@ -1005,6 +1005,34 @@ agent = Agent(model)
 ...
 ```
 
+### Inception
+
+To use [Inception Labs](https://www.inceptionlabs.ai/)' Mercury diffusion models, you need an API key. See the [Inception documentation](https://docs.inceptionlabs.ai/) for how to create one.
+
+You can set the `INCEPTION_API_KEY` environment variable and use [`InceptionProvider`][pydantic_ai.providers.inception.InceptionProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('inception:mercury-2')
+...
+```
+
+Or initialise the model and provider directly:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.inception import InceptionProvider
+
+model = OpenAIChatModel(
+    'mercury-2',
+    provider=InceptionProvider(api_key='your-api-key'),
+)
+agent = Agent(model)
+...
+```
+
 ### Atlas Cloud
 
 [Atlas Cloud](https://www.atlascloud.ai/) is an OpenAI-compatible API gateway that provides access to 300+ models from a single endpoint, including DeepSeek, Qwen, Claude, GPT, and Gemini.
