@@ -4112,11 +4112,12 @@ Fix the errors and try again.\
 
 
 async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
-    """A `ThinkingPart` in history that can't round-trip natively maps to the foreign-thinking marker.
+    """A `ThinkingPart` in history that can't round-trip natively maps to a noted `<thinking>` tag.
 
     xAI returns reasoning unsigned by default (no `encrypted_content`), so its own `First reasoning` comes
-    back with `provider_name=None` and can't be sent as native `reasoning_content` — it falls back to the
-    explicit marker rather than bare `<think>` tags, which the model would otherwise imitate.
+    back with `provider_name=None` and can't be sent as native `reasoning_content` — it falls back to a
+    `<thinking>` tag carrying an explicit note rather than the model's own bare tags, which it would
+    otherwise imitate.
     """
     # First response with reasoning
     response1 = create_response(
@@ -4165,9 +4166,9 @@ async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
                         'content': [
                             {
                                 'text': """\
-Earlier reasoning, possibly from another model, provided for context only:
-
-First reasoning\
+<thinking note="continued from another model in this conversation">
+First reasoning
+</thinking>\
 """
                             }
                         ],
