@@ -1,0 +1,20 @@
+docs/message-history.md
+  s_a1768203f8e01b::t_36e63447dfd709 339
+  s_a1768203f8e01b::t_c740489222d43e 320-322
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "f8614d0c6d4db5b2839f026b496c8fe495eacea2",
+  "prompts": {},
+  "sessions": {
+    "s_a1768203f8e01b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8f50-dd59-7853-b87c-a4ea7b45eb45",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
