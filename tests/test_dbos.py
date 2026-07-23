@@ -2042,15 +2042,17 @@ async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
 
     inner = MCPToolset('https://example.com/mcp', id='cache_return_test')
     wrapper = dbosify_mcp_toolset(inner, step_name_prefix='cache_return_test', step_config={})
-    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage(), max_retries=5)
     run_context._mcp_tool_defs_cache['cache_return_test'] = {  # pyright: ignore[reportPrivateUsage]
         'foo': ToolDefinition(name='foo', parameters_json_schema={'type': 'object'}),
     }
 
     tools = await wrapper.get_tools(run_context)
     assert list(tools.keys()) == ['foo']
-    # Returned ToolsetTool wraps the cached `ToolDefinition` via `tool_for_tool_def` on the wrapped MCPToolset.
+    # Returned ToolsetTool wraps the cached `ToolDefinition` via `tool_for_tool_def` on the wrapped MCPToolset,
+    # inheriting the agent-level retry count from the run context (rather than a hard-coded default).
     assert tools['foo'].tool_def.name == 'foo'
+    assert tools['foo'].max_retries == 5
 
 
 def _call_mcp_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

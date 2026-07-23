@@ -1160,11 +1160,20 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             )
         return tools
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(
+        self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT] | None = None
+    ) -> ToolsetTool[AgentDepsT]:
+        if self.max_retries is not None:
+            max_retries = self.max_retries
+        elif ctx is not None:
+            # Inherit the effective agent/per-run retry count, matching `get_tools`.
+            max_retries = ctx.max_retries
+        else:
+            max_retries = 1
         return ToolsetTool[AgentDepsT](
             toolset=self,
             tool_def=tool_def,
-            max_retries=self.max_retries if self.max_retries is not None else 1,
+            max_retries=max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
