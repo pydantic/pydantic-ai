@@ -4,20 +4,33 @@ import json
 from collections.abc import AsyncIterator
 
 import pytest
-from aws_sdk_bedrock_runtime.models import (
-    BidirectionalOutputPayloadPart,
-    InvokeModelWithBidirectionalStreamInputChunk,
-    InvokeModelWithBidirectionalStreamOperationInput,
-    InvokeModelWithBidirectionalStreamOutputChunk,
-)
 from inline_snapshot import snapshot
 
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime import AudioInput, SessionUsageEvent, TextInput
-from pydantic_ai.realtime.bedrock import BedrockRealtimeConnection, BedrockRealtimeModel, BedrockRealtimeModelSettings
 from pydantic_ai.realtime.codec import AudioDelta, InputTranscript, Transcript
 from pydantic_ai.usage import RequestUsage
+
+from ..conftest import try_import
+
+with try_import() as imports_successful:
+    from aws_sdk_bedrock_runtime.models import (
+        BidirectionalOutputPayloadPart,
+        InvokeModelWithBidirectionalStreamInputChunk,
+        InvokeModelWithBidirectionalStreamOperationInput,
+        InvokeModelWithBidirectionalStreamOutputChunk,
+    )
+
+    from pydantic_ai.realtime.bedrock import (
+        BedrockRealtimeConnection,
+        BedrockRealtimeModel,
+        BedrockRealtimeModelSettings,
+    )
+
+pytestmark = pytest.mark.skipif(
+    not imports_successful(), reason='aws-sdk-bedrock-runtime not installed (requires Python 3.12+)'
+)
 
 
 class FakeInputStream:
