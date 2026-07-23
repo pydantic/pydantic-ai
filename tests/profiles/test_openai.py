@@ -44,6 +44,9 @@ class ReasoningCase:
     supports_mode: bool = False
     """The Responses API accepts `reasoning.mode` ('standard' | 'pro')."""
 
+    supports_context: bool = False
+    """The Responses API accepts `reasoning.context` ('auto' | 'current_turn' | 'all_turns')."""
+
 
 # Every cell verified against the live Responses API (2026-07): "enabled by default" = sampling
 # params rejected with no `reasoning.effort` set; "can be disabled" = `effort='none'` accepted.
@@ -81,12 +84,18 @@ REASONING_CASES = [
     ReasoningCase(model='gpt-5.1-chat-latest', enabled_by_default=True),
     ReasoningCase(model='gpt-5.2-chat-latest', enabled_by_default=True),
     ReasoningCase(model='gpt-5.3-chat-latest', enabled_by_default=True),
-    # gpt-5.5: reasons by default AND can be turned off, like gpt-5.6 but without `reasoning.mode`
+    # gpt-5.5: reasons by default AND can be turned off, like gpt-5.6 but without `reasoning.mode` or `reasoning.context`
     ReasoningCase(model='gpt-5.5', enabled_by_default=True, can_be_disabled=True),
-    # gpt-5.6: reasons by default AND can be turned off; the only family with `reasoning.mode`
-    ReasoningCase(model='gpt-5.6-sol', enabled_by_default=True, can_be_disabled=True, supports_mode=True),
-    ReasoningCase(model='gpt-5.6-terra', enabled_by_default=True, can_be_disabled=True, supports_mode=True),
-    ReasoningCase(model='gpt-5.6-luna', enabled_by_default=True, can_be_disabled=True, supports_mode=True),
+    # gpt-5.6: reasons by default AND can be turned off; the only family with `reasoning.mode` and `reasoning.context`
+    ReasoningCase(
+        model='gpt-5.6-sol', enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
+    ),
+    ReasoningCase(
+        model='gpt-5.6-terra', enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
+    ),
+    ReasoningCase(
+        model='gpt-5.6-luna', enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
+    ),
     # no reasoning
     ReasoningCase(model='gpt-5-chat'),
     ReasoningCase(model='gpt-4o'),
@@ -106,6 +115,7 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('openai_reasoning_enabled_by_default', False) is case.enabled_by_default
     assert profile.get('openai_supports_reasoning_effort_none', False) is case.can_be_disabled
     assert profile.get('openai_responses_supports_reasoning_mode', False) is case.supports_mode
+    assert profile.get('openai_responses_supports_reasoning_context', False) is case.supports_context
     assert profile.get('supports_thinking', False) is supports_reasoning
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
 
