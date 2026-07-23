@@ -5,8 +5,8 @@ Realtime providers talk over a persistent WebSocket rather than the request/resp
 replay the actual JSON frames exchanged with the provider, letting cassette-backed tests exercise
 the *real* protocol offline:
 
-- OpenAI Realtime connects with the `websockets` library directly (patched at
-  `pydantic_ai.realtime.openai.websockets.connect`).
+- OpenAI Realtime and Azure OpenAI connect through the OpenAI realtime module's `websockets`
+  reference; xAI uses its own module reference.
 - Gemini Live connects through the `google-genai` SDK, which itself uses `websockets` under
   `google.genai.live.ws_connect` (patched there). The SDK calls `.send`, `.recv(decode=False)`, and
   `.close` on the returned object, so the same raw-frame engine serves both providers.
@@ -23,7 +23,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import json
 import re
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -106,6 +106,17 @@ class RealtimeCassette:
 
     version: int = 1
     interactions: list[RealtimeCassetteInteraction] = field(default_factory=list['RealtimeCassetteInteraction'])
+    _disconnect: Callable[[], Awaitable[None]] | None = field(default=None, init=False, repr=False, compare=False)
+
+    async def disconnect(self) -> None:
+        """Force the active recorded connection to drop; replay consumes the recorded close next."""
+        if self._disconnect is None:
+            raise RuntimeError('The realtime cassette has no active WebSocket connection.')
+        await self._disconnect()
+
+    def bind_disconnect(self, disconnect: Callable[[], Awaitable[None]]) -> None:
+        """Bind the active transport's test-only disconnect operation."""
+        self._disconnect = disconnect
 
     @classmethod
     def load(cls, path: Path) -> RealtimeCassette:
@@ -118,7 +129,7 @@ class RealtimeCassette:
                 interactions.append(CassetteMessage(direction=item['direction'], data=item['data']))
         return cls(version=raw.get('version', 1), interactions=interactions)
 
-    def dump(self, path: Path) -> None:  # pragma: no cover - only runs while recording
+    def dump(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         interactions: list[dict[str, Any]] = [
             {'kind': 'message', 'direction': i.direction, 'data': i.data}
@@ -271,7 +282,7 @@ class ReplayWebSocket:
         while True:
             try:
                 yield await self.recv()
-            except (ConnectionClosedOK, ConnectionClosedError):
+            except ConnectionClosedOK:
                 return
 
     async def close(self, *args: Any, **kwargs: Any) -> None:
@@ -283,7 +294,7 @@ class ReplayWebSocket:
         return self._interactions[self._position]
 
 
-class RecordingWebSocket:  # pragma: no cover - only runs while recording
+class RecordingWebSocket:
     """Wrap a live WebSocket, recording JSON frames (secrets scrubbed, inbound audio truncated)."""
 
     def __init__(self, ws: Any, cassette: RealtimeCassette) -> None:
@@ -317,7 +328,7 @@ class RecordingWebSocket:  # pragma: no cover - only runs while recording
     async def __anext__(self) -> str | bytes:
         try:
             return await self.recv()
-        except (ConnectionClosedOK, ConnectionClosedError):
+        except ConnectionClosedOK:
             raise StopAsyncIteration
 
     async def close(self, *args: Any, **kwargs: Any) -> None:
@@ -359,14 +370,26 @@ def patched_ws_connect(provider: ProviderName, cassette: RealtimeCassette, plan:
     """Patch the provider's WebSocket `connect` to replay from (or record into) `cassette`."""
     target, attr = _connect_target(provider)
     real_connect = getattr(target, attr)
+    replay = ReplayWebSocket(cassette) if plan == 'replay' else None
 
     @asynccontextmanager
     async def connect(*args: Any, **kwargs: Any) -> AsyncGenerator[ReplayWebSocket | RecordingWebSocket]:
         if plan == 'replay':
-            yield ReplayWebSocket(cassette)
+            assert replay is not None
+            # A reconnect continues at the next recorded interaction rather than rewinding the
+            # cassette to the first handshake. Reusing the cursor also preserves outbound-ID
+            # normalization across sockets in one logical realtime session.
+            cassette.bind_disconnect(replay.close)
+            yield replay
         else:  # pragma: no cover - only runs while recording
             async with real_connect(*args, **kwargs) as ws:
-                yield RecordingWebSocket(ws, cassette)
+                recording = RecordingWebSocket(ws, cassette)
+
+                async def disconnect() -> None:
+                    await recording.close(code=1011, reason='test reconnect')
+
+                cassette.bind_disconnect(disconnect)
+                yield recording
 
     with mock.patch.object(target, attr, connect):
         yield

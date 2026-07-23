@@ -16,19 +16,23 @@ from contextlib import asynccontextmanager
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.realtime import (
-    RealtimeConnection,
-    RealtimeEvent,
-    RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
     TurnCompleteEvent,
+)
+from pydantic_ai.realtime.codec import (
+    RealtimeCodecEvent,
+    RealtimeConnection,
+    RealtimeInput,
 )
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
@@ -43,7 +47,7 @@ class _Connection(RealtimeConnection):
     async def send(self, content: RealtimeInput) -> None:
         pass
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield TurnCompleteEvent()
 
 
@@ -86,15 +90,13 @@ class _RecordingModel(RealtimeModel):
     async def connect(
         self,
         *,
-        instructions: str,
-        tools: list[ToolDefinition] | None = None,
-        native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: RealtimeModelSettings | None = None,
-        messages: Sequence[ModelMessage] | None = None,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[RealtimeConnection]:
-        self.instructions = instructions
-        self.tools = tools
-        self.native_tools = native_tools
+        self.instructions = get_instructions(messages)
+        self.tools = model_request_parameters.function_tools
+        self.native_tools = model_request_parameters.native_tools
         self.model_settings = model_settings
         yield _Connection()
 
@@ -118,6 +120,46 @@ async def test_capability_instructions_reach_session() -> None:
     assert model.instructions is not None
     assert 'Be helpful.' in model.instructions
     assert 'Speak like a pirate.' in model.instructions
+
+
+async def test_per_call_capabilities_are_bound_via_for_agent() -> None:
+    """Per-call `capabilities=` are bound via `for_agent` before resolution, like `run`/`iter`.
+
+    Regression: `realtime_session` skipped the `for_agent` binding, so a capability that overrides
+    `for_agent` (e.g. the durability capabilities) was used unbound.
+    """
+
+    class BoundInstructionsCap(AbstractCapability[None]):
+        def __init__(self, *, bound: bool = False) -> None:
+            self._bound = bound
+
+        def for_agent(self, agent: object) -> AbstractCapability[None]:
+            return BoundInstructionsCap(bound=True)
+
+        def get_instructions(self) -> str:
+            return 'bound-instruction' if self._bound else 'unbound-instruction'
+
+    agent = Agent(instructions='Base.')
+    model = _RecordingModel()
+    await _drain(agent, model, capabilities=[BoundInstructionsCap()])
+    assert model.instructions is not None
+    assert 'bound-instruction' in model.instructions
+    assert 'unbound-instruction' not in model.instructions
+
+
+async def test_root_capability_override_reaches_session() -> None:
+    """`override(spec=...)` replaces the root capability and applies to a realtime session, like `iter`.
+
+    Regression: `realtime_session` resolved from `self._root_capability`, ignoring the
+    `override(root_capability=...)` set by `override(spec=...)`, so the overridden capability's
+    contributions were silently dropped.
+    """
+    agent = Agent(instructions='Be helpful.')
+    model = _RecordingModel()
+    with agent.override(spec={'instructions': 'from override'}):
+        await _drain(agent, model)
+    assert model.instructions is not None
+    assert 'from override' in model.instructions
 
 
 async def test_regular_settings_do_not_reach_session() -> None:
@@ -145,6 +187,8 @@ async def test_capability_toolset_reaches_session() -> None:
     @toolset.tool_plain
     def greet(name: str) -> str:
         return f'Hello, {name}!'
+
+    assert greet('World') == 'Hello, World!'
 
     class ToolsetCap(AbstractCapability[None]):
         def get_toolset(self) -> FunctionToolset[None]:

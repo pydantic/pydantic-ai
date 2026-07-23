@@ -214,25 +214,28 @@ agent = Agent.from_file('agent.yaml')
 
 ### Realtime (speech-to-speech) sessions
 
-For voice models that stream audio over a persistent connection (OpenAI Realtime, Gemini Live), use
+For voice models that stream audio over a persistent connection (OpenAI Realtime, Azure AI Voice
+Live, Gemini Live, or xAI Grok Voice), use
 `agent.realtime_session()` instead of `run()`. It reuses the agent's tools and instructions and runs
-the tool loop for you. Stream input with `send_audio`/`send_text`/`send_image`, and iterate the
+the tool loop for you. Stream input with `send_audio`/`send`/`send`, and iterate the
 session to consume the **same part/event vocabulary as a streamed run** — `PartStartEvent` /
 `PartDeltaEvent` / `PartEndEvent` carrying `SpeechPart`s and `ToolCallPart`s, plus
-`FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`SpeechStartedEvent`,
+`FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`InputSpeechStartEvent`,
 `TurnCompleteEvent`, ...).
 
 ```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import SpeechPart, SpeechPartDelta
-from pydantic_ai.realtime import PartDeltaEvent, PartEndEvent
+from pydantic_ai.realtime import PartDeltaEvent, PartEndEvent, TurnDetection
 from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings
 
 agent = Agent(instructions='You are a helpful voice assistant.')
 
 
 async def main(microphone_chunk: bytes):
-    settings = OpenAIRealtimeModelSettings(voice='alloy')
+    settings = OpenAIRealtimeModelSettings(
+        voice='alloy', turn_detection=TurnDetection(sensitivity='high')
+    )
     async with agent.realtime_session(
         model='openai:gpt-realtime', model_settings=settings
     ) as session:
@@ -259,9 +262,14 @@ Key facts for building realtime agents:
 - **Check the model profile before calling profile-gated methods**: `model.profile` (a
   `RealtimeModelProfile`, the realtime counterpart to `ModelProfile`) reports
   `supports_manual_turn_control`, `supports_interruption`, `supports_image_input`,
-  `supports_output_truncation`, and `supports_session_seeding`. OpenAI supports all of these; Gemini
+  `supports_output_truncation`, and `supports_session_seeding`. OpenAI and Azure OpenAI support all of these; Gemini
   Live lacks `supports_manual_turn_control`, `supports_interruption`, and `supports_output_truncation`
   (automatic VAD only). Calling an unsupported method raises `UserError` up front.
+- **Turn detection**: use the shared `TurnDetection` setting for sensitivity, prefix padding, and
+  silence duration across providers. Use `openai_turn_detection`, `xai_turn_detection`, or
+  `google_vad` only for finer provider-specific control; when present, they fully override the shared
+  setting. Automatic detection is on by default (`True`); set `turn_detection=False` for push-to-talk
+  (OpenAI/Azure/xAI only — Gemini has no manual turn controls and raises).
 - **Tools**: every tool runs concurrently, so the model keeps speaking while it runs.
 
 See the [Realtime guide](https://ai.pydantic.dev/realtime/) for the full walkthrough.
@@ -277,8 +285,8 @@ Load only the most relevant reference first. Read additional references only if 
 | Decide what should load eagerly vs on demand, apply progressive disclosure, defer capability loading, or explain `load_capability` | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Add function tools, toolsets, MCP servers, or explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
 | Use provider-native web search, web fetch, or code execution | [Native Tools](./references/NATIVE-TOOLS.md) |
-| Use advanced tool features such as approval, retries, `ToolReturn`, validators, timeouts, or tool search | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
-| Work with multimodal input, message history, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
+| Use advanced tool features such as approval, retries, failed tool results, `ToolReturn`, validators, timeouts, or tool search | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
+| Work with multimodal input, message history, `run_id` / `conversation_id`, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Test or debug agent behavior | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Coordinate multiple agents or build graph workflows | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md#coordinate-multiple-agents) |
 | Call the model directly, expose A2A, use durable execution, embeddings, evals, or third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
@@ -329,8 +337,8 @@ Load exactly one of these unless the task clearly spans multiple families:
 | Progressive disclosure, deferred capabilities, capabilities on demand, and `load_capability` semantics | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Function tools, toolsets, MCP, explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
 | Provider-native tools | [Native Tools](./references/NATIVE-TOOLS.md) |
-| Approval, retries, validators, timeouts, rich tool returns, tool search, and tool-level deferred loading | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
-| Multimodal input, message history, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
+| Approval, retries, failed tool results, validators, timeouts, rich tool returns, tool search, and tool-level deferred loading | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
+| Multimodal input, message history, `run_id` / `conversation_id`, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Testing, request inspection, and Logfire debugging | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Multi-agent patterns, graphs, direct API, A2A, durable execution, embeddings, evals, third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
 

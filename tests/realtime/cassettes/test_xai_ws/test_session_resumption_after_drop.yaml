@@ -1,0 +1,770 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  data:
+    type: session.created
+    event_id: ed03dff5-5207-425b-91b8-6653de777490
+    session:
+      id: 4a6ce2536f554068b243815768d72ce2
+      object: realtime.session
+      instructions: ''
+      voice: ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+      model: grok-voice-latest
+- kind: message
+  direction: received
+  data:
+    type: conversation.created
+    event_id: a51e7686-8e36-4912-a0d0-1bc832940d32
+    conversation:
+      id: 551e72a6-5ce9-41f4-972c-ae7eb0fb60cd
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: sent
+  data:
+    type: session.update
+    session:
+      instructions: Answer in one short sentence.
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      resumption:
+        enabled: true
+- kind: message
+  direction: received
+  data:
+    type: ping
+    event_id: 1c602001-00b2-4590-9d37-b2d1539b178b
+    timestamp: 1784649534895
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    session:
+      instructions: Answer in one short sentence.
+      enable_noise_suppression: true
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      model: grok-voice-latest
+      keep_context: false
+      enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+    type: session.updated
+    event_id: edba2fb9-e7eb-4d54-ba9b-6969cdd79d4f
+    previous_item_id: null
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: 'Remember exactly: the code word is cobalt. Briefly acknowledge it.'
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: f0df226c-8efb-40bd-8ffd-3c17cad7344a
+    item:
+      id: 4145a13d-bc93-49ab-8cb7-6db5f46aaf3c
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: 'Remember exactly: the code word is cobalt. Briefly acknowledge it.'
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: 73ee0746-d0bd-4641-ad7b-0f3bd5c409b2
+    response:
+      id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+      object: realtime.response
+      output: []
+      status: in_progress
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: fe983100-baec-4b29-9566-8229f3f1ca17
+    item:
+      id: 3ca91379-2e08-4e0a-b038-90b98837e011
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+    response_id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: 2532d7b8-8fd5-4357-8cca-741b168ba784
+    item:
+      id: 3ca91379-2e08-4e0a-b038-90b98837e011
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    previous_item_id: 4145a13d-bc93-49ab-8cb7-6db5f46aaf3c
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: 93c67fe8-214c-4b9c-97be-bfad6f29cf49
+    item_id: 3ca91379-2e08-4e0a-b038-90b98837e011
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 7e80c524-7b8b-47e6-ab9d-90749993d396
+    item_id: 3ca91379-2e08-4e0a-b038-90b98837e011
+    response_id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+    delta: CQARABcAFQANAAUAAAAAAAIADAAUABQAEQAMAAcAAwAA
+    content_index: 0
+    output_index: 0
+    rid: c74eb1c5-c4ab-4d5f-a42e-56531ac4b026
+    latency: '0.57'
+    audio_duration_ms: 489
+    ts: 1784649535661
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: c74eb1c5-c4ab-4d5f-a42e-56531ac4b026
+    item_id: 3ca91379-2e08-4e0a-b038-90b98837e011
+    response_id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+    delta: Got it—code word is cobalt.
+    content_index: 0
+    output_index: 0
+    rid: c74eb1c5-c4ab-4d5f-a42e-56531ac4b026
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 4958e3a8-6205-4722-ba42-ecd9ace1805d
+    item_id: 3ca91379-2e08-4e0a-b038-90b98837e011
+    response_id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+    delta: BgAIAAcAAwAAAPz//f8AAAQABwAFAAMAAAD+//v/+P/4
+    content_index: 0
+    output_index: 0
+    rid: c74eb1c5-c4ab-4d5f-a42e-56531ac4b026
+    audio_duration_ms: 520
+    ts: 1784649535823
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 3a637177-9e22-4b51-8f09-e58ba9bbc9fe
+    item_id: 3ca91379-2e08-4e0a-b038-90b98837e011
+    response_id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+    delta: nv1a/QH9rvxO/PH7q/tU+wn71fqQ+nH6SPoF+uf5qvmG
+    content_index: 0
+    output_index: 0
+    rid: c74eb1c5-c4ab-4d5f-a42e-56531ac4b026
+    audio_duration_ms: 642
+    ts: 1784649536017
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 5a3b3008-d3a1-4cf0-9341-61c38d68fd80
+    item_id: 3ca91379-2e08-4e0a-b038-90b98837e011
+    response_id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+    delta: yf/d/9z/yf+Y/1T/Bf+g/jD+rv0o/Z38E/yK+wD7gfoP
+    content_index: 0
+    output_index: 0
+    rid: c74eb1c5-c4ab-4d5f-a42e-56531ac4b026
+    audio_duration_ms: 61
+    ts: 1784649536092
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 4511a22f-cde5-45c9-9df4-03325feb598d
+    item_id: 3ca91379-2e08-4e0a-b038-90b98837e011
+    response_id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+    delta: uvlS+hL7xPtR/Ln8I/2x/R/+UP6C/qj+tP7c/gT/Lf+X
+    content_index: 0
+    output_index: 0
+    rid: c74eb1c5-c4ab-4d5f-a42e-56531ac4b026
+    audio_duration_ms: 275
+    ts: 1784649536097
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 6642301f-3bfd-4392-a5e9-1a0361881df6
+    item_id: 3ca91379-2e08-4e0a-b038-90b98837e011
+    response_id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+    delta: HwBy/6z+Iv/4/6T/J/+y/5P/6/4AAMUA///A/+H+A/+F
+    content_index: 0
+    output_index: 0
+    rid: c74eb1c5-c4ab-4d5f-a42e-56531ac4b026
+    audio_duration_ms: 122
+    ts: 1784649536100
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.done
+    event_id: e2af3e0c-b09c-420b-b82c-9076a87181c8
+    item_id: 3ca91379-2e08-4e0a-b038-90b98837e011
+    transcript: Got it—code word is cobalt.
+    response_id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: ba22686c-8a3e-4469-b65a-9184ffd33c18
+    item_id: 3ca91379-2e08-4e0a-b038-90b98837e011
+    response_id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.done
+    event_id: 8d39c6e3-36eb-45e2-8a56-b737127120db
+    item_id: 3ca91379-2e08-4e0a-b038-90b98837e011
+    response_id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: b7cd9ce7-82b6-4528-9678-93d04af8c39d
+    item:
+      id: 3ca91379-2e08-4e0a-b038-90b98837e011
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+    response_id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: f99d0a12-3c44-494d-a0c4-1cae10687410
+    response:
+      id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+      object: realtime.response
+      output:
+      - id: 3ca91379-2e08-4e0a-b038-90b98837e011
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: Got it—code word is cobalt.
+      status: completed
+      status_details: unimplemented
+      usage: {}
+    response_id: 1e03142d-e5a0-40b5-b607-af167f5944cc
+    usage:
+      input_tokens: 13
+      input_token_details:
+        text_tokens: 13
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 114
+      output_token_details:
+        text_tokens: 8
+        audio_tokens: 106
+        grok_tokens: 0
+      total_tokens: 127
+      output_audio_seconds: 2.11
+      billable_audio_seconds: 1
+    previous_item_id: null
+- kind: close
+  code: 1011
+  reason: test reconnect
+  ok: false
+- kind: message
+  direction: received
+  data:
+    type: session.created
+    event_id: eddd6703-bf7b-4404-b415-e87d031ca923
+    session:
+      id: 00aea7c146d64327b577c052e6d9234a
+      object: realtime.session
+      instructions: ''
+      voice: ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+      model: grok-voice-latest
+- kind: message
+  direction: received
+  data:
+    type: conversation.created
+    event_id: a14ae3ed-085f-4f60-8b48-b7e8a0330298
+    conversation:
+      id: 551e72a6-5ce9-41f4-972c-ae7eb0fb60cd
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: sent
+  data:
+    type: session.update
+    session:
+      instructions: Answer in one short sentence.
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      resumption:
+        enabled: true
+- kind: message
+  direction: received
+  data:
+    type: ping
+    event_id: 1042e317-3899-45e3-b111-a4c90be28737
+    timestamp: 1784649536467
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: ee142d25-b1ce-457a-a99b-b4010e71b825
+    item:
+      id: af1d7ec8-53b0-4bc6-a975-5437e811ef96
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: text
+        text: Got it—code word is cobalt.
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    session:
+      instructions: Answer in one short sentence.
+      enable_noise_suppression: true
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      model: grok-voice-latest
+      keep_context: false
+      enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+    type: session.updated
+    event_id: 112cb440-d15c-4238-9bd5-4d19e067d51a
+    previous_item_id: null
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What code word did I ask you to remember?
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: 9fdd566b-4268-4462-9146-e00abaf299ad
+    item:
+      id: b24dbaa1-993d-4f3a-a8a6-a8f910454965
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What code word did I ask you to remember?
+    previous_item_id: af1d7ec8-53b0-4bc6-a975-5437e811ef96
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: 2c04c733-bd0e-4b00-a764-957086434ef2
+    response:
+      id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+      object: realtime.response
+      output: []
+      status: in_progress
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: da36077d-82b6-4695-91d7-bb33bcdc4194
+    item:
+      id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: 1c8c9986-50df-4d17-9ba6-d1246cac9b16
+    item:
+      id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    previous_item_id: b24dbaa1-993d-4f3a-a8a6-a8f910454965
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: 5bc6394e-be6f-4736-9ba3-0ad201ea589a
+    item_id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 0ad2ffcd-c077-47fe-be1d-a7c5153eb86a
+    item_id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    delta: BwAOABQAEgAJAAMAAQABAAcAEwAdAB8AHAAXABIADQAH
+    content_index: 0
+    output_index: 0
+    rid: b4127c04-a359-43f9-9ba4-827c841bc063
+    latency: '0.82'
+    audio_duration_ms: 642
+    ts: 1784649537481
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: b4127c04-a359-43f9-9ba4-827c841bc063
+    item_id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    delta: Cobalt.
+    content_index: 0
+    output_index: 0
+    rid: b4127c04-a359-43f9-9ba4-827c841bc063
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: ee12b928-1cba-417f-b2bb-9768caed5239
+    item_id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    delta: /v/2/+j/2P/M/9D/4f/4/woADgAEAPr/8v/o/9v/0v/M
+    content_index: 0
+    output_index: 0
+    rid: b4127c04-a359-43f9-9ba4-827c841bc063
+    audio_duration_ms: 31
+    ts: 1784649537486
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: f8a3bdb7-8041-48ac-ba12-68b0eba559e6
+    item_id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    delta: ' You asked me to remember the code word cobalt.'
+    content_index: 0
+    output_index: 0
+    rid: f8a3bdb7-8041-48ac-ba12-68b0eba559e6
+    start_time: 0.78
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 6407f211-ef00-484e-ac0a-7e9bed0f8729
+    item_id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    delta: 5//o/+n/6//u//L/9f/4//v///8AAAEAAwADAAMABAAE
+    content_index: 0
+    output_index: 0
+    rid: f8a3bdb7-8041-48ac-ba12-68b0eba559e6
+    audio_duration_ms: 581
+    ts: 1784649539215
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 696b9182-c580-4f4c-aae2-bda293ce5c6e
+    item_id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    delta: uf+0AY//Pv82/+AAqf4b/68CKwHE/VAAkAEp/qYA6v8H
+    content_index: 0
+    output_index: 0
+    rid: f8a3bdb7-8041-48ac-ba12-68b0eba559e6
+    audio_duration_ms: 520
+    ts: 1784649539339
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: cfd3fef9-3c71-47da-932c-d4e8bb9bfbb1
+    item_id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    delta: RgbWBUMFhgStA/wCWAK2Af8ADgAI/xT+Tv3C/E78D/wp
+    content_index: 0
+    output_index: 0
+    rid: f8a3bdb7-8041-48ac-ba12-68b0eba559e6
+    audio_duration_ms: 612
+    ts: 1784649539554
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: bbcb818e-2420-4363-ab3a-f6752f654b44
+    item_id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    delta: APUC96X3gPgH+sH6Lfz6/fz+uQCLAvIDpQWUBnUHUQge
+    content_index: 0
+    output_index: 0
+    rid: f8a3bdb7-8041-48ac-ba12-68b0eba559e6
+    audio_duration_ms: 765
+    ts: 1784649539726
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 17e9e632-f3a9-4d65-9faf-95519a53697b
+    item_id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    delta: IAAfAB4AHQAeAB0AHgAdABwAGwAaABgAFgATAA4ACwAH
+    content_index: 0
+    output_index: 0
+    rid: f8a3bdb7-8041-48ac-ba12-68b0eba559e6
+    audio_duration_ms: 336
+    ts: 1784649539732
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: e0097b99-e3a4-4875-991f-bdce06e68b40
+    item_id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    delta: 9f/g/8z/z//g//P/+/8FABEAGAARAPX/zv++/7v/tv/J
+    content_index: 0
+    output_index: 0
+    rid: f8a3bdb7-8041-48ac-ba12-68b0eba559e6
+    audio_duration_ms: 78
+    ts: 1784649539734
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 63ca0eb6-962e-4359-b331-6113b3fa99f0
+    item_id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+    transcript: Cobalt. You asked me to remember the code word cobalt.
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: 89a2caed-e713-4490-a8fd-804f96c7c1bb
+    item_id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.done
+    event_id: 02a56d3a-6b18-49ae-9492-9c1588a52ac4
+    item_id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: 82d564bf-23c1-4a00-bf52-7fcbbd0e8a41
+    item:
+      id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: 30b4b012-901b-41b1-b339-cca31ab03f1f
+    response:
+      id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+      object: realtime.response
+      output:
+      - id: fdec2af3-f81e-450b-b52a-478a3f2bce9d
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: Cobalt. You asked me to remember the code word cobalt.
+      status: completed
+      status_details: unimplemented
+      usage: {}
+    response_id: f5a0b946-9818-4ac8-bed4-509ef87ce951
+    usage:
+      input_tokens: 10
+      input_token_details:
+        text_tokens: 10
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 191
+      output_token_details:
+        text_tokens: 12
+        audio_tokens: 179
+        grok_tokens: 0
+      total_tokens: 201
+      output_audio_seconds: 3.5641666666666665
+      billable_audio_seconds: 3
+    previous_item_id: null

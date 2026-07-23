@@ -12,10 +12,10 @@ from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from typing import Literal, Protocol, cast
 
+from .._instrumentation import get_instructions
 from .._utils import is_str_dict
 from ..messages import ModelMessage, ModelRequest, ModelResponse, SpeechPart, TextPart, UserPromptPart
-from ..native_tools import AbstractNativeTool
-from ..tools import ToolDefinition
+from ..models import ModelRequestParameters
 from ..usage import RequestUsage
 from ._base import (
     AudioDelta,
@@ -26,8 +26,8 @@ from ._base import (
     CreateResponse,
     ImageInput,
     InputTranscript,
+    RealtimeCodecEvent,
     RealtimeConnection,
-    RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
@@ -41,7 +41,6 @@ from ._base import (
     Transcript,
     TruncateOutput,
     TurnCompleteEvent,
-    user_prompt_text,
 )
 
 try:
@@ -66,6 +65,13 @@ except ImportError as _import_error:  # pragma: no cover - exercised by optional
         'Amazon Nova Sonic realtime support requires `aws-sdk-bedrock-runtime`. '
         'Install `pydantic-ai-slim[realtime-bedrock]`.'
     ) from _import_error
+
+
+def user_prompt_text(part: UserPromptPart) -> str:
+    """Extract the plain text from a `UserPromptPart` (dropping multimodal content for text seeding)."""
+    if isinstance(part.content, str):
+        return part.content
+    return ''.join(item for item in part.content if isinstance(item, str))
 
 
 class BedrockRealtimeModelSettings(RealtimeModelSettings, total=False):
@@ -233,8 +239,8 @@ class BedrockRealtimeConnection(RealtimeConnection):
         elif isinstance(content, (ImageInput, ClearAudio, CreateResponse, CancelResponse, TruncateOutput)):
             raise NotImplementedError(f'Amazon Nova Sonic does not support {type(content).__name__} input')
 
-    def _map_json_event(self, data: dict[str, object]) -> list[RealtimeEvent]:
-        events: list[RealtimeEvent] = []
+    def _map_json_event(self, data: dict[str, object]) -> list[RealtimeCodecEvent]:
+        events: list[RealtimeCodecEvent] = []
         if content_start := _dict(data, 'contentStart'):
             self._role = _str(content_start, 'role')
             fields = _str(content_start, 'additionalModelFields')
@@ -277,7 +283,7 @@ class BedrockRealtimeConnection(RealtimeConnection):
             self._interrupted = False
         return events
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         while True:
             try:
                 _, receiver = await self._stream.await_output()
@@ -360,13 +366,12 @@ class BedrockRealtimeModel(RealtimeModel):
     async def connect(
         self,
         *,
-        instructions: str,
-        tools: list[ToolDefinition] | None = None,
-        native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: RealtimeModelSettings | None = None,
-        messages: Sequence[ModelMessage] | None = None,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[BedrockRealtimeConnection]:
-        del native_tools
+        instructions = get_instructions(messages) or ''
+        tools = model_request_parameters.function_tools
         settings = cast('BedrockRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         stream = await asyncio.wait_for(
             self._client.invoke_model_with_bidirectional_stream(

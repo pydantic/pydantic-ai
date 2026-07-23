@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import os
 import re
+import weakref
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
@@ -19,6 +20,9 @@ if TYPE_CHECKING:
 
     from pydantic_ai.providers import Provider
     from pydantic_ai.providers.anthropic import AsyncAnthropicClient
+
+
+_gateway_providers: weakref.WeakSet[Provider[Any]] = weakref.WeakSet()
 
 
 @overload
@@ -158,11 +162,13 @@ def gateway_provider(
     if canonical == 'bedrock':
         from .bedrock import BedrockProvider
 
-        return BedrockProvider(
+        provider = BedrockProvider(
             api_key=api_key,
             base_url=base_url,
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
+        _gateway_providers.add(provider)
+        return provider
 
     own_http_client = http_client is None
     http_client = http_client or create_async_http_client()
@@ -177,6 +183,7 @@ def gateway_provider(
         if own_http_client:
             provider._own_http_client = http_client  # pyright: ignore[reportPrivateUsage]
             provider._http_client_factory = _http_client_factory  # pyright: ignore[reportPrivateUsage]
+        _gateway_providers.add(provider)
         return provider
 
     if canonical in ('openai', 'openai-chat', 'openai-responses'):
@@ -206,6 +213,15 @@ def gateway_provider(
         return _with_http_client(GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client))
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
+
+
+def is_gateway_provider(provider: Provider[Any]) -> bool:
+    """Whether `provider` routes requests through the Pydantic AI Gateway.
+
+    True for any provider created by `gateway_provider(...)`, whether it reached the caller as the
+    `gateway/<name>` string (resolved via `infer_provider`) or as a `gateway_provider(...)` instance.
+    """
+    return provider in _gateway_providers
 
 
 class _GatewayRequestHook:

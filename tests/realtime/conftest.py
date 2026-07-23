@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import os
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -18,6 +19,9 @@ with try_import() as imports_successful:
 
 with try_import() as xai_imports_successful:
     from pydantic_ai.providers.xai import XaiProvider
+
+with try_import() as azure_imports_successful:
+    from pydantic_ai.providers.azure import AzureProvider
 
 if TYPE_CHECKING:
     from pydantic_ai.providers import Provider
@@ -40,6 +44,8 @@ def _realtime_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('OPENAI_API_KEY', 'mock-api-key')
     monkeypatch.setenv('GOOGLE_API_KEY', 'mock-api-key')
     monkeypatch.setenv('XAI_API_KEY', 'mock-api-key')
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://mock.openai.azure.com/openai/v1')
+    monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
 
 
 def _record_mode(request: pytest.FixtureRequest) -> str | None:
@@ -113,3 +119,24 @@ def xai_ws_cassette(request: pytest.FixtureRequest, xai_api_key: str) -> Iterato
         pytest.skip('xai-sdk / websockets not installed')
     with _ws_cassette(request, 'xai', skip_if_missing=True) as cassette:
         yield XaiProvider(api_key=xai_api_key), cassette
+
+
+@pytest.fixture(scope='session')
+def azure_config() -> tuple[str, str]:
+    """Capture real Azure OpenAI configuration before offline placeholders apply."""
+    return (
+        os.getenv('AZURE_OPENAI_ENDPOINT', 'https://mock.openai.azure.com'),
+        os.getenv('AZURE_OPENAI_API_KEY', 'mock-api-key'),
+    )
+
+
+@pytest.fixture
+def azure_ws_cassette(
+    request: pytest.FixtureRequest, azure_config: tuple[str, str]
+) -> Iterator[tuple[AzureProvider, RealtimeCassette]]:
+    """An `AzureProvider` whose Azure OpenAI realtime WebSocket is cassette-backed."""
+    if not azure_imports_successful():  # pragma: no cover
+        pytest.skip('openai / websockets not installed')
+    endpoint, api_key = azure_config
+    with _ws_cassette(request, 'openai') as cassette:
+        yield AzureProvider(azure_endpoint=f'{endpoint.rstrip("/")}/openai/v1', api_key=api_key), cassette

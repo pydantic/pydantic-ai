@@ -10,13 +10,14 @@ Recorded once against the live API with `--record-mode=rewrite`, then replayed o
 
 from __future__ import annotations as _annotations
 
+from pathlib import Path
 from typing import Any
 
 import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RequestUsage
 from pydantic_ai.messages import (
     BinaryContent,
     FunctionToolCallEvent,
@@ -50,20 +51,72 @@ pytestmark = [
 _MODEL = 'gemini-2.5-flash-native-audio-preview-09-2025'
 
 
+async def test_audio_in_server_vad_turn(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """A spoken user turn (audio in, automatic VAD) is transcribed into a user turn in history.
+
+    The default microphone workflow — Gemini transcribes input natively — must land the user's turn in
+    history, not just the assistant's reply (the dropped-user-turn guard).
+    """
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_16khz.pcm').read_bytes()  # Gemini wants 16 kHz input
+
+    events: list[Any] = []
+    async with agent.realtime_session(model=model) as session:
+        for start in range(0, len(pcm), 3200):  # ~100 ms chunks at 16 kHz
+            await session.send_audio(pcm[start : start + 3200])
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+                events.append(event)
+                if isinstance(event, TurnCompleteEvent):
+                    break
+
+    # Pin the spoken-turn event order for this cassette (Gemini streams input transcripts natively).
+    assert collapse_event_types(events) == snapshot(
+        ['PartStartEvent', 'PartDeltaEvent', 'PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnCompleteEvent']
+    )
+
+    messages = session.all_messages()
+    # Automatic VAD may split the clip into several short user turns; the invariant is that the spoken
+    # input is transcribed into user history (not dropped) ahead of the assistant's reply.
+    user_speech = [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
+    assert user_speech and all(isinstance(p, SpeechPart) and p.speaker == 'user' for p in user_speech)
+    assert any(isinstance(p, SpeechPart) and p.transcript for p in user_speech)  # at least one transcribed
+    responses = [message for message in messages if isinstance(message, ModelResponse)]
+    assert responses and isinstance(responses[-1].parts[0], SpeechPart)
+
+
 async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """A text-in turn yields streamed audio+transcript parts and a classic-shaped history."""
-    provider, _ = gemini_ws_cassette
+    provider, cassette = gemini_ws_cassette
     model = GoogleRealtimeModel(_MODEL, provider=provider)
     agent = Agent(instructions='Answer in two or three words.')
 
     events: list[Any] = []
-    async with agent.realtime_session(model=model, audio_retention='output') as session:
-        await session.send_text('Say a short greeting.')
+    async with agent.realtime_session(model=model, audio_retention='output_audio') as session:
+        await session.send('Say a short greeting.')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
+
+    assert sent_frames_containing(cassette, 'Answer in two or three words.') == snapshot(
+        [
+            {
+                'setup': {
+                    'model': 'models/gemini-2.5-flash-native-audio-preview-09-2025',
+                    'generationConfig': {'responseModalities': ['AUDIO']},
+                    'systemInstruction': {'parts': [{'text': 'Answer in two or three words.'}], 'role': 'user'},
+                    'inputAudioTranscription': {},
+                    'outputAudioTranscription': {},
+                }
+            }
+        ]
+    )
 
     messages = session.all_messages()
     assert collapse_event_types(events) == snapshot(
@@ -79,13 +132,17 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
     assert part.speaker == 'assistant'
     assert part.transcript == snapshot('Hello there.')
     assert isinstance(part.audio, BinaryContent)
-    assert part.audio.media_type == 'audio/pcm'
+    assert part.audio.media_type == 'audio/wav'
     assert len(part.audio.data) > 0
+
+    # Reasoning (`thoughtsTokenCount`) is billed but left out of Gemini's response/total counts, so the
+    # session captures it in `details` rather than dropping it.
+    assert response.usage.details.get('thoughts_tokens') == snapshot(23)
 
 
 async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """A tool call is executed by the session and its result folded back into a classic-shaped history."""
-    provider, _ = gemini_ws_cassette
+    provider, cassette = gemini_ws_cassette
     model = GoogleRealtimeModel(_MODEL, provider=provider)
     agent = Agent(instructions='Use the get_weather tool for any weather question, then answer in one short sentence.')
 
@@ -96,12 +153,49 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
 
     events: list[Any] = []
     async with agent.realtime_session(model=model) as session:
-        await session.send_text('What is the weather in London?')
+        await session.send('What is the weather in London?')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
+
+    assert sent_frames_containing(cassette, 'Look up the weather for a city.') == snapshot(
+        [
+            {
+                'setup': {
+                    'model': 'models/gemini-2.5-flash-native-audio-preview-09-2025',
+                    'generationConfig': {'responseModalities': ['AUDIO']},
+                    'systemInstruction': {
+                        'parts': [
+                            {
+                                'text': 'Use the get_weather tool for any weather question, then answer in one short sentence.'
+                            }
+                        ],
+                        'role': 'user',
+                    },
+                    'tools': [
+                        {
+                            'functionDeclarations': [
+                                {
+                                    'description': 'Look up the weather for a city.',
+                                    'name': 'get_weather',
+                                    'parameters_json_schema': {
+                                        'additionalProperties': False,
+                                        'properties': {'city': {'type': 'string'}},
+                                        'required': ['city'],
+                                        'type': 'object',
+                                    },
+                                }
+                            ]
+                        }
+                    ],
+                    'inputAudioTranscription': {},
+                    'outputAudioTranscription': {},
+                }
+            }
+        ]
+    )
 
     call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]
@@ -122,6 +216,9 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     tool_response = messages[1]
     assert isinstance(tool_response, ModelResponse)
     assert tool_response.parts == [ToolCallPart(tool_name='get_weather', args=IsStr(), tool_call_id=IsStr())]
+    # Gemini's tool-call frame carries no usage metadata; the later completed turn owns the only usage
+    # report the provider supplies, so the intermediate response remains honestly empty.
+    assert tool_response.usage == RequestUsage()
     tool_return = messages[2]
     assert isinstance(tool_return, ModelRequest)
     assert tool_return.parts == [
@@ -138,6 +235,21 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     assert isinstance(final_part, SpeechPart)
     assert final_part.transcript is not None and 'fog' in final_part.transcript.lower()
 
+    # Gemini packs `turnComplete` and `usageMetadata` into the same message; the codec emits the usage
+    # before the turn boundary so the session folds it into this final `ModelResponse` instead of
+    # dropping it after the response was already finalized. (Regression test for usage attribution.)
+    # The per-modality split is mapped too — audio bills far higher than text, so `output_audio_tokens`
+    # must not be collapsed into the output total.
+    assert final.usage == snapshot(
+        RequestUsage(
+            input_tokens=1203,
+            output_tokens=80,
+            output_audio_tokens=68,
+            details={'input_text_tokens': 1203, 'output_text_tokens': 12},
+        )
+    )
+    assert session.usage.total_tokens == final.usage.total_tokens
+
 
 async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """Seeded prior turns are sent on the wire and reflected in the model's reply."""
@@ -152,16 +264,31 @@ async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], 
 
     events: list[Any] = []
     async with agent.realtime_session(model=model, message_history=history) as session:
-        await session.send_text('What is my name and favorite color?')
+        await session.send('What is my name and favorite color?')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
 
-    # The seeded turns were sent on the wire as inactive context (a `client_content` frame).
-    assert sent_frames_containing(cassette, 'My name is Alice')
-    assert sent_frames_containing(cassette, 'Nice to meet you')
+    # The seeded turns were sent on the wire as inactive context: a single `client_content` frame
+    # carrying both turns with `turnComplete` false (so Gemini doesn't respond to the seed yet). A
+    # wrong role, turn ordering, or completion flag fails here rather than passing on a substring match.
+    seeded = sent_frames_containing(cassette, 'My name is Alice')
+    assert seeded == sent_frames_containing(cassette, 'Nice to meet you')  # one frame carries both turns
+    assert seeded == snapshot(
+        [
+            {
+                'client_content': {
+                    'turns': [
+                        {'parts': [{'text': 'My name is Alice and my favorite color is teal.'}], 'role': 'user'},
+                        {'parts': [{'text': 'Nice to meet you, Alice!'}], 'role': 'model'},
+                    ],
+                    'turnComplete': False,
+                }
+            }
+        ]
+    )
 
     # `all_messages()` carries the seeded history ahead of this session's turns.
     messages = session.all_messages()
@@ -188,5 +315,10 @@ def test_profile_allow_seeding() -> None:
         supports_interruption=False,
         supports_output_truncation=False,
         supports_session_seeding=True,
+        supports_seeding_images=True,
+        supports_seeding_audio=False,
+        supports_thinking=True,  # the default native-audio model supports a thinking config
         supported_native_tools=frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
+        audio_input_sample_rate=16000,
+        audio_output_sample_rate=24000,
     )

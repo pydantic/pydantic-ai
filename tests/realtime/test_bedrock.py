@@ -12,8 +12,11 @@ from aws_sdk_bedrock_runtime.models import (
 )
 from inline_snapshot import snapshot
 
-from pydantic_ai.realtime import AudioDelta, AudioInput, InputTranscript, SessionUsageEvent, TextInput, Transcript
+from pydantic_ai.messages import ModelRequest
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.realtime import AudioInput, SessionUsageEvent, TextInput
 from pydantic_ai.realtime.bedrock import BedrockRealtimeConnection, BedrockRealtimeModel, BedrockRealtimeModelSettings
+from pydantic_ai.realtime.codec import AudioDelta, InputTranscript, Transcript
 from pydantic_ai.usage import RequestUsage
 
 
@@ -79,8 +82,9 @@ async def test_handshake_settings_merge_and_inputs() -> None:
         settings=settings,
     )
     async with model.connect(
-        instructions='Be concise.',
+        messages=[ModelRequest(parts=[], instructions='Be concise.')],
         model_settings=overrides,
+        model_request_parameters=ModelRequestParameters(),
     ) as connection:
         await connection.send(TextInput('hello'))
         await connection.send(AudioInput(b'pcm'))

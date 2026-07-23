@@ -1,8 +1,9 @@
 """Realtime camera + voice assistant — talk to a Gemini Live model and show it your camera.
 
 The browser streams microphone audio (PCM16, 16kHz) and ~1 fps JPEG camera frames into a Gemini
-Live session and plays the model's audio back. Pure conversation — no tools, no supervisor — just
-"talk and show": point your camera at something and ask about it.
+Live session and plays the model's audio back: point your camera at something and ask about it.
+The assistant can also ground answers with web search and redraw a hand-drawn sketch into a clean
+diagram (see the tool and capability notes below).
 
 Requires `GOOGLE_API_KEY` (Gemini Live access) — or, where org policy disallows API keys, set
 `GOOGLE_GENAI_USE_VERTEXAI=true` (+ `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` and
@@ -56,7 +57,7 @@ import base64
 import json
 import os
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -70,16 +71,16 @@ from fastapi.responses import HTMLResponse
 
 from pydantic_ai import Agent, BinaryContent, RunContext
 from pydantic_ai.capabilities import WebSearch
+from pydantic_ai.messages import NativeToolReturnPart
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 from pydantic_ai.realtime import (
+    InputSpeechStartEvent,
     PartDeltaEvent,
     PartEndEvent,
+    RealtimeEvent,
     RealtimeSession,
-    RealtimeSessionEvent,
-    SourcesEvent,
     SpeechPart,
     SpeechPartDelta,
-    SpeechStartedEvent,
     TurnCompleteEvent,
 )
 from pydantic_ai.realtime.google import (
@@ -310,9 +311,9 @@ def _build_model(params: Mapping[str, str]) -> GoogleRealtimeModel:
     )
 
 
-def _json_message(event: RealtimeSessionEvent) -> dict[str, object] | None:
+def _json_message(event: RealtimeEvent) -> dict[str, object] | None:
     """Translate a session event into a JSON message for the browser (audio is sent separately)."""
-    if isinstance(event, SpeechStartedEvent):
+    if isinstance(event, InputSpeechStartEvent):
         return {'type': 'speech_started'}
     if (
         isinstance(event, PartEndEvent)
@@ -320,11 +321,20 @@ def _json_message(event: RealtimeSessionEvent) -> dict[str, object] | None:
         and event.part.transcript
     ):
         return {'type': event.part.speaker, 'text': event.part.transcript}
-    if isinstance(event, SourcesEvent):
+    if isinstance(event, PartEndEvent) and isinstance(event.part, NativeToolReturnPart):
+        content = cast(object, event.part.content)
+        sources = cast('list[object]', content) if isinstance(content, list) else []
         return {
             'type': 'sources',
-            'queries': event.queries,
-            'sources': [{'url': s.url, 'title': s.title} for s in event.sources],
+            'queries': [],
+            'sources': [
+                {'url': item.get('uri'), 'title': item.get('title')}
+                for source in sources
+                if isinstance(source, dict)
+                and isinstance(
+                    (item := cast('dict[str, object]', source)).get('uri'), str
+                )
+            ],
         }
     if isinstance(event, TurnCompleteEvent):
         return {'type': 'turn_complete'}
@@ -380,16 +390,18 @@ async def _dispatch_text(
         if data.get('type') == 'image':
             frame = base64.b64decode(data['data'])
             store_frame(frame)  # low-res fallback if a high-res capture isn't available
-            await session.send_image(frame, mime_type=data.get('mime') or 'image/jpeg')
+            await session.send(
+                BinaryContent(data=frame, media_type=data.get('mime') or 'image/jpeg')
+            )
         elif data.get('type') == 'frame_hd':
             # High-res still requested for `redraw_diagram` — keep it for the tool but don't forward
             # it to Gemini (the live session only needs the cheap streamed frames for context).
             store_hd(base64.b64decode(data['data']))
         elif data.get('type') == 'text':
-            await session.send_text(data['text'])
+            await session.send(data['text'])
         elif data.get('type') == 'nudge':
             # Watch mode: trigger a turn so the model reports visual changes.
-            await session.send_text(WATCH_PROMPT)
+            await session.send(WATCH_PROMPT)
     except (ValueError, AttributeError, KeyError, TypeError):
         return
 
@@ -416,11 +428,8 @@ async def ws(socket: WebSocket) -> None:
         async with anyio.create_task_group() as tg:
 
             async def pump_events() -> None:
-                events = cast(
-                    'AsyncGenerator[RealtimeSessionEvent, None]', session.__aiter__()
-                )
                 try:
-                    async for event in events:
+                    async for event in session:
                         if (
                             isinstance(event, PartDeltaEvent)
                             and isinstance(event.delta, SpeechPartDelta)
@@ -432,10 +441,10 @@ async def ws(socket: WebSocket) -> None:
                         if (message := _json_message(event)) is not None:
                             await emit(message)
                 except Exception:
+                    # Log before tearing down so a pump failure (e.g. a provider error surfaced through
+                    # the session) is diagnosable instead of a silent disconnect.
+                    logfire.exception('Realtime event pump failed')
                     tg.cancel_scope.cancel()
-                finally:
-                    with anyio.CancelScope(shield=True):
-                        await events.aclose()
 
             async def pump_inbound() -> None:
                 try:

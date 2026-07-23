@@ -51,7 +51,7 @@ Designed to give your IDE or AI coding agent as much context as possible for aut
 Enables you to systematically test and [evaluate](https://ai.pydantic.dev/evals) the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.
 
 6. **Extensible by Design**:
-Build agents from composable [capabilities](https://ai.pydantic.dev/capabilities) that bundle tools, hooks, instructions, and model settings into reusable units. Use built-in capabilities for [web search](https://ai.pydantic.dev/capabilities#provider-adaptive-tools), [thinking](https://ai.pydantic.dev/capabilities#thinking), and [MCP](https://ai.pydantic.dev/capabilities#provider-adaptive-tools), pick from the [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) capability library, build your own, or install [third-party capability packages](https://ai.pydantic.dev/extensibility). Define agents entirely in [YAML/JSON](https://ai.pydantic.dev/agent-spec) — no code required.
+Build agents from composable [capabilities](https://ai.pydantic.dev/capabilities/overview/) that bundle tools, hooks, instructions, and model settings into reusable units. Use built-in capabilities for [web search](https://ai.pydantic.dev/capabilities/web-search/), [thinking](https://ai.pydantic.dev/capabilities/thinking/), and [MCP](https://ai.pydantic.dev/capabilities/mcp/), pick from the [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) capability library, build your own, or install [third-party capability packages](https://ai.pydantic.dev/extensibility). Define agents entirely in [YAML/JSON](https://ai.pydantic.dev/agent-spec) — no code required.
 
 7. **MCP and UI**:
 Integrates the [Model Context Protocol](https://ai.pydantic.dev/mcp/overview) and various [UI event stream](https://ai.pydantic.dev/ui/overview) standards to give your agent access to external tools and data and build interactive applications with streaming event-based communication.
@@ -67,6 +67,9 @@ Provides the ability to [stream](https://ai.pydantic.dev/output#streamed-results
 
 11. **Graph Support**:
 Provides a powerful way to define [graphs](https://ai.pydantic.dev/graph) using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+
+12. **Realtime Voice**:
+Build [speech-to-speech agents](https://ai.pydantic.dev/realtime) on native realtime models (OpenAI Realtime, Gemini Live, and xAI Grok Voice) over a persistent bidirectional audio connection, with the same tools, capabilities, and observability as any other agent.
 
 Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
 
@@ -97,9 +100,9 @@ _(This example is complete, it can be run "as is", assuming you've [installed th
 
 The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
 
-Not very interesting yet, but we can easily add [tools](https://ai.pydantic.dev/tools), [dynamic instructions](https://ai.pydantic.dev/agents#instructions), [structured outputs](https://ai.pydantic.dev/output), or composable [capabilities](https://ai.pydantic.dev/capabilities) to build more powerful agents.
+Not very interesting yet, but we can easily add [tools](https://ai.pydantic.dev/tools), [dynamic instructions](https://ai.pydantic.dev/agents#instructions), [structured outputs](https://ai.pydantic.dev/output), or composable [capabilities](https://ai.pydantic.dev/capabilities/overview/) to build more powerful agents.
 
-Here's the same agent with [thinking](https://ai.pydantic.dev/capabilities#thinking) and [web search](https://ai.pydantic.dev/capabilities#provider-adaptive-tools) capabilities:
+Here's the same agent with [thinking](https://ai.pydantic.dev/capabilities/thinking/) and [web search](https://ai.pydantic.dev/capabilities/web-search/) capabilities:
 
 ```python
 from pydantic_ai import Agent

@@ -32,7 +32,15 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import (
+    CallDeferred,
+    ModelRetry,
+    ToolFailed,
+    ToolRetryError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import (
     InstructionPart,
     ModelRequest,
@@ -44,7 +52,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import Tool, ToolDefinition
+from pydantic_ai.tools import DeferredToolResults, Tool, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -851,6 +859,76 @@ async def test_handle_call_wrap_validation_errors_false():
     with pytest.raises(ToolRetryError):
         await tool_manager.handle_call(ToolCallPart(tool_name='retrying', args={}))
     assert tool_manager.failed_tools == {'needs_int', 'retrying'}
+
+
+async def test_handle_call_raw_mode_propagates_tool_failed_from_body():
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def failing() -> None:
+        raise ToolFailed('body failed')
+
+    tool_manager = await ToolManager[None](toolset).for_run_step(build_run_context(None))
+
+    with pytest.raises(ToolFailed, match='body failed'):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='failing', args={}),
+            wrap_validation_errors=False,
+        )
+
+
+async def test_handle_call_raw_mode_propagates_deferred_tool_failed():
+    """A deferred handler result honors the same raw-error contract as an in-process failure."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def failing_later() -> None:
+        raise CallDeferred
+
+    tool_manager = await ToolManager[None](toolset).for_run_step(build_run_context(None))
+    tool_manager.resolve_deferred_tool_calls = AsyncMock(
+        return_value=DeferredToolResults(calls={'call-1': ToolFailed('deferred failed')})
+    )
+
+    with pytest.raises(ToolFailed, match='deferred failed'):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='failing_later', args={}, tool_call_id='call-1'),
+            wrap_validation_errors=False,
+        )
+
+
+@pytest.mark.parametrize('hook_name', ['execute', 'validate'])
+async def test_handle_call_raw_mode_propagates_tool_failed_from_hooks(hook_name: str):
+    class FailingCapability(AbstractCapability[None]):
+        async def before_tool_execute(
+            self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            if hook_name == 'execute':
+                raise ToolFailed('hook failed')
+            return args  # pragma: no cover - unreachable: the 'validate' hook fails before execute runs
+
+        async def before_tool_validate(
+            self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+        ) -> str | dict[str, Any]:
+            if hook_name == 'validate':
+                raise ToolFailed('hook failed')
+            return args
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def tool() -> str:
+        return 'ok'  # pragma: no cover - unreachable: a hook always fails before the tool body runs
+
+    tool_manager = await ToolManager[None](toolset, root_capability=FailingCapability()).for_run_step(
+        build_run_context(None)
+    )
+
+    with pytest.raises(ToolFailed, match='hook failed'):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='tool', args={}),
+            wrap_validation_errors=False,
+        )
 
 
 async def test_toolset_max_retries_inherits_from_agent():

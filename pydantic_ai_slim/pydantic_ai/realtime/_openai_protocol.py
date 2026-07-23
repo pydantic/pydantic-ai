@@ -17,34 +17,81 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 
+from openai.types.realtime import (
+    ConversationCreatedEvent,
+    ConversationItem,
+    ConversationItemAdded,
+    ConversationItemCreatedEvent,
+    ConversationItemInputAudioTranscriptionCompletedEvent,
+    ConversationItemInputAudioTranscriptionDeltaEvent,
+    ConversationItemInputAudioTranscriptionFailedEvent,
+    RealtimeConversationItemFunctionCall,
+    RealtimeConversationItemFunctionCallOutput,
+    RealtimeError,
+    RealtimeErrorEvent,
+    RealtimeResponse,
+    RealtimeResponseStatus,
+    ResponseAudioDeltaEvent,
+    ResponseAudioTranscriptDeltaEvent,
+    ResponseAudioTranscriptDoneEvent,
+    ResponseDoneEvent,
+    ResponseFunctionCallArgumentsDoneEvent,
+    ResponseTextDeltaEvent,
+    ResponseTextDoneEvent,
+)
+from typing_extensions import assert_never
+
+from .._utils import is_str_dict
+from ..exceptions import UserError
 from ..messages import (
+    BinaryContent,
+    CompactionPart,
+    FilePart,
+    FinishReason,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
+    ModelResponsePart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    RetryPromptPart,
     SpeechPart,
+    SystemPromptPart,
     TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
+from ..profiles import DEFAULT_THINKING_TAGS
 from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from ._base import (
     AudioDelta,
+    ConversationCreated,
+    ConversationItemCreated,
+    InputSpeechEndEvent,
+    InputSpeechStartEvent,
     InputTranscript,
-    RateLimit,
-    RateLimitsEvent,
-    RealtimeEvent,
+    InputTranscriptionFailedEvent,
+    RealtimeCodecEvent,
+    RealtimeModelProfile,
     SessionErrorEvent,
-    SpeechStartedEvent,
-    SpeechStoppedEvent,
     ToolCall,
     Transcript,
     TurnCompleteEvent,
-    user_prompt_text,
+    TurnDetection,
+    seed_pcm_audio,
+    seed_speech_content,
+    seed_user_content,
 )
 
 if TYPE_CHECKING:
@@ -87,7 +134,14 @@ def resolve_transcription_model(value: str | None, *, default: str) -> str | Non
 AUDIO_DELTA_TYPES = frozenset({'response.output_audio.delta', 'response.audio.delta'})
 _AUDIO_TRANSCRIPT_DELTA_TYPES = frozenset({'response.output_audio_transcript.delta', 'response.audio_transcript.delta'})
 _AUDIO_TRANSCRIPT_DONE_TYPES = frozenset({'response.output_audio_transcript.done', 'response.audio_transcript.done'})
-_INPUT_TRANSCRIPT_DONE_TYPES = frozenset({'conversation.item.input_audio_transcription.completed'})
+INPUT_TRANSCRIPT_DONE_TYPES = frozenset({'conversation.item.input_audio_transcription.completed'})
+_INPUT_TRANSCRIPTION_TYPES = frozenset(
+    {
+        'conversation.item.input_audio_transcription.delta',
+        'conversation.item.input_audio_transcription.completed',
+        'conversation.item.input_audio_transcription.failed',
+    }
+)
 _FUNCTION_CALL_DONE_TYPES = frozenset({'response.function_call_arguments.done'})
 
 
@@ -103,45 +157,266 @@ def tool_def_to_openai(tool: ToolDefinition) -> dict[str, Any]:
     return result
 
 
-def seed_items(messages: Sequence[ModelMessage]) -> list[dict[str, Any]]:
-    """Project prior conversation to OpenAI `conversation.item.create` items (text/transcript only, v1).
+async def seed_items(
+    messages: Sequence[ModelMessage], *, profile: RealtimeModelProfile, provider_name: str
+) -> list[dict[str, Any]]:
+    """Map prior history to OpenAI-protocol `conversation.item.create` items.
 
-    User prompts and user-spoken transcripts become `input_text` user items; assistant text and
-    assistant-spoken transcripts become `output_text` assistant items. `SystemPromptPart`s are skipped (the
-    `instructions` session field covers system-level guidance), and tool calls/results are skipped —
-    seeding a `function_call_output` without its originating call item is invalid, and full tool-round
-    replay is out of scope for v1. Content that can't be projected is dropped rather than erroring.
+    Text, transcripts, images, retained user audio, thinking, and function-tool rounds are replayed in
+    part order. Thinking becomes tag-wrapped assistant text; its signature and `provider_details` are
+    provider-session-bound and are not replayed. Native-tool parts are metadata about how an answer was
+    produced and are skipped while the answer itself is retained. `SystemPromptPart`s are routed through
+    the session `instructions` field, and `CachePoint`s are ignored.
+
+    Retained user audio is decoded by the new session's configured input-audio format. Assistant audio
+    cannot be inserted by the API, so assistant speech requires a transcript. Any other content that
+    cannot be represented faithfully raises [`UserError`][pydantic_ai.exceptions.UserError].
     """
     items: list[dict[str, Any]] = []
+    call_ids: dict[str, str] = {}
+    seeded_calls: set[str] = set()
+    supports_images = profile.get('supports_seeding_images', False)
+    supports_audio = profile.get('supports_seeding_audio', False)
+
     for message in messages:
         if isinstance(message, ModelRequest):
-            for req_part in message.parts:
-                if isinstance(req_part, UserPromptPart) and (text := user_prompt_text(req_part)):
-                    items.append(_message_item('user', 'input_text', text))
-                elif isinstance(req_part, SpeechPart) and req_part.transcript:
-                    items.append(_message_item('user', 'input_text', req_part.transcript))
+            items.extend(
+                await _seed_request_items(
+                    message.parts,
+                    provider_name=provider_name,
+                    supports_images=supports_images,
+                    supports_audio=supports_audio,
+                    audio_input_sample_rate=profile.get('audio_input_sample_rate', 24000),
+                    call_ids=call_ids,
+                    seeded_calls=seeded_calls,
+                )
+            )
         else:
-            for resp_part in message.parts:
-                if isinstance(resp_part, TextPart) and resp_part.content:
-                    items.append(_message_item('assistant', 'output_text', resp_part.content))
-                elif isinstance(resp_part, SpeechPart) and resp_part.transcript:
-                    items.append(_message_item('assistant', 'output_text', resp_part.transcript))
+            items.extend(
+                _seed_response_items(
+                    message.parts,
+                    provider_name=provider_name,
+                    supports_audio=supports_audio,
+                    call_ids=call_ids,
+                    seeded_calls=seeded_calls,
+                )
+            )
     return items
 
 
-def _message_item(role: str, content_type: str, text: str) -> dict[str, Any]:
-    return {'type': 'message', 'role': role, 'content': [{'type': content_type, 'text': text}]}
+async def _seed_request_items(
+    parts: Sequence[ModelRequestPart],
+    *,
+    provider_name: str,
+    supports_images: bool,
+    supports_audio: bool,
+    audio_input_sample_rate: int,
+    call_ids: dict[str, str],
+    seeded_calls: set[str],
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for part in parts:
+        if isinstance(part, SystemPromptPart):
+            continue
+        elif isinstance(part, UserPromptPart):
+            if content := _user_content_items(
+                await seed_user_content(part, provider_name=provider_name, supports_images=supports_images)
+            ):
+                items.append(_message_item('user', content))
+        elif isinstance(part, SpeechPart):
+            content = seed_speech_content(part, provider_name=provider_name, supports_audio=supports_audio)
+            if isinstance(content, str):
+                if content:
+                    items.append(_message_item('user', [_text_content('input_text', content)]))
+            else:
+                pcm = seed_pcm_audio(
+                    content,
+                    provider_name=provider_name,
+                    sample_rate=audio_input_sample_rate,
+                )
+                items.append(_message_item('user', [{'type': 'input_audio', 'audio': base64.b64encode(pcm).decode()}]))
+        elif isinstance(part, ToolReturnPart):
+            _require_seeded_call(part.tool_name, part.tool_call_id, seeded_calls)
+            output, user_content = part.model_response_str_and_user_content()
+            items.append(
+                {
+                    'type': 'function_call_output',
+                    'call_id': _seed_call_id(part.tool_call_id, call_ids),
+                    'output': output,
+                }
+            )
+            if user_content and (
+                content := _user_content_items(
+                    await seed_user_content(
+                        UserPromptPart(content=user_content),
+                        provider_name=provider_name,
+                        supports_images=supports_images,
+                    )
+                )
+            ):
+                items.append(_message_item('user', content))
+        elif isinstance(part, RetryPromptPart):
+            output = part.model_response()
+            if part.tool_name is None:
+                items.append(_message_item('user', [_text_content('input_text', output)]))
+            else:
+                _require_seeded_call(part.tool_name, part.tool_call_id, seeded_calls)
+                items.append(
+                    {
+                        'type': 'function_call_output',
+                        'call_id': _seed_call_id(part.tool_call_id, call_ids),
+                        'output': output,
+                    }
+                )
+        else:
+            assert_never(part)
+    return items
 
 
-def _str_field(data: dict[str, Any], key: str, default: str = '') -> str:
-    """Return `data[key]` if it is a string, otherwise `default`."""
-    value = data.get(key, default)
-    return value if isinstance(value, str) else default
+def _seed_response_items(
+    parts: Sequence[ModelResponsePart],
+    *,
+    provider_name: str,
+    supports_audio: bool,
+    call_ids: dict[str, str],
+    seeded_calls: set[str],
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for part in parts:
+        if isinstance(part, TextPart):
+            if part.content:
+                items.append(_message_item('assistant', [_text_content('output_text', part.content)]))
+        elif isinstance(part, ThinkingPart):
+            if part.content:
+                start_tag, end_tag = DEFAULT_THINKING_TAGS
+                text = '\n'.join([start_tag, part.content, end_tag])
+                items.append(_message_item('assistant', [_text_content('output_text', text)]))
+        elif isinstance(part, ToolCallPart):
+            call_id = _seed_call_id(part.tool_call_id, call_ids)
+            seeded_calls.add(part.tool_call_id)
+            items.append(
+                {
+                    'type': 'function_call',
+                    'name': part.tool_name,
+                    'call_id': call_id,
+                    'arguments': part.args_as_json_str(),
+                }
+            )
+        elif isinstance(part, (NativeToolCallPart, NativeToolReturnPart)):
+            continue
+        elif isinstance(part, SpeechPart):
+            content = seed_speech_content(part, provider_name=provider_name, supports_audio=supports_audio)
+            if content:
+                assert isinstance(content, str)
+                items.append(_message_item('assistant', [_text_content('output_text', content)]))
+        elif isinstance(part, CompactionPart):
+            # Provider-session-bound compaction state can't round-trip into another session; classic
+            # model adapters skip it when crossing APIs (e.g. Chat Completions), and seeding matches.
+            continue
+        elif isinstance(part, FilePart):
+            raise UserError(
+                f'`FilePart` cannot be seeded into {provider_name} realtime history. '
+                'Convert it to text or filter it from `message_history` before connecting.'
+            )
+        else:
+            assert_never(part)
+    return items
 
 
-def obj(value: Any) -> dict[str, Any]:
-    """Return `value` as a `dict[str, Any]` when it is a mapping, otherwise an empty dict."""
-    return cast('dict[str, Any]', value) if isinstance(value, dict) else {}
+def _seed_call_id(tool_call_id: str, call_ids: dict[str, str]) -> str:
+    """Return a stable wire ID no longer than the OpenAI protocol's 32-character limit."""
+    if wire_id := call_ids.get(tool_call_id):
+        return wire_id
+    wire_id = tool_call_id if len(tool_call_id) <= 32 else hashlib.sha256(tool_call_id.encode()).hexdigest()[:32]
+    call_ids[tool_call_id] = wire_id
+    return wire_id
+
+
+def _require_seeded_call(tool_name: str, tool_call_id: str, seeded_calls: set[str]) -> None:
+    if tool_call_id not in seeded_calls:
+        raise UserError(
+            f'Cannot seed output for tool {tool_name!r} with call ID {tool_call_id!r}: no preceding '
+            '`ToolCallPart` with that ID was included in `message_history`.'
+        )
+
+
+def _user_content_items(content: Sequence[str | BinaryContent]) -> list[dict[str, Any]]:
+    return [
+        _text_content('input_text', item)
+        if isinstance(item, str)
+        else {'type': 'input_image', 'image_url': item.data_uri}
+        for item in content
+        if not isinstance(item, str) or item
+    ]
+
+
+def _text_content(content_type: Literal['input_text', 'output_text'], text: str) -> dict[str, Any]:
+    return {'type': content_type, 'text': text}
+
+
+def _message_item(role: Literal['user', 'assistant'], content: list[dict[str, Any]]) -> dict[str, Any]:
+    return {'type': 'message', 'role': role, 'content': content}
+
+
+async def user_message_item(
+    content: str | Sequence[UserContent], *, provider_name: str, supports_images: bool
+) -> dict[str, Any] | None:
+    """Build a live follow-up user item through the same normalization used for seeded history."""
+    normalized = await seed_user_content(
+        UserPromptPart(content=content), provider_name=provider_name, supports_images=supports_images
+    )
+    return _message_item('user', items) if (items := _user_content_items(normalized)) else None
+
+
+def map_conversation_event(
+    data: dict[str, Any], *, replayed: bool | None = None
+) -> ConversationCreated | ConversationItemCreated | None:
+    """Map xAI's conversation handshake and item lifecycle events to codec control events.
+
+    OpenAI emits similarly shaped lifecycle events during ordinary streaming, but doesn't support
+    resumption. The shared OpenAI mapper deliberately doesn't call this helper; xAI opts in from its
+    provider-specific mapper so OpenAI's observable codec stream remains unchanged.
+    """
+    event_type = data.get('type')
+    if event_type == 'conversation.created':
+        conversation_data = data.get('conversation')
+        if conversation_data is None:
+            return None
+        if not is_str_dict(conversation_data):
+            raise ValueError('`conversation` must be an object')
+        event = ConversationCreatedEvent.construct(**data)
+        conversation_id = event.conversation.id
+        return ConversationCreated(conversation_id) if conversation_id else None
+    if event_type == 'conversation.item.added':
+        event = ConversationItemAdded.construct(**data)
+    elif event_type == 'conversation.item.created':
+        event = ConversationItemCreatedEvent.construct(**data)
+    else:
+        return None
+    item_data = data.get('item')
+    if item_data is None:
+        return None
+    if not is_str_dict(item_data):
+        raise ValueError('`item` must be an object')
+    item_id = event.item.id or data.get('item_id')
+    tool_call_id = (
+        event.item.call_id
+        if isinstance(event.item, (RealtimeConversationItemFunctionCall, RealtimeConversationItemFunctionCallOutput))
+        else data.get('call_id')
+    )
+    item_id = item_id if isinstance(item_id, str) and item_id else None
+    tool_call_id = tool_call_id if isinstance(tool_call_id, str) and tool_call_id else None
+    if item_id is not None or tool_call_id is not None:
+        # An item is only part of a resumption replay when the reconnect handshake explicitly says
+        # so (`replayed=True`, set by the burst-capture callback bounded by `session.updated`). A
+        # live-stream lifecycle event — including the server's echo of a client-created item — is
+        # never a replay, so it defaults to `replayed=False` and is not suppressed.
+        return ConversationItemCreated(
+            item_id=item_id,
+            tool_call_id=tool_call_id,
+            replayed=bool(replayed),
+        )
+    return None
 
 
 def loads_obj(raw: str) -> dict[str, Any]:
@@ -157,118 +432,209 @@ def loads_obj(raw: str) -> dict[str, Any]:
     return cast('dict[str, Any]', data)
 
 
-def _map_rate_limits(data: dict[str, Any]) -> RateLimitsEvent:
-    """Map a `rate_limits.updated` event to a [`RateLimitsEvent`][pydantic_ai.realtime.RateLimitsEvent]."""
-    entries = data.get('rate_limits')
-    limits: list[RateLimit] = []
-    for entry in cast('list[Any]', entries) if isinstance(entries, list) else []:
-        item = obj(entry)
-        name = item.get('name')
-        if not isinstance(name, str):
-            continue
-        reset = item.get('reset_seconds')
-        limits.append(
-            RateLimit(
-                name=name,
-                limit=item.get('limit') if isinstance(item.get('limit'), int) else None,
-                remaining=item.get('remaining') if isinstance(item.get('remaining'), int) else None,
-                reset_seconds=float(reset) if isinstance(reset, (int, float)) and not isinstance(reset, bool) else None,
-            )
-        )
-    return RateLimitsEvent(limits=limits)
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
 
 
-def _is_function_call_only(output: Any) -> bool:
+def _is_function_call_only(output: list[ConversationItem] | None) -> bool:
     """Whether a `response.done` output list contains only function calls."""
-    entries = cast('list[Any]', output)
-    if not isinstance(entries, list):
-        return False
-    return bool(entries) and all(obj(entry).get('type') == 'function_call' for entry in entries)
+    return bool(output) and all(item.type == 'function_call' for item in output)
 
 
-def _map_response_done(data: dict[str, Any]) -> RealtimeEvent | None:
+def _response_status_reason(response: RealtimeResponse) -> str | None:
+    """Return the raw terminal `status_details.reason`, when present."""
+    status_details = response.status_details
+    return status_details.reason if isinstance(status_details, RealtimeResponseStatus) else None
+
+
+def response_finish_reason(response: RealtimeResponse) -> FinishReason | None:
+    """Map an OpenAI-protocol response `status`/output to a shared `FinishReason`.
+
+    A `'cancelled'` response is a barge-in (the user interrupted the model), which isn't an error and
+    has no dedicated `FinishReason`, so it's left unset — the response's `state='interrupted'` carries
+    that meaning, mirroring how a classic cancelled stream leaves `finish_reason` as-is. Incomplete
+    responses use `status_details.reason`, matching the classic OpenAI adapter.
+    """
+    status = response.status
+    if status == 'completed':
+        return 'tool_call' if _is_function_call_only(response.output) else 'stop'
+    if status == 'incomplete':
+        reason = _response_status_reason(response)
+        if reason == 'max_output_tokens':
+            return 'length'
+        if reason == 'content_filter':
+            return 'content_filter'
+    if status == 'failed':
+        return 'error'
+    return None
+
+
+def _response_provider_details(response: RealtimeResponse) -> dict[str, Any]:
+    """Retain the raw response status and incomplete reason for provider fidelity."""
+    details: dict[str, Any] = {'status': response.status}
+    if (reason := _response_status_reason(response)) is not None:
+        details['finish_reason'] = reason
+    return details
+
+
+def validate_response_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Return a raw response object after validating fields read through SDK-constructed models."""
+    response_data = data.get('response')
+    if response_data is None:
+        return {}
+    if not is_str_dict(response_data):
+        raise ValueError('`response` must be an object')
+    output_data = response_data.get('output')
+    if output_data is not None:
+        if not _is_object_list(output_data):
+            raise ValueError('`response.output` must be a list of objects')
+        for item in output_data:
+            if not is_str_dict(item):
+                raise ValueError('`response.output` must be a list of objects')
+    return response_data
+
+
+def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     """Map a `response.done` event, returning `None` for function-call-only responses.
 
     A response whose only output is function calls is an intermediate step: the session executes the
     tools and the model emits a further `response.done` with the actual answer. Surfacing a
     `TurnCompleteEvent` here would prematurely signal the end of the turn.
     """
-    if not isinstance(data.get('response'), dict):
-        return TurnCompleteEvent(interrupted=False)
-    response = obj(data.get('response'))
-    output = response.get('output')
+    if not validate_response_data(data):
+        return TurnCompleteEvent(interrupted=False, provider_details={'status': None})
+    event = ResponseDoneEvent.construct(**data)
+    response = event.response
+    output = response.output
     if _is_function_call_only(output):
         return None
-    return TurnCompleteEvent(interrupted=response.get('status') == 'cancelled')
+    status = response.status
+    response_id = response.id
+    return TurnCompleteEvent(
+        interrupted=status == 'cancelled',
+        provider_response_id=response_id if isinstance(response_id, str) else None,
+        finish_reason=response_finish_reason(response),
+        provider_details=_response_provider_details(response),
+    )
 
 
-def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
-    """Map a raw OpenAI Realtime event to a [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent].
+def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
+    """Map a raw OpenAI Realtime event to a [`RealtimeCodecEvent`][pydantic_ai.realtime.codec.RealtimeCodecEvent].
 
     Returns `None` for events that carry no session-relevant content (e.g. `session.created`).
     """
+    # Dispatching once on the wire discriminator avoids the SDK union parser misclassifying clone/beta events.
     event_type = data.get('type')
 
     if event_type in AUDIO_DELTA_TYPES:
-        delta = data.get('delta')
+        event = ResponseAudioDeltaEvent.construct(**data)
+        delta = event.delta
         if not isinstance(delta, str):
             return None
-        return AudioDelta(data=base64.b64decode(delta))
+        return AudioDelta(data=base64.b64decode(delta), item_id=event.item_id or None)
 
     if event_type in _AUDIO_TRANSCRIPT_DELTA_TYPES:
-        return Transcript(text=_str_field(data, 'delta'), is_final=False)
+        event = ResponseAudioTranscriptDeltaEvent.construct(**data)
+        return Transcript(text=event.delta or '', is_final=False, item_id=event.item_id or None)
 
     if event_type in _AUDIO_TRANSCRIPT_DONE_TYPES:
-        return Transcript(text=_str_field(data, 'transcript'), is_final=True)
+        event = ResponseAudioTranscriptDoneEvent.construct(**data)
+        return Transcript(text=event.transcript or '', is_final=True, item_id=event.item_id or None)
 
     if event_type == 'response.output_text.delta':
-        return Transcript(text=_str_field(data, 'delta'), is_final=False, output_text=True)
+        event = ResponseTextDeltaEvent.construct(**data)
+        return Transcript(text=event.delta or '', is_final=False, output_text=True)
 
     if event_type == 'response.output_text.done':
-        return Transcript(text=_str_field(data, 'text'), is_final=True, output_text=True)
+        event = ResponseTextDoneEvent.construct(**data)
+        return Transcript(text=event.text or '', is_final=True, output_text=True)
 
-    if event_type == 'conversation.item.input_audio_transcription.delta':
-        return InputTranscript(text=_str_field(data, 'delta'), is_final=False)
-
-    if event_type in _INPUT_TRANSCRIPT_DONE_TYPES:
-        return InputTranscript(text=_str_field(data, 'transcript'), is_final=True)
+    if event_type in _INPUT_TRANSCRIPTION_TYPES:
+        return _map_input_transcription_event(data, event_type)
 
     if event_type in _FUNCTION_CALL_DONE_TYPES:
+        event = ResponseFunctionCallArgumentsDoneEvent.construct(**data)
         return ToolCall(
-            tool_call_id=_str_field(data, 'call_id'),
-            tool_name=_str_field(data, 'name'),
-            args=_str_field(data, 'arguments', '{}'),
+            tool_call_id=event.call_id or '',
+            tool_name=event.name or '',
+            args=event.arguments or '{}',
+            response_usage_follows=True,
         )
 
     if event_type == 'input_audio_buffer.speech_started':
-        return SpeechStartedEvent()
+        started_item_id = data.get('item_id')
+        return InputSpeechStartEvent(item_id=started_item_id if isinstance(started_item_id, str) else None)
 
     if event_type == 'input_audio_buffer.speech_stopped':
-        return SpeechStoppedEvent()
-
-    if event_type == 'rate_limits.updated':
-        return _map_rate_limits(data)
+        # The stopped frame names the input item this speech segment produced, letting the session attach
+        # retained input audio to the right user turn even when overlapping turns finalize out of order.
+        stopped_item_id = data.get('item_id')
+        return InputSpeechEndEvent(item_id=stopped_item_id if isinstance(stopped_item_id, str) else None)
 
     if event_type == 'response.done':
         return _map_response_done(data)
 
     if event_type == 'error':
-        error = obj(data.get('error'))
+        error_data = data.get('error')
+        if not is_str_dict(error_data):
+            return SessionErrorEvent(message=str(error_data), recoverable=True)
+        event = RealtimeErrorEvent.construct(**data)
+        error = event.error
         return SessionErrorEvent(
-            message=_error_message(data.get('error')),
-            type=_str_field(error, 'type') or None,
-            code=_str_field(error, 'code') or None,
+            message=_error_message(error),
+            type=error.type or None if isinstance(error, RealtimeError) else None,
+            code=error.code or None if isinstance(error, RealtimeError) else None,
             recoverable=True,  # a protocol `error` keeps the session open; a dropped connection does not
         )
 
     return None
 
 
-def _error_message(error: Any) -> str:
+def _map_input_transcription_event(
+    data: dict[str, Any], event_type: str
+) -> InputTranscript | InputTranscriptionFailedEvent | SessionErrorEvent | None:
+    """Map input transcription progress and failure events."""
+    if event_type == 'conversation.item.input_audio_transcription.delta':
+        event = ConversationItemInputAudioTranscriptionDeltaEvent.construct(**data)
+        return InputTranscript(text=event.delta or '', is_final=False, item_id=event.item_id or None)
+    if event_type in INPUT_TRANSCRIPT_DONE_TYPES:
+        event = ConversationItemInputAudioTranscriptionCompletedEvent.construct(**data)
+        # OpenAI omits `status`; xAI and Azure may send cumulative `.completed` snapshots whose
+        # interim values must not be surfaced as final transcripts.
+        status = (event.model_extra or {}).get('status')  # Provider extra used by xAI and Azure.
+        if status is not None and status != 'completed':
+            return None
+        return InputTranscript(text=event.transcript or '', is_final=True, item_id=event.item_id or None)
+
+    if not is_str_dict(data.get('error')):
+        raise ValueError('`error` must be an object')
+    event = ConversationItemInputAudioTranscriptionFailedEvent.construct(**data)
+    if event.error.code == 'DeploymentNotFound':
+        # A misconfiguration, not a transient per-utterance failure: Azure resolves the transcription
+        # model against the resource's own deployments, so the default fails on every turn until fixed —
+        # silently dropping user turns. Fail loudly instead of surfacing a recoverable event nobody reads.
+        return SessionErrorEvent(
+            message=(
+                'Input transcription failed: the transcription model is not deployed on this Azure '
+                'resource (DeploymentNotFound). Deploy a transcription model and set '
+                '`input_transcription_model` in the realtime model settings, or disable input '
+                'transcription with `input_transcription_model=None`.'
+            ),
+            recoverable=False,
+        )
+    return InputTranscriptionFailedEvent(
+        message=event.error.message or '',
+        type=event.error.type or None,
+        code=event.error.code or None,
+        item_id=event.item_id or None,
+        content_index=event.content_index,
+    )
+
+
+def _error_message(error: RealtimeError | object) -> str:
     """Extract a human-readable message from an OpenAI `error` payload."""
-    if isinstance(error, dict):
-        message = obj(error).get('message')
-        return message if isinstance(message, str) and message else json.dumps(obj(error))
+    if isinstance(error, RealtimeError):
+        return error.message or json.dumps(error.model_dump(exclude_none=True))
     return str(error)
 
 
@@ -304,6 +670,33 @@ class SemanticVAD:
     """Whether to automatically generate a response when a turn ends."""
     interrupt_response: bool = True
     """Whether to automatically interrupt an in-progress response when the user starts speaking."""
+
+
+def server_vad_from_turn_detection(turn_detection: TurnDetection) -> ServerVAD:
+    """Map cross-provider turn detection to the OpenAI-compatible server-VAD shape."""
+    threshold = (
+        {'low': 0.7, 'medium': 0.5, 'high': 0.3}[turn_detection.sensitivity]
+        if turn_detection.sensitivity is not None
+        else None
+    )
+    return ServerVAD(
+        threshold=threshold,
+        prefix_padding_ms=turn_detection.prefix_padding_ms,
+        silence_duration_ms=turn_detection.silence_duration_ms,
+    )
+
+
+def resolve_base_turn_detection(base: bool | TurnDetection) -> ServerVAD | None:
+    """Resolve a cross-provider `turn_detection` value to a server-VAD config (or `None` to disable).
+
+    `True` (or an absent setting, handled by the caller) uses the provider defaults; `False` disables
+    detection (push-to-talk); a [`TurnDetection`][pydantic_ai.realtime.TurnDetection] maps its knobs.
+    """
+    if base is False:
+        return None
+    if base is True:
+        return ServerVAD()
+    return server_vad_from_turn_detection(base)
 
 
 def turn_detection_config(turn_detection: ServerVAD | SemanticVAD | None) -> dict[str, Any] | None:
@@ -349,12 +742,19 @@ def tool_choice_config(tool_choice: ToolChoice) -> str | dict[str, Any] | None:
     return None  # multi-tool restriction / ToolOrOutput: not expressible in realtime
 
 
-async def expect_event(ws: ClientConnection, expected_type: str, *, timeout: float) -> dict[str, Any]:
+async def expect_event(
+    ws: ClientConnection,
+    expected_type: str,
+    *,
+    timeout: float,
+    on_unexpected: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     """Read events until one of `expected_type` arrives, raising on a server error or timeout.
 
     Unrelated events received during the handshake (e.g. rate limit notices) are skipped rather than
-    treated as a protocol violation. `timeout` bounds the total wait so `connect()` fails predictably
-    instead of hanging if the expected event never arrives.
+    treated as a protocol violation, and passed to `on_unexpected` when supplied (xAI uses this to
+    capture its resumption replay burst). `timeout` bounds the total wait so `connect()` fails
+    predictably instead of hanging if the expected event never arrives.
     """
     deadline = time.monotonic() + timeout
     while True:
@@ -370,3 +770,5 @@ async def expect_event(ws: ClientConnection, expected_type: str, *, timeout: flo
             return data
         if event_type == 'error':
             raise RuntimeError(f'OpenAI realtime error during handshake: {_error_message(data.get("error"))}')
+        if on_unexpected is not None:
+            on_unexpected(data)

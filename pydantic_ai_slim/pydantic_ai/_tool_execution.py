@@ -17,7 +17,7 @@ from pydantic_graph import GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import _output, exceptions, messages as _messages, result
-from .exceptions import ToolRetryError
+from .exceptions import ToolFailedError, ToolRetryError
 from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDenied, ToolKind
 
 if TYPE_CHECKING:
@@ -35,6 +35,43 @@ _OUTPUT_NOT_FINAL_RESULT = 'Output tool processed, but its value will not be the
 _OUTPUT_EXECUTION_FAILED = 'Output tool not used - output function execution failed.'
 _OUTPUT_VALIDATION_FAILED = 'Output tool not used - output failed validation.'
 _TOOL_SKIPPED_FINAL_ALREADY_PROCESSED = 'Tool not executed - a final result was already processed.'
+
+
+def build_tool_return_part(
+    tool_result: Any,
+    *,
+    call: _messages.ToolCallPart,
+    tool_kind: _messages.ToolPartKind | None,
+) -> tuple[_messages.ToolReturnPart, str | Sequence[_messages.UserContent] | None]:
+    """Translate a settled function-tool result into normalized history and optional user content."""
+    if isinstance(tool_result, ToolDenied):
+        return _messages.ToolReturnPart(
+            tool_name=call.tool_name,
+            content=tool_result.message,
+            tool_call_id=call.tool_call_id,
+            outcome='denied',
+        ), None
+
+    if isinstance(tool_result, _messages.ToolReturn):
+        tool_return = cast(_messages.ToolReturn[Any], tool_result)
+    elif isinstance(tool_result, list) and any(
+        isinstance(item, _messages.ToolReturn) for item in cast(list[Any], tool_result)
+    ):
+        raise exceptions.UserError(
+            f'The return value of tool {call.tool_name!r} contains invalid nested `ToolReturn` objects. '
+            f'`ToolReturn` should be used directly.'
+        )
+    else:
+        tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
+
+    return_part = _messages.ToolReturnPart(
+        tool_name=call.tool_name,
+        tool_call_id=call.tool_call_id,
+        content=tool_return.return_value,
+        metadata=tool_return.metadata,
+        tool_kind=tool_kind,
+    )
+    return _messages.ToolReturnPart.narrow_type(return_part), tool_return.content or None
 
 
 def _duplicate_tool_call_ids(calls: Sequence[_messages.ToolCallPart]) -> list[str]:
@@ -361,6 +398,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
         if not validated.args_valid:
             assert validated.validation_error is not None
+            # Output-tool validation (`validate_output_tool_call`) only ever raises
+            # `ToolRetryError`/`ValidationError`/`ModelRetry`, never `ToolFailed`, so
+            # `validation_error` is always a `ToolRetryError` here — unlike the function-tool
+            # path, which also handles `ToolFailedError`.
+            assert isinstance(validated.validation_error, ToolRetryError)
             self.output_retries_increment += 1
             return _OutputCallResult(call=call, args_valid=False, retry_part=validated.validation_error.tool_retry)
 
@@ -524,12 +566,15 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 else:
                     raise RuntimeError('Expected validated tool call')  # pragma: no cover
             elif isinstance(tool_call_result, ToolDenied):
-                return _messages.ToolReturnPart(
+                tool_result = tool_call_result
+            elif isinstance(tool_call_result, exceptions.ToolFailed):
+                m = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
                     content=tool_call_result.message,
                     tool_call_id=call.tool_call_id,
-                    outcome='denied',
-                ), None
+                    outcome='failed',
+                )
+                raise ToolFailedError(m)
             elif isinstance(tool_call_result, exceptions.ModelRetry):
                 m = _messages.RetryPromptPart(
                     content=tool_call_result.message,
@@ -545,34 +590,19 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 tool_result = tool_call_result
         except ToolRetryError as e:
             return e.tool_retry, None
-
-        if isinstance(tool_result, _messages.ToolReturn):
-            tool_return = cast(_messages.ToolReturn[Any], tool_result)
-        elif isinstance(tool_result, list) and any(
-            isinstance(i, _messages.ToolReturn) for i in cast(list[Any], tool_result)
-        ):
-            raise exceptions.UserError(
-                f'The return value of tool {call.tool_name!r} contains invalid nested `ToolReturn` objects. '
-                f'`ToolReturn` should be used directly.'
-            )
-        else:
-            tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
+        except ToolFailedError as e:
+            return e.tool_failed, None
 
         # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
         # (e.g. `'tool-search'`), promote the return part to that subclass. This keeps the
         # typed identity intact across multi-turn history: the next turn's discovery parser /
         # cross-provider replay sees a typed `ToolSearchReturnPart` instead of a base part.
         tool_def = self.tool_manager.get_tool_def(call.tool_name)
-        return_part = _messages.ToolReturnPart(
-            tool_name=call.tool_name,
-            tool_call_id=call.tool_call_id,
-            content=tool_return.return_value,
-            metadata=tool_return.metadata,
+        return build_tool_return_part(
+            tool_result,
+            call=call,
             tool_kind=tool_def.tool_kind if tool_def else None,
         )
-        return_part = _messages.ToolReturnPart.narrow_type(return_part)
-
-        return return_part, tool_return.content or None
 
     async def _call_tools(  # noqa: C901
         self,
@@ -797,12 +827,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         self.deferred_calls['unapproved'].append(call)
                 else:
                     # Call execute_tool_call to raise the validation error inside a trace span;
-                    # retries are already tracked by validate_tool_call() via failed_tools.
+                    # retry failures are already tracked by validate_tool_call() via failed_tools.
                     try:
                         await self.tool_manager.execute_tool_call(validated)
-                    except ToolRetryError as e:
-                        self.output_parts.append(e.tool_retry)
-                        yield _messages.FunctionToolResultEvent(e.tool_retry)
+                    except (ToolRetryError, ToolFailedError) as e:
+                        part = e.tool_retry if isinstance(e, ToolRetryError) else e.tool_failed
+                        self.output_parts.append(part)
+                        yield _messages.FunctionToolResultEvent(part)
 
     async def _resolve_deferred_calls(self) -> AsyncIterator[_messages.HandleResponseEvent]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""

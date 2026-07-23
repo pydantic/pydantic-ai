@@ -15,28 +15,30 @@ from pydantic_ai import ModelMessage, ModelResponse, models
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, infer_model_profile, parse_model_id
-from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
+from pydantic_ai.models import (
+    CompletedStreamedResponse,
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    infer_model_profile,
+    parse_model_id,
+)
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+from ._durability import _RequestParams  # pyright: ignore[reportPrivateUsage]
 from ._run_context import TemporalRunContext, deserialize_run_context
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
-
-@dataclass
-@with_config(ConfigDict(arbitrary_types_allowed=True))
-class _RequestParams:
-    messages: list[ModelMessage]
-    # `model_settings` can't be a `ModelSettings` because Temporal would end up dropping fields only defined on its subclasses.
-    model_settings: dict[str, Any] | None
-    model_request_parameters: ModelRequestParameters
-    serialized_run_context: Any
-    model_id: str | None = None
+__all__ = [
+    'TemporalModel',
+    'TemporalProviderFactory',
+]
 
 
 @dataclass
@@ -230,7 +232,7 @@ class TemporalModel(WrapperModel):
             ],
             **activity_config,
         )
-        yield CompletedStreamedResponse(model_request_parameters, response)
+        yield CompletedStreamedResponse(response, model_request_parameters=model_request_parameters)
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         if not workflow.in_workflow():
@@ -291,7 +293,7 @@ class TemporalModel(WrapperModel):
         if isinstance(model, Model):
             return model
 
-        # For strings and None, use _get_model_id + _resolve_model
+        # For strings and None, use _get_model_id + _resolve_model_id
         model_id = self._get_model_id(model)
         return self._resolve_model_id(model_id)
 

@@ -76,6 +76,10 @@ pytestmark = [
 ]
 
 
+def test_provider_default_realtime_profile_is_unknown() -> None:
+    assert Provider.realtime_model_profile('voice') is None
+
+
 @pytest.fixture(autouse=True)
 def empty_env():
     with patch.dict(os.environ, {}, clear=True):

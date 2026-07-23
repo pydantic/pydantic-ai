@@ -5,7 +5,7 @@ import warnings
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any, cast, get_args, get_origin
+from typing import Annotated, Any, Literal, cast, get_args, get_origin
 
 import pytest
 from pydantic import TypeAdapter
@@ -1660,6 +1660,39 @@ def test_tool_return_part_list_structure_preserved():
     assert tool_return_multi_list.model_response_str() == snapshot('[{"a":1},{"b":2}]')
 
 
+@pytest.mark.parametrize(
+    'outcome,expected_str,expected_object',
+    [
+        pytest.param('success', 'Disk full', {'return_value': 'Disk full'}, id='success'),
+        pytest.param('denied', 'Disk full', {'return_value': 'Disk full'}, id='denied'),
+        pytest.param('failed', '{"error":"Disk full"}', {'error': 'Disk full'}, id='failed'),
+    ],
+)
+def test_tool_return_part_model_response_outcome(
+    outcome: Literal['success', 'failed', 'denied'], expected_str: str, expected_object: dict[str, Any]
+) -> None:
+    """Public model-conversion helpers frame only failed results and let native error channels opt out."""
+    part = ToolReturnPart(tool_name='tool', content='Disk full', tool_call_id='call_1', outcome=outcome)
+
+    assert part.model_response_str() == expected_str
+    assert part.model_response_object() == expected_object
+
+    if outcome == 'failed':
+        assert part.model_response_str(wrap_if_error=False) == 'Disk full'
+        assert part.model_response_object(wrap_if_error=False) == {'return_value': 'Disk full'}
+
+        structured = ToolReturnPart(
+            tool_name='tool',
+            content={'error': 'legitimate output'},
+            tool_call_id='call_2',
+            outcome='failed',
+        )
+        assert structured.model_response_str() == '{"error":"{\\"error\\":\\"legitimate output\\"}"}'
+        assert structured.model_response_str(wrap_if_error=False) == '{"error":"legitimate output"}'
+        assert structured.model_response_object() == {'error': '{"error":"legitimate output"}'}
+        assert structured.model_response_object(wrap_if_error=False) == {'error': 'legitimate output'}
+
+
 def test_tool_return_part_content_items():
     img = ImageUrl(url='https://example.com/img.png')
     binary = BinaryContent(data=b'\x89PNG', media_type='image/png')
@@ -1795,6 +1828,21 @@ def test_tool_return_part_model_response_str_and_user_content():
     text, user_content = p_file_only.model_response_str_and_user_content()
     assert text == snapshot('See file d5a901.')
     assert user_content == snapshot(['This is file d5a901:', ImageUrl(url='https://example.com/img.png')])
+
+    # Failed content keeps file references so the trailing user message remains attributable.
+    failed_img = ImageUrl(url='https://example.com/failed.png', identifier='report')
+    p_failed = ToolReturnPart(tool_name='t', content=['Disk full', failed_img], tool_call_id='c5', outcome='failed')
+    text, user_content = p_failed.model_response_str_and_user_content()
+    assert text == snapshot('[{"error":"Disk full"},"See file report."]')
+    assert user_content == snapshot(
+        ['This is file report:', ImageUrl(url='https://example.com/failed.png', identifier='report')]
+    )
+
+    text, user_content = p_failed.model_response_str_and_user_content(wrap_if_error=False)
+    assert text == snapshot('["Disk full","See file report."]')
+    assert user_content == snapshot(
+        ['This is file report:', ImageUrl(url='https://example.com/failed.png', identifier='report')]
+    )
 
 
 def test_args_as_dict_valid_json():

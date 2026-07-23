@@ -27,14 +27,13 @@ from pydantic_ai import Agent
 from pydantic_ai.realtime import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    InputSpeechStartEvent,
     PartDeltaEvent,
     PartEndEvent,
+    RealtimeEvent,
     RealtimeSession,
-    RealtimeSessionEvent,
-    SessionErrorEvent,
     SpeechPart,
     SpeechPartDelta,
-    SpeechStartedEvent,
 )
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
@@ -103,14 +102,14 @@ def drain(play_queue: queue.Queue[bytes]) -> None:
 
 async def handle_event(
     session: RealtimeSession,
-    event: RealtimeSessionEvent,
+    event: RealtimeEvent,
     play_queue: queue.Queue[bytes],
 ) -> bool:
     """Handle one session event; return `True` to stop the session."""
     match event:
         case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
             play_queue.put_nowait(chunk)
-        case SpeechStartedEvent():
+        case InputSpeechStartEvent():
             # Barge-in: drop buffered audio locally and cancel the model's turn.
             drain(play_queue)
             await session.interrupt()
@@ -122,9 +121,6 @@ async def handle_event(
             print(f'[calling {call.tool_name}]')
         case FunctionToolResultEvent(part=result):
             print(f'[{result.tool_name} returned: {result.content}]')
-        case SessionErrorEvent(message=message, recoverable=recoverable):
-            print(f'error: {message}')
-            return not recoverable
     return False
 
 

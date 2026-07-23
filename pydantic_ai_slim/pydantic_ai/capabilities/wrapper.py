@@ -21,6 +21,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 from .abstract import (
     AbstractCapability,
+    AgentModel,
     AgentNode,
     CapabilityDescription,
     NodeResult,
@@ -37,8 +38,8 @@ from .abstract import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai.agent.abstract import AgentModelSettings
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
+    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
 
@@ -93,11 +94,22 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             or self.wrapped.has_wrap_run_event_stream
         )
 
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        new_wrapped = self.wrapped.for_agent(agent)
+        if new_wrapped is self.wrapped:
+            return self
+        return replace(self, wrapped=new_wrapped)
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = await self.wrapped.for_run(ctx)
         if new_wrapped is self.wrapped:
             return self
         return replace(self, wrapped=new_wrapped)
+
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        self.wrapped._validate_runtime_capabilities(ctx, capabilities)
 
     # --- Get methods ---
 
@@ -106,6 +118,23 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         return self.wrapped.get_model_settings()
+
+    def get_model(self) -> AgentModel[AgentDepsT] | None:
+        return self.wrapped.get_model()
+
+    @property
+    def has_resolve_model_id(self) -> bool:
+        return (
+            type(self).resolve_model_id is not WrapperCapability.resolve_model_id or self.wrapped.has_resolve_model_id
+        )
+
+    async def resolve_model_id(
+        self,
+        ctx: ModelResolutionContext[AgentDepsT],
+        *,
+        model_id: KnownModelName | str,
+    ) -> Model | None:
+        return await self.wrapped.resolve_model_id(ctx, model_id=model_id)
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         return self.wrapped.get_toolset()

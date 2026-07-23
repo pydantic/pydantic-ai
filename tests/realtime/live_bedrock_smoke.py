@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import asyncio
 
-from pydantic_ai.realtime import AudioDelta, Transcript
+from pydantic_ai.messages import ModelRequest
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime.bedrock import BedrockRealtimeModel
+from pydantic_ai.realtime.codec import AudioDelta, Transcript
 
 
 async def main() -> None:
     model = BedrockRealtimeModel()
     transcript: list[str] = []
     audio_bytes = 0
-    async with model.connect(instructions='Reply briefly.') as connection:
+    async with model.connect(
+        messages=[ModelRequest(parts=[], instructions='Reply briefly.')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as connection:
         await connection.send_text('Say the word hello', 'USER')
         async for event in connection:
             if isinstance(event, Transcript):

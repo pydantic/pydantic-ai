@@ -1,31 +1,73 @@
 from __future__ import annotations
 
-from abc import ABC
-from collections.abc import Callable
-from typing import TYPE_CHECKING
+import inspect
+from collections.abc import Mapping
+from typing import Any, Literal, cast
 
-from pydantic_ai import AbstractToolset, FunctionToolset, WrapperToolset
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool
+from pydantic_ai.durable_exec._toolset import guard_run_context_enqueue
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._types import TaskConfig
 
-if TYPE_CHECKING:
-    pass
+
+def guard_task_enqueue(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+    """Make `ctx.enqueue()` raise inside a Prefect task-wrapped tool call."""
+    return guard_run_context_enqueue(ctx, unit_noun='task', container_noun='flow')
 
 
-class PrefectWrapperToolset(WrapperToolset[AgentDepsT], ABC):
-    """Base class for Prefect-wrapped toolsets."""
+def with_non_retryable_errors(config: TaskConfig) -> TaskConfig:
+    """Ensure framework configuration errors are not retried by Prefect."""
+    config = config.copy()
+    configured_condition = config.get('retry_condition_fn')
 
-    @property
-    def id(self) -> str | None:
-        # Prefect toolsets should have IDs for better task naming
-        return self.wrapped.id
+    async def retry_condition(task: Any, task_run: Any, state: Any) -> bool:
+        result = state.result(raise_on_failure=False)
+        if inspect.isawaitable(result):
+            result = await result
+        if isinstance(result, (UserError, UnexpectedModelBehavior)):
+            return False
+        if configured_condition is None:
+            return True
+        decision = configured_condition(task, task_run, state)
+        return await decision if inspect.isawaitable(decision) else decision
 
-    def visit_and_replace(
-        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
-    ) -> AbstractToolset[AgentDepsT]:
-        # Prefect-ified toolsets cannot be swapped out after the fact.
-        return self
+    config['retry_condition_fn'] = retry_condition
+    return config
+
+
+def resolve_tool_task_config(
+    tool: ToolsetTool[Any] | None,
+    tool_name: str,
+    tool_task_config: Mapping[str, TaskConfig | None],
+) -> TaskConfig | Literal[False]:
+    """Resolve per-tool Prefect task config.
+
+    Reads `tool.tool_def.metadata['prefect']` first, then falls back to the explicit
+    `tool_task_config` dict keyed by tool name. Returns a `TaskConfig` dict (possibly
+    empty), or `False` to skip task wrapping.
+    """
+    # Metadata set on the tool (via @toolset.tool(metadata={'prefect': ...}), with_metadata, or
+    # the `SetToolMetadata` capability) is the primary path.
+    if tool is not None and tool.tool_def.metadata is not None:
+        metadata_config = tool.tool_def.metadata.get('prefect')
+        if metadata_config is False:
+            return False
+        if metadata_config is not None:
+            if not isinstance(metadata_config, dict):
+                raise UserError(
+                    f"Tool {tool_name!r} has invalid 'prefect' metadata: expected a dict "
+                    f'(`TaskConfig`) or `False`, got {type(metadata_config).__name__}.'
+                )
+            return cast('TaskConfig', metadata_config)
+    # Fallback: per-tool dict passed to the deprecated `PrefectAgent`. An explicit `None`
+    # disables wrapping; a missing key means "use the base config".
+    if tool_name in tool_task_config:
+        fallback = tool_task_config[tool_name]
+        return False if fallback is None else fallback
+    return {}
 
 
 def prefectify_toolset(
@@ -43,23 +85,37 @@ def prefectify_toolset(
         tool_task_config_by_name: Per-tool task configuration. Keys are tool names, values are TaskConfig or None.
     """
     if isinstance(toolset, FunctionToolset):
-        from ._function_toolset import PrefectFunctionToolset
+        from ._function_toolset import prefectify_function_toolset
 
-        return PrefectFunctionToolset(
+        return prefectify_function_toolset(
             wrapped=toolset,
             task_config=tool_task_config,
             tool_task_config=tool_task_config_by_name,
         )
 
+    if isinstance(toolset, DynamicToolset):
+        # The deprecated `PrefectAgent` still accepts anonymous dynamic toolsets and
+        # must retain its existing inline behavior. The capability path validates IDs
+        # before dispatching here.
+        if toolset.id is None:
+            return toolset
+        from ._dynamic_toolset import prefectify_dynamic_toolset
+
+        return prefectify_dynamic_toolset(
+            wrapped=toolset,
+            task_config=tool_task_config,
+            tool_task_config={},
+        )
+
     try:
         from pydantic_ai.mcp import MCPToolset
 
-        from ._mcp_toolset import PrefectMCPToolset
+        from ._mcp_toolset import prefectify_mcp_toolset
     except ImportError:
         pass
     else:
         if isinstance(toolset, MCPToolset):
-            return PrefectMCPToolset(
+            return prefectify_mcp_toolset(
                 wrapped=toolset,
                 task_config=mcp_task_config,
             )

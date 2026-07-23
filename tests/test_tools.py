@@ -32,11 +32,18 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import PrepareTools
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.tools import (
+    DeferredToolCallResult,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
@@ -167,6 +174,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -209,6 +217,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -259,6 +268,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -310,6 +320,7 @@ def test_google_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -358,6 +369,7 @@ def test_sphinx_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -412,6 +424,7 @@ def test_numpy_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -454,6 +467,7 @@ def test_only_returns_type():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -487,6 +501,7 @@ def test_docstring_unknown():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -538,6 +553,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -582,6 +598,7 @@ def test_takes_just_model():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -635,6 +652,7 @@ def test_takes_model_and_int():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -661,14 +679,16 @@ def test_init_tool_plain():
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
     assert agent._function_toolset.tools['plain_tool'].takes_ctx is False
-    assert agent._function_toolset.tools['plain_tool'].max_retries == 7
+    # No explicit per-tool budget, so the agent default resolves per-run via `RunContext.max_retries`
+    # rather than baked onto the tool (contrast `test_init_tool_ctx`, where explicit `max_retries=3` wins).
+    assert agent._function_toolset.tools['plain_tool'].max_retries is None
 
     agent_infer = Agent('test', tools=[plain_tool], retries={'tools': 7, 'output': 7})
     result = agent_infer.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0, 0])
     assert agent_infer._function_toolset.tools['plain_tool'].takes_ctx is False
-    assert agent_infer._function_toolset.tools['plain_tool'].max_retries == 7
+    assert agent_infer._function_toolset.tools['plain_tool'].max_retries is None
 
 
 def ctx_tool(ctx: RunContext[int], x: int) -> int:
@@ -1030,6 +1050,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -1110,6 +1131,7 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
+                'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
                 'tool_kind': None,
@@ -1133,6 +1155,7 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
+                'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
                 'tool_kind': None,
@@ -1227,6 +1250,7 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
+                'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
                 'tool_kind': None,
@@ -1249,6 +1273,7 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
+                'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
                 'tool_kind': None,
@@ -1294,6 +1319,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
             'tool_kind': None,
@@ -1376,7 +1402,8 @@ def test_function_tool_consistent_with_schema():
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
-    assert agent._function_toolset.tools['foobar'].max_retries == 0
+    # The agent default resolves per-run via `RunContext.max_retries`, so it isn't baked onto the tool.
+    assert agent._function_toolset.tools['foobar'].max_retries is None
 
 
 def test_function_tool_from_schema_with_ctx():
@@ -1405,7 +1432,8 @@ def test_function_tool_from_schema_with_ctx():
     result = agent.run_sync('foobar', deps='Hello, ')
     assert result.output == snapshot('{"foobar":"Hello, I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is True
-    assert agent._function_toolset.tools['foobar'].max_retries == 0
+    # The agent default resolves per-run via `RunContext.max_retries`, so it isn't baked onto the tool.
+    assert agent._function_toolset.tools['foobar'].max_retries is None
 
 
 def test_function_tool_inconsistent_with_schema():
@@ -1452,7 +1480,8 @@ def test_async_function_tool_consistent_with_schema():
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
-    assert agent._function_toolset.tools['foobar'].max_retries == 0
+    # The agent default resolves per-run via `RunContext.max_retries`, so it isn't baked onto the tool.
+    assert agent._function_toolset.tools['foobar'].max_retries is None
 
 
 @pytest.mark.anyio
@@ -1520,6 +1549,89 @@ def test_tool_retries():
     assert call_retries == snapshot([0, 1, 2, 3, 4, 5])
     assert call_max_retries == snapshot([5, 5, 5, 5, 5, 5])
     assert call_last_attempt == snapshot([False, False, False, False, False, True])
+
+
+def test_tool_failed():
+    """A tool raising `ToolFailed` produces a `ToolReturnPart(outcome='failed')` in history (not a `RetryPromptPart`), and the run continues."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('failing_tool', {}, tool_call_id='call1')])
+        return ModelResponse(parts=[TextPart('Acknowledged.')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def failing_tool() -> str:
+        raise ToolFailed('Disk full')
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Acknowledged.'
+
+    parts = [p for m in result.all_messages() for p in m.parts]
+    tool_returns = [p for p in parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].outcome == 'failed'
+    assert tool_returns[0].content == 'Disk full'
+    assert not any(isinstance(p, RetryPromptPart) for p in parts)
+
+
+def test_tool_failed_parallel():
+    """When one of several parallel tool calls raises `ToolFailed`, the other results still reach the model and the run continues."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('ok_tool', {}, tool_call_id='call_ok'),
+                    ToolCallPart('failing_tool', {}, tool_call_id='call_fail'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def ok_tool() -> str:
+        return 'ok'
+
+    @agent.tool_plain
+    def failing_tool() -> str:
+        raise ToolFailed('Disk full')
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Done.'
+
+    tool_returns = {p.tool_call_id: p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)}
+    assert tool_returns['call_ok'].outcome == 'success'
+    assert tool_returns['call_ok'].content == 'ok'
+    assert tool_returns['call_fail'].outcome == 'failed'
+    assert tool_returns['call_fail'].content == 'Disk full'
+
+
+def test_tool_failed_does_not_consume_retry_budget():
+    """`ToolFailed` is a result, not a correction request — repeated failures must not trigger `UnexpectedModelBehavior` from the per-tool retry counter."""
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 5:
+            return ModelResponse(parts=[ToolCallPart('failing_tool', {}, tool_call_id=f'call{call_count}')])
+        return ModelResponse(parts=[TextPart('Giving up.')])
+
+    # retries=1 would trip after a single ModelRetry; ToolFailed must not.
+    agent = Agent(FunctionModel(llm), retries=1)
+
+    @agent.tool_plain
+    def failing_tool() -> str:
+        raise ToolFailed('Still failing')
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Giving up.'
+    tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) == 5
+    assert all(p.outcome == 'failed' for p in tool_returns)
 
 
 def test_tool_raises_call_deferred():
@@ -2700,6 +2812,7 @@ def test_deferred_tool_results_serializable():
                 content='The tool call was approved.',
                 metadata={'foo': 'bar'},
             ),
+            'tool-failed': ToolFailed('The tool failed.'),
             'model-retry': ModelRetry('The tool call was denied.'),
             'retry-prompt-part': RetryPromptPart(
                 content='The tool call was denied.',
@@ -2726,6 +2839,7 @@ def test_deferred_tool_results_serializable():
                     'metadata': {'foo': 'bar'},
                     'kind': 'tool-return',
                 },
+                'tool-failed': {'message': 'The tool failed.', 'kind': 'tool-failed'},
                 'model-retry': {'message': 'The tool call was denied.', 'kind': 'model-retry'},
                 'retry-prompt-part': {
                     'content': 'The tool call was denied.',
@@ -2747,6 +2861,52 @@ def test_deferred_tool_results_serializable():
     )
     deserialized = results_ta.validate_python(serialized)
     assert deserialized == results
+    assert TypeAdapter(DeferredToolCallResult).validate_python(results.calls['tool-failed']) == ToolFailed(
+        'The tool failed.'
+    )
+
+
+def test_deferred_tool_call_result_tool_failed():
+    """A `ToolFailed` in `DeferredToolResults.calls` reaches the model as a failed tool return, not a retry or a success."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('buy', {'fruit': 'apple'}, tool_call_id='buy_apple')])
+        else:
+            return ModelResponse(parts=[TextPart('Done!')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def buy(fruit: str):
+        raise CallDeferred
+
+    result = agent.run_sync('Buy me an apple')
+    assert result.output == snapshot(
+        DeferredToolRequests(calls=[ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple')])
+    )
+
+    result = agent.run_sync(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(calls={'buy_apple': ToolFailed('The store is closed')}),
+    )
+    assert result.output == snapshot('Done!')
+    assert result.all_messages()[-2] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='buy',
+                    content='The store is closed',
+                    tool_call_id='buy_apple',
+                    timestamp=IsDatetime(),
+                    outcome='failed',
+                )
+            ],
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
 
 
 def test_tool_metadata():

@@ -2,45 +2,76 @@
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import json
-from collections.abc import AsyncIterator
-from typing import Any, cast
+import random
+import re
+from collections.abc import AsyncIterator, Sequence
+from contextlib import AbstractAsyncContextManager
+from contextvars import ContextVar
+from typing import Any, Literal, cast
 
+import anyio
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
+from pydantic_ai.messages import (
+    BinaryContent,
+    CachePoint,
+    CompactionPart,
+    FilePart,
+    ImageUrl,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    PartEndEvent,
+    PartStartEvent,
+    RetryPromptPart,
+    SpeechPart,
+    SystemPromptPart,
+    TextContent,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
-    AudioDelta,
     AudioInput,
-    ImageInput,
-    InputTranscript,
-    NativeToolParts,
-    RealtimeModelSettings,
+    InputSpeechStartEvent,
+    RealtimeSession,
     ReconnectedEvent,
-    SessionErrorEvent,
     SessionUsageEvent,
-    SourcesEvent,
-    SpeechStartedEvent,
-    TextInput,
+    TurnCompleteEvent,
+    TurnDetection,
+)
+from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
+from pydantic_ai.realtime.codec import (
+    AudioDelta,
+    InputTranscript,
     ToolCall,
+    ToolCallCancelled,
     ToolResult,
     Transcript,
-    TurnCompleteEvent,
-    WebSource,
 )
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
+from .test_session import make_tool_manager
 
 with try_import() as imports_successful:
     from google.genai import Client, errors as genai_errors, types as genai_types
     from google.genai.live import AsyncSession, ConnectionClosed
 
+    from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.realtime import google as rt_google
     from pydantic_ai.realtime.google import (
@@ -57,6 +88,19 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
 ]
+
+
+def _connect(
+    model: GoogleRealtimeModel,
+    instructions: str,
+    *,
+    messages: Sequence[ModelMessage] | None = None,
+) -> AbstractAsyncContextManager[GoogleRealtimeConnection]:
+    return model.connect(
+        messages=[*(messages or ()), ModelRequest(parts=[], instructions=instructions)],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
 
 
 class _RecordingSession:
@@ -198,7 +242,178 @@ def test_ws_trace_context_noop_without_http_options() -> None:
 
     client = SimpleNamespace(_api_client=None)
     with rt_google._ws_trace_context(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        pass
+        # No HTTP options to inject into, so the client is left untouched (no attribute is added).
+        assert client._api_client is None
+        assert not hasattr(client, '_http_options')
+    assert client._api_client is None
+
+
+async def test_connect_serializes_shared_client_header_mutations(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = GoogleProvider(api_key='test-key')
+    client = provider.client
+    headers = client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
+    assert headers is not None
+    original_headers = headers.copy()
+    handshake_headers: list[dict[str, str]] = []
+
+    class _ConcurrentConnect:
+        async def __aenter__(self) -> _RecordingSession:
+            # Let the other task reach the handshake. Without per-client serialization its header
+            # contexts overlap this suspension and one handshake observes the other's mutations.
+            await anyio.sleep(0)
+            handshake_headers.append(headers.copy())
+            return _RecordingSession()
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+    def connect(*, model: str, config: genai_types.LiveConnectConfig) -> _ConcurrentConnect:
+        return _ConcurrentConnect()
+
+    traceparent: ContextVar[str] = ContextVar('traceparent')
+
+    def inject(carrier: dict[str, str]) -> None:
+        carrier['traceparent'] = traceparent.get()
+
+    monkeypatch.setattr(client.aio.live, 'connect', connect)
+    monkeypatch.setattr(rt_google, 'inject_trace_context', inject)
+    model = GoogleRealtimeModel(provider=provider)
+
+    async def open_connection(value: str) -> None:
+        token = traceparent.set(value)
+        try:
+            async with _connect(model, ''):
+                pass
+        finally:
+            traceparent.reset(token)
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(open_connection, 'trace-1')
+        task_group.start_soon(open_connection, 'trace-2')
+
+    assert {captured['traceparent'] for captured in handshake_headers} == {'trace-1', 'trace-2'}
+    assert all(sum(key.lower() == 'user-agent' for key in captured) == 1 for captured in handshake_headers)
+    assert headers == original_headers
+
+
+class _StopDial(Exception):
+    """Raised from the fake handshake to short-circuit `connect` once headers are captured."""
+
+
+class _FakeWSConnect:
+    async def __aenter__(self) -> None:
+        raise _StopDial()
+
+    async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover - never entered
+        return False
+
+
+def _capture_ws_connect(captured: dict[str, Any]) -> Any:
+    """A stand-in for `google.genai.live.ws_connect` that records the dialed URI and headers."""
+
+    def ws_connect(uri: str, *, additional_headers: dict[str, str] | None = None, **kwargs: Any) -> _FakeWSConnect:
+        captured['uri'] = uri
+        captured['headers'] = dict(additional_headers or {})
+        return _FakeWSConnect()
+
+    return ws_connect
+
+
+async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A gateway provider dials the Live WebSocket through the SDK, which forwards the client's HTTP
+    # headers as the handshake's `additional_headers`. The gateway authenticates on `Authorization:
+    # Bearer <key>` — added to REST calls by its httpx hook, which can't reach this `websockets` dial —
+    # so `connect` must inject the gateway key into the handshake headers itself. Driven end-to-end
+    # through `connect` (patching the SDK's `ws_connect`, as the cassette engine does) so the real URL
+    # derivation and header stack are exercised, not a hand-built dict.
+    provider = gateway_provider('google', api_key='gw-key', base_url='https://gateway.pydantic.dev/proxy')
+    model = GoogleRealtimeModel('gemini-live-2.5-flash', provider=provider)
+    assert model._gateway is True  # pyright: ignore[reportPrivateUsage]
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect(captured))
+    with pytest.raises(_StopDial):
+        async with _connect(model, 'hi'):
+            pass  # pragma: no cover - the dial short-circuits before yielding
+
+    # The SDK swaps https→wss and appends the Vertex BidiGenerateContent path onto the gateway base URL;
+    # the gateway's platform relay accepts exactly this URL and derives the billed model from the setup
+    # frame, so pydantic-ai does not rewrite it.
+    assert captured['uri'] == snapshot(
+        'wss://gateway.pydantic.dev/proxy/google-vertex/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent'
+    )
+    assert captured['headers'].get('Authorization') == 'Bearer gw-key'
+    # `_single_ws_user_agent` still runs, so the handshake carries exactly one user-agent header.
+    assert sum(key.lower() == 'user-agent' for key in captured['headers']) == 1
+    # The injected `Authorization` is removed after the connect so the shared client's later REST
+    # requests fall back to the gateway's httpx hook rather than carrying a stale bearer header.
+    rest_headers = provider.client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
+    assert rest_headers is not None and 'Authorization' not in rest_headers
+
+
+async def test_non_gateway_handshake_has_no_bearer_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A plain `GoogleProvider` is not a gateway provider, so `connect` leaves the handshake auth to the
+    # SDK (the API key travels as `x-goog-api-key`) and adds no `Authorization` header.
+    model = GoogleRealtimeModel(provider=GoogleProvider(api_key='k'))
+    assert model._gateway is False  # pyright: ignore[reportPrivateUsage]
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect(captured))
+    with pytest.raises(_StopDial):
+        async with _connect(model, 'hi'):
+            pass  # pragma: no cover - the dial short-circuits before yielding
+
+    assert 'Authorization' not in captured['headers']
+
+
+def test_ws_gateway_auth_injects_and_restores_bearer() -> None:
+    # `google-genai` forwards the client's HTTP headers as the Live handshake headers, so the gateway
+    # bearer key is injected into them for the connect only, then removed so the shared client's later
+    # REST requests fall back to the gateway's httpx hook. The header dict is the SDK's private one, so
+    # this is a direct unit test.
+    from types import SimpleNamespace
+
+    headers = {'user-agent': 'solo'}
+    client = SimpleNamespace(
+        _api_client=SimpleNamespace(api_key='gw-key', _http_options=SimpleNamespace(headers=headers))
+    )
+    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
+        assert headers == {'user-agent': 'solo', 'Authorization': 'Bearer gw-key'}
+    assert headers == {'user-agent': 'solo'}
+
+
+def test_ws_gateway_auth_noop_without_api_key() -> None:
+    # No key to mirror (e.g. an ADC gateway client), so the handshake headers are left untouched.
+    from types import SimpleNamespace
+
+    headers = {'user-agent': 'solo'}
+    client = SimpleNamespace(_api_client=SimpleNamespace(api_key=None, _http_options=SimpleNamespace(headers=headers)))
+    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
+        assert headers == {'user-agent': 'solo'}
+    assert headers == {'user-agent': 'solo'}
+
+
+def test_ws_gateway_auth_noop_with_existing_authorization() -> None:
+    # A caller-supplied `Authorization` header wins: the gateway key is not layered on top of it.
+    from types import SimpleNamespace
+
+    headers = {'Authorization': 'Bearer caller'}
+    client = SimpleNamespace(
+        _api_client=SimpleNamespace(api_key='gw-key', _http_options=SimpleNamespace(headers=headers))
+    )
+    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
+        assert headers == {'Authorization': 'Bearer caller'}
+    assert headers == {'Authorization': 'Bearer caller'}
+
+
+def test_ws_gateway_auth_noop_without_http_options() -> None:
+    # A custom/fake client without the SDK's private HTTP options simply skips injection.
+    from types import SimpleNamespace
+
+    client = SimpleNamespace(_api_client=None)
+    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
+        assert client._api_client is None
+    assert client._api_client is None
 
 
 # --- provider resolution & capabilities --------------------------------------
@@ -220,17 +435,23 @@ def test_profile() -> None:
     profile = GoogleRealtimeModel().profile
     # Gemini Live has no manual turn control or server-side interruption (automatic VAD only).
     assert (
-        profile['supports_image_input'],
-        profile['supports_manual_turn_control'],
-        profile['supports_interruption'],
-        profile['supports_session_seeding'],
+        profile.get('supports_image_input'),
+        profile.get('supports_manual_turn_control'),
+        profile.get('supports_interruption'),
+        profile.get('supports_session_seeding'),
+        profile.get('supports_seeding_images'),
+        profile.get('supports_seeding_audio'),
     ) == (
         True,
         False,
         False,
         True,
+        True,
+        False,
     )
-    assert profile['supported_native_tools'] == frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
+    assert profile.get('supported_native_tools') == frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
+    assert profile.get('audio_input_sample_rate') == 16000
+    assert profile.get('audio_output_sample_rate') == 24000
 
 
 # --- config ------------------------------------------------------------------
@@ -263,6 +484,33 @@ def test_config_full() -> None:
     assert config.top_p == 0.9
 
 
+def test_config_thinking_maps_to_thinking_level() -> None:
+    # The default native-audio model supports thinking (verified live); `thinking` maps to a level,
+    # and `False` disables it via a zero budget.
+    def thinking_config(thinking: object) -> genai_types.ThinkingConfig | None:
+        settings = GoogleRealtimeModelSettings(thinking=thinking)  # type: ignore[typeddict-item]
+        return GoogleRealtimeModel()._config('hi', None, settings).thinking_config  # pyright: ignore[reportPrivateUsage]
+
+    assert thinking_config('high') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
+    assert thinking_config('minimal') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.MINIMAL)
+    assert thinking_config(True) == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.MEDIUM)
+    assert thinking_config(False) == genai_types.ThinkingConfig(thinking_budget=0)
+
+
+def test_config_google_thinking_config_wins_over_unified_thinking() -> None:
+    settings = GoogleRealtimeModelSettings(thinking='low', google_thinking_config={'thinking_budget': 512})
+    config = GoogleRealtimeModel()._config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
+    assert config.thinking_config == genai_types.ThinkingConfig(thinking_budget=512)
+
+
+def test_config_thinking_on_non_thinking_model_warns() -> None:
+    # A non-native-audio Gemini Live model doesn't report thinking support → warn and drop.
+    model = GoogleRealtimeModel('gemini-live-2.5-flash-preview', settings=GoogleRealtimeModelSettings(thinking='high'))
+    with pytest.warns(UserWarning, match='does not support the `thinking` setting'):
+        config = model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert config.thinking_config is None
+
+
 def test_config_minimal_text_no_transcription_no_vad() -> None:
     model = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(
@@ -283,7 +531,9 @@ def test_config_minimal_text_no_transcription_no_vad() -> None:
 def test_config_forwards_only_present_model_settings() -> None:
     # `model_settings` is non-empty but carries none of the forwarded fields → all stay unset
     # (`presence_penalty` has no Gemini Live equivalent and is ignored).
-    config = GoogleRealtimeModel()._config('hi', None, RealtimeModelSettings())  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel()._config(  # pyright: ignore[reportPrivateUsage]
+        'hi', None, GoogleRealtimeModelSettings()
+    )
     assert config.max_output_tokens is None
     assert config.temperature is None
     assert config.top_p is None
@@ -316,7 +566,7 @@ async def test_send_text() -> None:
 
 async def test_send_image_as_video_frame() -> None:
     session = _RecordingSession()
-    await _conn(session).send(ImageInput(data=b'\xff\xd8', mime_type='image/jpeg'))
+    await _conn(session).send(ImageInput(data=b'\xff\xd8', media_type='image/jpeg'))
     blob = session.realtime[0]['video']
     assert blob.data == b'\xff\xd8'
     assert blob.mime_type == 'image/jpeg'
@@ -338,6 +588,33 @@ async def test_send_tool_result_echoes_name() -> None:
     assert response.id == 'c1'
     assert response.name == 'get_weather'
     assert response.response == {'output': 'Sunny'}
+
+
+async def test_send_tool_result_content_falls_back_to_text() -> None:
+    session = _RecordingSession()
+    conn = _conn(session)
+    conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            tool_call=genai_types.LiveServerToolCall(
+                function_calls=[genai_types.FunctionCall(id='c1', name='inspect', args={})]
+            )
+        )
+    )
+    await conn.send(
+        ToolResult(
+            tool_call_id='c1',
+            output='done',
+            content=[
+                'plain context',
+                TextContent('extra context'),
+                CachePoint(),
+                BinaryContent(data=b'png', media_type='image/png', identifier='result.png'),
+            ],
+        )
+    )
+    assert session.tool_responses[0].response == {
+        'output': 'done\n\nplain context\n\nextra context\n\n[BinaryContent: result.png]'
+    }
 
 
 async def test_parallel_id_less_calls_do_not_collide() -> None:
@@ -427,9 +704,48 @@ def test_map_transcriptions_interrupt_and_turn_complete() -> None:
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
         InputTranscript(text='weather?', is_final=True),
         Transcript(text='Sunny', is_final=False),
-        SpeechStartedEvent(),
-        TurnCompleteEvent(interrupted=False),
+        InputSpeechStartEvent(),
+        TurnCompleteEvent(interrupted=True),
     ]
+
+
+def test_map_interruption_latches_until_turn_complete() -> None:
+    conn = _conn(_RecordingSession())
+    interrupted = genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(interrupted=True))
+    completed = genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(turn_complete=True))
+    assert conn._map_message(interrupted) == [InputSpeechStartEvent()]  # pyright: ignore[reportPrivateUsage]
+    assert conn._map_message(completed) == [TurnCompleteEvent(interrupted=True)]  # pyright: ignore[reportPrivateUsage]
+    assert conn._map_message(completed) == [TurnCompleteEvent(interrupted=False)]  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_interruption_finalizes_session_response_as_interrupted() -> None:
+    provider_session = _RecordingSession(
+        [
+            [
+                genai_types.LiveServerMessage(
+                    server_content=genai_types.LiveServerContent(
+                        output_transcription=genai_types.Transcription(text='Cut off', finished=False),
+                        interrupted=True,
+                    )
+                ),
+                genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(turn_complete=True)),
+            ]
+        ]
+    )
+    session = RealtimeSession(
+        _conn(provider_session),
+        make_tool_manager(),
+        model_name='gemini-live',
+        provider_name='google',
+    )
+    async with session:
+        async for event in session:
+            if isinstance(event, TurnCompleteEvent):
+                break
+
+    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
+    assert response.state == 'interrupted'
+    assert response.finish_reason is None
 
 
 def test_map_tool_call_and_usage() -> None:
@@ -446,12 +762,19 @@ def test_map_tool_call_and_usage() -> None:
     ]
 
 
-def test_map_grounding_and_url_context_to_sources_and_native_tool_parts() -> None:
-    # A grounded turn produces two events from the same metadata: the UI-facing `SourcesEvent` (flattened,
-    # lossy) and `NativeToolParts` carrying the native tool parts for history. The `NativeToolParts` parts
-    # must match the classic `GoogleModel` shapes exactly (web_search + web_fetch, full `content` dicts
-    # including a source's `domain` and a fetch's retrieval status, which `SourcesEvent` drops), so a grounded
-    # voice turn's history is indistinguishable from a classic run's. Kept as a unit test because a
+def test_map_tool_call_cancellation() -> None:
+    # Gemini's `toolCallCancellation` (sent when the model abandons in-flight calls, e.g. on barge-in)
+    # maps to a `ToolCallCancelled` carrying the cancelled call ids for the session to act on.
+    conn = _conn(_RecordingSession())
+    message = genai_types.LiveServerMessage(
+        tool_call_cancellation=genai_types.LiveServerToolCallCancellation(ids=['c1', 'c2'])
+    )
+    assert conn._map_message(message) == [ToolCallCancelled(tool_call_ids=['c1', 'c2'])]  # pyright: ignore[reportPrivateUsage]
+
+
+def test_map_grounding_and_url_context_to_native_tool_part_events() -> None:
+    # Grounding streams native tool parts matching the classic `GoogleModel` shapes exactly (web_search +
+    # web_fetch, including a source's `domain` and a fetch's retrieval status). Kept as a unit test because a
     # cassette can't reliably force the model to ground and the recording key only exposes audio-out.
     conn = _conn(_RecordingSession())
     message = genai_types.LiveServerMessage(
@@ -479,55 +802,48 @@ def test_map_grounding_and_url_context_to_sources_and_native_tool_parts() -> Non
             ),
         )
     )
-    assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
-        SourcesEvent(
-            sources=[
-                WebSource(url='https://example.com', title='Example'),
-                WebSource(url='https://fetched.example'),
+    parts = [
+        NativeToolCallPart(
+            tool_name='web_search',
+            args={'queries': ['weather rome']},
+            tool_call_id=IsStr(),
+            provider_name='google',
+        ),
+        NativeToolReturnPart(
+            tool_name='web_search',
+            content=[
+                {'domain': 'example.com', 'title': 'Example', 'uri': 'https://example.com'},
+                # The `web=None` chunk is dropped; the uri-less one round-trips, matching classic.
+                {'domain': None, 'title': None, 'uri': None},
             ],
-            queries=['weather rome'],
+            tool_call_id=IsStr(),
+            timestamp=IsDatetime(),
+            provider_name='google',
         ),
-        NativeToolParts(
-            parts=[
-                NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'queries': ['weather rome']},
-                    tool_call_id=IsStr(),
-                    provider_name='google',
-                ),
-                NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=[
-                        {'domain': 'example.com', 'title': 'Example', 'uri': 'https://example.com'},
-                        # Unlike `SourcesEvent`, grounding history keeps every non-None `web` chunk verbatim
-                        # (the `web=None` chunk is dropped, the uri-less one round-trips), matching classic.
-                        {'domain': None, 'title': None, 'uri': None},
-                    ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='google',
-                ),
-                NativeToolCallPart(
-                    tool_name='web_fetch',
-                    args={'urls': ['https://fetched.example']},
-                    tool_call_id=IsStr(),
-                    provider_name='google',
-                ),
-                NativeToolReturnPart(
-                    tool_name='web_fetch',
-                    content=[
-                        {
-                            'retrieved_url': 'https://fetched.example',
-                            'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
-                        },
-                        {'retrieved_url': None, 'url_retrieval_status': None},
-                    ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='google',
-                ),
-            ]
+        NativeToolCallPart(
+            tool_name='web_fetch',
+            args={'urls': ['https://fetched.example']},
+            tool_call_id=IsStr(),
+            provider_name='google',
         ),
+        NativeToolReturnPart(
+            tool_name='web_fetch',
+            content=[
+                {
+                    'retrieved_url': 'https://fetched.example',
+                    'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
+                },
+                {'retrieved_url': None, 'url_retrieval_status': None},
+            ],
+            tool_call_id=IsStr(),
+            timestamp=IsDatetime(),
+            provider_name='google',
+        ),
+    ]
+    assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
+        event
+        for index, part in enumerate(parts)
+        for event in (PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part))
     ]
 
 
@@ -536,8 +852,8 @@ def test_map_code_execution_to_native_tool_parts() -> None:
     # `code_execution_result` parts on the model turn. They map to a `NativeToolCallPart` /
     # `NativeToolReturnPart` pair byte-identical to the classic `GoogleModel`'s (tool_name
     # `code_execution`, `args`/`content` from the SDK models' JSON dump), sharing a single `tool_call_id`
-    # so the return pairs with its call, and are carried on `NativeToolParts` for history — not yielded
-    # live. The spoken transcript still comes through as its own `Transcript`. Kept as a unit test because
+    # so the return pairs with its call, and stream as part start/end events. The spoken transcript still
+    # comes through as its own `Transcript`. Kept as a unit test because
     # a cassette can't reliably force the model to run code and the recording key only exposes audio-out.
     conn = _conn(_RecordingSession())
     message = genai_types.LiveServerMessage(
@@ -559,25 +875,28 @@ def test_map_code_execution_to_native_tool_parts() -> None:
             )
         )
     )
+    parts = [
+        NativeToolCallPart(
+            tool_name='code_execution',
+            args={'code': 'print(1 + 1)', 'language': 'PYTHON'},
+            tool_call_id=(code_id := IsSameStr()),
+            provider_name='google',
+        ),
+        NativeToolReturnPart(
+            tool_name='code_execution',
+            content={'outcome': 'OUTCOME_OK', 'output': '2\n'},
+            tool_call_id=code_id,
+            timestamp=IsDatetime(),
+            provider_name='google',
+        ),
+    ]
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
         Transcript(text='The answer is 2.', is_final=False, output_text=True),
-        NativeToolParts(
-            parts=[
-                NativeToolCallPart(
-                    tool_name='code_execution',
-                    args={'code': 'print(1 + 1)', 'language': 'PYTHON'},
-                    tool_call_id=(code_id := IsSameStr()),
-                    provider_name='google',
-                ),
-                NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '2\n'},
-                    tool_call_id=code_id,
-                    timestamp=IsDatetime(),
-                    provider_name='google',
-                ),
-            ]
-        ),
+        *[
+            event
+            for index, part in enumerate(parts)
+            for event in (PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part))
+        ],
     ]
 
 
@@ -646,7 +965,7 @@ async def test_connect_streams_events() -> None:
     session = _RecordingSession([[_turn('hi')], [_turn('bye')]])
     captured: dict[str, Any] = {}
     model = _model(session, captured)
-    async with model.connect(instructions='x') as conn:
+    async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
     assert captured['model'] == 'gemini-2.5-flash-native-audio-latest'
     # Both turns stream, then the server closes the socket; without a reconnect policy that surfaces a
@@ -660,68 +979,173 @@ async def test_connect_streams_events() -> None:
     assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
 
 
-async def test_connect_seeds_message_history() -> None:
-    from pydantic_ai.messages import (
-        ModelRequest,
-        ModelResponse,
-        SpeechPart,
-        SystemPromptPart,
-        TextPart,
-        ToolCallPart,
-        UserPromptPart,
-    )
+async def test_connect_continues_after_empty_server_turn() -> None:
+    session = _RecordingSession([[], [_turn('hi')]])
+
+    events = [event async for event in _conn(session)]
+
+    assert events[:2] == [Transcript(text='hi', is_final=True), TurnCompleteEvent(interrupted=False)]
+    assert isinstance(events[-1], SessionErrorEvent)
+
+
+async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def download_image(*args: Any, **kwargs: Any) -> Any:
+        return {'data': b'url-image', 'data_type': 'image/png'}
 
     session = _RecordingSession([[_turn('hi')]])
 
     history = [
-        ModelRequest(parts=[SystemPromptPart(content='sys'), UserPromptPart(content='earlier question')]),
-        ModelResponse(parts=[TextPart(content='earlier answer'), ToolCallPart(tool_name='t', args='{}')]),
-        ModelRequest(parts=[SpeechPart(speaker='user', transcript='spoken question')]),
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='sys'),
+                UserPromptPart(content=['earlier question', TextContent(' with context'), CachePoint()]),
+                UserPromptPart(content=[CachePoint(), '']),
+                SpeechPart(speaker='user', transcript=''),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='reasoning',
+                    signature='session-bound',
+                    provider_name='google',
+                    provider_details={'thought_signature': 'secret'},
+                ),
+                ThinkingPart(content='', signature='signature-only', provider_name='google'),
+                TextPart(content=''),
+                TextPart(content='earlier answer'),
+                SpeechPart(speaker='assistant', transcript=''),
+                NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='native-call'),
+                NativeToolReturnPart(tool_name='web_search', content='native metadata', tool_call_id='native-call'),
+                ToolCallPart(tool_name='weather', args={'city': 'Paris'}, tool_call_id='call-1'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='weather',
+                    content=[
+                        'sunny',
+                        BinaryContent(data=b'tool-image', media_type='image/png', identifier='weather.png'),
+                    ],
+                    tool_call_id='call-1',
+                ),
+                ToolReturnPart(tool_name='plain', content='ok', tool_call_id='plain-call'),
+                RetryPromptPart(tool_name='weather', content='invalid city', tool_call_id='call-1'),
+                RetryPromptPart(content='answer in prose'),
+                UserPromptPart(
+                    content=[
+                        ImageUrl(url='https://example.com/a.png'),
+                        BinaryContent(data=b'inline-image', media_type='image/png'),
+                    ]
+                ),
+                SpeechPart(speaker='user', transcript='spoken question'),
+            ]
+        ),
         ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='spoken answer')]),
     ]
+    monkeypatch.setattr('pydantic_ai.realtime._base.download_item', download_image)
     model = _model(session)
-    async with model.connect(instructions='x', messages=history) as conn:
+    async with _connect(model, 'x', messages=history) as conn:
         _ = [e async for e in conn]
 
-    # A single seed batch of context turns, sent without `turn_complete` so the model doesn't respond.
-    # System parts and tool calls are dropped (text/transcript projection only).
     seeded = session.client_content[0]
     assert seeded['turn_complete'] is False
     turns = seeded['turns']
-    assert [(t.role, [p.text for p in t.parts]) for t in turns] == [
-        ('user', ['earlier question']),
-        ('model', ['earlier answer']),
-        ('user', ['spoken question']),
-        ('model', ['spoken answer']),
-    ]
+    assert [turn.model_dump(exclude_none=True) for turn in turns] == snapshot(
+        [
+            {
+                'parts': [{'text': 'earlier question'}, {'text': ' with context'}],
+                'role': 'user',
+            },
+            {
+                'parts': [
+                    {'text': '<think>\nreasoning\n</think>'},
+                    {'text': 'earlier answer'},
+                    {'text': '[Tool call: weather({"city":"Paris"})]'},
+                ],
+                'role': 'model',
+            },
+            {
+                'parts': [
+                    {'text': '[Tool "weather" returned: ["sunny","See file weather.png."]]'},
+                    {'text': 'This is file weather.png:'},
+                    {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
+                    {'text': '[Tool "plain" returned: ok]'},
+                    {'text': '[Tool "weather" error: invalid city\n\nFix the errors and try again.]'},
+                    {'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.'},
+                    {'inline_data': {'data': b'url-image', 'mime_type': 'image/png'}},
+                    {'inline_data': {'data': b'inline-image', 'mime_type': 'image/png'}},
+                    {'text': 'spoken question'},
+                ],
+                'role': 'user',
+            },
+            {'parts': [{'text': 'spoken answer'}], 'role': 'model'},
+        ]
+    )
+    assert 'session-bound' not in repr(turns)
+    assert 'thought_signature' not in repr(turns)
 
 
-async def test_connect_seed_drops_non_text_and_textless_turns() -> None:
-    # A list-content user prompt is projected to its text (multimodal parts dropped); a response with
-    # no projectable text (only a tool call) yields no turn at all.
-    from pydantic_ai.messages import ImageUrl, ModelRequest, ModelResponse, ToolCallPart, UserPromptPart
-
+async def test_connect_seed_projects_tool_calls_as_text() -> None:
     session = _RecordingSession([[_turn('hi')]])
-    history = [
-        ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/a.png'), 'describe this'])]),
-        ModelResponse(parts=[ToolCallPart(tool_name='t', args='{}')]),
-    ]
+    history = [ModelResponse(parts=[ToolCallPart(tool_name='t', args='{}')])]
     model = _model(session)
-    async with model.connect(instructions='x', messages=history) as conn:
+    async with _connect(model, 'x', messages=history) as conn:
         _ = [e async for e in conn]
 
     turns = session.client_content[0]['turns']
-    assert [(t.role, [p.text for p in t.parts]) for t in turns] == [('user', ['describe this'])]
+    assert [(t.role, [p.text for p in t.parts]) for t in turns] == [('model', ['[Tool call: t({})]'])]
+
+
+async def test_connect_rejects_audio_only_user_turn() -> None:
+    session = _RecordingSession()
+    history = [
+        ModelRequest(parts=[SpeechPart(speaker='user', audio=BinaryContent(data=b'pcm-audio', media_type='audio/pcm'))])
+    ]
+
+    with pytest.raises(UserError, match='google realtime history seeding does not support retained user audio'):
+        async with _connect(_model(session), 'x', messages=history):
+            pass  # pragma: no cover
+
+
+async def test_connect_rejects_unseedable_response_parts() -> None:
+    histories = [
+        ([ModelResponse(parts=[SpeechPart(speaker='assistant')])], 'assistant `SpeechPart`'),
+        (
+            [ModelResponse(parts=[FilePart(content=BinaryContent(data=b'file', media_type='application/pdf'))])],
+            '`FilePart`',
+        ),
+    ]
+    for history, match in histories:
+        with pytest.raises(UserError, match=re.escape(match)):
+            async with _connect(_model(_RecordingSession()), 'x', messages=history):
+                pass  # pragma: no cover
+
+
+async def test_connect_seed_skips_compaction_parts() -> None:
+    # Provider-session-bound compaction state can't round-trip into another session; like the classic
+    # model adapters crossing APIs, seeding skips it silently rather than erroring.
+    session = _RecordingSession()
+    history = [ModelResponse(parts=[CompactionPart(content='summary'), TextPart(content='the answer')])]
+    async with _connect(_model(session), 'x', messages=history):
+        pass
+    turns = session.client_content[0]['turns']
+    assert [part.text for turn in turns for part in turn.parts] == ['the answer']
 
 
 async def test_connect_wires_reconnect_only_with_resumption() -> None:
     # reconnect + session resumption → the connection can re-dial.
-    on = _model(_RecordingSession([[_turn('hi')]]), reconnect=ReconnectPolicy(), enable_session_resumption=True)
-    async with on.connect(instructions='x') as conn:
+    on = _model(
+        _RecordingSession([[_turn('hi')]]),
+        reconnect=ReconnectPolicy(),
+        settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True),
+    )
+    async with _connect(on, 'x') as conn:
         assert conn._dial is not None and conn._reconnect is not None  # pyright: ignore[reportPrivateUsage]
     # reconnect without resumption would lose state → not wired.
     off = _model(_RecordingSession([[_turn('hi')]]), reconnect=ReconnectPolicy())
-    async with off.connect(instructions='x') as conn:
+    async with _connect(off, 'x') as conn:
         assert conn._dial is None and conn._reconnect is None  # pyright: ignore[reportPrivateUsage]
 
 
@@ -790,6 +1214,49 @@ def test_realtime_input_full() -> None:
     assert rt.turn_coverage == genai_types.TurnCoverage.TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO
 
 
+@pytest.mark.parametrize('sensitivity', ['low', 'medium', 'high'])
+def test_cross_provider_turn_detection_sensitivity(sensitivity: Literal['low', 'medium', 'high']) -> None:
+    # Resolve the expected `genai_types` enums inside the test (not in the `parametrize` decorator, which
+    # is evaluated at collection time before the module-level skip can apply when `google-genai` is absent).
+    expected_start, expected_end = {
+        'low': (genai_types.StartSensitivity.START_SENSITIVITY_LOW, genai_types.EndSensitivity.END_SENSITIVITY_LOW),
+        'medium': (None, None),
+        'high': (genai_types.StartSensitivity.START_SENSITIVITY_HIGH, genai_types.EndSensitivity.END_SENSITIVITY_HIGH),
+    }[sensitivity]
+    config = GoogleRealtimeModel(
+        settings=GoogleRealtimeModelSettings(turn_detection=TurnDetection(sensitivity=sensitivity))
+    )._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    realtime_input_config = config.realtime_input_config
+    assert realtime_input_config is not None
+    detection = realtime_input_config.automatic_activity_detection
+    assert detection is not None
+    assert detection.start_of_speech_sensitivity == expected_start
+    assert detection.end_of_speech_sensitivity == expected_end
+
+
+def test_google_vad_overrides_cross_provider_turn_detection() -> None:
+    config = GoogleRealtimeModel(
+        settings=GoogleRealtimeModelSettings(
+            turn_detection=TurnDetection(sensitivity='high'),
+            google_vad=AutomaticVAD(start_sensitivity='low', end_sensitivity='low'),
+        )
+    )._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    realtime_input_config = config.realtime_input_config
+    assert realtime_input_config is not None
+    detection = realtime_input_config.automatic_activity_detection
+    assert detection is not None
+    assert detection.start_of_speech_sensitivity == genai_types.StartSensitivity.START_SENSITIVITY_LOW
+    assert detection.end_of_speech_sensitivity == genai_types.EndSensitivity.END_SENSITIVITY_LOW
+
+
+def test_cross_provider_turn_detection_false_is_rejected() -> None:
+    """Gemini has no manual turn controls, so disabling VAD (push-to-talk) fails loudly rather than
+    producing an unusable session."""
+    model = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(turn_detection=False))
+    with pytest.raises(UserError, match='does not support disabling automatic turn detection'):
+        model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+
+
 def test_realtime_input_absent_when_unset() -> None:
     # no vad, no activity handling, no turn coverage → no realtime input config at all.
     assert GoogleRealtimeModel()._config('hi', None, None).realtime_input_config is None  # pyright: ignore[reportPrivateUsage]
@@ -835,9 +1302,9 @@ def test_transcription_language_codes() -> None:
 def test_context_compression_and_session_resumption() -> None:
     model = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(
-            google_context_compression=ContextCompression(trigger_tokens=8000, target_tokens=4000)
+            google_context_compression=ContextCompression(trigger_tokens=8000, target_tokens=4000),
+            google_enable_session_resumption=True,
         ),
-        enable_session_resumption=True,
     )
     config = model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     cwc = config.context_window_compression
@@ -848,7 +1315,9 @@ def test_context_compression_and_session_resumption() -> None:
 
 
 def test_session_resumption_passes_handle() -> None:
-    config = GoogleRealtimeModel(enable_session_resumption=True)._config('hi', None, None, resumption_handle='h9')  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True))._config(  # pyright: ignore[reportPrivateUsage]
+        'hi', None, None, resumption_handle='h9'
+    )
     assert config.session_resumption.handle == 'h9'  # type: ignore[union-attr]
 
 
@@ -917,7 +1386,7 @@ async def test_reconnect_resumes_then_gives_up() -> None:
     conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
     events = [e async for e in conn]
     assert events[:3] == [
-        ReconnectedEvent(),
+        ReconnectedEvent(state_restored=True),
         Transcript(text='back', is_final=True),
         TurnCompleteEvent(interrupted=False),
     ]
@@ -926,15 +1395,31 @@ async def test_reconnect_resumes_then_gives_up() -> None:
     assert handles == ['h1', 'h1', 'h1']
 
 
-async def test_reconnect_applies_jitter() -> None:
+async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    # With `jitter=True` the backoff delay is scaled by `0.5 + random()*0.5`, so a fixed `random()`
+    # of 0.4 turns the first attempt's 0.5s base delay into 0.5 * 0.7 = 0.35s. Capturing the actual
+    # slept delay proves jitter is applied (and with a real value, not the un-jittered 0.5s) — a
+    # non-zero `base_delay` is required, otherwise the multiply is a no-op and tests nothing.
+    delays: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    # `reconnect_with_backoff` calls `random.random()` and `asyncio.sleep()` from these module
+    # singletons, so patching them here controls the jitter factor and captures the resulting delay.
+    monkeypatch.setattr(random, 'random', lambda: 0.4)
+    monkeypatch.setattr(asyncio, 'sleep', record_sleep)
+
     s1 = _RecordingSession([])
     dial, _ = _dialer(_RecordingSession([[_turn('hi')]]))
     conn = GoogleRealtimeConnection(
-        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=True)
+        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.5, max_attempts=1, jitter=True)
     )
     events = [e async for e in conn]
-    assert events[0] == ReconnectedEvent()
-    assert isinstance(events[-1], SessionErrorEvent)
+    assert events[0] == ReconnectedEvent(state_restored=True)
+    # Every backoff delay is the jittered 0.35s, never the un-jittered 0.5s base delay.
+    assert delays
+    assert all(delay == pytest.approx(0.35) for delay in delays)
 
 
 async def test_connect_reconnect_closes_previous_session() -> None:
@@ -977,12 +1462,12 @@ async def test_connect_reconnect_closes_previous_session() -> None:
 
     model = GoogleRealtimeModel(
         provider=GoogleProvider(client=cast('Client', _Client())),
-        enable_session_resumption=True,
+        settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True),
         reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False),
     )
-    async with model.connect(instructions='x') as conn:
+    async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
-    assert events[0] == ReconnectedEvent()
+    assert events[0] == ReconnectedEvent(state_restored=True)
     assert events[1:3] == [Transcript(text='back', is_final=True), TurnCompleteEvent(interrupted=False)]
     assert isinstance(events[-1], SessionErrorEvent)
     # cm0 closed when reconnecting into cm1; cm1 closed when the next reconnect runs out of sessions.

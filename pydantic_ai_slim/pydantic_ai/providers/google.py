@@ -2,14 +2,18 @@ from __future__ import annotations as _annotations
 
 import os
 from abc import ABC, abstractmethod
-from typing import Literal, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, create_async_http_client, get_user_agent
+from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
+
+if TYPE_CHECKING:
+    from pydantic_ai.realtime import RealtimeModelProfile
 
 try:
     from google.genai.client import Client
@@ -45,6 +49,20 @@ class BaseGoogleProvider(Provider[Client], ABC):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         return google_model_profile(model_name)
+
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+        return {
+            'supports_image_input': True,
+            'supports_session_seeding': True,
+            'supports_seeding_images': True,
+            'supports_seeding_audio': False,
+            'audio_input_sample_rate': 16000,
+            'audio_output_sample_rate': 24000,
+            'supported_native_tools': frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
+            # Native-audio Gemini Live models support a thinking config (verified live).
+            'supports_thinking': 'native-audio' in model_name,
+        }
 
     def _build_http_options(
         self,
