@@ -784,6 +784,24 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     or telemetry. See [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
     """
 
+    stateless: bool
+    """Whether to connect in stateless mode, deferring the MCP `initialize` handshake until the
+    first real request.
+
+    When `True`, the toolset enters without calling `initialize`, which is useful for:
+
+    - Stateless HTTP servers behind load balancers or per-request deployments (Lambda-style)
+    - Multi-agent systems where you want to decouple agent instantiation from MCP server connections
+    - Health checks that shouldn't require MCP servers to be running
+
+    The `initialize` call (and capability exchange) happens lazily on the first actual operation
+    (`list_tools`, `call_tool`, etc.). This means `server_info`, `capabilities`, and `instructions`
+    properties are unavailable until that first operation completes.
+
+    Only applicable when constructing the toolset from a URL or transport — not when passing a
+    pre-built `fastmcp.Client`.
+    """
+
     sampling_model: models.Model | None
     """A Pydantic AI model that the server may sample from via the MCP `sampling/createMessage` flow.
 
@@ -831,6 +849,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         cache_prompts: bool = True,
         include_instructions: bool = False,
         include_return_schema: bool | None = None,
+        stateless: bool = False,
         # Sampling — high-level shortcut and low-level escape hatch
         sampling_model: models.Model | None = None,
         sampling_handler: SamplingHandler[Any, Any] | None = None,
@@ -879,6 +898,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 [`MCPToolset.include_instructions`][pydantic_ai.mcp.MCPToolset.include_instructions].
             include_return_schema: Whether to include return schemas in tool definitions. See
                 [`MCPToolset.include_return_schema`][pydantic_ai.mcp.MCPToolset.include_return_schema].
+            stateless: Whether to connect in stateless mode, deferring the MCP `initialize`
+                handshake until the first real request. See
+                [`MCPToolset.stateless`][pydantic_ai.mcp.MCPToolset.stateless].
             sampling_model: A Pydantic AI model the server may sample from. Mutually exclusive with
                 `sampling_handler`.
             sampling_handler: A FastMCP-shaped sampling handler. Use for full control over the
@@ -935,6 +957,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 conflicts.append('init_timeout')
             if read_timeout is not _UNSET:
                 conflicts.append('read_timeout')
+            # `stateless` controls `auto_initialize` on the Client, so it can't be passed alongside
+            # a pre-built Client.
+            if stateless:
+                conflicts.append('stateless')
             if conflicts:
                 names = ', '.join(repr(n) for n in conflicts)
                 raise ValueError(
@@ -943,6 +969,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 )
             self.client = client
             self._user_message_handler = None
+            self.stateless = False  # Pre-built clients manage their own initialization
         else:
             if sampling_handler is not None and sampling_model is not None:
                 raise ValueError('Pass either `sampling_model` or `sampling_handler`, not both.')
@@ -982,8 +1009,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 init_timeout=init_timeout,
                 timeout=read_timeout,
                 roots=roots,
+                auto_initialize=not stateless,
             )
             self._user_message_handler = message_handler
+            self.stateless = stateless
 
         self._id = id
         self.max_retries = max_retries
@@ -1083,6 +1112,29 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     def _invalidate_prompts_cache(self) -> None:
         self._cached_prompts = None
 
+    async def _ensure_initialized(self) -> None:
+        """Ensure the MCP session is initialized, calling `initialize` if needed.
+
+        In stateless mode, the FastMCP client is entered without calling `initialize` (via
+        `auto_initialize=False`). This method performs the lazy initialization on the first
+        operation that needs server capabilities or info.
+
+        This method is idempotent — calling it multiple times is safe.
+        """
+        if self._initialized:
+            return
+        if not self.is_running:
+            raise ValueError(
+                f'`{self.__class__.__name__}._ensure_initialized` called before entering the toolset context'
+            )
+        # Perform the deferred initialization
+        init_result = await self.client.initialize()
+        self._server_info = init_result.serverInfo
+        self._server_capabilities = ServerCapabilities.from_mcp_sdk(init_result.capabilities)
+        self._instructions = init_result.instructions
+        if self.log_level is not None:
+            await self.client.session.set_logging_level(self.log_level)
+
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
             if self._running_count == 0:
@@ -1093,17 +1145,21 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 # session that got torn down mid-setup.
                 async with AsyncExitStack() as exit_stack:
                     await exit_stack.enter_async_context(self.client)
-                    init_result = self.client.initialize_result
-                    assert init_result is not None, 'FastMCP Client initialization returned no result'
-                    server_info = init_result.serverInfo
-                    server_capabilities = ServerCapabilities.from_mcp_sdk(init_result.capabilities)
-                    instructions = init_result.instructions
-                    if self.log_level is not None:
-                        await self.client.session.set_logging_level(self.log_level)
+                    if not self.stateless:
+                        # Eager initialization: read the init result and populate server state
+                        init_result = self.client.initialize_result
+                        assert init_result is not None, 'FastMCP Client initialization returned no result'
+                        server_info = init_result.serverInfo
+                        server_capabilities = ServerCapabilities.from_mcp_sdk(init_result.capabilities)
+                        instructions = init_result.instructions
+                        if self.log_level is not None:
+                            await self.client.session.set_logging_level(self.log_level)
+                        self._server_info = server_info
+                        self._server_capabilities = server_capabilities
+                        self._instructions = instructions
+                    # In stateless mode, _server_info/_server_capabilities/_instructions remain None
+                    # until _ensure_initialized() is called on the first real operation.
                     self._exit_stack = exit_stack.pop_all()
-                    self._server_info = server_info
-                    self._server_capabilities = server_capabilities
-                    self._instructions = instructions
             self._running_count += 1
         return self
 
@@ -1139,10 +1195,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         When [`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] is enabled (default), results
         are cached and invalidated by `notifications/tools/list_changed` or the toolset's last
         `__aexit__`.
+
+        In stateless mode, this is the point where lazy initialization occurs if the MCP
+        `initialize` handshake hasn't happened yet.
         """
         if self.cache_tools and self._cached_tools is not None:
             return self._cached_tools
         async with self:
+            await self._ensure_initialized()
             tools = await self.client.list_tools()
             if self.cache_tools:
                 self._cached_tools = tools
@@ -1210,6 +1270,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             ToolFailed: If a completed tool error occurs and `tool_error_behavior='failed'`.
         """
         async with self:
+            await self._ensure_initialized()
             try:
                 if use_task:
                     tool_task: ToolTask = await self.client.call_tool(
@@ -1314,6 +1375,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         if self.cache_prompts and self._cached_prompts is not None:
             return self._cached_prompts
         async with self:
+            await self._ensure_initialized()
             if not self.capabilities.prompts:
                 return []
             try:
@@ -1337,6 +1399,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 an error response.
         """
         async with self:
+            await self._ensure_initialized()
             if not self.capabilities.prompts:
                 raise MCPError(
                     message=f'Server does not advertise the `prompts` capability; cannot get prompt {name!r}.',
@@ -1369,6 +1432,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         if self.cache_resources and self._cached_resources is not None:
             return self._cached_resources
         async with self:
+            await self._ensure_initialized()
             if not self.capabilities.resources:
                 return []
             try:
@@ -1389,6 +1453,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             MCPError: If the server returns an error.
         """
         async with self:
+            await self._ensure_initialized()
             if not self.capabilities.resources:
                 return []
             try:
@@ -1423,6 +1488,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """
         resource_uri = uri if isinstance(uri, str) else uri.uri
         async with self:
+            await self._ensure_initialized()
             try:
                 contents = await self.client.read_resource(AnyUrl(resource_uri))
             except mcp_exceptions.McpError as e:
