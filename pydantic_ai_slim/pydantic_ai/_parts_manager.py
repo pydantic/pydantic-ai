@@ -85,27 +85,24 @@ class ModelResponsePartsManager:
         }
 
     def __repr__(self) -> str:
-        self._materialize_string_buffers()
         return (
             f'{type(self).__qualname__}('
             f'model_request_parameters={self.model_request_parameters!r}, '
-            f'_parts={self._parts!r}, '
+            f'_parts={self._materialized_parts()!r}, '
             f'_vendor_id_to_part_index={self._vendor_id_to_part_index!r})'
         )
 
     def __eq__(self, other: object) -> bool:
         if other.__class__ is self.__class__:
             assert isinstance(other, ModelResponsePartsManager)
-            self._materialize_string_buffers()
-            other._materialize_string_buffers()
             return (
                 self.model_request_parameters,
-                self._parts,
+                self._materialized_parts(),
                 self._vendor_id_to_part_index,
                 self._tool_kind_by_name,
             ) == (
                 other.model_request_parameters,
-                other._parts,
+                other._materialized_parts(),
                 other._vendor_id_to_part_index,
                 other._tool_kind_by_name,
             )
@@ -661,7 +658,16 @@ class ModelResponsePartsManager:
         return existing_part
 
     def _buffer_string_delta(self, part_index: int, current_value: str | None, delta: str) -> None:
-        """Buffer a string append while preserving a `None`-to-empty transition."""
+        """Buffer a string append while preserving a `None`-to-empty transition.
+
+        Invariant: `''.join(buffer)` in `_materialized_part` must equal the result of applying each
+        buffered delta in turn via `TextPartDelta.apply`/`ThinkingPartDelta.apply`/`ToolCallPartDelta.apply`,
+        which combine string content by plain concatenation (`part.content + delta`). This buffered
+        assembly duplicates that concatenation logic from `messages.py`, and no test would catch the two
+        copies diverging: if a `*Delta.apply` ever combined content by anything other than `a + b`
+        (normalization, trimming, dedup), the buffered path would silently produce different output. Keep
+        the two in lockstep.
+        """
         if not delta:
             return
         buffer = self._string_buffers.get(part_index)
@@ -669,36 +675,47 @@ class ModelResponsePartsManager:
             buffer = self._string_buffers[part_index] = [current_value or '']
         buffer.append(delta)
 
-    def _materialize_part(self, part_index: int) -> ManagedPart:
-        """Materialize buffered string deltas for one part."""
+    def _materialized_part(self, part_index: int) -> ManagedPart:
+        """Compute the materialized form of a part without mutating any buffered state."""
         part = self._parts[part_index]
-        buffer = self._string_buffers.pop(part_index, None)
+        buffer = self._string_buffers.get(part_index)
         if buffer is None:
             return part
 
         value = ''.join(buffer)
         if isinstance(part, TextPart | ThinkingPart):
-            part = replace(part, content=value)
-        elif isinstance(part, ToolCallPartDelta):
+            return replace(part, content=value)
+        if isinstance(part, ToolCallPartDelta):
             if isinstance(part.args_delta, dict):  # pragma: no cover
                 raise AssertionError('Cannot materialize string arguments onto dictionary arguments')
-            part = replace(part, args_delta=value)
-        elif isinstance(part, ToolCallPart | NativeToolCallPart):
+            return replace(part, args_delta=value)
+        if isinstance(part, ToolCallPart | NativeToolCallPart):
             if isinstance(part.args, dict):  # pragma: no cover
                 raise AssertionError('Cannot materialize string arguments onto dictionary arguments')
-            part = replace(part, args=value)
-            if isinstance(part, ToolCallPart):
-                part = self._typed_call_part(part)
-        else:  # pragma: no cover
-            raise AssertionError(f'Cannot materialize string deltas for {part!r}')
+            materialized = replace(part, args=value)
+            if isinstance(materialized, ToolCallPart):
+                materialized = self._typed_call_part(materialized)
+            return materialized
+        raise AssertionError(f'Cannot materialize string deltas for {part!r}')  # pragma: no cover
 
+    def _materialize_part(self, part_index: int) -> ManagedPart:
+        """Materialize buffered string deltas for one part, caching the result in `_parts`."""
+        if part_index not in self._string_buffers:
+            return self._parts[part_index]
+        part = self._materialized_part(part_index)
+        del self._string_buffers[part_index]
         self._parts[part_index] = part
         return part
 
-    def _materialize_string_buffers(self) -> None:
-        """Materialize all buffered strings before returning a snapshot."""
-        for part_index in tuple(self._string_buffers):
-            self._materialize_part(part_index)
+    def _materialized_parts(self) -> list[ManagedPart]:
+        """Return the fully materialized parts without mutating buffered state.
+
+        Used by `__eq__`/`__repr__` so that reading the manager never flushes its buffers as a
+        side effect.
+        """
+        if not self._string_buffers:
+            return self._parts
+        return [self._materialized_part(index) for index in range(len(self._parts))]
 
     def _replace_part(self, part_index: int, part: ManagedPart) -> None:
         """Fully replace a part and discard any buffered deltas."""
