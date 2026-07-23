@@ -34,6 +34,18 @@ process last wrote. Treat it as `unknown_after_crash` when replaying -- the
 external side effect may or may not have happened.
 """
 
+SnapshotState = Literal['complete', 'interrupted']
+"""Whether a snapshot's tool work was settled when it was captured.
+
+`complete`: every `ToolCallPart` has a matching result; resuming starts a
+fresh model turn. `interrupted`: the history carries unsettled tool work (an
+open tool call, or a partially-returned batch) captured at failure time.
+pydantic-ai (>= 2.10) makes either shape sendable on resume, but an
+`interrupted` point may re-execute pending tool calls or close them out with
+synthesized returns -- check `list_unresolved_tool_effects` before resuming
+from one. Vocabulary mirrors `pydantic_ai.messages.ModelRequestState`.
+"""
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -73,11 +85,12 @@ class StepEvent:
 
 @dataclass(kw_only=True)
 class ContinuableSnapshot:
-    """A provider-valid message-history snapshot safe to resume from.
+    """A message-history snapshot a run can be resumed from.
 
-    Only emitted at boundaries where every `ToolCallPart` in the history
-    has a matching `ToolReturnPart` or `RetryPromptPart`. Pass `messages`
-    to `Agent.run(..., message_history=...)` to continue or fork the run.
+    Pass `messages` to `Agent.run(..., message_history=...)` to continue or
+    fork the run. `state` says whether the captured tool work was settled;
+    stores hide `interrupted` snapshots from `latest_snapshot` unless the
+    caller opts in (see `SnapshotState`).
     """
 
     run_id: str
@@ -87,6 +100,7 @@ class ContinuableSnapshot:
     parent_run_id: str | None = None
     agent_name: str | None = None
     timestamp: datetime = field(default_factory=_utcnow)
+    state: SnapshotState = 'complete'
 
 
 @dataclass(kw_only=True)

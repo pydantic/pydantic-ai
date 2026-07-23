@@ -19,9 +19,9 @@ from pydantic_ai_harness.step_persistence._types import ToolEffectRecord
 
 
 def is_provider_valid(messages: list[ModelMessage]) -> bool:
-    """Return True when `messages` can be safely passed to `Agent.run(message_history=...)`.
+    """Return True when `messages` carries no unsettled tool call/result pairing.
 
-    A history is provider-valid when:
+    A history passes when:
 
     1. Every `ToolCallPart` has a matching `ToolReturnPart` or
        tool-bound `RetryPromptPart` later in the conversation, and
@@ -31,6 +31,11 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
     A `RetryPromptPart` with `tool_name is None` is an output-validation
     retry -- providers map it as a regular user message, not a tool result,
     so it does not need to resolve an open call.
+
+    Since pydantic-ai 2.10 repairs broken pairing before every model request,
+    a failing history is still sendable via `Agent.run(message_history=...)`;
+    this predicate now classifies snapshots (`complete` vs `interrupted`,
+    see `SnapshotState`) rather than gating what gets persisted.
     """
     open_calls: set[str] = set()
     for msg in messages:
@@ -51,30 +56,37 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
     return not open_calls
 
 
-async def continue_run(store: StepStore, *, run_id: str) -> list[ModelMessage]:
+async def continue_run(store: StepStore, *, run_id: str, include_interrupted: bool = False) -> list[ModelMessage]:
     """Load the latest continuable snapshot for `run_id` as a message history.
 
     Pass the return value to `Agent.run(message_history=...)` to continue
     a delegate's prior investigation instead of starting fresh.
 
-    Raises `LookupError` if no continuable snapshot exists for `run_id` -- the
-    run may have crashed mid-tool-call, in which case there is event-log data
-    but no safe resume point.
+    By default only `complete` snapshots are considered -- points whose tool
+    work was settled when captured. `include_interrupted=True` also considers
+    `interrupted` rescue points (e.g. a crash mid-tool-cycle): pydantic-ai
+    makes them sendable on resume, but pending tool calls may be re-executed
+    or closed out with synthesized returns, so check
+    `list_unresolved_tool_effects` first (see `SnapshotState`).
+
+    Raises `LookupError` if no matching snapshot exists for `run_id` -- e.g.
+    the run failed before producing a model response, or it crashed
+    mid-tool-cycle and only an `interrupted` rescue point exists.
     """
-    snapshot = await store.latest_snapshot(run_id=run_id)
+    snapshot = await store.latest_snapshot(run_id=run_id, include_interrupted=include_interrupted)
     if snapshot is None:
         raise LookupError(f'no continuable snapshot for run_id {run_id!r}')
     return list(snapshot.messages)
 
 
-async def fork_run(store: StepStore, *, run_id: str) -> list[ModelMessage]:
+async def fork_run(store: StepStore, *, run_id: str, include_interrupted: bool = False) -> list[ModelMessage]:
     """Return a copy of the latest snapshot's messages, intended for a new logical run.
 
     Semantically identical to `continue_run` at the data layer; the
     distinction is in how the caller treats the returned history (new
     `run_id`, new lineage entry, branching off prior context).
     """
-    return await continue_run(store, run_id=run_id)
+    return await continue_run(store, run_id=run_id, include_interrupted=include_interrupted)
 
 
 async def annotate_tool_effect(

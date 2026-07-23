@@ -41,19 +41,22 @@ node boundary, so only `after_run` ever sees the whole run. Task-isolated like
 `current_run_id`, so concurrent runs don't interfere.
 """
 
-latest_node_history: ContextVar[tuple[list[ModelMessage], int] | None] = ContextVar(
-    'pydantic_ai_harness.step_persistence.latest_node_history',
+live_run_history: ContextVar[tuple[list[ModelMessage], int] | None] = ContextVar(
+    'pydantic_ai_harness.step_persistence.live_run_history',
     default=None,
 )
-"""Async-context-local `(messages, step_index)` captured at the last completed node.
+"""Async-context-local `(live message list, run_step)` refreshed at each node boundary.
 
-`after_node_run` refreshes this at every node boundary; `on_run_error` reads it
-to rescue a provider-valid resume point that a node reached but that no
-`after_node_run` persisted -- e.g. a text response whose subsequent
-`CallToolsNode` raises inside output validation. The `RunContext` passed to
+The list is held by *reference*, not copied: `after_node_run` re-stashes
+`ctx.messages` at every boundary, and `on_run_error` reads the reference's
+current content to persist the at-failure history. The `RunContext` passed to
 `on_run_error` carries the start-of-run history (a stale reference the graph
-rebinds during the run), not the live message list, so the hook cannot read the
-partial history from `ctx.messages` directly.
+rebinds in `UserPromptNode.run`), not the live message list, so the hook cannot
+read the partial history from its own `ctx.messages`. See the stash site in
+`_capability.py` for the pydantic-ai invariant this leans on.
+
+`run_step` is the last completed boundary's step, so an error-path snapshot's
+`step_index` can lag the failing request by one.
 
 Reset to `None` in `wrap_run` so a run never inherits a prior run's tail.
 Task-isolated like `current_run_id`.
