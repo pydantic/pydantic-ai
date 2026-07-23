@@ -505,8 +505,9 @@ class TextContent:
     metadata: Any = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM.
 
-    As application-only data it is not guaranteed to survive serialization round-trips through
-    protocol adapters; see [Storing and loading messages](../message-history.md#storing-and-loading-messages-to-json).
+    `ModelMessagesTypeAdapter` preserves this field, but as application-only data it is not
+    guaranteed to survive a round-trip through the UI adapters; see
+    [Storing and loading messages](../message-history.md#storing-and-loading-messages-to-json).
     """
 
     kind: Literal['text-content'] = 'text-content'

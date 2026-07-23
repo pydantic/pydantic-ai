@@ -312,12 +312,15 @@ result2 = agent.run_sync(  # (3)!
 _(This example is complete, it can be run "as is")_
 
 !!! note "What survives a round-trip"
-    Round-trip fidelity is scoped to state that affects what the model sees or how a resumed
-    run behaves. Fields documented as *not sent to the model* — application-only annotations
-    such as [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] — are not
-    guaranteed to survive every boundary: `ModelMessagesTypeAdapter` preserves them, but a
-    protocol adapter such as one of the [UI adapters](ui/overview.md) may drop them when its
-    wire format has no place to carry them. That loss is by design, not a state-loss bug.
+    `ModelMessagesTypeAdapter` round-trips messages faithfully: every field survives a
+    `to_jsonable_python` → `validate_python` cycle unchanged, including application-only
+    annotations such as [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata]
+    that are *not sent to the model*. This is the boundary you use to persist and reload history.
+
+    The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
+    protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields,
+    so those fields are dropped when crossing that boundary. That loss is by design, not a
+    state-loss bug.
 
 ### Loading untrusted history
 
