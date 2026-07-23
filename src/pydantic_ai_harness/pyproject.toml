@@ -132,7 +132,7 @@ quote-style = 'single'
 [tool.pyright]
 pythonVersion = '3.10'
 typeCheckingMode = 'strict'
-exclude = ['template', '.venv', 'mutants']
+exclude = ['template', '.venv', 'mutants', '.agents', '.claude']
 # `reportUnusedFunction` is disabled for tests because fixtures and `@agent.tool_plain`
 # helpers are registered via decorators and never referenced by name (matches pydantic-ai).
 executionEnvironments = [
