@@ -190,6 +190,8 @@ def _connect(
 
 
 def test_realtime_url_for_gateway_provider(monkeypatch: pytest.MonkeyPatch):
+    # The gateway accepts the `/v1`-less realtime path (like the OpenAI SDK's own `<base>/realtime`), so
+    # the realtime URL is derived straight from the provider base URL, without inserting a `/v1` segment.
     monkeypatch.setenv('PYDANTIC_AI_GATEWAY_API_KEY', 'gw-key')
     monkeypatch.setenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
     string_model = OpenAIRealtimeModel('gpt-realtime', provider='gateway/openai')
@@ -199,9 +201,11 @@ def test_realtime_url_for_gateway_provider(monkeypatch: pytest.MonkeyPatch):
     )
     plain_model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
 
-    assert '/v1/realtime' in string_model._realtime_url()  # pyright: ignore[reportPrivateUsage]
-    assert '/v1/realtime' in instance_model._realtime_url()  # pyright: ignore[reportPrivateUsage]
-    assert plain_model._realtime_url().count('/v1') == 1  # pyright: ignore[reportPrivateUsage]
+    gateway_url = 'wss://gateway.pydantic.dev/proxy/openai/realtime?model=gpt-realtime'
+    assert string_model._realtime_url() == gateway_url  # pyright: ignore[reportPrivateUsage]
+    assert instance_model._realtime_url() == gateway_url  # pyright: ignore[reportPrivateUsage]
+    # The plain OpenAI base URL already carries its own `/v1`.
+    assert plain_model._realtime_url() == 'wss://api.openai.com/v1/realtime?model=gpt-realtime'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_audio_delta() -> None:

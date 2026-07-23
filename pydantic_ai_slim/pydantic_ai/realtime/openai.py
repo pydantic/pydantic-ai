@@ -58,7 +58,6 @@ from ..messages import ModelMessage
 from ..models import ModelRequestParameters
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
-from ..providers.gateway import is_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._base import (
@@ -624,7 +623,6 @@ class OpenAIRealtimeModel(RealtimeModel):
     settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
-    _gateway: bool = field(init=False, default=False, repr=False)
 
     def __post_init__(self, provider: Provider[AsyncOpenAI] | str) -> None:
         if isinstance(provider, str):
@@ -636,7 +634,6 @@ class OpenAIRealtimeModel(RealtimeModel):
                 '`azure:` prefix) for Azure OpenAI realtime.'
             )
         self._provider = provider
-        self._gateway = is_gateway_provider(provider)
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -714,10 +711,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         return config
 
     def _realtime_url(self) -> str:
-        base_url = self._provider.base_url
-        if self._gateway:
-            base_url = f'{base_url.rstrip("/")}/v1'
-        return f'{realtime_websocket_url(base_url)}?model={self.model}'
+        return f'{realtime_websocket_url(self._provider.base_url)}?model={self.model}'
 
     async def _auth_headers(self) -> dict[str, str]:
         # `AsyncOpenAI` accepts an async `api_key` provider, in which case `client.api_key` is empty
