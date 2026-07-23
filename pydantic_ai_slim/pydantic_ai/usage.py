@@ -139,7 +139,11 @@ class UsageBase:
         return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
     def __eq__(self, value: object, /) -> bool:
-        return type(self) is type(value) and self.__dict__ == value.__dict__
+        if type(self) is type(value):
+            missing = object()
+            keys = self.__dict__.keys() | value.__dict__.keys()
+            return all(getattr(self, key, missing) == getattr(value, key, missing) for key in keys)
+        return NotImplemented
 
     def has_values(self) -> bool:
         """Whether any values are set and non-zero."""
