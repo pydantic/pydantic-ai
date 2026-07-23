@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import StatusCode
-from pydantic_core import to_json
+from pydantic_core import ValidationError, to_json
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
@@ -22,18 +22,28 @@ from pydantic_ai._instrumentation import (
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._utils import UNSET, Unset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    SkipToolExecution,
+    ToolFailed,
+    ToolFailedError,
+    ToolRetryError,
+)
+from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
     AbstractCapability,
     CapabilityOrdering,
+    RawToolArgs,
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapOutputProcessHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
+    WrapToolValidateHandler,
 )
 
 if TYPE_CHECKING:
@@ -285,11 +295,11 @@ class Instrumentation(AbstractCapability[Any]):
             return response
 
     # ------------------------------------------------------------------
-    # wrap_tool_execute — tool execution span
+    # Tool operation instrumentation
     # ------------------------------------------------------------------
 
     def _tool_span_attributes(self, call: ToolCallPart) -> dict[str, Any]:
-        """Build the span attributes shared by `wrap_tool_execute` and `wrap_output_process`.
+        """Build the span attributes shared by tool operations and `wrap_output_process`.
 
         Both spans use `gen_ai.operation.name='execute_tool'` and the same `gen_ai.tool.*`
         attributes — they only differ in how the result is serialized and which exceptions
@@ -376,6 +386,19 @@ class Instrumentation(AbstractCapability[Any]):
                     span.record_exception(exc, escaped=True)
                     span.set_status(StatusCode.ERROR)
                 raise
+            except SkipToolExecution as e:
+                # A hook skipped execution with a replacement result; `ToolManager` converts this
+                # into a successful tool result, so record the replacement like a normal result and
+                # leave the span status unset instead of marking it ERROR. Only reached on the
+                # tool-execute path (`handle_tool_control_flow=True`); `SkipToolExecution` is a
+                # hook-level control-flow signal that never reaches output processing and has no
+                # pre-version-5 span shape to mirror.
+                if include_content and span.is_recording():
+                    span.set_attribute(
+                        names.tool_result_attr,
+                        e.result if isinstance(e.result, str) else serialize_result(e.result),
+                    )
+                raise
             except ToolRetryError as e:
                 if handle_tool_control_flow and include_content and span.is_recording():
                     # Tool retries are surfaced as model-visible errors; record the prompt
@@ -402,6 +425,53 @@ class Instrumentation(AbstractCapability[Any]):
                 )
 
         return result
+
+    async def wrap_tool_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: RawToolArgs,
+        handler: WrapToolValidateHandler,
+    ) -> ValidatedToolArgs:
+        """Emit an ERROR span for a tool call rejected at argument validation.
+
+        Successful validation is not span-worthy on its own — the execute-stage span covers the
+        normal lifecycle, and emitting a second span here would duplicate it. Only when validation
+        ultimately fails (`on_tool_validate_error` did not recover it) do we open a near-zero-width
+        `execute_tool` span marked ERROR, recording the failure the model will see. This restores
+        the pre-#4967 behavior where a tool call rejected before execution stayed visible in traces
+        (#6555).
+        """
+        try:
+            return await handler(args)
+        except (ValidationError, ModelRetry, ToolFailed) as error:
+            names = self._instrumentation_names
+            with self.settings.tracer.start_as_current_span(
+                names.get_tool_span_name(call.tool_name),
+                attributes=self._tool_span_attributes(call),
+                record_exception=False,
+                set_status_on_exception=False,
+            ) as span:
+                if self.settings.include_content and span.is_recording():
+                    if isinstance(error, ToolFailed):
+                        result = error.message
+                    else:
+                        # Mirror `ToolManager._wrap_error_as_retry` to record the retry prompt the
+                        # model will see. Duplicated here to avoid importing `ToolManager`.
+                        content = (
+                            error.errors(include_url=False, include_context=False)
+                            if isinstance(error, ValidationError)
+                            else error.message
+                        )
+                        result = RetryPromptPart(
+                            tool_name=call.tool_name, content=content, tool_call_id=call.tool_call_id
+                        ).model_response()
+                    span.set_attribute(names.tool_result_attr, result)
+                span.record_exception(error, escaped=True)
+                span.set_status(StatusCode.ERROR)
+            raise
 
     async def wrap_tool_execute(
         self,
