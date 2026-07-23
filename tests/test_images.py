@@ -1733,22 +1733,25 @@ async def test_xai_image_generation_unknown_status_error():
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
 @pytest.mark.parametrize(
-    'status_code,expected_http',
+    'status_name,expected_http',
     [
-        (grpc.StatusCode.INVALID_ARGUMENT, 400),
-        (grpc.StatusCode.UNAUTHENTICATED, 401),
-        (grpc.StatusCode.PERMISSION_DENIED, 403),
+        ('INVALID_ARGUMENT', 400),
+        ('UNAUTHENTICATED', 401),
+        ('PERMISSION_DENIED', 403),
     ],
 )
-async def test_xai_image_generation_maps_grpc_status_to_http(status_code: grpc.StatusCode, expected_http: int):
+async def test_xai_image_generation_maps_grpc_status_to_http(status_name: str, expected_http: int):
     """gRPC status codes map to their HTTP-equivalent `ModelHTTPError`.
 
     xAI's image path is gRPC, so provider errors arrive as `grpc.StatusCode`, not HTTP codes. A bad
     request (`INVALID_ARGUMENT`) must surface as 400 rather than the generic `ModelAPIError`, and the
     already-mapped auth codes (`UNAUTHENTICATED`/`PERMISSION_DENIED`) are pinned here too.
+    Parametrized by enum name because `grpc` is an optional import: enum values in the decorator would
+    `NameError` at collection time in environments without the xAI extras.
 
     Reference: `_GRPC_STATUS_TO_HTTP` in `pydantic_ai.images.xai`.
     """
+    status_code = grpc.StatusCode[status_name]
 
     class TestRpcError(grpc.RpcError):
         def code(self) -> grpc.StatusCode:
