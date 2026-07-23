@@ -41,7 +41,9 @@ async def test_text_in_audio_out_turn(
 ) -> None:
     """A text turn produces live audio/transcript events and standard message history."""
     provider, cassette = azure_voice_live_ws_cassette
-    model = AzureRealtimeModel('gpt-realtime', provider=provider, settings={'azure_voice_live': True})
+    model = AzureRealtimeModel(
+        'gpt-realtime', provider=provider, settings=AzureRealtimeModelSettings(azure_voice_live=True)
+    )
     agent = Agent(instructions='Answer in two or three words.')
 
     events: list[Any] = []
@@ -106,7 +108,9 @@ async def test_audio_in_server_vad_turn(
 ) -> None:
     """A spoken user turn is segmented by server VAD and retained as transcribed history."""
     provider, _ = azure_voice_live_ws_cassette
-    model = AzureRealtimeModel('gpt-realtime', provider=provider, settings={'azure_voice_live': True})
+    model = AzureRealtimeModel(
+        'gpt-realtime', provider=provider, settings=AzureRealtimeModelSettings(azure_voice_live=True)
+    )
     assert model.profile == RealtimeModelProfile(
         supports_image_input=True,
         supports_manual_turn_control=True,
