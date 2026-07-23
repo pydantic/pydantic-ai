@@ -53,6 +53,7 @@ if TYPE_CHECKING:
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeSession,
+        WebRTCCall,
     )
 
 DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
@@ -1149,6 +1150,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
+        provider_session: WebRTCCall | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session; see [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] for the parameters.
 
@@ -1175,6 +1177,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             message_history=message_history,
             audio_retention=audio_retention,
             retain_images_every_n=retain_images_every_n,
+            provider_session=provider_session,
         ) as session:
             yield session
 
