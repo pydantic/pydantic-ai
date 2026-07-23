@@ -1,12 +1,13 @@
-"""Foreign `ThinkingPart`s map to an explicit foreign marker, not bare `<thinking>` tags.
+"""Foreign `ThinkingPart`s map to a noted `<thinking>` tag, not the model's own bare `<thinking>` tags.
 
 Regression test for #5869: an unsigned or foreign-provider `ThinkingPart` in history (round-tripped
 through storage, rebuilt by a history processor, or produced by another model in a `FallbackModel`
-chain) can't be sent through the model's own native reasoning channel. Anthropic documents that
+chain) can't be sent through the model's own native reasoning channel. Anthropic documents that bare
 `<thinking>` tags in the prompt get generalized into the model's own output, so re-rendering such a
-part as bare tags teaches the model to leak the format into user-visible answers. The three providers
-with a native thinking-block concept (Anthropic, xAI, Bedrock) instead prefix it with an explicit
-foreign marker.
+part in that native format teaches the model to leak it into user-visible answers. The three providers
+with a native thinking-block concept (Anthropic, xAI, Bedrock) instead wrap it in a `<thinking>` tag
+carrying an explicit note that the reasoning is carried over from another model in the conversation. The
+source provider is deliberately not named.
 
 The outbound request body is asserted directly via each model's `_map_message`/`_map_messages`:
 provider cassettes match on method+URI only, so a VCR test would play back green regardless of how the
@@ -22,7 +23,7 @@ from dataclasses import dataclass, field
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai._thinking_part import FOREIGN_THINKING_INTRO
+from pydantic_ai._thinking_part import FOREIGN_THINKING_NOTE
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -137,9 +138,9 @@ CASES = [
                     'content': [
                         {
                             'text': """\
-Earlier reasoning, possibly from another model, provided for context only:
-
-Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.\
+<thinking note="continued from another model in this conversation">
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</thinking>\
 """,
                             'type': 'text',
                         },
@@ -191,9 +192,9 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-Earlier reasoning, possibly from another model, provided for context only:
-
-Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.\
+<thinking note="continued from another model in this conversation">
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</thinking>\
 """
                         }
                     ],
@@ -240,9 +241,9 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-Earlier reasoning, possibly from another model, provided for context only:
-
-Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.\
+<thinking note="continued from another model in this conversation">
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</thinking>\
 """
                         },
                         {'text': 'The 10-year Treasury has more interest-rate risk.'},
@@ -291,9 +292,9 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-Earlier reasoning, possibly from another model, provided for context only:
-
-Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.\
+<thinking note="continued from another model in this conversation">
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</thinking>\
 """,
                             'type': 'text',
                         },
@@ -321,9 +322,9 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-Earlier reasoning, possibly from another model, provided for context only:
-
-Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.\
+<thinking note="continued from another model in this conversation">
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</thinking>\
 """
                         }
                     ],
@@ -352,9 +353,9 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-Earlier reasoning, possibly from another model, provided for context only:
-
-Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.\
+<thinking note="continued from another model in this conversation">
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</thinking>\
 """
                         },
                         {'text': 'The 10-year Treasury has more interest-rate risk.'},
@@ -369,11 +370,12 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
 
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in CASES])
 async def test_foreign_thinking_marker(case: Case):
-    """A non-native `ThinkingPart` — unsigned, or signed by another provider — is re-rendered with the
-    explicit marker, never bare `<thinking>` tags; a history without thinking is unaffected."""
+    """A non-native `ThinkingPart` — unsigned, or signed by another provider — is re-rendered inside a
+    noted `<thinking>` tag, never the model's own bare `<thinking>` tags; a history without thinking is
+    unaffected."""
     body = await case.outbound(case.history)
     assert body == case.expected
 
     serialized = json.dumps(body, default=str)
-    assert (FOREIGN_THINKING_INTRO in serialized) is case.expect_marker
-    assert '<think' not in serialized
+    assert (FOREIGN_THINKING_NOTE in serialized) is case.expect_marker
+    assert '<thinking>' not in serialized

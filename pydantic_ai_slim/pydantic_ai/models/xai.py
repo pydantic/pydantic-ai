@@ -464,8 +464,8 @@ class XaiModel(Model[AsyncClient]):
         """Map a `ThinkingPart` into a single xAI assistant message.
 
         - Native xAI thinking (with optional signature) is sent via `reasoning_content`/`encrypted_content`
-        - Non-native thinking (unsigned or from another provider) is prefixed with an explicit marker instead
-          of the profile's thinking tags, which the model would imitate
+        - Non-native thinking (unsigned or from another provider) is wrapped in a noted `<thinking>` tag
+          instead of the profile's native, unannotated thinking tags, which the model would imitate
         """
         if item.provider_name in _XAI_PROVIDER_NAMES and (item.content or item.signature):
             msg = assistant('')

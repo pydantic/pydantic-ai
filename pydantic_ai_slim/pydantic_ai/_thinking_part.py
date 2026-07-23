@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from pydantic_ai import TextPart, ThinkingPart
 
-FOREIGN_THINKING_INTRO = 'Earlier reasoning, possibly from another model, provided for context only:'
+FOREIGN_THINKING_NOTE = 'continued from another model in this conversation'
 
 
 def render_foreign_thinking(content: str) -> str:
@@ -10,13 +10,15 @@ def render_foreign_thinking(content: str) -> str:
 
     Such a part reaches this fallback when it has no signature (a model's own reasoning round-tripped
     through storage, or a provider like xAI that returns reasoning unsigned by default) or was produced by
-    a different provider (e.g. another model in a `FallbackModel` chain). It is prefixed with an explicit
-    marker rather than the profile's `<thinking>` tags: providers like Anthropic document that `<thinking>`
-    tags in the prompt get generalized into the model's own output, so re-rendering the reasoning as tags
-    teaches the model to leak that format into user-visible answers. The wording stays accurate whether the
-    reasoning is the model's own (unsigned) or genuinely foreign, since the two are indistinguishable here.
+    a different provider (e.g. another model in a `FallbackModel` chain). It is wrapped in a `<thinking>` tag
+    carrying an explicit note rather than the profile's native, unannotated `<thinking>` tags: providers like
+    Anthropic document that bare `<thinking>` tags in the prompt get generalized into the model's own output,
+    so re-rendering the reasoning in that native format teaches the model to leak it into user-visible
+    answers. The note states that the reasoning is being carried over from another model in the conversation,
+    which both keeps the block transparent to the model and marks it as context rather than a format to
+    imitate. The source provider is deliberately not named.
     """
-    return f'{FOREIGN_THINKING_INTRO}\n\n{content}'
+    return f'<thinking note="{FOREIGN_THINKING_NOTE}">\n{content}\n</thinking>'
 
 
 def split_content_into_text_and_thinking(content: str, thinking_tags: tuple[str, str]) -> list[ThinkingPart | TextPart]:
