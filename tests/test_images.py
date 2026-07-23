@@ -1810,9 +1810,9 @@ def test_xai_image_generation_unlisted_model_vcr(xai_provider: XaiProvider):
     `grok-imagine-image-pro` tier (https://docs.x.ai/developers/models/grok-imagine-image-pro); it is in
     the curated set, so the `str` annotation (not the model string) is what exercises the forward path.
 
-    Live-API note pinned by the recording: xAI resolves the requested `grok-imagine-image-pro` id to
-    `grok-imagine-image-quality` in the response's `model` field, and `result.model_name` reflects the
-    resolved response model (not the requested id).
+    Live-API note, pinned by the `model_name` assertion below: xAI resolves the requested
+    `grok-imagine-image-pro` id to `grok-imagine-image-quality` in the response's `model` field, and
+    `result.model_name` reflects the resolved response model (not the requested id).
     """
     model_name: str = 'grok-imagine-image-pro'
     generator = ImageGenerator(XaiImageGenerationModel(model_name, provider=xai_provider))
