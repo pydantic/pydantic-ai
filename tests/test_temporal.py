@@ -3790,7 +3790,7 @@ def test_temporal_run_context_enqueue_raises_inside_activity():
     assert reconstructed.enqueue() is None
 
 
-def test_temporal_run_context_serializes_usage():
+async def test_temporal_run_context_serializes_usage():
     ctx = RunContext(
         deps=None,
         model=TestModel(),
@@ -3800,12 +3800,33 @@ def test_temporal_run_context_serializes_usage():
             input_tokens=123,
             output_tokens=456,
             details={'foo': 1},
+            future_tokens=7,
+            label='original',
+            zero_tokens=0,
         ),
         run_id='run-123',
     )
 
     serialized = TemporalRunContext.serialize_run_context(ctx)
-    assert serialized['usage'] == ctx.usage
+    payloads = await pydantic_data_converter.encode([serialized])
+    [serialized] = await pydantic_data_converter.decode(payloads, [dict[str, Any]])
+    assert serialized['usage'] == snapshot(
+        {
+            'input_tokens': 123,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 456,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {'foo': 1},
+            'requests': 2,
+            'tool_calls': 1,
+            'future_tokens': 7,
+            'label': 'original',
+            'zero_tokens': 0,
+        }
+    )
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     assert reconstructed.usage == ctx.usage

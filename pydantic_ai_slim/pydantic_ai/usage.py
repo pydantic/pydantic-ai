@@ -3,10 +3,11 @@ from __future__ import annotations as _annotations
 import dataclasses
 from copy import copy
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from genai_prices.data_snapshot import get_snapshot
-from pydantic import AliasChoices, BeforeValidator, Field
+from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler
+from pydantic_core import SchemaSerializer, core_schema
 
 from . import _utils
 from .exceptions import UsageLimitExceeded
@@ -19,6 +20,74 @@ attributes. They must never be emitted under `gen_ai.usage.details.*` too: doing
 conceptual quantity under two attributes that consumers like Langfuse then sum, double-counting tokens
 and cost. Adapters that stash these keys in `details` (e.g. Anthropic's streaming carry-forward, Cohere's
 billed units) keep them accessible on `RequestUsage.details`; only the ambiguous OTel emission is dropped."""
+
+_LEGACY_USAGE_KEYS = frozenset({'requests', 'request_tokens', 'response_tokens', 'total_tokens'})
+"""Keys accepted in stored usage data for backwards compatibility but not preserved as arbitrary fields."""
+
+_LEGACY_TOKEN_ALIASES = (('input_tokens', 'request_tokens'), ('output_tokens', 'response_tokens'))
+
+_SERIALIZATION_FILTER_MISSING = object()
+
+
+def _usage_field_filter(
+    filter_: core_schema.IncExCall,
+    key: str,
+    *,
+    include: bool,
+) -> tuple[bool, core_schema.IncExCall]:
+    if filter_ is None:
+        return True, None
+    if isinstance(filter_, set):
+        selected = key in filter_
+        return (selected if include else not selected), None
+
+    item_filter = filter_.get(key, _SERIALIZATION_FILTER_MISSING)
+    if item_filter is _SERIALIZATION_FILTER_MISSING:
+        return not include, None
+    if item_filter is True or item_filter is Ellipsis:
+        return include, None
+    return True, cast(core_schema.IncExCall, item_filter)
+
+
+def _serialize_usage(
+    value: UsageBase,
+    inner: core_schema.SerializerFunctionWrapHandler,
+    info: core_schema.SerializationInfo,
+    *,
+    reserved_names: frozenset[str],
+    arbitrary_value_serializer: SchemaSerializer,
+) -> dict[str, Any]:
+    serialized = inner(value)
+    assert isinstance(serialized, dict)
+    result = cast(dict[str, Any], serialized).copy()
+    for key, item in value.__dict__.items():
+        if key in reserved_names:
+            continue
+        included, item_include = _usage_field_filter(info.include, key, include=True)
+        if not included:
+            continue
+        included, item_exclude = _usage_field_filter(info.exclude, key, include=False)
+        if not included:
+            continue
+        if info.exclude_none and item is None:
+            continue
+        if item_include is not None or item_exclude is not None:
+            item = arbitrary_value_serializer.to_python(
+                item,
+                mode=info.mode,
+                include=cast(Any, item_include),
+                exclude=cast(Any, item_exclude),
+                by_alias=info.by_alias,
+                exclude_unset=info.exclude_unset,
+                exclude_defaults=info.exclude_defaults,
+                exclude_none=info.exclude_none,
+                exclude_computed_fields=info.exclude_computed_fields,
+                round_trip=info.round_trip,
+                serialize_as_any=info.serialize_as_any,
+                context=info.context,
+            )
+        result[key] = item
+    return result
 
 
 @dataclass(repr=False, init=False, eq=False)
@@ -69,6 +138,54 @@ class UsageBase:
         self.details = details or {}
         for k, v in kwargs.items():
             setattr(self, k, v)
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        """Preserve arbitrary usage fields across Pydantic serialization."""
+        schema = handler(source_type)
+        field_names = frozenset(field.name for field in dataclasses.fields(source_type))
+        reserved_names = field_names | frozenset(dir(source_type)) | _LEGACY_USAGE_KEYS
+        arbitrary_value_serializer = SchemaSerializer(core_schema.any_schema())
+
+        def validate(value: Any, inner: core_schema.ValidatorFunctionWrapHandler) -> UsageBase:
+            if isinstance(value, dict):
+                value_dict = cast(dict[str, Any], value)
+                input_value = value_dict.copy()
+                if not value_dict.get('details'):
+                    input_value['details'] = {}
+                for field_name, legacy_name in _LEGACY_TOKEN_ALIASES:
+                    if field_name not in value_dict and legacy_name in value_dict and value_dict[legacy_name] is None:
+                        input_value[legacy_name] = 0
+            else:
+                value_dict = None
+                input_value = cast(object, value)
+
+            result = inner(input_value)
+            assert isinstance(result, UsageBase)
+            if value_dict is not None:
+                for key, item in value_dict.items():
+                    if key not in reserved_names:
+                        setattr(result, key, item)
+            return result
+
+        def serialize(
+            value: UsageBase,
+            inner: core_schema.SerializerFunctionWrapHandler,
+            info: core_schema.SerializationInfo,
+        ) -> Any:
+            return _serialize_usage(
+                value,
+                inner,
+                info,
+                reserved_names=reserved_names,
+                arbitrary_value_serializer=arbitrary_value_serializer,
+            )
+
+        return core_schema.no_info_wrap_validator_function(
+            validate,
+            schema,
+            serialization=core_schema.wrap_serializer_function_ser_schema(serialize, info_arg=True, schema=schema),
+        )
 
     def __copy__(self) -> UsageBase:
         """Shallow copy that also copies mutable fields like `details`."""

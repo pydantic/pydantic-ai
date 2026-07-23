@@ -8,7 +8,7 @@ from decimal import Decimal
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import (
     Agent,
@@ -442,6 +442,73 @@ def test_usage_arbitrary_fields():
 
     result = usage + RequestUsage(future_tokens=2, label='increment')
     assert result == RequestUsage(future_tokens=3, label='original')
+
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_arbitrary_fields_pydantic_roundtrip(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    usage = usage_type(
+        input_tokens=5,
+        details={'reasoning_tokens': 3},
+        future_tokens=42,
+        label='original',
+        zero_tokens=0,
+    )
+    adapter = TypeAdapter(usage_type)
+
+    loaded = adapter.validate_json(adapter.dump_json(usage))
+    assert loaded == usage
+    assert loaded.__dict__['future_tokens'] == 42
+    assert adapter.validate_python(usage) is usage
+
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_reserved_fields_not_loaded_as_arbitrary(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    loaded = TypeAdapter(usage_type).validate_python({'input_tokens': 5, 'cache_hit_ratio': 0.5})
+
+    assert loaded == usage_type(input_tokens=5)
+    assert 'cache_hit_ratio' not in loaded.__dict__
+
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_details_none_deserialization(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    loaded = TypeAdapter(usage_type).validate_python({'details': None})
+
+    assert loaded.details == {}
+
+
+def test_usage_arbitrary_fields_pydantic_serialization_filters():
+    adapter = TypeAdapter(RequestUsage)
+    usage = RequestUsage(
+        input_tokens=5,
+        future_tokens=42,
+        label=None,
+        breakdown={'a': 1, 'b': 2},
+    )
+
+    assert adapter.dump_python(usage, include={'input_tokens'}) == {'input_tokens': 5}
+    assert adapter.dump_python(
+        usage,
+        include={'input_tokens', 'future_tokens', 'label'},
+        exclude_none=True,
+    ) == {'input_tokens': 5, 'future_tokens': 42}
+
+    serialized = adapter.dump_python(usage, exclude={'future_tokens'})
+    assert 'future_tokens' not in serialized
+    assert serialized['label'] is None
+    assert adapter.dump_python(usage, include={'future_tokens': True}) == {'future_tokens': 42}
+    assert 'future_tokens' not in adapter.dump_python(
+        usage,
+        exclude={'future_tokens': ...},  # pyright: ignore[reportArgumentType]
+    )
+
+    assert adapter.dump_python(usage, include={'breakdown': {'a'}}) == {'breakdown': {'a': 1}}
+    assert adapter.dump_python(usage, exclude={'breakdown': {'a'}})['breakdown'] == {'b': 2}
 
 
 def test_cache_hit_ratio():
