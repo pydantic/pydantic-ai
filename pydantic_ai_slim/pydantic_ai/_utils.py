@@ -861,8 +861,7 @@ def add_provider_metadata_tool_call_id(metadata: dict[str, Any] | None, tool_cal
     namespace = {**namespace} if is_str_dict(namespace) else {}
     existing_tool_call_ids = namespace.get(_PROVIDER_METADATA_TOOL_CALL_IDS_KEY)
     tool_call_ids = list(existing_tool_call_ids) if is_str_list(existing_tool_call_ids) else []
-    if tool_call_id not in tool_call_ids:
-        tool_call_ids.append(tool_call_id)
+    tool_call_ids.append(tool_call_id)
     namespace[_PROVIDER_METADATA_TOOL_CALL_IDS_KEY] = tool_call_ids
     metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
     return metadata

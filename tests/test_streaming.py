@@ -4486,106 +4486,41 @@ def _make_text_output_agent_stream(response: ModelResponse) -> AgentStream[None,
     )
 
 
-def test_provider_metadata_tool_call_ids_are_deduplicated() -> None:
-    """The serialized marker must remain a set-like list when the same provider metadata is processed twice.
-
-    This is a pure metadata helper with no model or HTTP boundary, so a VCR test cannot exercise it.
-    """
-    metadata = _utils.add_provider_metadata_tool_call_id(None, 'web-search-call')
-
-    assert _utils.add_provider_metadata_tool_call_id(metadata, 'web-search-call') == snapshot(
-        {'__pydantic_ai__': {'provider_metadata_tool_call_ids': ['web-search-call']}}
-    )
-
-
-async def test_existing_text_deltas_separate_native_tool_pair() -> None:
-    """Already-buffered text around a native tool pair retains the same separator as live stream events.
-
-    This directly tests in-memory stream assembly before iteration starts, which has no HTTP boundary to record.
-    """
-    response = ModelResponse(
-        parts=[
-            TextPart('first'),
-            NativeToolCallPart(
-                tool_name='web_search',
-                args={'queries': ['query']},
-                tool_call_id='web-search-call',
-                provider_name='test',
-            ),
-            NativeToolReturnPart(
-                tool_name='web_search',
-                content=[{'uri': 'https://example.com', 'title': 'Example'}],
-                tool_call_id='web-search-call',
-                provider_name='test',
-            ),
-            TextPart('second'),
-        ]
-    )
-    stream_response = CompletedStreamedResponse(response, model_request_parameters=models.ModelRequestParameters())
-    stream = AgentStream(
-        _raw_stream_response=stream_response,
-        _output_schema=TextOutputSchema[str](
-            text_processor=TextOutputProcessor(),
-            allows_deferred_tools=False,
-            allows_image=False,
-            allows_none=False,
-        ),
-        _model_request_parameters=models.ModelRequestParameters(),
-        _output_validators=[],
-        _run_ctx=RunContext(deps=None, model=TestModel(), usage=RunUsage()),
-        _usage_limits=None,
-        _tool_manager=ToolManager(toolset=MagicMock()),
-        _root_capability=CombinedCapability([]),
-    )
-
-    assert [text async for text in stream.stream_text(delta=True, debounce_by=None)] == snapshot(
-        ['first', '\n\n', 'second']
-    )
-
-
-def _native_pair_parts(n: int) -> list[BuiltinToolCallsReturns]:
-    tool_return = NativeToolReturnPart(
-        tool_name='web_search',
-        content=[{'uri': 'https://example.com', 'title': 'Example'}],
-        tool_call_id=f'web-search-call-{n}',
-        provider_name='function',
-    )
-    return [
-        {
-            2 * n: NativeToolCallPart(
-                tool_name='web_search',
-                args={'queries': ['query']},
-                tool_call_id=f'web-search-call-{n}',
-                provider_name='function',
-            )
-        },
-        {2 * n + 1: tool_return},
-    ]
-
-
-async def test_agent_stream_text_separator_when_text_resumes_as_deltas() -> None:
-    """Providers that stream text under a constant vendor ID (e.g. xAI, Groq, `FunctionModel`) resume
-    the pre-tool `TextPart` as deltas after a native tool pair rather than starting a new part, so the
-    deferred separator must be flushed on the delta branch too, not only on a new `TextPart` start.
-    """
+async def test_agent_stream_text_separator_before_trailing_native_tool_pair() -> None:
+    """An ordinary trailing native tool pair retains the established separator delta."""
 
     async def stream_function(
         _messages: list[ModelMessage], _info: AgentInfo
     ) -> AsyncIterator[str | BuiltinToolCallsReturns]:
         yield 'first'
-        for part in _native_pair_parts(1):
-            yield part
-        yield 'second'
-        for part in _native_pair_parts(2):
-            yield part
-        yield 'third'
+        yield {
+            0: NativeToolCallPart(
+                tool_name='web_search',
+                args={'queries': ['query']},
+                tool_call_id='web-search-call',
+                provider_name='function',
+            )
+        }
+        yield {
+            1: NativeToolReturnPart(
+                tool_name='web_search',
+                content=[{'uri': 'https://example.com', 'title': 'Example'}],
+                tool_call_id='web-search-call',
+                provider_name='function',
+            )
+        }
 
     agent = Agent(FunctionModel(stream_function=stream_function))
 
-    async with agent.run_stream('hello') as result:
-        deltas = [text async for text in result.stream_text(delta=True, debounce_by=None)]
+    deltas: list[str] = []
+    async with agent.iter('hello') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    deltas = [text async for text in stream.stream_text(delta=True, debounce_by=None)]
+                break
 
-    assert deltas == snapshot(['first', '\n\n', 'second', '\n\n', 'third'])
+    assert deltas == snapshot(['first', '\n\n'])
 
 
 async def test_agent_does_not_treat_text_before_trailing_native_pair_as_output() -> None:

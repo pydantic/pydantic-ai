@@ -46,26 +46,6 @@ __all__ = (
 )
 
 
-def _text_deltas_from_existing_parts(
-    parts: Iterable[_messages.ModelResponsePart],
-) -> tuple[list[tuple[str, int]], int | None, bool]:
-    """Collect existing text with separators and return state for later stream events."""
-    deltas: list[tuple[str, int]] = []
-    last_text_index: int | None = None
-    separator_pending = False
-    for index, part in enumerate(parts):
-        if isinstance(part, _messages.TextPart) and part.content:
-            if separator_pending:
-                deltas.append(('\n\n', index))
-                separator_pending = False
-            last_text_index = index
-            deltas.append((part.content, index))
-        elif isinstance(part, _messages.NativeToolCallPart) and last_text_index is not None:
-            separator_pending = True
-            last_text_index = None
-    return deltas, last_text_index, separator_pending
-
-
 @dataclass(kw_only=True)
 class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _raw_stream_response: models.StreamedResponse
@@ -335,19 +315,17 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             # yields tuples of (text_content, part_index)
             # we don't currently make use of the part_index, but in principle this may be useful
             # so we retain it here for now to make possible future refactors simpler
-            existing_deltas, last_text_index, separator_pending = _text_deltas_from_existing_parts(self.response.parts)
-            for existing_delta in existing_deltas:
-                yield existing_delta
+            for index, part in enumerate(self.response.parts):
+                if isinstance(part, _messages.TextPart) and part.content:
+                    yield part.content, index
 
+            last_text_index: int | None = None
             async for event in self:
                 if (
                     isinstance(event, _messages.PartStartEvent)
                     and isinstance(event.part, _messages.TextPart)
                     and event.part.content
                 ):
-                    if separator_pending:
-                        yield '\n\n', event.index
-                        separator_pending = False
                     last_text_index = event.index
                     yield event.part.content, event.index
                 elif (
@@ -355,11 +333,6 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     and isinstance(event.delta, _messages.TextPartDelta)
                     and event.delta.content_delta
                 ):
-                    if separator_pending:
-                        # Providers that stream text under a constant vendor ID resume the
-                        # pre-tool `TextPart` as deltas instead of starting a new part.
-                        yield '\n\n', event.index
-                        separator_pending = False
                     last_text_index = event.index
                     yield event.delta.content_delta, event.index
                 elif (
@@ -368,9 +341,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     and last_text_index is not None
                 ):
                     # Text parts that are interrupted by a native tool call should not be joined together directly.
-                    # Defer the separator until the next text part starts, so a native tool pair that trails all
-                    # text (e.g. Google grounding metadata) does not leave a dangling separator on the output.
-                    separator_pending = True
+                    # Omit the separator only for a synthetic provider-metadata pair that trails the response.
+                    # Ordinary native tool calls keep the established behavior of emitting it immediately.
+                    if not _utils.is_trailing_provider_metadata_native_tool_call(self.response, event.index):
+                        yield '\n\n', event.index
                     last_text_index = None
 
         async def _stream_text_deltas() -> AsyncGenerator[str, None]:
