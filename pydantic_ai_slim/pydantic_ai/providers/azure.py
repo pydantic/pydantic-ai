@@ -153,7 +153,9 @@ class AzureProvider(Provider[AsyncOpenAI]):
             # Azure AI Voice Live (used by `AzureRealtimeModel`) is a distinct resource with its own
             # `AZURE_VOICELIVE_*` credentials; accept those as a fallback so a Voice Live user doesn't need
             # to also set `AZURE_OPENAI_*`. An explicit argument, then the OpenAI prefix, then Voice Live.
-            azure_endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT') or os.getenv('AZURE_VOICELIVE_ENDPOINT')
+            azure_endpoint = (
+                azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT') or os.getenv('AZURE_VOICELIVE_ENDPOINT')
+            )
             if not azure_endpoint:
                 raise UserError(
                     'Must provide the `azure_endpoint` argument or set the `AZURE_OPENAI_ENDPOINT` '
