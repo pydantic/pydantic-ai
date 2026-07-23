@@ -60,7 +60,6 @@ def test_vllm_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_vllm_provider_api_key_placeholder(env: TestEnv) -> None:
-    # vLLM servers do not always require an API key, so a non-empty placeholder is used.
     env.remove('VLLM_API_KEY')
     provider = VLLMProvider(base_url='http://localhost:8000/v1/')
     assert provider.client.api_key == 'api-key-not-set'
@@ -109,8 +108,6 @@ def test_vllm_provider_openai_client_is_exclusive() -> None:
 
 
 async def test_vllm_provider_recreates_closed_owned_client() -> None:
-    # Re-entering the provider after its owned HTTP client was closed recreates the client
-    # via the factory, exercising `_set_http_client`.
     provider = VLLMProvider(base_url='http://localhost:8000/v1/')
     owned = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
     assert owned is not None
@@ -148,7 +145,6 @@ def test_vllm_provider_model_profile(mocker: MockerFixture) -> None:
     assert qwen_profile is not None
     assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
-    # `qwq` maps to the qwen profile too.
     qwq_profile = provider.model_profile('qwq-32b')
     qwen_model_profile_mock.assert_called_with('qwq-32b')
     assert qwq_profile is not None
@@ -180,9 +176,6 @@ def test_vllm_provider_model_profile(mocker: MockerFixture) -> None:
 
 
 def test_vllm_provider_model_profile_handles_hf_namespaces(mocker: MockerFixture) -> None:
-    # vLLM is typically served with Hugging Face repo IDs (`org/model`), like the docs example
-    # `Qwen/Qwen3-32B`, so the family must be detected from the bare name after the namespace and that
-    # bare name passed to the profile function.
     provider = VLLMProvider(base_url='http://localhost:8000/v1/')
     ns = 'pydantic_ai.providers.vllm'
     meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
@@ -200,12 +193,10 @@ def test_vllm_provider_model_profile_handles_hf_namespaces(mocker: MockerFixture
     assert google_profile is not None
     assert google_profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
 
-    # The bare name carries the family here (the `coherelabs` org does not).
     provider.model_profile('CohereLabs/c4ai-command-a-03-2025')
     cohere_model_profile_mock.assert_called_once_with('c4ai-command-a-03-2025')
 
-    # Regression guard: `mistralai/Mixtral` matches via the `mistralai` org, but its bare name
-    # `mixtral-...` does not start with `mistral`, so a naive namespace-strip would drop it.
+    # `mistralai/Mixtral` only matches through its org name.
     provider.model_profile('mistralai/Mixtral-8x7B-Instruct-v0.1')
     mistral_model_profile_mock.assert_called_once_with('mixtral-8x7b-instruct-v0.1')
 
@@ -218,7 +209,6 @@ def test_vllm_provider_model_profile_is_case_insensitive(mocker: MockerFixture) 
 
 
 def test_vllm_provider_profile_overrides() -> None:
-    # Regression guard for #5812 and vLLM's OpenAI-compatible request capabilities.
     provider = VLLMProvider(base_url='http://localhost:8000/v1/')
     for model in (
         'llama-3-8b',

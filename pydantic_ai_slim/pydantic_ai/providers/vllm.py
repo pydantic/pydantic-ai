@@ -58,29 +58,18 @@ class VLLMProvider(Provider[AsyncOpenAI]):
         }
 
         model_name = model_name.lower()
-        # vLLM model names are usually Hugging Face repo IDs like `meta-llama/Llama-3-8B`, where the family
-        # appears after the org namespace. Match the prefix against the full id (so org-based families like
-        # `mistralai/...` keep matching) and the bare name after the namespace, and pass the bare name to the
-        # profile function so its own name-based detection (e.g. `qwen_model_profile`) sees a clean model id.
+        # Match both parts of Hugging Face repo IDs, preserving org-based families such as `mistralai/Mixtral`.
         bare_name = model_name.rpartition('/')[2]
         profile = None
         for prefix, profile_func in prefix_to_profile.items():
             if model_name.startswith(prefix) or bare_name.startswith(prefix):
                 profile = profile_func(bare_name)
 
-        # `json_schema_transformer` is a fallback (the upstream model profile wins if it set one). The other
-        # overrides win on top: vLLM's /v1/chat/completions endpoint supports response_format with json_schema,
-        # required tool choice, and strict function tools. It does not support OpenAI file content parts or native
-        # tool return schemas.
-        # `openai_chat_supports_multiple_system_messages` is forced off because some chat templates served by
-        # vLLM reject more than one leading system message.
+        # The family profile's schema transformer overrides the OpenAI-compatible fallback.
+        # Some vLLM chat templates reject multiple leading system messages.
         # See https://github.com/pydantic/pydantic-ai/issues/5812.
-        #
-        # `openai_chat_thinking_field='reasoning'` matches vLLM, which renamed `reasoning_content` to `reasoning`
-        # to follow OpenAI's gpt-oss guidance. See https://github.com/vllm-project/vllm/issues/27752.
-        # Older vLLM servers only emit `reasoning_content`, but reading falls back to it (see
-        # `OpenAIChatModel._process_thinking`), and this only sets the field used when sending reasoning back on
-        # multi-turn requests.
+        # vLLM renamed `reasoning_content` to `reasoning`; reading still supports either field.
+        # See https://github.com/vllm-project/vllm/issues/27752.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
