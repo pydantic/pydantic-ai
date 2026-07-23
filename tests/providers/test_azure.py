@@ -66,6 +66,18 @@ def test_azure_provider_with_azure_openai_client():
     assert isinstance(provider.client, AsyncAzureOpenAI)
 
 
+def test_azure_provider_api_key_required_when_absent():
+    """`AzureProvider.api_key` raises when no API key is available (e.g. a client built for Entra auth)."""
+    provider = AzureProvider(
+        api_version='2024-12-01-preview',
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_key='1234567890',
+    )
+    provider._api_key = None  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match='requires API-key authentication'):
+        _ = provider.api_key
+
+
 def test_azure_provider_with_http_client():
     import httpx
 

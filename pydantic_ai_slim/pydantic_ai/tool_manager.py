@@ -874,7 +874,7 @@ class ToolManager(Generic[AgentDepsT]):
                 wrap_validation_errors=wrap_validation_errors,
             )
         except UnexpectedModelBehavior:
-            if on_validate is not None:
+            if on_validate is not None:  # pragma: no branch - callers that hit max-retries here always pass `on_validate`
                 await on_validate(False)
             raise
         if on_validate is not None:

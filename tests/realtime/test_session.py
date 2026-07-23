@@ -2823,7 +2823,7 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
         async def send(self, content: RealtimeInput) -> None:
             if isinstance(content, TextInput):
                 raise RuntimeError('drain send failed')
-            await super().send(content)
+            await super().send(content)  # pragma: no cover - this test only drives the drain's `TextInput` send
 
     conn = _FailingDrain([])
     session = RealtimeSession(conn)
@@ -3183,6 +3183,10 @@ async def test_agent_realtime_session_dynamic_instructions() -> None:
     @agent.instructions
     def extra() -> str:
         return 'Dynamic'
+
+    @agent.instructions
+    def skipped() -> str | None:
+        return None  # a dynamic instruction returning None contributes nothing
 
     conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
