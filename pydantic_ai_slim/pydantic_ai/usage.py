@@ -21,7 +21,7 @@ and cost. Adapters that stash these keys in `details` (e.g. Anthropic's streamin
 billed units) keep them accessible on `RequestUsage.details`; only the ambiguous OTel emission is dropped."""
 
 
-@dataclass(repr=False, kw_only=True)
+@dataclass(repr=False, init=False)
 class UsageBase:
     input_tokens: Annotated[
         int,
@@ -64,6 +64,11 @@ class UsageBase:
         BeforeValidator(lambda d: d or {}),
     ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
+
+    def __init__(self, *, details: dict[str, int] | None = None, **kwargs: Any):
+        self.details = details or {}
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
     def __copy__(self) -> UsageBase:
         """Shallow copy that also copies mutable fields like `details`."""
@@ -130,7 +135,7 @@ class UsageBase:
         return result
 
     def __repr__(self):
-        kv_pairs = (f'{f.name}={value!r}' for f in fields(self) if (value := getattr(self, f.name)))
+        kv_pairs = (f'{name}={value!r}' for name, value in sorted(self.__dict__.items()) if value)
         return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
     def has_values(self) -> bool:
@@ -138,7 +143,7 @@ class UsageBase:
         return any(self.details.values()) or any(getattr(self, f.name) for f in fields(self) if f.name != 'details')
 
 
-@dataclass(repr=False, kw_only=True)
+@dataclass(repr=False, init=False)
 class RequestUsage(UsageBase):
     """LLM usage associated with a single request.
 
@@ -203,7 +208,7 @@ class RequestUsage(UsageBase):
         return cls(details=details)
 
 
-@dataclass(repr=False, kw_only=True)
+@dataclass(repr=False, init=False)
 class RunUsage(UsageBase):
     """LLM usage associated with an agent run.
 
