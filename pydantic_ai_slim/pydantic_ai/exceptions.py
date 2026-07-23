@@ -407,8 +407,10 @@ class MessageHistoryMutatedWarning(Warning):
     `gen_ai.input.messages` span attribute caches each message's serialized form, so spans recorded
     after the mutation may not match the messages actually sent to the model. The run-level
     `pydantic_ai.all_messages` attribute is always serialized fresh and does reflect the mutation.
-    To transform history mid-run, build new message or part objects instead — e.g. via a history
-    processor ([`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory]).
+    To transform history mid-run, build new message or part objects instead — e.g. with
+    `dataclasses.replace`, passing the message a new `parts` list (replacing a message in the
+    history and reassigning its `parts` list are both safe) — for instance in a history processor
+    ([`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory]).
 
     The warning is best-effort: it's raised when a mutation is detected at the end of a successful
     run, which covers messages still present in the final history. Errored runs aren't checked —
