@@ -380,6 +380,17 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
     return 'pt_then_on_demand'
 
 
+def _map_api_error(e: errors.APIError, model_name: str) -> ModelAPIError:
+    """Map a `google.genai` API error to the pydantic-ai exception to raise in its place."""
+    if (status_code := e.code) >= 400:
+        return ModelHTTPError(
+            status_code=status_code,
+            model_name=model_name,
+            body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+        )
+    return ModelAPIError(model_name=model_name, message=str(e))
+
+
 def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:
     """HTTP headers for Google Cloud Provisioned Throughput, Flex PayGo, and Priority PayGo routing."""
     if service_tier == 'pt_then_on_demand':
@@ -784,13 +795,7 @@ class GoogleModel(Model[Client]):
         try:
             return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
         except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
-                ) from e
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise _map_api_error(e, self._model_name) from e
 
     def _translate_thinking(
         self,
@@ -1002,7 +1007,13 @@ class GoogleModel(Model[Client]):
         peekable_response: _utils.PeekableAsyncStream[
             GenerateContentResponse, AsyncIterator[GenerateContentResponse]
         ] = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
+        # `generate_content_stream` doesn't issue the HTTP request until the response
+        # iterator is first advanced, so API errors surface here rather than in
+        # `_generate_content`'s try/except and need the same mapping.
+        try:
+            first_chunk = await peekable_response.peek()
+        except errors.APIError as e:
+            raise _map_api_error(e, self._model_name) from e
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
@@ -1512,13 +1523,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
             self._pending_file_search_returns = []
         except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
-                ) from e
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise _map_api_error(e, self._model_name) from e
 
     def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None
