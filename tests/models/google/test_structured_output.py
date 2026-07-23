@@ -10,14 +10,15 @@ Also verifies that older models still raise appropriate errors.
 
 from __future__ import annotations as _annotations
 
+import json
 import re
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, _utils
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -360,6 +361,61 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
             ),
         ]
     )
+
+
+def _match_google_tool_history(request: Any) -> Any:
+    body = request.body
+    if not isinstance(body, (str, bytes, bytearray)):
+        return request
+
+    parsed_body = json.loads(body)
+    if isinstance(parsed_body, list):
+        return request
+    tool_parts: list[dict[str, Any]] = []
+    for content in parsed_body.get('contents', []):
+        for part in content.get('parts', []):
+            if 'toolCall' in part:
+                tool_parts.append({'toolCall': part['toolCall']})
+            elif 'toolResponse' in part:
+                tool_parts.append({'toolResponse': part['toolResponse']})
+    request.body = json.dumps(tool_parts)
+    return request
+
+
+@pytest.mark.vcr(
+    match_on=['method', 'scheme', 'host', 'port', 'path', 'query', 'body'],
+    before_record_request=_match_google_tool_history,
+)
+async def test_web_search_stream_history_round_trip(allow_model_requests: None, google_model: GoogleModelFactory):
+    m = google_model('gemini-3-flash-preview')
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
+
+    async with agent.run_stream('What is the largest city in Mexico?') as result:
+        await result.get_output()
+
+    messages = result.all_messages()
+    first_response = messages[-1]
+    assert isinstance(first_response, ModelResponse)
+    web_search_call_ids = {
+        part.tool_call_id
+        for part in first_response.parts
+        if isinstance(part, NativeToolCallPart) and part.tool_name == 'web_search'
+    }
+    web_search_returns = [
+        part
+        for part in first_response.parts
+        if isinstance(part, NativeToolReturnPart) and part.tool_name == 'web_search'
+    ]
+    assert web_search_returns
+    assert {part.tool_call_id for part in web_search_returns} == web_search_call_ids
+    for web_search_return in web_search_returns:
+        assert isinstance(web_search_return.content, list)
+        raw_response = (web_search_return.provider_details or {}).get('raw_tool_response')
+        assert _utils.is_str_dict(raw_response)
+        assert isinstance(raw_response.get('search_suggestions'), str)
+
+    followup = await agent.run('Which country is that city in?', message_history=messages)
+    assert followup.output
 
 
 async def test_function_tools_with_builtin_tools(allow_model_requests: None, google_model: GoogleModelFactory):
