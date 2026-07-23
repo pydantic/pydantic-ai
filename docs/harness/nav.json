@@ -23,6 +23,7 @@
       { "label": "Runtime Authoring", "slug": "runtime-authoring" },
       { "label": "Guardrails", "slug": "guardrails" },
       { "label": "Managed Prompt", "slug": "managed-prompt" },
+      { "label": "LocalStack", "slug": "localstack" },
       { "label": "ACP", "slug": "acp" }
     ]
   }

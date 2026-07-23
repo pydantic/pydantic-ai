@@ -150,6 +150,7 @@ We studied leading coding agents, agent frameworks, and Claw-style assistants to
 | | **Tool search** | Progressive tool discovery for large tool sets | :white_check_mark: [Pydantic&nbsp;AI](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/#deferred-loading) | |
 | | **File system** | Read, write, edit, search files with path traversal prevention | :white_check_mark: [Docs](pydantic_ai_harness/filesystem/) | [pydantic-ai-backend](https://github.com/vstorm-co/pydantic-ai-backend) (vstorm&#8209;co) |
 | | **Shell** | Execute commands with allowlists, denylists, and timeouts | :white_check_mark: [Docs](pydantic_ai_harness/shell/) | [pydantic-ai-backend](https://github.com/vstorm-co/pydantic-ai-backend) (vstorm&#8209;co) |
+| | **LocalStack** | Environment-backed AWS emulator with AWS CLI tools and optional Docker lifecycle | :white_check_mark: [Docs](pydantic_ai_harness/localstack/) | |
 | | **Modal sandbox** | Run commands and manage files in an isolated [Modal](https://modal.com) cloud sandbox | :white_check_mark: [Docs](pydantic_ai_harness/modal_sandbox/) | |
 | | **Repo context injection** | Auto-load CLAUDE.md/AGENTS.md and repo structure | :white_check_mark: [Docs](pydantic_ai_harness/context/) | [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
 | | **Docs lookup** | On-demand `read_pyai_docs` tool for Pydantic AI docs | :white_check_mark: [Docs](pydantic_ai_harness/docs/) | |
