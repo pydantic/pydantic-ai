@@ -1,0 +1,14 @@
+pydantic_ai_slim/pydantic_ai/usage.py
+  h_d9dd17644dded9 279
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "8f4b79d9e8bd0190d2b67164d589ce34b5a1e0bd",
+  "prompts": {},
+  "humans": {
+    "h_d9dd17644dded9": {
+      "author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
