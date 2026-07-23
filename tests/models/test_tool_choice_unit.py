@@ -55,8 +55,8 @@ with try_import() as xai_available:
 pytestmark = pytest.mark.anyio
 
 
-def make_tool(name: str) -> ToolDefinition:
-    return ToolDefinition(name=name)
+def make_tool(name: str, *, strict: bool | None = None) -> ToolDefinition:
+    return ToolDefinition(name=name, strict=strict)
 
 
 # =============================================================================
@@ -615,7 +615,8 @@ NATIVE_TOOL_CONFIG_CASES = [
         id='function-tool-keeps-config',
         model='gemini-2.5-pro',
         request_parameters=ModelRequestParameters(function_tools=[make_tool('get_weather')]),
-        expected_tool_config={'function_calling_config': {'mode': 'AUTO'}},
+        # A plain `strict=None` tool on a strict-supporting model defaults to `VALIDATED`.
+        expected_tool_config={'function_calling_config': {'mode': 'VALIDATED'}},
     ),
     dict(
         id='code-execution-gemini-3-sets-server-side-flag',
@@ -625,7 +626,7 @@ NATIVE_TOOL_CONFIG_CASES = [
         ),
         expected_tool_config={
             'include_server_side_tool_invocations': True,
-            'function_calling_config': {'mode': 'AUTO'},
+            'function_calling_config': {'mode': 'VALIDATED'},
         },
     ),
 ]

@@ -141,6 +141,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'google_supports_server_side_tool_invocations': False,
     'google_supported_mime_types_in_tool_returns': (),
     'google_supports_thinking_level': False,
+    'google_supports_strict_tool_definition': False,
     # GrokModelProfile subclass defaults
     'grok_supports_builtin_tools': False,
     'grok_supports_tool_choice_required': True,
@@ -409,6 +410,7 @@ def test_google_gemini_3_pro():
                 'text/plain',
             ),
             'google_supports_thinking_level': True,
+            'google_supports_strict_tool_definition': True,
         }
     )
 
@@ -422,6 +424,26 @@ def test_google_gemini_2_5_flash():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_thinking': True,
+            'google_supports_strict_tool_definition': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not google_imports(), reason='google not installed')
+def test_google_gemini_2_5_flash_image():
+    # `gemini-2.5-flash-image` is both a thinking (2.5) and an image model, so the `not is_image_model`
+    # term in the profile's strict-support guard is load-bearing: it flips the flag from True back to
+    # False. The explicit assert (not just the snapshot, which strips the default `False`) guards against
+    # a silent inversion of that guard, which 100% line coverage would otherwise hide.
+    profile = GoogleProvider.model_profile('gemini-2.5-flash-image')
+    assert profile is not None
+    assert profile.get('google_supports_strict_tool_definition') is False
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_image_output': True,
+            'supports_tools': False,
             'supports_thinking': True,
         }
     )
@@ -860,6 +882,7 @@ def test_openrouter_google_gemini_3_pro():
                 'text/plain',
             ),
             'google_supports_thinking_level': True,
+            'google_supports_strict_tool_definition': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1625,6 +1648,7 @@ def test_vercel_vertex_gemini():
                 'text/plain',
             ),
             'google_supports_thinking_level': True,
+            'google_supports_strict_tool_definition': True,
         }
     )
 

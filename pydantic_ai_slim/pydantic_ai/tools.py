@@ -392,7 +392,7 @@ class Tool(Generic[ToolAgentDepsT]):
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
-            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+            strict: Whether to enforce (vendor-specific) strict JSON schema validation for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
@@ -569,9 +569,12 @@ class ToolDefinition:
     in exchange for guaranteeing the API responses strictly match that schema.
 
     When `False`, the model may be free to generate other properties or types (depending on the vendor).
-    When `None` (the default), the value will be inferred based on the compatibility of the parameters_json_schema.
+    When `None` (the default), the value is inferred per provider: OpenAI enables strict mode whenever the
+    `parameters_json_schema` is strict-compatible, while Anthropic, Bedrock, and Google leave it off unless you
+    explicitly set `strict=True`, since their strict modes are opt-in.
 
-    Note: this is currently supported by OpenAI and Anthropic models.
+    Note: this is currently supported by OpenAI, Anthropic, Google, and Bedrock models. On Google it maps to
+    Gemini's `VALIDATED` function-calling mode, which the API enforces on models that support it.
     """
 
     sequential: bool = False
