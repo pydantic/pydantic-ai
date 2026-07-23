@@ -73,7 +73,9 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             'max_retries': ctx.max_retries,
             'run_step': ctx.run_step,
             'partial_output': ctx.partial_output,
-            'usage': ctx.usage,
+            # `serialized_run_context` crosses the Temporal boundary through `Any`, so the payload converter
+            # cannot discover `RunUsage`'s Pydantic serializer from the surrounding schema.
+            'usage': _run_usage_ta.dump_python(ctx.usage, mode='json'),
             'usage_limits': ctx.usage_limits,
             'loaded_capability_ids': ctx.loaded_capability_ids,
             'discovered_tool_names': ctx.discovered_tool_names,
