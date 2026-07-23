@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from copy import copy
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 from genai_prices.data_snapshot import get_snapshot
@@ -143,7 +143,7 @@ class UsageBase:
 
     def has_values(self) -> bool:
         """Whether any values are set and non-zero."""
-        return any(self.details.values()) or any(getattr(self, f.name) for f in fields(self) if f.name != 'details')
+        return any(self.details.values()) or any(v for k, v in self.__dict__.items() if k != 'details')
 
 
 @dataclass(repr=False, init=False)
