@@ -1,0 +1,22 @@
+tests/test_temporal.py
+  s_a1768203f8e01b::t_7c8938d2ca7594 3793,3803-3805,3811,3813-3829
+  s_a1768203f8e01b::t_cf57afb77ec40e 3812
+pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py
+  s_a1768203f8e01b::t_7c8938d2ca7594 76-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "71f1f51125e59644f489f89620270e6b18d41418",
+  "prompts": {},
+  "sessions": {
+    "s_a1768203f8e01b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8f50-dd59-7853-b87c-a4ea7b45eb45",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
