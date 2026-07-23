@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from copy import copy
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -80,13 +81,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         new_caps = [capability.for_agent(agent) for capability in self.capabilities]
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
-        return replace(self, capabilities=new_caps)
+        return _copy_with_capabilities(self, new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
-        return replace(self, capabilities=list(new_caps))
+        return _copy_with_capabilities(self, list(new_caps))
 
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
@@ -844,7 +845,16 @@ def bind_capabilities_tier(
     new_caps = [c.for_agent(agent) if is_innermost(c) == innermost else c for c in combined.capabilities]
     if all(new is old for new, old in zip(new_caps, combined.capabilities, strict=True)):
         return combined
-    return replace(combined, capabilities=new_caps)
+    return _copy_with_capabilities(combined, new_caps)
+
+
+def _copy_with_capabilities(
+    combined: CombinedCapability[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+) -> CombinedCapability[AgentDepsT]:
+    copied = copy(combined)
+    copied.capabilities = capabilities
+    copied.__post_init__()
+    return copied
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:

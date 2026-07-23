@@ -67,6 +67,7 @@ from pydantic_ai._output import (
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
+    CombinedCapability,
     Hooks,
     NativeTool,
     PrepareOutputTools,
@@ -11817,6 +11818,69 @@ async def test_agent_capability_for_run_called_once_per_run():
     await agent.run('Hello', capabilities=[CountingCapability('run')])
 
     assert for_run_calls == {'agent': 1, 'run': 1}
+
+
+async def test_combined_capability_custom_init_supports_rebound_children():
+    """`CombinedCapability` subclasses may expose friendly constructors that don't accept
+    `capabilities`, while child capabilities may return fresh instances for binding or
+    per-run isolation.
+
+    Unit test rather than VCR: this fails during capability binding before a provider
+    request would be made.
+    """
+    calls: list[tuple[str, str]] = []
+
+    class RebindingCapability(AbstractCapability):
+        def __init__(self, name: str, *, for_agent: bool = False, for_run: bool = False) -> None:
+            self.name = name
+            self.rebind_for_agent = for_agent
+            self.rebind_for_run = for_run
+
+        def for_agent(self, agent: Any) -> AbstractCapability:
+            calls.append(('child_for_agent', self.name))
+            if self.rebind_for_agent:
+                return RebindingCapability(f'{self.name}:agent')
+            return self
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            calls.append(('child_for_run', self.name))
+            if self.rebind_for_run:
+                return RebindingCapability(f'{self.name}:run')
+            return self
+
+    class FriendlyCombined(CombinedCapability):
+        def __init__(self, *, name: str, child: AbstractCapability) -> None:
+            self.name = name
+            super().__init__(capabilities=[child])
+
+        def for_agent(self, agent: Any) -> CombinedCapability:
+            calls.append(('combined_for_agent', self.name))
+            return super().for_agent(agent)
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            calls.append(('combined_for_run', self.name))
+            return await super().for_run(ctx)
+
+    agent = Agent(TestModel())
+    result = await agent.run(
+        'Hello',
+        capabilities=[
+            FriendlyCombined(name='for-agent', child=RebindingCapability('for-agent-child', for_agent=True)),
+            FriendlyCombined(name='for-run', child=RebindingCapability('for-run-child', for_run=True)),
+        ],
+    )
+
+    assert result.output == 'success (no tool calls)'
+    assert set(calls) == {
+        ('combined_for_agent', 'for-agent'),
+        ('combined_for_agent', 'for-run'),
+        ('child_for_agent', 'for-agent-child'),
+        ('child_for_agent', 'for-run-child'),
+        ('combined_for_run', 'for-agent'),
+        ('combined_for_run', 'for-run'),
+        ('child_for_run', 'for-agent-child:agent'),
+        ('child_for_run', 'for-run-child'),
+    }
 
 
 async def test_run_with_unapproved_tool_call_in_history():
