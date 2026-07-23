@@ -1,0 +1,24 @@
+tests/conftest.py
+  s_ab6e77f33b432a::t_2d92b4aa55387a 725
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "6cdd6bb4cf1c6ec951ccee8a33a0b617738309dd",
+  "prompts": {},
+  "humans": {
+    "h_d9dd17644dded9": {
+      "author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_ab6e77f33b432a": {
+      "agent_id": {
+        "tool": "github-copilot-jetbrains",
+        "id": "1784800848985",
+        "model": "unknown"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
