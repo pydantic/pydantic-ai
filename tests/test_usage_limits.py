@@ -501,6 +501,11 @@ def test_usage_arbitrary_fields_pydantic_serialization_filters():
     serialized = adapter.dump_python(usage, exclude={'future_tokens'})
     assert 'future_tokens' not in serialized
     assert serialized['label'] is None
+    assert adapter.dump_python(usage, include={'future_tokens': True}) == {'future_tokens': 42}
+    assert 'future_tokens' not in adapter.dump_python(
+        usage,
+        exclude={'future_tokens': ...},  # pyright: ignore[reportArgumentType]
+    )
 
     assert adapter.dump_python(usage, include={'breakdown': {'a'}}) == {'breakdown': {'a': 1}}
     assert adapter.dump_python(usage, exclude={'breakdown': {'a'}})['breakdown'] == {'b': 2}

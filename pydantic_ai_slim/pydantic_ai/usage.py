@@ -46,8 +46,6 @@ def _usage_field_filter(
         return not include, None
     if item_filter is True or item_filter is Ellipsis:
         return include, None
-    if item_filter is None:
-        return True, None
     return True, cast(core_schema.IncExCall, item_filter)
 
 
