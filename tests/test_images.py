@@ -739,6 +739,54 @@ async def test_google_image_generation_resolves_dimensions_and_aspect_ratio():
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_wires_extra_body():
+    """The `extra_body` escape hatch is merged into the outgoing `generateContent` request body.
+
+    `ImageGenerationSettings.extra_body` reached the Google adapter but was silently dropped — the resolver
+    forwarded only `extra_headers`. `google.genai`'s `HttpOptions.extra_body` recursively merges its dict into
+    the request body, so a caller's extra fields must appear on the wire (and must not raise a spurious
+    "ignored unsupported settings" warning, since the setting is now honored).
+
+    - `HttpOptions.extra_body` ("Extra parameters to add to the request body"): python-genai
+      `google/genai/types.py` `HttpOptions.extra_body`.
+    - Merge site: python-genai `google/genai/_api_client.py`
+      `_common.recursive_dict_update(request_dict, patched_http_options.extra_body)`.
+    - Review item: `local-notes/review-items.md` §1.3 (`extra_body` silently dropped).
+    """
+    requests: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {
+                            'parts': [{'inlineData': {'data': 'aGVsbG8=', 'mimeType': 'image/png'}}],
+                            'role': 'model',
+                        },
+                        'finishReason': 'STOP',
+                    }
+                ]
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            await model.generate('a robot', settings={'extra_body': {'labels': {'team': 'growth'}}})
+    finally:
+        await http_client.aclose()
+
+    assert json.loads(requests[0].content)['labels'] == snapshot({'team': 'growth'})
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_downloads_image_url(monkeypatch: pytest.MonkeyPatch):
     download_mock = AsyncMock(return_value={'data': b'downloaded', 'data_type': 'image/webp'})
     monkeypatch.setattr(google_images, 'download_item', download_mock)
@@ -799,7 +847,62 @@ async def test_google_image_generation_rejects_invalid_uploaded_file(uploaded_fi
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
-async def test_google_image_generation_response_without_image():
+async def test_google_image_generation_no_image_finish_reason():
+    """A benign `NO_IMAGE` no-output raises `UnexpectedModelBehavior` naming the finish reason, not a filter error.
+
+    Gemini can return HTTP 200 with `finishReason=NO_IMAGE` and only text (the "returns text instead of an
+    image" soft-failure) when it declines to draw — this is not a safety block. The user must be able to tell
+    it apart from a content-moderation block without parsing the raw body, so the finish reason is named in the
+    message, and it must NOT surface as `ContentFilterError`.
+
+    - `FinishReason.NO_IMAGE` ("model was expected to generate an image, but none was generated"):
+      python-genai `google/genai/types.py` `FinishReason`.
+    - ai.google.dev image-generation guide (NO_IMAGE soft failure): https://ai.google.dev/gemini-api/docs/image-generation
+    - Research: `local-notes/image-gen-research/google-gemini-image-api.md` §5; gap analysis B3.
+    """
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {'parts': [{'text': 'Here is a description instead.'}], 'role': 'model'},
+                        'finishReason': 'NO_IMAGE',
+                    }
+                ]
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+    try:
+        with pytest.raises(
+            UnexpectedModelBehavior, match=r'did not contain any images \(finish_reason: NO_IMAGE\)'
+        ) as exc_info:
+            await model.generate('tiny robot')
+    finally:
+        await http_client.aclose()
+
+    assert not isinstance(exc_info.value, ContentFilterError)
+    assert exc_info.value.body is not None
+    assert "'finish_reason': 'NO_IMAGE'" in exc_info.value.body
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_image_safety_finish_reason():
+    """An `IMAGE_SAFETY` finish reason raises a typed `ContentFilterError` naming the reason.
+
+    A candidate returned with `finishReason=IMAGE_SAFETY` and no image part is a content-policy refusal, so we
+    raise `ContentFilterError` (the images content-moderation error, consistent with the xAI adapter) rather
+    than a generic `UnexpectedModelBehavior`, and name the reason in the message.
+
+    - `FinishReason.IMAGE_SAFETY`: python-genai `google/genai/types.py` `FinishReason`.
+    - Research: `local-notes/image-gen-research/google-gemini-image-api.md` §5 (IMAGE_SAFETY silent block); gap B4.
+    """
+
     def handle_request(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -807,11 +910,44 @@ async def test_google_image_generation_response_without_image():
                 'candidates': [
                     {
                         'content': {'parts': [{'text': 'I cannot create that image.'}], 'role': 'model'},
-                        'finishReason': 'SAFETY',
+                        'finishReason': 'IMAGE_SAFETY',
                     }
-                ],
+                ]
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+    try:
+        with pytest.raises(ContentFilterError, match=r'content moderation \(reason: IMAGE_SAFETY\)') as exc_info:
+            await model.generate('tiny robot')
+    finally:
+        await http_client.aclose()
+
+    assert exc_info.value.body is not None
+    assert "'finish_reason': 'IMAGE_SAFETY'" in exc_info.value.body
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_prompt_blocked():
+    """A prompt-level block (empty candidates + `promptFeedback.blockReason`) raises `ContentFilterError`.
+
+    When Gemini blocks the prompt itself it returns no candidates and a `promptFeedback.blockReason`
+    (e.g. `PROHIBITED_CONTENT`). This is a content-moderation outcome, so it raises `ContentFilterError`
+    naming the block reason, with the block details preserved in the body.
+
+    - `BlockedReason.PROHIBITED_CONTENT`: python-genai `google/genai/types.py` `BlockedReason`.
+    - Research: `local-notes/image-gen-research/google-gemini-image-api.md` §5 (safety blocks → empty parts, `prompt_feedback.block_reason`).
+    """
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
                 'promptFeedback': {
-                    'blockReason': 'SAFETY',
+                    'blockReason': 'PROHIBITED_CONTENT',
                     'blockReasonMessage': 'blocked by safety policy',
                 },
             },
@@ -822,15 +958,98 @@ async def test_google_image_generation_response_without_image():
     model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
 
     try:
-        with pytest.raises(UnexpectedModelBehavior, match='did not contain any images') as exc_info:
+        with pytest.raises(ContentFilterError, match=r'content moderation \(reason: PROHIBITED_CONTENT\)') as exc_info:
             await model.generate('tiny robot')
     finally:
         await http_client.aclose()
 
     assert exc_info.value.body is not None
-    assert "'finish_reason': 'SAFETY'" in exc_info.value.body
-    assert "'block_reason': 'SAFETY'" in exc_info.value.body
+    assert "'block_reason': 'PROHIBITED_CONTENT'" in exc_info.value.body
     assert "'block_reason_message': 'blocked by safety policy'" in exc_info.value.body
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_degenerate_candidates():
+    """Degenerate candidates (empty `parts`, or no candidates at all) raise a clean typed error, never `IndexError`.
+
+    A candidate whose `content.parts` is empty, and a response with no candidates, both yield no image. The
+    adapter must not index into empty sequences; it raises `UnexpectedModelBehavior` (not `ContentFilterError`,
+    since neither carries a moderation signal), naming the finish reason when one is present.
+
+    - Empty `parts` / 200-OK-no-image guard: python-genai response shape `candidates[].content.parts`.
+    - Research: `local-notes/image-gen-research/google-gemini-image-api.md` §8.4 (empty `parts` with 200 OK); gap B4.
+    """
+    degenerate_responses: list[dict[str, object]] = [
+        {'candidates': [{'content': {'parts': [], 'role': 'model'}, 'finishReason': 'STOP'}]},
+        {'candidates': []},
+    ]
+    responses = iter(degenerate_responses)
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=next(responses))
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+    try:
+        with pytest.raises(
+            UnexpectedModelBehavior, match=r'did not contain any images \(finish_reason: STOP\)'
+        ) as empty_parts:
+            await model.generate('empty parts')
+        with pytest.raises(UnexpectedModelBehavior, match=r'did not contain any images$') as no_candidates:
+            await model.generate('no candidates')
+    finally:
+        await http_client.aclose()
+
+    assert not isinstance(empty_parts.value, ContentFilterError)
+    assert no_candidates.value.body is None
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_supported_settings_emit_no_warning():
+    """A fully-supported Google settings combination emits no warning.
+
+    Over-warning erodes the signal of the warning channel; warnings are reserved for settings a request
+    genuinely ignores or overrides. `n=1`, a `google_image_config` aspect ratio, `extra_headers`, and
+    `extra_body` are all honored by the adapter, so the call must be silent.
+
+    - `warn_image_generation_settings` channel: `pydantic_ai/images/settings.py`.
+    - Negative-warning coverage gap: `local-notes/review-items.md` §4 (warnings coverage should include the negative).
+    """
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {
+                            'parts': [{'inlineData': {'data': 'aGVsbG8=', 'mimeType': 'image/png'}}],
+                            'role': 'model',
+                        },
+                        'finishReason': 'STOP',
+                    }
+                ]
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+    model = GoogleImageGenerationModel('gemini-3-pro-image', provider=provider)
+    settings = GoogleImageGenerationSettings(
+        n=1,
+        extra_headers={'x-team': 'growth'},
+        extra_body={'labels': {'team': 'growth'}},
+        google_image_config={'aspect_ratio': '16:9'},
+    )
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            await model.generate('a robot', settings=settings)
+    finally:
+        await http_client.aclose()
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')

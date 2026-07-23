@@ -6,7 +6,14 @@ from typing import Literal, cast
 
 from typing_extensions import assert_never
 
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai._utils import is_str_dict
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    ModelAPIError,
+    ModelHTTPError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import download_item
 from pydantic_ai.providers import Provider, infer_provider
@@ -39,6 +46,20 @@ except ImportError as _import_error:
 
 GoogleImageGenerationModelName = str
 """Possible Google image generation model names."""
+
+_CONTENT_FILTER_FINISH_REASONS = frozenset(
+    {
+        'SAFETY',
+        'RECITATION',
+        'BLOCKLIST',
+        'PROHIBITED_CONTENT',
+        'SPII',
+        'IMAGE_SAFETY',
+        'IMAGE_PROHIBITED_CONTENT',
+        'IMAGE_RECITATION',
+    }
+)
+"""`FinishReason` values that indicate the model refused for content-policy reasons rather than a benign no-output."""
 
 
 class GoogleImageGenerationSettings(ImageGenerationSettings, total=False):
@@ -193,10 +214,19 @@ class GoogleImageGenerationModel(ImageGenerationModel):
 
         provider_details = _response_provider_details(response)
         if not images:
-            raise UnexpectedModelBehavior(
-                'Google image generation response did not contain any images',
-                str(provider_details) if provider_details else None,
-            )
+            body = str(provider_details) if provider_details else None
+            finish_reason = provider_details.get('finish_reason')
+            block_reason = provider_details.get('block_reason')
+            if block_reason is not None or finish_reason in _CONTENT_FILTER_FINISH_REASONS:
+                raise ContentFilterError(
+                    f'Google image generation was blocked for content moderation '
+                    f'(reason: {block_reason or finish_reason})',
+                    body,
+                )
+            message = 'Google image generation response did not contain any images'
+            if finish_reason is not None:
+                message = f'{message} (finish_reason: {finish_reason})'
+            raise UnexpectedModelBehavior(message, body)
 
         return ImageGenerationResult(
             images=images,
@@ -241,15 +271,17 @@ def _resolve_google_settings(settings: GoogleImageGenerationSettings, *, model_n
     if geometry.image_size is not None:
         image_config['image_size'] = geometry.image_size
 
-    http_options = None
+    http_options: HttpOptionsDict = {}
     if extra_headers := settings.get('extra_headers'):
-        http_options = HttpOptionsDict(headers=dict(extra_headers))
+        http_options['headers'] = dict(extra_headers)
+    if is_str_dict(extra_body := settings.get('extra_body')):
+        http_options['extra_body'] = extra_body
 
     return _GoogleResolvedSettings(
         config=GenerateContentConfigDict(
             response_modalities=['IMAGE'],
             image_config=image_config or None,
-            http_options=http_options,
+            http_options=http_options or None,
         ),
         ignored=ignored + geometry.ignored,
         conflicts=geometry.conflicts,
