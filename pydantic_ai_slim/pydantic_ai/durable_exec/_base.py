@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping
+from contextlib import contextmanager
 from typing import Any, ClassVar
 
 from typing_extensions import Self
 
+from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -15,10 +17,14 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrde
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
+from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._runtime_toolsets import RuntimeToolsetKind, reject_unsupported_runtime_toolsets
+from ._toolset import guard_run_context_enqueue
 from ._utils import unwrap_model
 
 _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
@@ -124,8 +130,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         runtime_leaves: list[AbstractToolset[AgentDepsT]] = []
 
         def collect(leaf: AbstractToolset[AgentDepsT]) -> None:
-            if id(leaf) not in construction_leaves:
-                runtime_leaves.append(leaf)
+            if id(leaf) in construction_leaves:
+                return
+            if isinstance(leaf, CapabilityOwnedToolset):
+                # The run re-collects capability contributions in a fresh `CapabilityOwnedToolset`
+                # whenever `for_run` changed the capability tree (e.g. a `DynamicCapability`
+                # resolved, or a per-run capability was added). The wrapper itself is
+                # non-executing packaging; the toolset it wraps is visited separately by this
+                # same walk and judged on its own identity.
+                return
+            runtime_leaves.append(leaf)
 
         toolset.apply(collect)
         reject_unsupported_runtime_toolsets(
@@ -135,9 +149,19 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool_config_key=self._tool_config_key,
         )
 
+    def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        """The handler in-boundary event delivery targets for the current run.
+
+        Engines may override to consult per-run state — e.g. DBOS honors the
+        `event_stream_handler` recorded in a wrapper-era workflow's inputs, delivering
+        it exactly the way the wrapper did so recovery replays the recorded step
+        sequence.
+        """
+        return self._event_stream_handler
+
     @property
     def has_wrap_run_event_stream(self) -> bool:
-        return self._event_stream_handler is not None
+        return self._effective_event_stream_handler() is not None
 
     async def wrap_run_event_stream(
         self,
@@ -145,7 +169,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        if self._event_stream_handler is None:
+        if self._effective_event_stream_handler() is None:
             async for event in stream:
                 yield event
             return
@@ -175,6 +199,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         ts_id = ts.id
+        if ts_id is None and isinstance(ts, DynamicToolset):
+            raise UserError(
+                f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
+                f'need to have a unique `id` in order to be used with {self.engine_name}. '
+                f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
+                f'{self._durable_container_noun}. Set the dynamic toolset ID with `DynamicToolset(id=...)`, '
+                "or, when it is contributed by a capability, set the capability's `id` (for example, "
+                "`DynamicCapability(..., id='user-tools')`). A capability function passed directly to "
+                '`capabilities=` cannot carry an `id`; wrap it explicitly: '
+                "`DynamicCapability(my_func, id='...')`."
+            )
         if ts_id is not None and (existing := self._toolsets_by_id.get(ts_id)) is not None:
             if existing.wrapped is ts:
                 # The same toolset instance can appear in more than one place in the tree;
@@ -230,6 +265,34 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         # objects) is not spec-serializable, and a durable agent additionally has to be constructed in
         # worker-setup code for its durable units to be registered.
         return None
+
+    def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        """The run context to hand to user code running inside this engine's durable unit.
+
+        User code inside a durable unit (a tool call, a `process_tool_call` hook, an
+        `event_stream_handler`) can't enqueue: the unit's recorded result is replayed on
+        recovery/cache-hit without re-running the code, so an enqueued message would be
+        dropped. This installs the shared `EnqueueGuard` so `enqueue()` raises a clear error
+        instead. Engines whose durable unit degrades to an inline call outside the container
+        (e.g. a DBOS step outside a workflow) override to pass the context through unchanged
+        there; Temporal reconstructs its context across the activity boundary and installs the
+        same guard in `deserialize_run_context`.
+        """
+        return guard_run_context_enqueue(
+            ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun
+        )
+
+    @contextmanager
+    def _durable_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT]]:
+        """Run user code inside a durable unit with `ctx` guarded and set as the ambient context.
+
+        Both the yielded context and `get_current_run_context()` are guarded, so user code can't
+        enqueue whether it reads its argument or the ambient getter (Temporal gets the same guard
+        because its activity-side context comes from `deserialize_run_context`).
+        """
+        guarded = self._durable_run_context(ctx)
+        with set_current_run_context(guarded):
+            yield guarded
 
     @abstractmethod
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
@@ -314,9 +377,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         result to rebuild the same `Model` on the other side via
         `_resolve_model_for_request`.
 
-        Instances are matched by identity after stripping `WrapperModel` layers,
-        so e.g. an `InstrumentedModel`-wrapped default still takes the default's
-        fast path. The `model_id` fallback covers models built from a run-time
+        `WrapperModel` layers are peeled off the request's model one at a time, matching
+        registered instances as-is at each depth and preferring the shallowest match: a
+        registered behavior-changing wrapper keeps its own ID — even under further
+        unregistered wrapping, e.g. an `InstrumentedModel` around it — while an
+        unregistered wrapper around the default still takes the default's fast path.
+        The registered side is never unwrapped: a registered wrapper's identity holds at
+        its registered depth, so its bare inner model doesn't inherit the wrapper's ID. The
+        `model_id` fallback covers models built from a run-time
         string (via `resolve_model_id`) and models an outer capability swaps in
         via `before_model_request`: the worker rebuilds them by looking the
         `model_id` up in the registry, then falling back to the `resolve_model_id`
@@ -325,10 +393,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         can rebuild — a pre-built instance with a custom provider, client, or
         settings that isn't registered in `models=` will not survive it faithfully.
         """
-        unwrapped = unwrap_model(model)
-        for model_id, registered in self._models_by_id.items():
-            if unwrap_model(registered) is unwrapped:
-                return None if model_id == 'default' else model_id
+        candidate: Model | None = model
+        while candidate is not None:
+            for model_id, registered in self._models_by_id.items():
+                if registered is candidate:
+                    return None if model_id == 'default' else model_id
+            candidate = candidate.wrapped if isinstance(candidate, WrapperModel) else None
         # Runtime-built or swapped-in Model: round-trip via its model_id string. The worker
         # rebuilds it the same way (registry lookup → resolve_model_id chain → infer_model).
         return model.model_id

@@ -1,0 +1,203 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '163'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: gpt-5
+      moderation:
+        model: omni-moderation-latest
+      stream: false
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3462'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1076'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: Paris.
+          refusal: null
+          role: assistant
+      created: 1784728646
+      id: chatcmpl-E4Rjq0z4lSeAzdbyin5pCFXEyhSW9
+      model: gpt-5-2025-08-07
+      moderation:
+        input:
+          model: omni-moderation-latest
+          results:
+          - categories:
+              harassment: false
+              harassment/threatening: false
+              hate: false
+              hate/threatening: false
+              illicit: false
+              illicit/violent: false
+              self-harm: false
+              self-harm/instructions: false
+              self-harm/intent: false
+              sexual: false
+              sexual/minors: false
+              violence: false
+              violence/graphic: false
+            category_applied_input_types:
+              harassment:
+              - text
+              harassment/threatening:
+              - text
+              hate:
+              - text
+              hate/threatening:
+              - text
+              illicit:
+              - text
+              illicit/violent:
+              - text
+              self-harm:
+              - text
+              self-harm/instructions:
+              - text
+              self-harm/intent:
+              - text
+              sexual:
+              - text
+              sexual/minors:
+              - text
+              violence:
+              - text
+              violence/graphic:
+              - text
+            category_scores:
+              harassment: 1.5598027633743823e-05
+              harassment/threatening: 2.212566909570261e-06
+              hate: 2.7803096387751555e-05
+              hate/threatening: 1.0783312222985275e-06
+              illicit: 0.005284363395662242
+              illicit/violent: 3.514382632807918e-05
+              self-harm: 2.4682904407607285e-06
+              self-harm/instructions: 5.955139348629957e-07
+              self-harm/intent: 2.627477314480822e-06
+              sexual: 9.818326983657703e-07
+              sexual/minors: 1.9333584585546466e-07
+              violence: 6.814872211615988e-06
+              violence/graphic: 7.889262586245034e-07
+            flagged: false
+            model: omni-moderation-latest
+            type: moderation_result
+          type: moderation_results
+        output:
+          model: omni-moderation-latest
+          results:
+          - categories:
+              harassment: false
+              harassment/threatening: false
+              hate: false
+              hate/threatening: false
+              illicit: false
+              illicit/violent: false
+              self-harm: false
+              self-harm/instructions: false
+              self-harm/intent: false
+              sexual: false
+              sexual/minors: false
+              violence: false
+              violence/graphic: false
+            category_applied_input_types:
+              harassment:
+              - text
+              harassment/threatening:
+              - text
+              hate:
+              - text
+              hate/threatening:
+              - text
+              illicit:
+              - text
+              illicit/violent:
+              - text
+              self-harm:
+              - text
+              self-harm/instructions:
+              - text
+              self-harm/intent:
+              - text
+              sexual:
+              - text
+              sexual/minors:
+              - text
+              violence:
+              - text
+              violence/graphic:
+              - text
+            category_scores:
+              harassment: 5.0333557545281144e-05
+              harassment/threatening: 1.2533751425646102e-05
+              hate: 3.740956047302422e-05
+              hate/threatening: 1.6187581436151335e-06
+              illicit: 3.077430764601415e-05
+              illicit/violent: 1.442598644847886e-05
+              self-harm: 1.0391067562761452e-05
+              self-harm/instructions: 1.2805474213228684e-06
+              self-harm/intent: 1.6442494559854523e-06
+              sexual: 0.00012448433020883747
+              sexual/minors: 3.120191139396651e-06
+              violence: 0.0005852836038915696
+              violence/graphic: 1.2339457598623173e-05
+            flagged: false
+            model: omni-moderation-latest
+            type: moderation_result
+          type: moderation_results
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 11
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 13
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 24
+    status:
+      code: 200
+      message: OK
+version: 1
