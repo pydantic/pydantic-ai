@@ -700,15 +700,18 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
     openai_reasoning_context: Literal['auto', 'current_turn', 'all_turns']
-    """The reasoning context to use, for models that support it (currently the GPT-5.6 family).
+    """The reasoning context to use, for models that support it.
 
     Controls which prior-turn reasoning items the model can use when sampling: `auto` uses the
     model's default, `current_turn` makes only the active turn's reasoning available, and
     `all_turns` renders compatible reasoning items from earlier turns into the next sample
     (requires access to earlier response items via `previous_response_id`, a conversation, or
-    replayed history). This setting is ignored when the resolved model profile does not
-    support reasoning context
-    ([`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context]).
+    replayed history).
+
+    `auto` and `current_turn` are sent to any model that supports reasoning. `all_turns` is sent
+    only to models whose profile sets
+    [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context]
+    (currently the GPT-5.6 family). A value the resolved profile doesn't support is ignored.
 
     See [OpenAI's reasoning context documentation](https://developers.openai.com/api/docs/guides/reasoning#reasoning-context)
     for more details.
@@ -2687,8 +2690,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             reasoning['effort'] = reasoning_effort  # type: ignore[typeddict-item]
         if reasoning_mode and self.profile.get('openai_responses_supports_reasoning_mode', False):
             reasoning['mode'] = reasoning_mode
-        if reasoning_context and self.profile.get('openai_responses_supports_reasoning_context', False):
-            reasoning['context'] = reasoning_context
+        if reasoning_context:
+            # Support is per-value, not per-field: every reasoning model accepts `auto` and
+            # `current_turn`, while `all_turns` is limited to the families that persist reasoning
+            # across turns. Gating the whole field on the narrower fact would silently discard a
+            # value the user explicitly set.
+            if reasoning_context == 'all_turns':
+                supports_reasoning_context = self.profile.get('openai_responses_supports_reasoning_context', False)
+            else:
+                supports_reasoning_context = self.profile.get('openai_supports_reasoning', False)
+            if supports_reasoning_context:
+                reasoning['context'] = reasoning_context
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT

@@ -297,11 +297,43 @@ async def test_openai_responses_reasoning_mode_omitted_when_unsupported(
     assert 'reasoning' not in get_mock_responses_kwargs(mock_client)[0]
 
 
-@pytest.mark.parametrize('provider_name', ['openai', 'openrouter'])
-async def test_openai_responses_reasoning_context_omitted_when_unsupported(
-    allow_model_requests: None, provider_name: Literal['openai', 'openrouter']
+@pytest.mark.parametrize(
+    'provider_name,model_name,reasoning_context,expected_reasoning',
+    [
+        # `all_turns` rides `openai_responses_supports_reasoning_context`: sent for GPT-5.6, dropped elsewhere.
+        pytest.param('openai', 'gpt-5.6-sol', 'all_turns', {'effort': 'medium', 'context': 'all_turns'}, id='5.6-all'),
+        pytest.param('openai', 'gpt-5.4', 'all_turns', {'effort': 'medium'}, id='5.4-all-dropped'),
+        pytest.param('openrouter', 'openai/gpt-5.4', 'all_turns', {'effort': 'medium'}, id='or-5.4-all-dropped'),
+        # `auto` and `current_turn` are accepted by every reasoning model, so they ride
+        # `openai_supports_reasoning` and must survive on non-GPT-5.6 models.
+        pytest.param('openai', 'gpt-5.4', 'auto', {'effort': 'medium', 'context': 'auto'}, id='5.4-auto'),
+        pytest.param(
+            'openai', 'gpt-5.4', 'current_turn', {'effort': 'medium', 'context': 'current_turn'}, id='5.4-current'
+        ),
+        pytest.param('openai', 'o3', 'current_turn', {'effort': 'medium', 'context': 'current_turn'}, id='o3-current'),
+        pytest.param(
+            'openrouter',
+            'openai/gpt-5.4',
+            'current_turn',
+            {'effort': 'medium', 'context': 'current_turn'},
+            id='or-5.4-current',
+        ),
+        # A model that doesn't reason at all takes no `reasoning.context` of any value.
+        pytest.param('openai', 'gpt-4o', 'current_turn', {'effort': 'medium'}, id='4o-dropped'),
+    ],
+)
+async def test_openai_responses_reasoning_context_gated_per_value(
+    allow_model_requests: None,
+    provider_name: Literal['openai', 'openrouter'],
+    model_name: str,
+    reasoning_context: Literal['auto', 'current_turn', 'all_turns'],
+    expected_reasoning: dict[str, str],
 ):
-    """Not a VCR test: unsupported paths must omit `reasoning.context` before sending."""
+    """Not a VCR test: pins which `reasoning.context` values reach the wire for each model.
+
+    Support is per-value rather than per-field, so gating the whole field on the `all_turns`
+    profile flag would silently drop an `auto`/`current_turn` the user explicitly set.
+    """
     c = response_message(
         [
             ResponseOutputMessage(
@@ -315,20 +347,18 @@ async def test_openai_responses_reasoning_context_omitted_when_unsupported(
     )
     mock_client = MockOpenAIResponses.create_mock(c)
     if provider_name == 'openai':
-        model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+        model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
     else:
-        model = OpenAIResponsesModel('openai/gpt-5.4', provider=OpenRouterProvider(openai_client=mock_client))
+        model = OpenAIResponsesModel(model_name, provider=OpenRouterProvider(openai_client=mock_client))
 
     await Agent(
         model,
         model_settings=OpenAIResponsesModelSettings(
-            openai_reasoning_effort='medium', openai_reasoning_context='all_turns'
+            openai_reasoning_effort='medium', openai_reasoning_context=reasoning_context
         ),
     ).run('Hello')
 
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert kwargs['reasoning'] == {'effort': 'medium'}
-    assert 'context' not in kwargs['reasoning']
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == expected_reasoning
 
 
 async def test_openai_responses_reasoning_mode_pro(allow_model_requests: None, openai_api_key: str, vcr: Cassette):

@@ -68,7 +68,7 @@ class _ReasoningSupport:
     """The Responses API accepts `reasoning.mode` (`'standard' | 'pro'`) for the model."""
 
     supports_context: bool
-    """The Responses API accepts `reasoning.context` (`'auto' | 'current_turn' | 'all_turns'`) for the model."""
+    """The Responses API accepts `reasoning.context='all_turns'` for the model."""
 
     @property
     def supported(self) -> bool:
@@ -98,11 +98,12 @@ _ALWAYS_ON_REASONING = _ReasoningSupport(
 
 _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # GPT-5.6 (sol/terra/luna) reasons by default (at 'medium'), accepts `effort='none'` to turn
-    # reasoning off, and is the only family that supports `reasoning.mode` and `reasoning.context`.
+    # reasoning off, and is the only family that supports `reasoning.mode` and is marked for
+    # `reasoning.context='all_turns'`.
     'gpt-5.6': _ReasoningSupport(
         enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
     ),
-    # gpt-5.5 reasons by default like gpt-5.6, but has no `reasoning.mode` or `reasoning.context`.
+    # gpt-5.5 reasons by default like gpt-5.6, but has no `reasoning.mode`.
     'gpt-5.5-pro': _ALWAYS_ON_REASONING,
     'gpt-5.5': _ReasoningSupport(
         enabled_by_default=True, can_be_disabled=True, supports_mode=False, supports_context=False
@@ -248,7 +249,10 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Currently only supported by the GPT-5.6 family."""
 
     openai_responses_supports_reasoning_context: bool
-    """Whether the Responses API supports `reasoning.context` (`'auto' | 'current_turn' | 'all_turns'`) for this model. Default: `False`.
+    """Whether the Responses API accepts `reasoning.context='all_turns'` for this model. Default: `False`.
+
+    `auto` and `current_turn` are accepted by every reasoning model, so they are gated on
+    `openai_supports_reasoning` instead; only `all_turns` requires this flag.
 
     Currently only supported by the GPT-5.6 family."""
 
