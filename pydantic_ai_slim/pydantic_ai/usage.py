@@ -86,7 +86,6 @@ def _serialize_usage(
                 exclude_computed_fields=info.exclude_computed_fields,
                 round_trip=info.round_trip,
                 serialize_as_any=info.serialize_as_any,
-                polymorphic_serialization=info.polymorphic_serialization,
                 context=info.context,
             )
         result[key] = item
