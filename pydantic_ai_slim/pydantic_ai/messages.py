@@ -512,7 +512,12 @@ class TextContent:
     _: KW_ONLY
 
     metadata: Any = None
-    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM.
+
+    `ModelMessagesTypeAdapter` preserves this field, but as application-only data it is not
+    guaranteed to survive a round-trip through the UI adapters; see
+    [Storing and loading messages](../message-history.md#storing-and-loading-messages-to-json).
+    """
 
     kind: Literal['text-content'] = 'text-content'
     """Type identifier, this is available on all parts as a discriminator."""

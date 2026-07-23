@@ -344,6 +344,18 @@ result2 = agent.run_sync(  # (3)!
 
 _(This example is complete, it can be run "as is")_
 
+!!! note "What survives a round-trip"
+    `ModelMessagesTypeAdapter` preserves every field, including application-only annotations such
+    as [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] that are *not sent to
+    the model*. Because `metadata` is typed `Any`, a JSON round-trip normalizes values with no
+    JSON-native form — a `tuple` reloads as a `list`, a `datetime` as its ISO string — while a
+    `dump_python` → `validate_python` round-trip preserves them exactly. This is the boundary you
+    use to persist and reload history.
+
+    The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
+    protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
+    those fields are dropped entirely. That loss is by design, not a state-loss bug.
+
 ### Loading untrusted history
 
 The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.
