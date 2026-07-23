@@ -4112,7 +4112,13 @@ Fix the errors and try again.\
 
 
 async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
-    """Test that ThinkingPart in message history is properly mapped."""
+    """A `ThinkingPart` in history that can't round-trip natively maps to a noted `<thinking>` tag.
+
+    xAI returns reasoning unsigned by default (no `encrypted_content`), so its own `First reasoning` comes
+    back with `provider_name=None` and can't be sent as native `reasoning_content` — it falls back to a
+    `<thinking>` tag carrying an explicit note rather than the model's own bare tags, which it would
+    otherwise imitate.
+    """
     # First response with reasoning
     response1 = create_response(
         content='first response',
@@ -4140,7 +4146,7 @@ async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
     # Include user-supplied `<think>` tags to confirm they are treated as plain user text.
     result2 = await agent.run('Second question <think>user think</think>', message_history=message_history)
 
-    # Verify kwargs - second call should have ThinkingPart mapped with reasoning_content
+    # Verify kwargs - second call maps the unsigned `First reasoning` to the foreign-thinking marker
     assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
             {
@@ -4160,9 +4166,9 @@ async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
                         'content': [
                             {
                                 'text': """\
-<think>
+<thinking note="continued from another model in this conversation">
 First reasoning
-</think>\
+</thinking>\
 """
                             }
                         ],
