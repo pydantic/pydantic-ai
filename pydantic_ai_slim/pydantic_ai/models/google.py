@@ -96,6 +96,7 @@ try:
         ImageConfigDict,
         MediaResolution,
         Modality,
+        ModelArmorConfigDict,
         Part,
         PartDict,
         SafetySettingDict,
@@ -146,6 +147,8 @@ LatestGoogleModelNames = Literal[
     'gemini-3.1-flash-lite',
     'gemini-3.1-pro-preview',
     'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.6-flash',
 ]
 """Latest Gemini models."""
 
@@ -288,6 +291,18 @@ class GoogleModelSettings(ModelSettings, total=False):
 
     See [`GoogleCloudServiceTier`][pydantic_ai.models.google.GoogleCloudServiceTier] for all values,
     headers sent, and links to Google docs.
+    """
+
+    google_model_armor_config: ModelArmorConfigDict
+    """Model Armor configuration for screening prompts and responses. Only supported by the Vertex AI API.
+
+    Specifies the Model Armor templates to use for sanitizing user prompts and model responses.
+    Both fields are optional — omit either to skip screening for that direction.
+
+    Mutually exclusive with `google_safety_settings`: Vertex AI rejects a request that sets both,
+    since Model Armor replaces the built-in safety filters for that request.
+
+    See the [Model Armor docs](https://cloud.google.com/security-command-center/docs/model-armor-overview) for use cases and limitations.
     """
 
 
@@ -895,6 +910,7 @@ class GoogleModel(Model[Client]):
             response_json_schema=response_schema,
             response_modalities=modalities,
             image_config=image_config,
+            model_armor_config=model_settings.get('google_model_armor_config'),
         )
 
         if gla_service_tier is not None:

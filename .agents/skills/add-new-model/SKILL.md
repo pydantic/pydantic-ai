@@ -180,7 +180,19 @@ Include the [PR template](.github/pull_request_template.md), fill in the issue n
 - **`bedrock:` stays on Converse; it does NOT auto-route to Mantle.** A GPT-5.4+ model on `bedrock:` raises from `BedrockProvider.model_profile` pointing users to `bedrock-mantle:` (there's a `TODO(v3)` to flip the default with a deprecation later). Only add `bedrock-mantle:` names to `KnownModelName` — no `bedrock:openai.gpt-5.*` names, and hence no `UNSUPPORTED_GATEWAY_MODEL_NAMES` entries for them.
 - **Response-scoped tool-call IDs are a profile flag, not a Mantle-wide behavior.** `openai_responses_tool_call_ids_are_response_scoped` (on `OpenAIModelProfile`) is enabled only for Mantle GPT-5.6 Responses; `OpenAIResponsesModel` qualifies call IDs with the response ID in both request and streaming ingestion so history stays uniquely keyed (#6536).
 
-### Google and others
+### Google (Gemini)
+
+- **TWO places for the id, FOUR `KnownModelName` blocks.** Add to:
+  1. `LatestGoogleModelNames` in `models/google.py` (`GoogleModelName = str | LatestGoogleModelNames` — the `str` arm is permissive at typecheck time, but the enumeration test only walks the `Literal` arm).
+  2. `models/_known_model_names.py` — **four** blocks: `gateway/google-cloud:`, `gateway/google:`, `google-cloud:`, `google:` (older add-model PRs that only edit three blocks or `models/__init__.py` are stale; KnownModelName moved in #5803).
+- **No SDK-lag bridge needed.** `google-genai` does not ship a model-id Literal the enumeration test consumes — the local `LatestGoogleModelNames` Literal *is* the source of truth. Adding the id lands green immediately.
+- **Profile is substring-gated, not per-id.** `profiles/google.py` keys off `'gemini-3' in model_name` (thinking level, tool combination, server-side tool invocations, MIME types in tool returns) and `'pro' in model_name and 'flash' not in model_name` (always-on thinking). A new `gemini-3.x-flash*` id is almost always a pure literal add — the existing Gemini-3 branch already covers it. Only probe if the release notes claim a capability divergence (e.g. no thinking, image-only, Pro always-on).
+- **API verification:** `curl -s "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=$GOOGLE_API_KEY"` (key is often in the main worktree `.env`, not every linked worktree). Confirm exact ids; do **not** invent dated snapshots or `-preview` suffixes. Specialized / limited-access models (e.g. Flash Cyber via CodeMender) are out of scope unless they appear in that public listing.
+- **Gateway support is opt-out, not opt-in.** The enumeration test generates `gateway/{google,google-cloud}:*` for every `LatestGoogleModelNames` entry **except** those listed in `UNSUPPORTED_GATEWAY_MODEL_NAMES` in `tests/models/test_model_names.py`. Mirror the most recent sibling series: if `gemini-3.5-flash` is in the gateway KnownModelName blocks (not in the unsupported set), new flash siblings go there too. Only add to `UNSUPPORTED_GATEWAY_MODEL_NAMES` when the gateway actually rejects the id.
+- **Snapshots / tests:** hand-add the new ids in sorted position in `tests/test_capabilities.py::test_model_json_schema_with_capabilities` (plain sorted string list). Mirror-only adds skip new VCR by default; #5527 recorded one for `gemini-3.5-flash` but that is not required for a pure name add.
+- **Docs:** example snippets often hard-code a recent flash id (`docs/models/google.md`, `docs/capabilities/thinking.md`) — leave them alone unless the docs maintain a model registry table (they currently do not).
+
+### Others
 
 Not yet documented here. **When you add the next model for one of these providers, add the landmines you encountered to this section before closing the session** (see Step 9).
 

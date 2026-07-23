@@ -3700,6 +3700,35 @@ def test_temporal_run_context_preserves_run_id():
     assert reconstructed.run_id == 'run-123'
 
 
+run_id_test_agent = Agent(TestModel(custom_output_text='ok'), name='run_id_test_agent')
+run_id_temporal_agent = TemporalAgent(run_id_test_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
+
+
+@workflow.defn
+class RunIdAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, run_id: str) -> list[str]:
+        result = await run_id_temporal_agent.run(prompt, run_id=run_id)
+        return [result.run_id, *[m.run_id or '<unset>' for m in result.all_messages()]]
+
+
+async def test_temporal_agent_explicit_run_id(client: Client):
+    """A pre-minted `run_id=` survives Temporal activity serialization and stamps all new messages."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunIdAgentWorkflow],
+        plugins=[AgentPlugin(run_id_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            RunIdAgentWorkflow.run,
+            args=['Hello', 'run-from-temporal'],
+            id=RunIdAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == ['run-from-temporal', 'run-from-temporal', 'run-from-temporal']
+
+
 def test_temporal_run_context_serializes_metadata():
     ctx = RunContext(
         deps=None,
@@ -3740,6 +3769,25 @@ def test_temporal_run_context_excludes_agent():
     reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
     assert reconstructed.agent is agent
     assert agent.name == 'test_agent'
+
+
+def test_temporal_run_context_enqueue_raises_inside_activity():
+    """`ctx.enqueue()` inside a Temporal activity raises the shared durable explanation.
+
+    `pending_messages` isn't serialized across the activity boundary, so any code running
+    activity-side (a tool, a `process_tool_call` hook, an `event_stream_handler`) is in a
+    durable unit whose result is replayed without re-running it; an enqueue would be dropped.
+    """
+    from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
+
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
+        reconstructed.enqueue('later')
+    # An empty enqueue stays a no-op, matching a normal run.
+    assert reconstructed.enqueue() is None
 
 
 def test_temporal_run_context_serializes_usage():
