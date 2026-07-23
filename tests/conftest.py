@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import dataclasses
 import importlib.util
 import logging
 import os
@@ -44,6 +45,7 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import Builder, Custom, customize
 
@@ -199,6 +201,21 @@ def isdatetime_handler(value: Any, builder: Builder) -> Any | None:  # pragma: n
     # Use IsDatetime() for datetime values in snapshots.
     if isinstance(value, datetime):
         return IsDatetime()
+
+
+@customize
+def usage_handler(value: Any, builder: Builder) -> Custom | None:  # pragma: no cover
+    if isinstance(value, (RequestUsage, RunUsage)):
+        # Usage objects accept arbitrary fields that inline-snapshot's default dataclass handler cannot see.
+        kwargs = value.__dict__.copy()
+        for field in dataclasses.fields(value):
+            if field.name not in kwargs:
+                continue
+            if field.default is not dataclasses.MISSING:
+                kwargs[field.name] = builder.with_default(kwargs[field.name], field.default)
+            elif field.default_factory is not dataclasses.MISSING:
+                kwargs[field.name] = builder.with_default(kwargs[field.name], field.default_factory())
+        return builder.create_call(type(value), [], kwargs)
 
 
 @customize
