@@ -8,7 +8,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, I
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -51,7 +51,9 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     Toolset,
 )
-from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec._codec import IDENTITY_CODEC, JSON_CODEC
+from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset, wrap_tool_call_result
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -65,6 +67,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -117,6 +120,116 @@ except ImportError:  # pragma: lax no cover
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+
+
+def test_durability_codecs() -> None:
+    value = [1, 2]
+    assert IDENTITY_CODEC.dump(list[int], value) is value
+    assert IDENTITY_CODEC.load(list[int], value) is value
+    assert JSON_CODEC.dump(list[int], value) == value
+    assert JSON_CODEC.load(list[int], value) == value
+    assert JSON_CODEC.dump(list[int], value) == value
+
+
+async def test_durability_base_default_hooks() -> None:
+    events: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        events.extend([event async for event in stream])
+
+    durability = PrefectDurability(event_stream_handler=handler, name='base-defaults')
+    base = cast(BaseDurabilityCapability[Any], durability)
+    assert BaseDurabilityCapability._unit_name(base, 'kind') == 'base-defaults__kind'  # pyright: ignore[reportPrivateUsage]
+    assert BaseDurabilityCapability._unit_name(base, 'kind', suffix='.suffix') == 'base-defaults__kind.suffix'  # pyright: ignore[reportPrivateUsage]
+    assert BaseDurabilityCapability._unit_name(base, 'kind', tool_name='tool') == 'base-defaults__kind.call_tool:tool'  # pyright: ignore[reportPrivateUsage]
+    assert (
+        BaseDurabilityCapability._unit_name(  # pyright: ignore[reportPrivateUsage]
+            base, 'mcp_server', tool_name='tool'
+        )
+        == 'base-defaults__mcp_server.call_tool'
+    )
+    assert BaseDurabilityCapability._unit_name(base, 'kind', prefix='custom', suffix='.suffix') == 'custom.suffix'  # pyright: ignore[reportPrivateUsage]
+    assert BaseDurabilityCapability._model_unit_config(base) is None  # pyright: ignore[reportPrivateUsage]
+    assert BaseDurabilityCapability._event_unit_config(base) is None  # pyright: ignore[reportPrivateUsage]
+    assert BaseDurabilityCapability._toolset_base_config(base, 'function') is None  # pyright: ignore[reportPrivateUsage]
+    assert BaseDurabilityCapability._normalize_unit_config(base, {'x': 1}) == {'x': 1}  # pyright: ignore[reportPrivateUsage]
+    resolve_tool_config = BaseDurabilityCapability._build_resolve_tool_config(base, {'base': 1})  # pyright: ignore[reportPrivateUsage]
+    tool = ToolsetTool(
+        toolset=FunctionToolset(),
+        tool_def=ToolDefinition(name='configured', metadata={'prefect': {'tool': 2}}),
+        max_retries=0,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    resolved_config = resolve_tool_config(tool, 'configured')
+    assert resolved_config is not False
+    assert resolved_config['base'] == 1
+    assert resolved_config['tool'] == 2
+    assert callable(resolved_config['retry_condition_fn'])
+    resolved_without_base = BaseDurabilityCapability._build_resolve_tool_config(base, {})(tool, 'configured')  # pyright: ignore[reportPrivateUsage]
+    assert resolved_without_base is not False
+    assert resolved_without_base['tool'] == 2
+    assert callable(resolved_without_base['retry_condition_fn'])
+
+    inline_tool = ToolsetTool(
+        toolset=FunctionToolset(),
+        tool_def=ToolDefinition(name='inline', metadata={'prefect': False}),
+        max_retries=0,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    assert resolve_tool_config(inline_tool, 'inline') is False
+
+    mcp_tool = ToolsetTool(
+        toolset=MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),
+        tool_def=ToolDefinition(name='mcp_inline', metadata={'prefect': False}),
+        max_retries=0,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    with pytest.raises(UserError, match='MCP tools perform I/O'):
+        resolve_tool_config(mcp_tool, 'mcp_inline')
+
+    assert BaseDurabilityCapability._model_id_suffix(base, 'model') == '.model'  # pyright: ignore[reportPrivateUsage]
+    base._default_model_id = 'model'  # pyright: ignore[reportPrivateUsage]
+    assert BaseDurabilityCapability._model_id_suffix(base, 'model') == ''  # pyright: ignore[reportPrivateUsage]
+    assert BaseDurabilityCapability._stamp_response(base, ModelResponse(parts=[]), []) is None  # pyright: ignore[reportPrivateUsage]
+    assert durability._unit_name('kind', label='Label') == 'Label'  # pyright: ignore[reportPrivateUsage]
+
+    async def value() -> str:
+        return 'value'
+
+    with pytest.raises(NotImplementedError):
+        await BaseDurabilityCapability.run_durable_unit(base, 'unit', value, inputs=(), config=None)
+
+    payload = await wrap_tool_call_result(value())
+    type(durability)._tool_call_result_upgrade_lenient = False  # pyright: ignore[reportPrivateUsage]
+    assert durability._unwrap_tool_result(payload) == 'value'  # pyright: ignore[reportPrivateUsage]
+    type(durability)._tool_call_result_upgrade_lenient = True  # pyright: ignore[reportPrivateUsage]
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    event = FinalResultEvent(tool_name=None, tool_call_id=None)
+
+    @flow
+    async def dispatch() -> None:
+        await BaseDurabilityCapability._dispatch_event_stream_event(base, ctx, event)  # pyright: ignore[reportPrivateUsage]
+
+    await dispatch()
+    assert events == [event]
+
+    agent = Agent(TestModel(), name='sequential-default', capabilities=[PrefectDurability()])
+    bound = PrefectDurability.from_agent(agent)
+    assert bound is not None
+    PrefectDurability._force_sequential_tools_in_durable_context = True  # pyright: ignore[reportPrivateUsage]
+
+    async def sequential_handler() -> Any:
+        assert ToolManager(FunctionToolset()).get_parallel_execution_mode() == 'sequential'
+        return object()
+
+    @flow
+    async def force_sequential() -> None:
+        await BaseDurabilityCapability.wrap_run(bound, ctx, handler=sequential_handler)
+
+    await force_sequential()
+    PrefectDurability._force_sequential_tools_in_durable_context = False  # pyright: ignore[reportPrivateUsage]
+
 
 # `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warnings here

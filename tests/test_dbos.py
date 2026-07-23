@@ -3088,6 +3088,40 @@ async def test_dbos_durability_mcp_toolset_wrapping(dbos: DBOS) -> None:
     assert isinstance(bound._toolsets_by_id['my_mcp'], DBOSMCPToolset)  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_dbos_durability_mcp_operations_run_in_steps(dbos: DBOS) -> None:
+    def call_then_answer(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('celsius_to_fahrenheit', {'celsius': 0}, tool_call_id='call-1')])
+
+    agent = Agent(
+        FunctionModel(call_then_answer),
+        name='durability_mcp_operations',
+        toolsets=[
+            MCPToolset(
+                StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+                include_instructions=True,
+                id='mcp',
+            )
+        ],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Convert zero Celsius to Fahrenheit.')).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_agent()
+
+    assert output == 'done'
+    step_names = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+    assert 'durability_mcp_operations__mcp_server__mcp.get_tools' in step_names
+    assert 'durability_mcp_operations__mcp_server__mcp.get_instructions' in step_names
+    assert 'durability_mcp_operations__mcp_server__mcp.call_tool' in step_names
+
+
 async def test_dbos_durability_rejects_idless_mcp_toolset(dbos: DBOS) -> None:
     """An `MCPToolset` without an `id` fails loudly at construction.
 

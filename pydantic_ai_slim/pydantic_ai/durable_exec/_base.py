@@ -2,30 +2,58 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping
 from contextlib import contextmanager
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal, TypeVar
 
 from typing_extensions import Self
 
+from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import ProcessEventStream
-from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, leaf_capabilities
+from pydantic_ai.capabilities.abstract import (
+    AbstractCapability,
+    CapabilityOrdering,
+    WrapModelRequestHandler,
+    WrapRunHandler,
+    leaf_capabilities,
+)
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import AgentStreamEvent, ModelResponseStreamEvent
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
+from ._codec import IDENTITY_CODEC, DurabilityCodec
 from ._runtime_toolsets import RuntimeToolsetKind, reject_unsupported_runtime_toolsets
-from ._toolset import guard_run_context_enqueue
-from ._utils import unwrap_model
+from ._toolset import (
+    CallToolResult,
+    DurableDynamicToolset,
+    DurableFunctionToolset,
+    DurableMCPToolset,
+    DynamicToolsResult,
+    Instructions,
+    Lifecycle,
+    ToolConfig,
+    call_dynamic_tool,
+    get_dynamic_tools,
+    guard_run_context_enqueue,
+    resolve_tool_durable_config,
+    unwrap_recorded_tool_call_result,
+    unwrap_tool_call_result,
+    wrap_tool_call_result,
+)
+from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, unwrap_model
+
+_T = TypeVar('_T')
+ToolsetKind = Literal['function', 'mcp', 'dynamic']
 
 _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
@@ -36,7 +64,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     Owns the model registry and the model round-trip across the durable boundary:
     a `Model` instance can't be serialized into an activity/step/task, so a request
     carries a `model_id` string (`None` for the agent's default, a `models=` registry
-    key, or a model-name string) and the model is rebuilt on the other side — deps-aware,
+    key, or a model-name string) and the model is rebuilt on the other side -- deps-aware,
     via the agent's full [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id]
     capability chain, with the registry as backstop. Subclasses call
     [`_bind_models`][pydantic_ai.durable_exec._base.BaseDurabilityCapability._bind_models] on the
@@ -54,6 +82,42 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     _durable_container_noun: ClassVar[str]
     _tool_config_key: ClassVar[str | None] = None
 
+    # --- Declarative Shape-D surface (prototype) -----------------------------------------------
+    # Everything below is DATA an engine sets rather than behavior it overrides. The base's
+    # concrete `_wrap_leaf_toolset` / `wrap_model_request` / `_dispatch_event_stream_event`
+    # (built on `run_durable_unit` + `_codec`) consult these; a callable engine implements only
+    # `run_durable_unit` + `in_durable_context` and fills these in.
+
+    _codec: ClassVar[DurabilityCodec] = IDENTITY_CODEC
+    """How the base serializes at every durable boundary. Identity for object-passing engines
+    (Temporal/DBOS/Prefect), JSON for journal engines (Restate/Lambda/Absurd)."""
+
+    _wrapped_toolset_kinds: ClassVar[frozenset[ToolsetKind]] = frozenset({'function', 'mcp', 'dynamic'})
+    """Which leaf-toolset kinds this engine wraps in a durable unit. DBOS omits `'function'`
+    (function tools run inline via `@DBOS.step`)."""
+
+    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
+        'function': 'enter-always',
+        'mcp': 'enter-always',
+        'dynamic': 'enter-never',
+    }
+    """Per-kind lifecycle profile (`enter-always` / `enter-outside-durable` / `enter-never`).
+    Forced explicit because two real bugs came from defaulted gates (#5477 requirement 3).
+    Restate opts function tools out of entry (`enter-never`)."""
+
+    _tool_call_result_upgrade_lenient: ClassVar[bool] = False
+    """When True, recorded tool payloads are decoded leniently for library-upgrade compat
+    (`unwrap_recorded_tool_call_result`) -- engines that replay stored outputs (Prefect cache,
+    DBOS/Lambda recovery). Journal engines that never cross an upgrade set False."""
+
+    _journal_discovery: ClassVar[bool] = True
+    """Whether toolset DISCOVERY (`get_tools`/`get_instructions`) runs in its own durable unit.
+    Journal engines (Restate/Lambda/Absurd) journal it; Prefect deliberately runs discovery in
+    flow code (flow retries re-resolve anyway) and journals only tool CALLS. THE odd one out."""
+
+    _force_sequential_tools_in_durable_context: ClassVar[bool] = False
+    """Whether tool calls must run sequentially inside the durable container."""
+
     name: str
     """Unique name used to identify the agent's durable units (activities/steps/tasks). Defaults to the agent's `name`."""
 
@@ -68,6 +132,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._agent: AbstractAgent[Any, Any] | None = None
         self._extra_models: dict[str, Model] = dict(models) if models else {}
         self._models_by_id: dict[str, Model] = {}
+        self._default_model_id: str | None = None
         self._event_stream_handler = event_stream_handler
         self._process_event_stream = ProcessEventStream(event_stream_handler) if event_stream_handler else None
         self._toolsets_by_id: dict[str, WrapperToolset[AgentDepsT]] = {}
@@ -92,9 +157,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _check_bindable(self) -> None:
         """Validate that the capability can be bound in the current context."""
 
-    @abstractmethod
     def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
-        """Register engine-specific durable units on this bound capability."""
+        """Bind engine-specific durable state. Default = wrap + index the agent's leaf toolsets.
+
+        Sufficient for ad-hoc-primitive engines (Restate/Lambda/Absurd/Prefect): their durable
+        units are created at call time. Pre-registration engines override to also register units
+        up front (Temporal: worker activities) or decorate them by name (DBOS: `@DBOS.step`).
+        """
+        self._register_toolsets(agent)
 
     @classmethod
     def from_agent(cls, agent: AbstractAgent[Any, Any]) -> Self | None:
@@ -102,7 +172,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         [`for_agent`][pydantic_ai.capabilities.AbstractCapability.for_agent] returns a new bound
         copy and leaves the user's original capability reference pristine, so use this to retrieve
-        the instance the agent actually runs with — e.g. the `TemporalDurability` whose activities
+        the instance the agent actually runs with -- e.g. the `TemporalDurability` whose activities
         are registered with the worker. Walks the agent's capability chain and returns the single
         match or `None`, raising a `UserError` if multiple instances are attached.
         """
@@ -123,7 +193,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return
 
         construction_leaves: set[int] = set()
-        if self._agent is not None:  # pragma: no branch — `for_agent` always binds before a run
+        if self._agent is not None:  # pragma: no branch -- `for_agent` always binds before a run
             for agent_toolset in self._agent.toolsets:
                 agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
 
@@ -152,7 +222,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
         """The handler in-boundary event delivery targets for the current run.
 
-        Engines may override to consult per-run state — e.g. DBOS honors the
+        Engines may override to consult per-run state -- e.g. DBOS honors the
         `event_stream_handler` recorded in a wrapper-era workflow's inputs, delivering
         it exactly the way the wrapper did so recovery replays the recorded step
         sequence.
@@ -235,9 +305,424 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._toolsets_by_id[ts_id] = wrapped
         return wrapped
 
-    @abstractmethod
+    # ===========================================================================================
+    #  Base-owned Shape-D assembly (prototype)
+    #
+    #  These methods used to be overridden by every engine. They are now concrete defaults built
+    #  on the declarative fields above plus two behavioral hooks -- `run_durable_unit` (the durable
+    #  primitive) and `in_durable_context`. A callable engine (Prefect/DBOS/Restate/Lambda/Absurd)
+    #  inherits all of them. A pre-registration engine (Temporal) still overrides them, because a
+    #  call-time closure can't cross its workflow→activity boundary (see `run_durable_unit`).
+    # ===========================================================================================
+
+    async def run_durable_unit(
+        self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
+    ) -> Any:
+        """Run one framework-built operation `fn` durably and return its (codec-dumped) payload.
+
+        THE durable primitive for callable engines: Prefect wraps `fn` in a `@task`, Restate calls
+        `ctx.run_typed(name, fn)`, Lambda bridges `fn` onto `context.step(name, ...)`. `fn` already
+        applies `self._codec.dump`, so the returned payload is journal-ready; the base applies
+        `self._codec.load` around this call.
+
+        `inputs` are the operation's logical arguments (messages, tool args, run context, ...).
+        SEQUENCE-keyed engines (Restate/Lambda/Absurd/DBOS) ignore them -- a step's identity is its
+        encounter order. HASH-keyed engines (Prefect) MUST feed them to the durable primitive so its
+        cache key hashes them; a bare no-arg closure would hide the inputs and collapse distinct
+        calls onto one cache entry. This parameter is exactly the seam that lets one primitive serve
+        both keying families.
+
+        Temporal CANNOT implement this: its durable unit is a worker-registered activity dispatched
+        by name (`activity.defn(name=...)` + `workflow.execute_activity(...)`), not an arbitrary
+        call-time callable. Temporal therefore overrides the assembly methods below instead.
+        """
+        raise NotImplementedError
+
+    async def _durable_operation(
+        self, name: str, fn: Callable[[], Awaitable[_T]], *, tp: Any, inputs: tuple[Any, ...], config: Any
+    ) -> _T:
+        """Run `fn` in a durable unit with the codec applied: `dump` inside, `load` outside.
+
+        Mirrors what the JSON engines hand-write (dump inside `_inner`, validate outside). For the
+        identity codec both are no-ops, so object engines pass the live value straight through.
+        """
+        codec = self._codec
+
+        async def unit() -> Any:
+            return codec.dump(tp, await fn())
+
+        payload = await self.run_durable_unit(name, unit, inputs=inputs, config=config)
+        return codec.load(tp, payload)
+
+    def _unit_name(self, kind: str, **parts: Any) -> str:
+        """Compose the durable-unit name for one operation.
+
+        Naming is compat surface (#5477 req 5), so this is a pure function of `(kind, parts)` an engine can override. Default is
+        the journal-engine scheme (`{agent}__{kind}...`); Prefect overrides with display names.
+        """
+        prefix = parts.get('prefix')
+        name = prefix if isinstance(prefix, str) else f'{self.name}__{kind}'
+        if suffix := parts.get('suffix'):
+            name = f'{name}{suffix}'
+        if (tool_name := parts.get('tool_name')) is not None:
+            name = f'{name}.call_tool'
+            if kind != 'mcp_server':
+                name = f'{name}:{tool_name}'
+        return name
+
+    def _model_unit_config(self) -> Any:
+        """Engine config for model-request durable units. Override for a custom config type."""
+        return None
+
+    def _event_unit_config(self) -> Any:
+        """Engine config for the event-stream-handler durable unit."""
+        return None
+
+    def _toolset_base_config(self, kind: ToolsetKind) -> Any:
+        """Engine base config for a toolset kind's durable units (merged with per-tool config)."""
+        return None
+
+    def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        """Guard `ctx.enqueue()` for user code that runs inside a durable unit (#6666)."""
+        return guard_run_context_enqueue(
+            ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun
+        )
+
+    @contextmanager
+    def _durable_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT]]:
+        """Guard `ctx.enqueue()` and install the guarded context as the ambient run context."""
+        guarded = self._durable_run_context(ctx)
+        with set_current_run_context(guarded):
+            yield guarded
+
+    def _build_resolve_tool_config(self, base_config: Any) -> Callable[[ToolsetTool[Any] | None, str], ToolConfig]:
+        """Build the per-tool config resolver from declarative fields (metadata key + polarity)."""
+        metadata_key = self._tool_config_key or ''
+
+        def resolve(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
+            config = resolve_tool_durable_config(
+                tool,
+                tool_name,
+                {},
+                metadata_key=metadata_key,
+                config_type_label=f'{self.engine_name} durable config',
+            )
+            if config is False:
+                # `fallback_config` is deliberately empty above, so `False` can only come from
+                # metadata on a concrete tool.
+                assert tool is not None
+                from pydantic_ai.mcp import MCPToolset
+
+                if isinstance(tool.toolset, MCPToolset):
+                    raise UserError(
+                        f'{self.engine_name} durable config for MCP tool {tool_name!r} has been explicitly '
+                        'set to `False` (durable execution disabled), but MCP tools perform I/O and cannot '
+                        f'run outside a durable {self._durable_unit_noun}. Remove the metadata so the call '
+                        'stays durable.'
+                    )
+                return False
+            if not config:
+                return self._normalize_unit_config(base_config)
+            combined: dict[str, Any] = {}
+            if base_config:
+                combined.update(base_config)
+            combined.update(config)
+            return self._normalize_unit_config(combined)
+
+        return resolve
+
+    async def wrap_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        handler: WrapRunHandler,
+    ) -> AgentRunResult[Any]:
+        """Force sequential tool execution when required by a sequence-keyed durable engine."""
+        agent = self._agent
+        if not self._force_sequential_tools_in_durable_context or agent is None or not self.in_durable_context:
+            return await handler()
+        with agent.parallel_tool_call_execution_mode('sequential'):
+            return await handler()
+
+    def _normalize_unit_config(self, config: Any) -> Any:
+        """Post-process a resolved config (e.g. Prefect/Temporal ensure non-retryable errors)."""
+        return config
+
+    def _unwrap_tool_result(self, payload: CallToolResult) -> Any:
+        """Turn a recorded tool payload back into a value/exception (control-flow-as-values seam).
+
+        `_tool_call_result_upgrade_lenient` engines (Prefect cache, DBOS/Lambda recovery) also
+        accept raw pre-value-wrapping recordings; strict journal engines assert the wire shape.
+        """
+        if self._tool_call_result_upgrade_lenient:
+            return unwrap_recorded_tool_call_result(payload)
+        return unwrap_tool_call_result(payload)
+
+    def _toolset_in_durable_context(self) -> bool:
+        """Whether durable toolset operations should use their durable boundary."""
+        return self.in_durable_context
+
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
-        """Wrap one leaf toolset in this engine's durable wrapper, or `None` to pass it through unwrapped."""
+        """Base-owned dispatch: build the right `Durable*Toolset` for a leaf toolset kind.
+
+        Consults `_wrapped_toolset_kinds` (DBOS omits `'function'`) and `_toolset_lifecycles`. The
+        operation closures call `self._durable_operation`, so the codec + control-flow-value wrapping
+        + upgrade-lenient decoding are all framework-owned; the engine only supplies the primitive.
+        """
+        if isinstance(ts, FunctionToolset):
+            if 'function' not in self._wrapped_toolset_kinds:
+                return None
+            return self._build_function_toolset(ts)
+        if isinstance(ts, DynamicToolset):
+            return self._build_dynamic_toolset(ts)
+        try:
+            from pydantic_ai.mcp import MCPToolset
+        except ImportError:  # pragma: no cover
+            return None
+        if isinstance(ts, MCPToolset):
+            return self._build_mcp_toolset(ts)
+        return None
+
+    def _build_function_toolset(self, toolset: FunctionToolset[AgentDepsT]) -> DurableFunctionToolset[AgentDepsT]:
+        base_config = self._toolset_base_config('function')
+        prefix = f'{self.name}__function_toolset__{toolset.id}'
+
+        async def call_tool_operation(
+            name: str,
+            tool_args: dict[str, Any],
+            ctx: RunContext[AgentDepsT],
+            tool: ToolsetTool[AgentDepsT],
+            config: Any,
+        ) -> Any:
+            async def fn() -> CallToolResult:
+                with self._durable_run_context_scope(ctx) as durable_ctx:
+                    return await wrap_tool_call_result(toolset.call_tool(name, tool_args, durable_ctx, tool))
+
+            unit_name = self._unit_name('function_toolset', prefix=prefix, tool_name=name, label='Call Tool')
+            payload = await self._durable_operation(
+                unit_name, fn, tp=CallToolResult, inputs=(name, tool_args, ctx, tool), config=config
+            )
+            return self._unwrap_tool_result(payload)
+
+        return DurableFunctionToolset(
+            toolset,
+            in_durable_context=self._toolset_in_durable_context,
+            call_tool_operation=call_tool_operation,
+            resolve_tool_config=self._build_resolve_tool_config(base_config),
+            lifecycle=self._toolset_lifecycles['function'],
+            durable_config=base_config,
+        )
+
+    def _build_dynamic_toolset(self, toolset: DynamicToolset[AgentDepsT]) -> DurableDynamicToolset[AgentDepsT]:
+        base_config = self._toolset_base_config('dynamic')
+        prefix = f'{self.name}__dynamic_toolset__{toolset.id}'
+
+        async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
+            if not self._journal_discovery:
+                # Prefect resolves the dynamic toolset in flow code, not a durable unit.
+                return await get_dynamic_tools(toolset, ctx)
+
+            async def fn() -> DynamicToolsResult:
+                with self._durable_run_context_scope(ctx) as durable_ctx:
+                    return await get_dynamic_tools(toolset, durable_ctx)
+
+            return await self._durable_operation(
+                self._unit_name('dynamic_toolset', prefix=prefix, suffix='.get_tools'),
+                fn,
+                tp=DynamicToolsResult,
+                inputs=(ctx,),
+                config=base_config,
+            )
+
+        async def call_tool_operation(
+            name: str,
+            tool_args: dict[str, Any],
+            ctx: RunContext[AgentDepsT],
+            tool: ToolsetTool[AgentDepsT],
+            config: Any,
+        ) -> Any:
+            async def fn() -> CallToolResult:
+                with self._durable_run_context_scope(ctx) as durable_ctx:
+                    return await wrap_tool_call_result(call_dynamic_tool(toolset, name, tool_args, durable_ctx))
+
+            unit_name = self._unit_name('dynamic_toolset', prefix=prefix, tool_name=name, label='Call Tool')
+            payload = await self._durable_operation(
+                unit_name, fn, tp=CallToolResult, inputs=(name, tool_args, ctx), config=config
+            )
+            return self._unwrap_tool_result(payload)
+
+        return DurableDynamicToolset(
+            toolset,
+            in_durable_context=self._toolset_in_durable_context,
+            get_tools_operation=get_tools_operation,
+            call_tool_operation=call_tool_operation,
+            resolve_tool_config=self._build_resolve_tool_config(base_config),
+            lifecycle=self._toolset_lifecycles['dynamic'],
+            durable_config=base_config,
+        )
+
+    def _build_mcp_toolset(self, toolset: Any) -> DurableMCPToolset[AgentDepsT]:
+        base_config = self._toolset_base_config('mcp')
+        prefix = f'{self.name}__mcp_server__{toolset.id}'
+
+        async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
+            async def fn() -> dict[str, ToolDefinition]:
+                with self._durable_run_context_scope(ctx) as durable_ctx:
+                    tools = await toolset.get_tools(durable_ctx)
+                return {n: t.tool_def for n, t in tools.items()}
+
+            return await self._durable_operation(
+                self._unit_name('mcp_server', prefix=prefix, suffix='.get_tools'),
+                fn,
+                tp=dict[str, ToolDefinition],
+                inputs=(ctx,),
+                config=base_config,
+            )
+
+        async def get_instructions_operation(ctx: RunContext[AgentDepsT]) -> Instructions:
+            async def fn() -> Instructions:
+                with self._durable_run_context_scope(ctx) as durable_ctx:
+                    return await toolset.get_instructions(durable_ctx)
+
+            return await self._durable_operation(
+                self._unit_name('mcp_server', prefix=prefix, suffix='.get_instructions'),
+                fn,
+                tp=Instructions,
+                inputs=(ctx,),
+                config=base_config,
+            )
+
+        async def call_tool_operation(
+            name: str,
+            tool_args: dict[str, Any],
+            ctx: RunContext[AgentDepsT],
+            tool: ToolsetTool[AgentDepsT],
+            config: Any,
+        ) -> Any:
+            async def fn() -> CallToolResult:
+                with self._durable_run_context_scope(ctx) as durable_ctx:
+                    return await wrap_tool_call_result(toolset.call_tool(name, tool_args, durable_ctx, tool))
+
+            unit_name = self._unit_name('mcp_server', prefix=prefix, tool_name=name, label='Call MCP Tool')
+            payload = await self._durable_operation(
+                unit_name, fn, tp=CallToolResult, inputs=(name, tool_args, ctx, tool), config=config
+            )
+            return self._unwrap_tool_result(payload)
+
+        return DurableMCPToolset(
+            toolset,
+            in_durable_context=self._toolset_in_durable_context,
+            # Prefect runs MCP discovery in flow code, not a durable unit (`_journal_discovery`).
+            get_tools_operation=get_tools_operation if self._journal_discovery else None,
+            get_instructions_operation=get_instructions_operation if self._journal_discovery else None,
+            call_tool_operation=call_tool_operation,
+            resolve_tool_config=self._build_resolve_tool_config(base_config),
+            lifecycle=self._toolset_lifecycles['mcp'],
+            durable_config=base_config,
+        )
+
+    async def wrap_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        request_context: ModelRequestContext,
+        handler: WrapModelRequestHandler,
+    ) -> ModelResponse:
+        """Base-owned: assemble a `DurableModel` from three segment executors when in-context.
+
+        Each segment runs its model call in a durable unit via `_durable_operation`; the model is
+        rebuilt worker-side from `model_id` (`_resolve_model_for_request`). Identical for every
+        callable engine -- the only per-engine input is the durable primitive + codec + naming.
+        """
+        if not self.in_durable_context:
+            return await handler(request_context)
+
+        model_id = self._model_id_for_request(ctx, request_context)
+        suffix = self._model_id_suffix(model_id)
+        model_name = request_context.model.model_name
+        config = self._model_unit_config()
+
+        async def request_segment(request: ModelRequestContext) -> ModelResponse:
+            async def fn() -> ModelResponse:
+                model = await self._resolve_model_for_request(model_id, ctx)
+                with self._durable_run_context_scope(ctx):
+                    response = await model.request(
+                        request.messages, request.model_settings, request.model_request_parameters
+                    )
+                self._stamp_response(response, request.messages)
+                return response
+
+            return await self._durable_operation(
+                self._unit_name('model.request', suffix=suffix, model_name=model_name, label='Model Request'),
+                fn,
+                tp=ModelResponse,
+                inputs=(model_id, request.messages, request.model_settings, request.model_request_parameters, ctx),
+                config=config,
+            )
+
+        async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
+            async def fn() -> StreamedActivityResult:
+                model = await self._resolve_model_for_request(model_id, ctx)
+                with self._durable_run_context_scope(ctx) as durable_ctx:
+                    async with model.request_stream(
+                        request.messages, request.model_settings, request.model_request_parameters, durable_ctx
+                    ) as streamed:
+                        events = await capture_event_stream(
+                            run_context=durable_ctx,
+                            stream=streamed,
+                            handler=self._effective_event_stream_handler(),
+                        )
+                response = streamed.get()
+                self._stamp_response(response, request.messages)
+                return StreamedActivityResult(response=response, events=events)
+
+            return await self._durable_operation(
+                self._unit_name(
+                    'model.request_stream', suffix=suffix, model_name=model_name, label='Model Request (Streaming)'
+                ),
+                fn,
+                tp=StreamedActivityResult,
+                inputs=(model_id, request.messages, request.model_settings, request.model_request_parameters, ctx),
+                config=config,
+            )
+
+        async def cancel_suspended_response_segment(response: ModelResponse) -> None:
+            async def fn() -> None:
+                model = await self._resolve_model_for_request(model_id, ctx)
+                with self._durable_run_context_scope(ctx):
+                    await model.cancel_suspended_response(response)
+                return None
+
+            await self._durable_operation(
+                self._unit_name(
+                    'model.cancel_suspended_response',
+                    suffix=suffix,
+                    model_name=model_name,
+                    label='Cancel Suspended Response',
+                ),
+                fn,
+                tp=type(None),
+                inputs=(model_id, response, ctx),
+                config=config,
+            )
+
+        request_context.model = DurableModel(
+            request_context.model,
+            request_segment=request_segment,
+            request_stream_segment=request_stream_segment,
+            cancel_suspended_response_segment=cancel_suspended_response_segment,
+        )
+        return await handler(request_context)
+
+    def _model_id_suffix(self, model_id: str | None) -> str:
+        """Suffix non-default model units while keeping the agent's default model names stable."""
+        if model_id is None or model_id == self._default_model_id:
+            return ''
+        return f'.{model_id}'
+
+    def _stamp_response(self, response: ModelResponse, messages: list[Any]) -> None:
+        """Stamp run provenance on a response before an engine persists/caches it. No-op default."""
+        return None
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Replace leaf toolsets with their durable-wrapped versions."""
@@ -266,37 +751,31 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         # worker-setup code for its durable units to be registered.
         return None
 
-    def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-        """The run context to hand to user code running inside this engine's durable unit.
-
-        User code inside a durable unit (a tool call, a `process_tool_call` hook, an
-        `event_stream_handler`) can't enqueue: the unit's recorded result is replayed on
-        recovery/cache-hit without re-running the code, so an enqueued message would be
-        dropped. This installs the shared `EnqueueGuard` so `enqueue()` raises a clear error
-        instead. Engines whose durable unit degrades to an inline call outside the container
-        (e.g. a DBOS step outside a workflow) override to pass the context through unchanged
-        there; Temporal reconstructs its context across the activity boundary and installs the
-        same guard in `deserialize_run_context`.
-        """
-        return guard_run_context_enqueue(
-            ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun
-        )
-
-    @contextmanager
-    def _durable_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT]]:
-        """Run user code inside a durable unit with `ctx` guarded and set as the ambient context.
-
-        Both the yielded context and `get_current_run_context()` are guarded, so user code can't
-        enqueue whether it reads its argument or the ambient getter (Temporal gets the same guard
-        because its activity-side context comes from `deserialize_run_context`).
-        """
-        guarded = self._durable_run_context(ctx)
-        with set_current_run_context(guarded):
-            yield guarded
-
-    @abstractmethod
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
-        """Deliver one workflow-side event inside an engine-specific durable boundary."""
+        """Base-owned: deliver one workflow-side event inside a durable unit.
+
+        Sufficient for SEQUENCE-keyed engines (Restate/Lambda/Absurd/DBOS/Temporal), where the
+        durable unit's identity is its encounter order, so content-identical events map to distinct
+        journal entries automatically. HASH-keyed engines (Prefect) key replay on input hash, so
+        two identical events collide; those engines override this to inject a per-container sequence
+        (#5477 requirement 4). That override is the one genuine behavioral difference the hash-keyed
+        family forces.
+        """
+        handler = self._effective_event_stream_handler()
+        assert handler is not None
+
+        async def fn() -> None:
+            with self._durable_run_context_scope(ctx) as durable_ctx:
+                await handler(durable_ctx, self._single_event_stream(event))
+            return None
+
+        await self._durable_operation(
+            self._unit_name('event_stream_handler', label='Handle Stream Event'),
+            fn,
+            tp=type(None),
+            inputs=(event,),
+            config=self._event_unit_config(),
+        )
 
     @staticmethod
     async def _single_event_stream(event: AgentStreamEvent) -> AsyncIterator[AgentStreamEvent]:
@@ -305,13 +784,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _bind_models(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Build the model registry on a bound copy from the agent's default model and `models=` extras.
 
-        Called from `for_agent`. A concrete default — a `Model` instance, or a string the user
-        explicitly mapped to one via `models=` (so it *is* the default) — is registered as
+        Called from `for_agent`. A concrete default -- a `Model` instance, or a string the user
+        explicitly mapped to one via `models=` (so it *is* the default) -- is registered as
         `'default'` (that key is reserved), and a `models=` string is also kept under its raw
         string so run-time resolution of the default yields the same instance.
 
         A plain string default is deliberately *not* resolved here: constructing it eagerly could
-        build the wrong provider — with authentication/configuration side effects — before a
+        build the wrong provider -- with authentication/configuration side effects -- before a
         sibling [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] gets to reinterpret it.
         Instead no `'default'` is registered; every request for the default carries the raw string
         and re-resolves through the capability chain (or `infer_model`) on the worker.
@@ -321,6 +800,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 f'An agent needs to have a `model` in order to be used with {self.engine_name}, '
                 'it cannot be set at agent run time.'
             )
+        self._default_model_id = agent.model if isinstance(agent.model, str) else None
         default_model: Model | None
         if isinstance(agent.model, str):
             # Only a `models=` mapping resolves the string to a concrete default here; any other
@@ -348,7 +828,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         default `infer_model` flow, so a durable run can accept arbitrary
         `agent.run(model='openai:gpt-5.2')` values without pre-registering each one in
         `models=`. To customize how strings are built (e.g. a custom provider), add a
-        [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability — its
+        [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability -- its
         position relative to this one doesn't matter for non-registry strings.
         """
         return self._models_by_id.get(model_id)
@@ -379,8 +859,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         `WrapperModel` layers are peeled off the request's model one at a time, matching
         registered instances as-is at each depth and preferring the shallowest match: a
-        registered behavior-changing wrapper keeps its own ID — even under further
-        unregistered wrapping, e.g. an `InstrumentedModel` around it — while an
+        registered behavior-changing wrapper keeps its own ID -- even under further
+        unregistered wrapping, e.g. an `InstrumentedModel` around it -- while an
         unregistered wrapper around the default still takes the default's fast path.
         The registered side is never unwrapped: a registered wrapper's identity holds at
         its registered depth, so its bare inner model doesn't inherit the wrapper's ID. The
@@ -390,7 +870,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         `model_id` up in the registry, then falling back to the `resolve_model_id`
         capability chain / `infer_model`. This round-trip only reproduces a model
         that the chain or `infer_model` (or the registry under that `model_id`)
-        can rebuild — a pre-built instance with a custom provider, client, or
+        can rebuild -- a pre-built instance with a custom provider, client, or
         settings that isn't registered in `models=` will not survive it faithfully.
         """
         candidate: Model | None = model
@@ -407,9 +887,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Rebuild the `Model` for a request inside the activity/step/task, deps-aware.
 
         Mirrors the workflow-side resolution in `Agent._resolve_model_selection`: run the agent's
-        full `resolve_model_id` capability chain — deps-aware user capabilities like
+        full `resolve_model_id` capability chain -- deps-aware user capabilities like
         `ResolveModelId` get first crack, and this capability's registry resolution
-        acts as the durable backstop — so a model whose provider depends on the run's
+        acts as the durable backstop -- so a model whose provider depends on the run's
         deps is rebuilt with the *actual* deps on the worker rather than deps-blind.
         """
         if model_id is None:
