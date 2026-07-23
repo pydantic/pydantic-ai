@@ -1793,7 +1793,7 @@ async def test_audio_retention_uses_profile_rate_for_each_speaker() -> None:
 
 async def test_clear_audio_discards_retained_input() -> None:
     # `clear_audio()` must drop the locally retained buffer too, or discarded audio would still attach
-    # to the next finalized user turn (with `audio_retention='input_audio'`/`'both'`).
+    # to the next finalized user turn (with `audio_retention='input_audio'`/`'all'`).
     conn = FakeRealtimeConnection([InputTranscript(text='hello', is_final=True)])
     session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')

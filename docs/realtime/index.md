@@ -394,9 +394,9 @@ only finalized history audio is wrapped in a WAV container.
 | [`audio_retention`][pydantic_ai.realtime.AudioRetention] | Retains |
 | --- | --- |
 | `'transcript_only'` (default) | Transcripts only; no audio bytes. |
-| `'input'` | The user's spoken audio. |
-| `'output'` | The model's spoken audio. |
-| `'both'` | Both sides' audio. |
+| `'input_audio'` | The user's spoken audio. |
+| `'output_audio'` | The model's spoken audio. |
+| `'all'` | Both sides' audio. |
 
 When you [hand off](#delegating-to-a-text-agent) to a standard model, retained user audio is forwarded
 to models whose profile declares audio-input support; other models receive the transcript instead.
@@ -425,7 +425,7 @@ xAI transcribe the user's audio with a dedicated model, set via `input_transcrip
 
 Gemini transcribes with `google_input_transcription` (on by default) rather than a model id: the
 Live model transcribes natively, so there is no separate transcription model to choose. If
-`google_input_transcription=False`, set `audio_retention='input_audio'` or `'both'`; otherwise session
+`google_input_transcription=False`, set `audio_retention='input_audio'` or `'all'`; otherwise session
 creation raises [`UserError`][pydantic_ai.exceptions.UserError] because user turns could not be
 recorded. If `google_output_transcription=False`, retain output audio to keep assistant audio turns
 in history at all. Transcript-less assistant audio cannot be handed off to a text agent or seeded

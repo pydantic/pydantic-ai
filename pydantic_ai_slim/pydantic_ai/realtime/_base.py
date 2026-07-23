@@ -430,7 +430,7 @@ class InputSpeechEndEvent:
     item_id: str | None = None
     """Provider id of the user input item this speech segment belongs to, when reported.
 
-    Used to attach retained input audio (`audio_retention='input_audio'`/`'both'`) to the right user turn
+    Used to attach retained input audio (`audio_retention='input_audio'`/`'all'`) to the right user turn
     when turns overlap, since transcripts for different items can finalize out of order.
     """
 

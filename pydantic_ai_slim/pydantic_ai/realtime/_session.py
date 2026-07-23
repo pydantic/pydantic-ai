@@ -359,7 +359,7 @@ class RealtimeSession:
             raise UserError(
                 "This realtime session can't capture the user's turns: input transcription is disabled "
                 "and `audio_retention` doesn't retain input audio. Enable transcription in the model settings, "
-                "or pass `audio_retention='input_audio'` or `'both'` to keep the "
+                "or pass `audio_retention='input_audio'` or `'all'` to keep the "
                 'raw audio instead.'
             )
         self.usage = usage if usage is not None else RunUsage()
@@ -406,7 +406,7 @@ class RealtimeSession:
         self._user_item_order: deque[str] = deque()
         self._finalized_users_by_id: dict[str, SpeechPart] = {}
         self._finalized_user_item_ids: set[str] = set()
-        # Retained input audio (`audio_retention='input_audio'`/`'both'`). `_input_audio` is the rolling buffer
+        # Retained input audio (`audio_retention='input_audio'`/`'all'`). `_input_audio` is the rolling buffer
         # of audio sent since the last turn boundary; on providers that report a per-item speech-stopped
         # boundary, each segment is cut into `_input_audio_by_id` keyed by its input item id, so overlapping
         # turns whose transcripts finalize out of order still attach their own audio (not a later turn's).
@@ -670,7 +670,7 @@ class RealtimeSession:
             self._profile.get('supports_manual_turn_control', False), 'clear_audio', 'manual turn-taking'
         )
         await self._connection.send(ClearAudio())
-        # Drop the locally retained copy too (with `audio_retention='input_audio'`/`'both'`), or the discarded
+        # Drop the locally retained copy too (with `audio_retention='input_audio'`/`'all'`), or the discarded
         # audio would still be attached to the next finalized user turn.
         self._input_audio.clear()
 
@@ -1195,7 +1195,7 @@ class RealtimeSession:
     def _finalize_audio_only_user(self) -> list[RealtimeEvent]:
         """Finalize a user turn from retained input audio when no transcript will arrive.
 
-        With input transcription disabled but input audio retained (`audio_retention='input_audio'`/`'both'`),
+        With input transcription disabled but input audio retained (`audio_retention='input_audio'`/`'all'`),
         the user's turn produces no [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript], so the
         transcript-driven `_finalize_user` never runs. This is called at each user-turn boundary (speech
         stopped / commit / turn complete) to finalize an audio-only user
