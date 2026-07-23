@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from pydantic_ai._ssrf import (
@@ -49,7 +49,7 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         client.__aenter__.return_value = client
         return client
 
-    monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', factory_wrapper)
+    monkeypatch.setattr('pydantic_ai._ssrf._create_client', factory_wrapper)
     return mock
 
 
@@ -805,9 +805,7 @@ class TestSafeDownload:
         """`safe_download` closes the HTTP client it creates, even on success.
 
         Without proper cleanup, each call to `safe_download` leaks an unclosed
-        `httpx.AsyncClient`. After switching from cached_async_http_client (which
-        reused a global) to `create_async_http_client` (new client per call),
-        the client must be explicitly closed.
+        `httpx.AsyncClient` (one client per call, no shared cache).
 
         Regression test for PR #4421 auto-review feedback.
         https://github.com/pydantic/pydantic-ai/pull/4421
@@ -827,7 +825,7 @@ class TestSafeDownload:
             created_clients.append(client)
             return client
 
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', tracking_create)
+        monkeypatch.setattr('pydantic_ai._ssrf._create_client', tracking_create)
 
         response = await safe_download('https://example.com/file.txt')
         assert response.content == b'test content'
@@ -927,6 +925,87 @@ class TestSafeDownload:
 
         with pytest.raises(ValueError, match='not in the allowed domains'):
             await safe_download('https://example.com/page', allowed_domains=['example.com'])
+
+    async def test_http_status_error_catchable_as_httpx_and_httpx2(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """`safe_download` translates `httpx2.HTTPStatusError` raised by `raise_for_status()` into a
+        compat class catchable as both `httpx.HTTPStatusError` and `httpx2.HTTPStatusError`, emitting a
+        deprecation warning for the legacy `httpx` catch. Drops the `httpx` parent in v2.
+        """
+        import httpx as httpx_legacy
+
+        from pydantic_ai._warnings import PydanticAIDeprecationWarning
+
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        request = httpx.Request('GET', 'https://example.com/file.txt')
+        response = httpx.Response(404, request=request)
+
+        mock_client = AsyncMock()
+        mock_client.get.return_value = response
+        mock_ssrf_client.return_value = mock_client
+
+        with pytest.warns(PydanticAIDeprecationWarning, match='catch the `httpx2` equivalents'):
+            with pytest.raises(httpx_legacy.HTTPStatusError) as exc_info:
+                await safe_download('https://example.com/file.txt')
+        assert isinstance(exc_info.value, httpx.HTTPStatusError)
+        assert exc_info.value.response is response
+
+    async def test_request_error_catchable_as_httpx_and_httpx2(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """`safe_download` translates `httpx2.RequestError` raised by `client.get()` (e.g. connect
+        failures) into a compat class catchable as both `httpx.RequestError` and `httpx2.RequestError`,
+        emitting a deprecation warning for the legacy `httpx` catch.
+        """
+        import httpx as httpx_legacy
+
+        from pydantic_ai._warnings import PydanticAIDeprecationWarning
+
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        request = httpx.Request('GET', 'https://example.com/file.txt')
+        underlying = httpx.ConnectError('connection refused', request=request)
+
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = underlying
+        mock_ssrf_client.return_value = mock_client
+
+        with pytest.warns(PydanticAIDeprecationWarning, match='catch the `httpx2` equivalents'):
+            with pytest.raises(httpx_legacy.RequestError) as exc_info:
+                await safe_download('https://example.com/file.txt')
+        assert isinstance(exc_info.value, httpx.RequestError)
+        assert exc_info.value.__cause__ is underlying
+
+    async def test_legacy_httpx_warning_suppressed_for_internal_callers(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """`warn_legacy_httpx_catch=False` lets internal callers that handle the error themselves
+        (e.g. `web_fetch`, which converts it to `ModelRetry`) skip the deprecation warning on both
+        error-translation sites (`RequestError` from `client.get()` and `HTTPStatusError` from
+        `raise_for_status()`).
+        """
+        import warnings
+
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        request = httpx.Request('GET', 'https://example.com/file.txt')
+
+        mock_client = AsyncMock()
+        mock_ssrf_client.return_value = mock_client
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+
+            mock_client.get.side_effect = httpx.ConnectError('connection refused', request=request)
+            with pytest.raises(httpx.RequestError):
+                await safe_download('https://example.com/file.txt', warn_legacy_httpx_catch=False)
+
+            mock_client.get.side_effect = None
+            mock_client.get.return_value = httpx.Response(404, request=request)
+            with pytest.raises(httpx.HTTPStatusError):
+                await safe_download('https://example.com/file.txt', warn_legacy_httpx_catch=False)
 
 
 class TestDnsRebindingPrevention:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from pydantic_ai.common_tools.web_fetch import (
@@ -297,6 +297,7 @@ class TestWebFetchLocalTool:
             headers={'Accept': 'text/markdown, text/html;q=0.9, */*;q=0.8'},
             allowed_domains=None,
             blocked_domains=None,
+            warn_legacy_httpx_catch=False,
         )
 
     async def test_safe_download_error_raises_model_retry(self):
@@ -314,8 +315,6 @@ class TestWebFetchLocalTool:
 
     async def test_http_error_raises_model_retry(self):
         """HTTP errors are converted to ModelRetry."""
-        import httpx
-
         from pydantic_ai.exceptions import ModelRetry
 
         request = httpx.Request('GET', 'https://example.com')

@@ -45,6 +45,10 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
 
+# Side-effect import: monkey-patches vcr.patch.CassettePatcherBuilder to also
+# intercept httpcore2 requests (used by `_ssrf.safe_download` via httpx2).
+# See module docstring; tracked upstream at https://github.com/kevin1024/vcrpy/issues/990.
+from . import _vcr_httpcore2_compat  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from ._inline_snapshot import Builder, Custom, customize
 
 T = TypeVar('T')

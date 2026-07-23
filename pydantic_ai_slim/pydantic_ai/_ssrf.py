@@ -9,15 +9,53 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import warnings
 from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 
-import httpx
+import httpx as _httpx_legacy
+import httpx2 as httpx
 
 from ._utils import run_in_executor
-from .models import create_async_http_client
+from ._warnings import PydanticAIDeprecationWarning
+from .models import get_user_agent
 
 __all__ = ['safe_download']
+
+
+# `safe_download` raises these on HTTP errors. They subclass both `httpx2.*` (raised by the
+# underlying client) and the legacy `httpx.*` so existing `except httpx.HTTPStatusError` blocks
+# around ImageUrl/DocumentUrl downloads keep matching; the httpx base is dropped in v2. Attributes
+# are set directly because `httpx` and `httpx2` have incompatible base `__init__` signatures, and
+# the pyright suppressions acknowledge that these only ever hold `httpx2` objects.
+
+
+class _SafeDownloadHTTPStatusError(  # pyright: ignore[reportIncompatibleMethodOverride, reportIncompatibleVariableOverride]
+    httpx.HTTPStatusError, _httpx_legacy.HTTPStatusError
+):
+    def __init__(self, message: str, *, request: httpx.Request, response: httpx.Response) -> None:
+        Exception.__init__(self, message)
+        self.request = request
+        self.response = response
+
+
+class _SafeDownloadRequestError(  # pyright: ignore[reportIncompatibleMethodOverride, reportIncompatibleVariableOverride]
+    httpx.RequestError, _httpx_legacy.RequestError
+):
+    def __init__(self, message: str, *, request: httpx.Request) -> None:
+        Exception.__init__(self, message)
+        self._request = request
+
+
+def _warn_legacy_httpx_catch() -> None:
+    warnings.warn(
+        'Pydantic AI now downloads URLs with `httpx2`. These errors remain catchable as '
+        '`httpx.HTTPStatusError` / `httpx.RequestError` for backward compatibility, but that will be '
+        'removed in Pydantic AI v2 — catch the `httpx2` equivalents instead.',
+        PydanticAIDeprecationWarning,
+        stacklevel=2,
+    )
+
 
 # Private IP ranges that should be blocked by default (i.e. unless allow_local=True).
 # IPv6 transition forms (6to4, NAT64, IPv4-mapped/-compatible, ISATAP) are not listed here;
@@ -115,6 +153,17 @@ _CLOUD_METADATA_IPV6: frozenset[ipaddress.IPv6Address] = frozenset(
 )
 
 _MAX_REDIRECTS = 10
+
+
+def _create_client(*, timeout: int) -> httpx.AsyncClient:
+    # Inlined construction; mirrors `pydantic_ai.models.create_async_http_client`. Reverts to that
+    # helper once provider SDKs accept `httpx2` clients (tracked at the call site in safe_download).
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(timeout=timeout, connect=5),
+        headers={'User-Agent': get_user_agent()},
+    )
+
+
 _DEFAULT_TIMEOUT = 30  # seconds
 _SENSITIVE_HEADERS = frozenset(('authorization', 'cookie', 'proxy-authorization'))
 
@@ -439,6 +488,7 @@ async def safe_download(
     headers: dict[str, str] | None = None,
     allowed_domains: list[str] | None = None,
     blocked_domains: list[str] | None = None,
+    warn_legacy_httpx_catch: bool = True,
 ) -> httpx.Response:
     """Download content from a URL with SSRF protection.
 
@@ -464,21 +514,27 @@ async def safe_download(
                 Checked on every hop including redirects.
         blocked_domains: If set, these hostnames are rejected (exact match).
                 Checked on every hop including redirects.
+        warn_legacy_httpx_catch: Whether to emit a `PydanticAIDeprecationWarning` when raising an
+                error catchable as legacy `httpx.*`. Internal callers that catch the error themselves
+                (rather than propagating it to user code) pass `False`.
 
     Returns:
-        The httpx.Response object.
+        The httpx2.Response object.
 
     Raises:
         ValueError: If the URL fails SSRF validation, domain validation,
                 or too many redirects occur.
-        httpx.HTTPStatusError: If the response has an error status code.
+        httpx2.HTTPStatusError: If the response has an error status code. Also catchable as
+                `httpx.HTTPStatusError` (the compat class subclasses both), but that base is
+                deprecated and dropped in Pydantic AI v2; migrate `except` blocks to `httpx2`.
     """
     current_url = url
     redirects_followed = 0
     original_hostname = urlparse(url).hostname
     effective_headers: dict[str, str] = dict(headers) if headers else {}
 
-    async with create_async_http_client(timeout=timeout) as client:
+    # NOTE: replace with `create_async_http_client(timeout=timeout)` once provider SDKs accept httpx2.
+    async with _create_client(timeout=timeout) as client:
         while True:
             # Validate and resolve the current URL
             resolved = await validate_and_resolve_url(current_url, allow_local)
@@ -499,12 +555,17 @@ async def safe_download(
             request_headers['Host'] = resolved.hostname
 
             # Make request with Host header set to original hostname
-            response = await client.get(
-                request_url,
-                headers=request_headers,
-                extensions=extensions,
-                follow_redirects=False,
-            )
+            try:
+                response = await client.get(
+                    request_url,
+                    headers=request_headers,
+                    extensions=extensions,
+                    follow_redirects=False,
+                )
+            except httpx.RequestError as e:
+                if warn_legacy_httpx_catch:
+                    _warn_legacy_httpx_catch()
+                raise _SafeDownloadRequestError(str(e), request=e.request) from e
 
             # Check if we need to follow a redirect
             if response.is_redirect:
@@ -529,5 +590,10 @@ async def safe_download(
                 continue
 
             # Not a redirect, we're done
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                if warn_legacy_httpx_catch:
+                    _warn_legacy_httpx_catch()
+                raise _SafeDownloadHTTPStatusError(str(e), request=e.request, response=e.response) from e
             return response
