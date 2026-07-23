@@ -171,7 +171,7 @@ def test_google_strict_resolution_via_transformer():
 # =============================================================================
 
 
-@pytest.mark.vcr(additional_matchers=['function_calling_mode'])
+@pytest.mark.vcr(additional_matchers=['function_calling_mode', 'function_declaration_count'])
 async def test_google_default_tools_use_validated_mode(
     allow_model_requests: None,
     google_model: GoogleModelFactory,

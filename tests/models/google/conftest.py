@@ -37,18 +37,34 @@ def _match_function_calling_mode(request1: Any, request2: Any) -> None:
     assert _function_calling_mode(request1) == _function_calling_mode(request2)
 
 
+def _function_declaration_count(request: Any) -> int:
+    """Count the function declarations across all tools in a Google request body."""
+    body: Any = request.body
+    data: dict[str, Any] = json.loads(body) if body else {}
+    tools: Any = data.get('tools') or []
+    return sum(len(tool.get('functionDeclarations') or []) for tool in tools)
+
+
+def _match_function_declaration_count(request1: Any, request2: Any) -> None:
+    assert _function_declaration_count(request1) == _function_declaration_count(request2)
+
+
 def pytest_recording_configure(config: pytest.Config, vcr: VCR) -> None:
-    """Register the `function_calling_mode` VCR request matcher.
+    """Register custom VCR request matchers that make body assertions drift-safe.
 
     VCR's default matchers ignore the request body, so a test that asserts on the recorded body
     (e.g. via `get_first_post_body`) can't detect the live code drifting away from what it asserts —
-    the stale cassette replays regardless. Opt a test in with
-    `@pytest.mark.vcr(additional_matchers=['function_calling_mode'])` to make the recorded
-    `functionCallingConfig.mode` part of the cassette match: on replay, a request whose mode no
-    longer equals the recorded value won't match and the test fails, catching the regression. This
-    is the reusable form of "any field a test explicitly asserts should also gate cassette matching".
+    the stale cassette replays regardless. Opt a test in with e.g.
+    `@pytest.mark.vcr(additional_matchers=['function_calling_mode'])` to make the recorded field part
+    of the cassette match: on replay, a request whose value no longer equals the recorded one won't
+    match and the test fails, catching the regression. This is the reusable form of "any field a test
+    explicitly asserts should also gate cassette matching".
+
+    - `function_calling_mode`: gates on `toolConfig.functionCallingConfig.mode`.
+    - `function_declaration_count`: gates on the number of function declarations sent.
     """
     vcr.register_matcher('function_calling_mode', _match_function_calling_mode)  # pyright: ignore[reportUnknownMemberType]
+    vcr.register_matcher('function_declaration_count', _match_function_declaration_count)  # pyright: ignore[reportUnknownMemberType]
 
 
 @pytest.fixture
