@@ -929,7 +929,7 @@ async def model_logic(  # noqa: C901
             parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'flight_search':
-        args = {'flight_number': m.content.flight_number}  # type: ignore
+        args = {'flight_number': m.content.flight_number}  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
         return ModelResponse(
             parts=[ToolCallPart(tool_name='final_result_FlightDetails', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )

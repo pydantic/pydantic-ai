@@ -135,11 +135,11 @@ else:
         from pydantic_ai.providers.together import TogetherProvider
         from pydantic_ai.providers.vercel import VercelProvider
     except ImportError:  # pragma: lax no cover
-        AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None  # type: ignore
-        FireworksProvider = GitHubProvider = HerokuProvider = None  # type: ignore
-        MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None  # type: ignore
-        OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None  # type: ignore
-        TogetherProvider = VercelProvider = None  # type: ignore
+        AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None
+        FireworksProvider = GitHubProvider = HerokuProvider = None
+        MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
+        OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None
+        TogetherProvider = VercelProvider = None
 
     try:
         from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -1563,7 +1563,7 @@ def test_output_type_tool_output_union():
         c: bool
 
     m = TestModel()
-    marker: ToolOutput[Foo | Bar] = ToolOutput(Foo | Bar, strict=False)  # type: ignore
+    marker: ToolOutput[Foo | Bar] = ToolOutput(Foo | Bar, strict=False)  # pyright: ignore[reportArgumentType, reportAssignmentType]
     agent = Agent(m, output_type=marker)
     result = agent.run_sync('Hello')
     assert result.output == snapshot(Foo(a=0, b='a'))
@@ -1949,7 +1949,7 @@ def test_output_type_text_output_invalid():
         return str(int)  # pragma: no cover
 
     with pytest.raises(UserError, match='TextOutput must take a function taking a single `str` argument'):
-        output_type: TextOutput[str] = TextOutput(int_func)  # type: ignore
+        output_type: TextOutput[str] = TextOutput(int_func)  # pyright: ignore[reportArgumentType]
         Agent('test', output_type=output_type)
 
 

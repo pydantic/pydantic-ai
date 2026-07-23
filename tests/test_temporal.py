@@ -6218,7 +6218,7 @@ def test_durability_unwrapped_toolset_without_id_is_allowed():
     assert TemporalDurability.from_agent(agent) is not None
 
 
-# --- temporalize returning non-TemporalWrapperToolset (line 294->297 branch) ---
+# --- temporalize returning non-TemporalWrapperToolset (passthrough / unwrapped leaf) ---
 
 
 def test_durability_non_temporal_wrapper_toolset_not_in_registry():

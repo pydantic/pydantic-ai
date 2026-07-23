@@ -1570,13 +1570,13 @@ async def test_async_response_handler() -> None:
 def test_fallback_on_invalid_type() -> None:
     """Test that invalid fallback_on types raise AssertionError via assert_never."""
     with pytest.raises(AssertionError, match='Expected code to be unreachable'):
-        FallbackModel(success_model, failure_model, fallback_on='invalid')  # type: ignore
+        FallbackModel(success_model, failure_model, fallback_on='invalid')  # pyright: ignore[reportArgumentType]
 
 
 def test_fallback_on_invalid_list_item() -> None:
     """Test that invalid items in fallback_on list raise AssertionError via assert_never."""
     with pytest.raises(AssertionError, match='Expected code to be unreachable'):
-        FallbackModel(success_model, failure_model, fallback_on=['invalid'])  # type: ignore
+        FallbackModel(success_model, failure_model, fallback_on=['invalid'])  # pyright: ignore[reportArgumentType]
 
 
 def test_response_handler_only_exception_propagates() -> None:

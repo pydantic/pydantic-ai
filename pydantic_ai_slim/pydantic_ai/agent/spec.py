@@ -205,7 +205,7 @@ class AgentSpec(BaseModel):
             tool_timeout: float | None = None
             metadata: dict[str, Any] | None = None
             if capability_schema_types:  # pragma: no branch
-                capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore  # noqa: UP007
+                capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore[reportUnknownVariableType, reportInvalidTypeArguments, reportInvalidTypeForm]  # noqa: UP007
 
         json_schema = _AgentSpecSchema.model_json_schema()
         json_schema['title'] = 'AgentSpec'

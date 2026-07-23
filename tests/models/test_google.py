@@ -3683,7 +3683,7 @@ async def test_google_image_generation_tool_unsupported_format_raises_error(
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
     # 'gif' is not supported by Google
-    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='gif')])  # type: ignore
+    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='gif')])  # pyright: ignore[reportArgumentType]
 
     with pytest.raises(UserError, match='Google image generation only supports `output_format` values'):
         model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
@@ -4946,7 +4946,7 @@ async def test_cache_point_filtering():
     # Create a minimal GoogleModel instance to test _map_user_prompt
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
 
-    # Test that CachePoint in a list is handled (triggers line 606)
+    # CachePoint mixed into a content list is filtered out by _map_user_prompt
     content = await model._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
 
     # CachePoint should be filtered out, only text content should remain

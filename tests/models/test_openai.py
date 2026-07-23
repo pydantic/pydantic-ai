@@ -170,7 +170,7 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.usage == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
-    mock_client.index = 0  # type: ignore
+    mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
@@ -4816,7 +4816,7 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
     )
-    c.created = None  # type: ignore
+    c.created = None  # pyright: ignore[reportAttributeAccessIssue]
 
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -4831,7 +4831,7 @@ async def test_process_response_no_finish_reason(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
     )
-    c.choices[0].finish_reason = None  # type: ignore
+    c.choices[0].finish_reason = None  # pyright: ignore[reportAttributeAccessIssue]
 
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -4853,7 +4853,7 @@ async def test_openai_unified_service_tier(allow_model_requests: None):
 async def test_service_tier_non_standard_value(allow_model_requests: None):
     """OpenAI-compatible providers can return service_tier values outside the OpenAI Literal."""
     c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
-    c.service_tier = 'standard'  # type: ignore  # simulate provider returning non-OpenAI value
+    c.service_tier = 'standard'  # pyright: ignore[reportAttributeAccessIssue]  # simulate provider returning non-OpenAI value
 
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))

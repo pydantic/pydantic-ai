@@ -595,7 +595,7 @@ class GoogleModel(Model[Client]):
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         try:
-            yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
+            yield await self._process_streamed_response(response, model_request_parameters)  # pyright: ignore[reportArgumentType]
         finally:
             aclose = getattr(response, 'aclose', None)
             if aclose is not None:  # pragma: no branch
@@ -782,7 +782,7 @@ class GoogleModel(Model[Client]):
         )
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
-            return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
+            return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 raise ModelHTTPError(
