@@ -1,0 +1,24 @@
+tests/conftest.py
+  s_0a9d202eacc543::t_1ffb9d19f7a460 209
+  s_0a9d202eacc543::t_e9fbcc885de9c0 4,48,206-208,210-218
+  s_0a9d202eacc543::t_b81b50541f8173 219-220
+tests/test_usage_limits.py
+  s_0a9d202eacc543::t_e65d0a7a6e145a 442
+  s_0a9d202eacc543::t_e9fbcc885de9c0 438
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "5a07d1acb6fd4d5b533d88a64d2e09ac1605a56c",
+  "prompts": {},
+  "sessions": {
+    "s_0a9d202eacc543": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8ff6-c8b1-7713-a34c-367492f775e0",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
