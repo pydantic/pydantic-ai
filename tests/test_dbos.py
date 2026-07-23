@@ -38,6 +38,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import MCP, Capability, DynamicCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -2380,7 +2381,7 @@ async def test_dbos_mcp_step_rejects_enqueue_in_workflow(dbos: DBOS, monkeypatch
     async def run_workflow() -> None:
         await durable.call_tool('hook', {}, run_context, tool)
 
-    with pytest.raises(UserError, match='recovery replays the recorded step output'):
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
         await run_workflow()
 
     # Outside a workflow the step degrades to a plain call and enqueueing keeps working.
@@ -2413,7 +2414,7 @@ async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None
     async def run_workflow() -> None:
         await agent.run('run')
 
-    with pytest.raises(UserError, match='recovery replays the recorded step output'):
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
         await run_workflow()
 
     await agent.run('run')
@@ -2969,6 +2970,44 @@ async def test_dbos_durability_event_stream_handler(dbos: DBOS) -> None:
     steps = await dbos.list_workflow_steps_async(wfid)
     step_names = [step['function_name'] for step in steps]
     assert 'durability_handler__event_stream_handler' in step_names
+
+
+async def test_dbos_durability_event_stream_handler_rejects_enqueue(dbos: DBOS) -> None:
+    """An `event_stream_handler` that enqueues inside a durable step raises, like a tool would.
+
+    The handler runs inside a durable step for both model events (the model-request step) and
+    graph events (the `__event_stream_handler` step); either step's recorded result is replayed
+    without re-running it, so an enqueue would be dropped. The handler catches the error on every
+    event so the run still completes, exercising both delivery paths.
+    """
+    enqueue_errors: list[str] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            with pytest.raises(UserError, match='enqueued messages would be dropped') as exc_info:
+                ctx.enqueue('later')
+            # The ambient current context is guarded too, so reading it instead of the argument
+            # doesn't bypass the guard.
+            ambient = get_current_run_context()
+            assert ambient is not None
+            with pytest.raises(UserError, match='enqueued messages would be dropped'):
+                ambient.enqueue('later')
+            enqueue_errors.append(str(exc_info.value))
+
+    async def handled_tool() -> str:
+        return 'handled'
+
+    durability = DBOSDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='durability_handler_enqueue', tools=[handled_tool], capabilities=[durability])
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        await run_durable_agent()
+    # Guarded on both the model-event (model-request step) and graph-event (dispatch step) paths.
+    assert len(enqueue_errors) > 1
 
 
 async def test_dbos_durability_event_stream_handler_outside_workflow(dbos: DBOS) -> None:
