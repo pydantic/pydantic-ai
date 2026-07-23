@@ -148,7 +148,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 },
             ]
         ),
-        marks=(pytest.mark.skipif(not anthropic_imports, reason='anthropic not installed'),),
+        marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
     ),
     Case(
         'anthropic-no-thinking',
@@ -172,7 +172,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 },
             ]
         ),
-        marks=(pytest.mark.skipif(not anthropic_imports, reason='anthropic not installed'),),
+        marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
     ),
     Case(
         'xai-foreign',
@@ -202,7 +202,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 {'content': [{'text': 'The 10-year Treasury has more interest-rate risk.'}], 'role': 'ROLE_ASSISTANT'},
             ]
         ),
-        marks=(pytest.mark.skipif(not xai_imports, reason='xai not installed'),),
+        marks=(pytest.mark.skipif(not xai_imports(), reason='xai not installed'),),
     ),
     Case(
         'xai-no-thinking',
@@ -220,7 +220,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 {'content': [{'text': 'The 10-year Treasury has more interest-rate risk.'}], 'role': 'ROLE_ASSISTANT'},
             ]
         ),
-        marks=(pytest.mark.skipif(not xai_imports, reason='xai not installed'),),
+        marks=(pytest.mark.skipif(not xai_imports(), reason='xai not installed'),),
     ),
     Case(
         'bedrock-foreign',
@@ -250,7 +250,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 },
             ]
         ),
-        marks=(pytest.mark.skipif(not bedrock_imports, reason='bedrock not installed'),),
+        marks=(pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed'),),
     ),
     Case(
         'bedrock-no-thinking',
@@ -268,7 +268,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 {'role': 'assistant', 'content': [{'text': 'The 10-year Treasury has more interest-rate risk.'}]},
             ]
         ),
-        marks=(pytest.mark.skipif(not bedrock_imports, reason='bedrock not installed'),),
+        marks=(pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed'),),
     ),
     Case(
         'anthropic-signed-foreign',
@@ -302,7 +302,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 },
             ]
         ),
-        marks=(pytest.mark.skipif(not anthropic_imports, reason='anthropic not installed'),),
+        marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
     ),
     Case(
         'xai-signed-foreign',
@@ -332,7 +332,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 {'content': [{'text': 'The 10-year Treasury has more interest-rate risk.'}], 'role': 'ROLE_ASSISTANT'},
             ]
         ),
-        marks=(pytest.mark.skipif(not xai_imports, reason='xai not installed'),),
+        marks=(pytest.mark.skipif(not xai_imports(), reason='xai not installed'),),
     ),
     Case(
         'bedrock-signed-foreign',
@@ -362,7 +362,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 },
             ]
         ),
-        marks=(pytest.mark.skipif(not bedrock_imports, reason='bedrock not installed'),),
+        marks=(pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed'),),
     ),
 ]
 
