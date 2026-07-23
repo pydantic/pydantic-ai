@@ -739,6 +739,24 @@ def test_file_part_serialization_roundtrip():
     assert deserialized == messages
 
 
+def test_native_tool_return_serialization_roundtrip():
+    # Verify that NativeToolReturnPart and NativeToolSearchReturnPart can be serialized
+    # as part of a ModelRequest.
+    from pydantic_ai.messages import NativeToolReturnPart, NativeToolSearchReturnPart
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                NativeToolReturnPart(tool_name='my_tool', content='tool result', tool_call_id='123'),
+                NativeToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='456'),
+            ]
+        )
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+    assert deserialized == messages
+
+
 def test_model_messages_type_adapter_preserves_run_id():
     messages: list[ModelMessage] = [
         ModelRequest(
