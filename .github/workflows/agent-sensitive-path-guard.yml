@@ -1,0 +1,128 @@
+name: Agent Sensitive Path Guard
+
+# CI-boundary backstop for the sensitive-path write guard that the coding agents
+# (pydanty, @claude) also enforce inside their own runtime. The in-agent guard is
+# necessary but not sufficient: a prompt-injected agent can bypass its own tool
+# layer by writing files through a raw shell instead. This check runs here, in the
+# base repo's Actions, entirely outside the agents' sandboxes, so an injected agent
+# can produce the diff but cannot clear the check. Make it a required status check
+# on `main` so it actually blocks merge; the human merge gate is the final backstop.
+#
+# It fails a PR only when an *agent-attributed* change touches a protected path:
+# - CI/action files (.github/workflows, .github/actions, action.yml) — execute in
+#   Actions with repository secrets.
+# - Agent-instruction files (CLAUDE.md, AGENTS.md, .claude/, .agents/, .cursor/,
+#   .codex/) — loaded verbatim into downstream reviewer prompts, so writing one is
+#   prompt-injection into the reviewer.
+# - Dependency manifests / lockfiles (pyproject.toml, uv.lock, requirements*.txt,
+#   ...) — the supply-chain-poisoning vector.
+# Human PRs and other bots (e.g. dependabot editing deps) are unaffected — only
+# changes attributed to the coding agents below are inspected. The denylist mirrors
+# `guard_writable_path` in the pydanty agent's `agents/shared/files.py`.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  guard:
+    name: Agent sensitive path guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Fail on agent-authored sensitive-path changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          # Immutable event-time SHAs. Pinning to these (not the live PR head)
+          # closes the TOCTOU window where a force-push after the event could
+          # swap in a clean diff; `synchronize` re-fires this check on every push.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Mirrors SENSITIVE_WRITE_{PREFIXES,BASENAMES,GLOBS} in the pydanty agent.
+          is_sensitive() {
+            local p="${1,,}"
+            local base="${p##*/}"
+            case "$p" in
+              .github/workflows/*|.github/actions/*|.claude/*|.agents/*|.cursor/*|.codex/*)
+                return 0 ;;
+            esac
+            local names="action.yml action.yaml claude.md claude.local.md agents.md dependabot.yml dependabot.yaml pyproject.toml uv.lock poetry.lock pipfile pipfile.lock setup.py setup.cfg .pre-commit-config.yaml .pre-commit-config.yml"
+            case " $names " in
+              *" $base "*) return 0 ;;
+            esac
+            case "$base" in
+              requirements*.txt) return 0 ;;
+            esac
+            return 1
+          }
+
+          violations=""
+          record() {
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              if is_sensitive "$f"; then
+                violations+="$f"$'\n'
+              fi
+            done
+          }
+
+          # Extract destination paths from a raw diff's `diff --git a/… b/…` headers.
+          # The diff media type is not capped at 300 files (the compare JSON is) and
+          # emits a header for every changed path including renames, so nothing hides.
+          diff_paths() {
+            grep '^diff --git ' | sed -E 's#^diff --git a/.* b/##'
+          }
+
+          # 1. pydanty PRs: the author is set by the GitHub App token and cannot be
+          #    forged by an injected agent, so the entire diff is agent-produced.
+          #    This is the forgery-proof layer — it holds even if the agent rewrote
+          #    its own commit metadata to dodge the per-commit check below.
+          if [ "$PR_AUTHOR" = "pydanty[bot]" ]; then
+            gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA" \
+              -H 'Accept: application/vnd.github.v3.diff' | diff_paths | record
+          fi
+
+          # 2. Any PR: commits attributed to a coding agent. This is what catches
+          #    @claude, which does not open its own PRs — it pushes commits into an
+          #    existing (often human-authored) PR branch. Matched on the agent's
+          #    author/committer identity. NOTE: commit metadata is agent-controllable,
+          #    so an injected @claude could in principle rewrite its committer to
+          #    evade this; the durable fix is to route @claude's writes through a
+          #    validated, agent-independent push step (tracked separately).
+          # Passed to jq via --arg (not interpolated into the program) so the regex
+          # backslashes survive as a literal string instead of being parsed as jq
+          # string escapes. `gh api --jq` can't take --arg, so pipe to real jq; the
+          # --paginate stream of arrays is fine for a leading `.[]`.
+          agent_id='pydanty@pydantic\.dev|pydanty\[bot\]@users\.noreply|noreply@anthropic\.com|claude\[bot\]@users\.noreply|^pydanty$|^claude(\[bot\])?$'
+          mapfile -t agent_shas < <(
+            gh api "repos/$REPO/pulls/$PR/commits" --paginate | jq -r --arg re "$agent_id" '
+              .[]
+              | select(([.commit.author.email, .commit.committer.email, .commit.author.name, .commit.committer.name] | join("\n")) | test($re; "i"))
+              | .sha'
+          )
+          for sha in "${agent_shas[@]}"; do
+            [ -z "$sha" ] && continue
+            gh api "repos/$REPO/commits/$sha" \
+              -H 'Accept: application/vnd.github.v3.diff' | diff_paths | record
+          done
+
+          if [ -n "$violations" ]; then
+            uniq_violations=$(printf '%s' "$violations" | sort -u)
+            echo "::error::A coding agent's change touches protected path(s). CI/workflow, agent-instruction, and dependency files are off-limits to the agents; a genuine change to one is a maintainer's to make by hand."
+            printf '%s\n' "$uniq_violations" | while IFS= read -r f; do
+              [ -n "$f" ] && echo "  - $f"
+            done
+            exit 1
+          fi
+
+          echo "No agent-authored changes to protected paths."
