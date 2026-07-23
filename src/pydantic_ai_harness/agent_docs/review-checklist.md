@@ -19,6 +19,10 @@ Use this before opening a PR or reviewing a capability change.
   runtime behavior.
 - Capability ordering is justified when present.
 - Dependency changes were made through `uv` and have a clear reason.
+- A capability that adds heavy CI machinery (a Docker image, an external service
+  with a secret, a large system binary, live network calls) scopes its expensive
+  job to its own paths and keeps the aggregate check green when that job is
+  skipped. See `capability-authoring.md` "CI And Dependency Footprint".
 
 ## Stale Or Pre-Merge PRs
 
@@ -34,6 +38,11 @@ well before now, or that was built against unreleased Pydantic AI changes.
   time.
 - Behavior the PR worked around because a primitive was missing is reconsidered
   if that primitive now exists in core.
+- A flood of pyright or import errors right after merging main or rebasing is
+  usually uninstalled extras, not a real regression. Re-sync (`make install`, or
+  `uv sync --frozen --all-extras --group lint`) before treating the merge as
+  broken; errors that name third-party types (`modal`, `openai`, ...) as unknown
+  in files the PR did not touch are the tell.
 
 ## Tests
 

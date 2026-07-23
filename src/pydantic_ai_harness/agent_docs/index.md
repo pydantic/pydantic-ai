@@ -14,6 +14,8 @@ For any code change:
 ## Task Routing
 
 - New or changed capability API: `capability-authoring.md`
+- Working on (or refreshing) a capability that wraps an external service, image,
+  or CLI: `capability-authoring.md` "External-Service Assumptions And Refresh"
 - New or changed tests: `testing-capabilities.md`
 - Unsure whether behavior belongs in harness or Pydantic AI core: `core-boundary.md`
 - Review, pre-PR check, or final self-check: `review-checklist.md`
