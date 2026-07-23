@@ -160,22 +160,26 @@ allow any name in the type hints.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
 
-_FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
-    GoogleFinishReason.FINISH_REASON_UNSPECIFIED: None,
-    GoogleFinishReason.STOP: 'stop',
-    GoogleFinishReason.MAX_TOKENS: 'length',
-    GoogleFinishReason.SAFETY: 'content_filter',
-    GoogleFinishReason.RECITATION: 'content_filter',
-    GoogleFinishReason.LANGUAGE: 'error',
-    GoogleFinishReason.OTHER: None,
-    GoogleFinishReason.BLOCKLIST: 'content_filter',
-    GoogleFinishReason.PROHIBITED_CONTENT: 'content_filter',
-    GoogleFinishReason.SPII: 'content_filter',
-    GoogleFinishReason.MALFORMED_FUNCTION_CALL: 'error',
-    GoogleFinishReason.IMAGE_SAFETY: 'content_filter',
-    GoogleFinishReason.UNEXPECTED_TOOL_CALL: 'error',
-    GoogleFinishReason.IMAGE_PROHIBITED_CONTENT: 'content_filter',
-    GoogleFinishReason.NO_IMAGE: 'error',
+# Keyed by enum value rather than member: `google.genai`'s `FinishReason` grows members dynamically
+# at parse time for values its installed version doesn't know statically (e.g. `MODEL_ARMOR`),
+# so member-keyed lookups silently miss them.
+_FINISH_REASON_MAP: dict[str, FinishReason | None] = {
+    GoogleFinishReason.FINISH_REASON_UNSPECIFIED.value: None,
+    GoogleFinishReason.STOP.value: 'stop',
+    GoogleFinishReason.MAX_TOKENS.value: 'length',
+    GoogleFinishReason.SAFETY.value: 'content_filter',
+    GoogleFinishReason.RECITATION.value: 'content_filter',
+    GoogleFinishReason.LANGUAGE.value: 'error',
+    GoogleFinishReason.OTHER.value: None,
+    GoogleFinishReason.BLOCKLIST.value: 'content_filter',
+    GoogleFinishReason.PROHIBITED_CONTENT.value: 'content_filter',
+    GoogleFinishReason.SPII.value: 'content_filter',
+    GoogleFinishReason.MALFORMED_FUNCTION_CALL.value: 'error',
+    GoogleFinishReason.IMAGE_SAFETY.value: 'content_filter',
+    GoogleFinishReason.UNEXPECTED_TOOL_CALL.value: 'error',
+    GoogleFinishReason.IMAGE_PROHIBITED_CONTENT.value: 'content_filter',
+    GoogleFinishReason.NO_IMAGE.value: 'error',
+    'MODEL_ARMOR': 'content_filter',
 }
 
 _GOOGLE_IMAGE_SIZE = Literal['512', '1K', '2K', '4K']
@@ -939,7 +943,7 @@ class GoogleModel(Model[Client]):
             # Add safety ratings to provider details
             if candidate.safety_ratings:
                 provider_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
-            finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+            finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason.value)
         elif candidate is None and response.prompt_feedback and response.prompt_feedback.block_reason:
             block_reason = response.prompt_feedback.block_reason
             provider_details['block_reason'] = block_reason.value
@@ -1347,7 +1351,7 @@ class GeminiStreamedResponse(StreamedResponse):
                             r.model_dump(by_alias=True) for r in candidate.safety_ratings
                         ]
 
-                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason.value)
 
                 # Google streams the grounding metadata (including the web search queries and results)
                 # _after_ the text that was generated using it, so it would show up out of order in the stream,
