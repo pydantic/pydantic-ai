@@ -466,6 +466,8 @@ Templates must be created in advance in the [Google Cloud Console](https://conso
 
 When a prompt or response is blocked, a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised.
 
+Note that response templates only screen non-streaming requests: with streaming, Google Cloud returns the response text unscreened, so apply your own output handling if you rely on response-side blocking.
+
 ### Context caching (`google_cached_content`)
 
 When you've created a Gemini [cached content resource](https://ai.google.dev/gemini-api/docs/caching), pass its resource name through [`google_cached_content`][pydantic_ai.models.google.GoogleModelSettings.google_cached_content] to reuse it across requests:

@@ -437,9 +437,12 @@ def pytest_recording_configure(config: Any, vcr: VCR):
         """Match URL paths after scrubbing AWS account IDs from ARNs."""
         path1 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r1.path)
         path2 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r2.path)
-        # Normalize Vertex AI paths by replacing region
+        # Normalize Vertex AI paths by replacing region and project (cassettes may be recorded
+        # against a different GCP project than the fixture default)
         path1 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path1)
         path2 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path2)
+        path1 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path1)
+        path2 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path2)
         if path1 != path2:
             raise AssertionError(f'{path1} != {path2}')
 
@@ -722,6 +725,7 @@ def tiny_video() -> BinaryContent:
 
 os.environ.pop('OPENAI_BASE_URL', None)
 os.environ.pop('ANTHROPIC_BASE_URL', None)
+os.environ.pop('LOGFIRE_EMIT_CONFIGURATION_SPAN', None)
 
 
 @pytest.fixture(scope='session')

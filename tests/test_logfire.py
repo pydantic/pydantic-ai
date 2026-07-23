@@ -803,7 +803,7 @@ def test_prompted_output_schema_instructions_do_not_set_variable_instructions(
     )
 
     result = my_agent.run_sync('Tell me about Paris')
-    assert result.output == snapshot(City(name='Paris', population=2148000))
+    assert result.output == City(name='Paris', population=2148000)
 
     summary = get_logfire_summary()
     agent_run_attrs = summary.attributes[0]

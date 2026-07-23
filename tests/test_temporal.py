@@ -3771,6 +3771,25 @@ def test_temporal_run_context_excludes_agent():
     assert agent.name == 'test_agent'
 
 
+def test_temporal_run_context_enqueue_raises_inside_activity():
+    """`ctx.enqueue()` inside a Temporal activity raises the shared durable explanation.
+
+    `pending_messages` isn't serialized across the activity boundary, so any code running
+    activity-side (a tool, a `process_tool_call` hook, an `event_stream_handler`) is in a
+    durable unit whose result is replayed without re-running it; an enqueue would be dropped.
+    """
+    from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
+
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
+        reconstructed.enqueue('later')
+    # An empty enqueue stays a no-op, matching a normal run.
+    assert reconstructed.enqueue() is None
+
+
 def test_temporal_run_context_serializes_usage():
     ctx = RunContext(
         deps=None,
