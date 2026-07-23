@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import itertools
 import json
-import warnings
 from collections.abc import Callable, Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
@@ -18,6 +17,8 @@ from pydantic import ConfigDict, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
+
+from ._cost import best_effort_price_calculation
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -83,10 +84,6 @@ non-streaming requests read the `None` default.
 This is a context variable rather than a field on `ModelRequestContext` because that object is
 public and holds only the *inputs* to `Model.request[_stream]`.
 """
-
-
-class CostCalculationFailedWarning(Warning):
-    """Warning raised when cost calculation fails."""
 
 
 def get_agent_run_baggage_attributes() -> dict[str, Any]:
@@ -302,15 +299,7 @@ def open_model_request_span(
 
                 # Compute cost before the `is_recording()` gate so `_record_metrics`
                 # always emits cost data, even when the span is dropped by sampling.
-                try:
-                    price_calculation = response.cost()
-                except LookupError:
-                    pass
-                except Exception as e:
-                    warnings.warn(
-                        f'Failed to get cost from response: {type(e).__name__}: {e}',
-                        CostCalculationFailedWarning,
-                    )
+                price_calculation = best_effort_price_calculation(response)
 
                 if not span.is_recording():
                     return

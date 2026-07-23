@@ -427,6 +427,8 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage`. This property returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
 
+[`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost] additionally holds a best-effort estimate of the run's total cost in USD, calculated from each request's usage with [genai-prices](https://github.com/pydantic/genai-prices). Requests to models or providers that genai-prices doesn't have pricing data for don't contribute to the total.
+
 Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
 #### Streaming All Events and Output
@@ -602,7 +604,7 @@ result_sync = agent.run_sync(
 print(result_sync.output)
 #> Rome
 print(result_sync.usage)
-#> RunUsage(input_tokens=62, output_tokens=1, requests=1)
+#> RunUsage(input_tokens=62, output_tokens=1, requests=1, cost=Decimal('0.000201'))
 
 try:
     result_sync = agent.run_sync(

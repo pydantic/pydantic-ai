@@ -206,7 +206,7 @@ async def test_xai_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 async def test_xai_cost_calculation(allow_model_requests: None):
@@ -952,6 +952,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
             details={'reasoning_tokens': 306},
             output_tokens=116,
             tool_calls=1,
+            cost=Decimal('0.00014985'),
         )
     )
 
@@ -1366,7 +1367,7 @@ async def test_xai_stream_text(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 async def test_xai_stream_text_finish_reason(allow_model_requests: None):
@@ -1438,7 +1439,9 @@ async def test_xai_stream_structured(allow_model_requests: None):
 
     assert agent_run.result is not None
     assert agent_run.result.output == snapshot({'first': 'One', 'second': 'Two'})
-    assert agent_run.usage == snapshot(RunUsage(input_tokens=20, output_tokens=1, requests=1))
+    assert agent_run.usage == snapshot(
+        RunUsage(input_tokens=20, output_tokens=1, requests=1, cost=Decimal('0.0000045'))
+    )
 
     # Verify event types: one PartStartEvent, then PartDeltaEvents for args
     # (UI adapters like Vercel AI and AG-UI expect deltas, not repeated starts)
@@ -1546,7 +1549,7 @@ async def test_xai_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 async def test_xai_none_delta(allow_model_requests: None):
@@ -1563,7 +1566,7 @@ async def test_xai_none_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])
@@ -3744,10 +3747,7 @@ async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
     assert result.output == '42'
     assert result.usage == snapshot(
         RunUsage(
-            input_tokens=10,
-            output_tokens=2,
-            requests=1,
-            details={'reasoning_tokens': 7},
+            input_tokens=10, output_tokens=2, requests=1, details={'reasoning_tokens': 7}, cost=Decimal('0.000003')
         )
     )
 
@@ -3767,7 +3767,7 @@ async def test_xai_usage_without_details(allow_model_requests: None):
     assert result.output == 'Simple answer'
 
     # Verify usage without details (empty dict when no additional usage info)
-    assert result.usage == snapshot(RunUsage(input_tokens=20, output_tokens=10, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=20, output_tokens=10, requests=1, cost=Decimal('0.000009')))
 
 
 def test_xai_usage_fallback_when_extract_fails(monkeypatch: pytest.MonkeyPatch):
@@ -3812,7 +3812,13 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
 
     # Verify usage includes server_side_tools_used in details
     assert result.usage == snapshot(
-        RunUsage(input_tokens=50, output_tokens=30, details={'server_side_tools_web_search': 2}, requests=1)
+        RunUsage(
+            input_tokens=50,
+            output_tokens=30,
+            details={'server_side_tools_web_search': 2},
+            requests=1,
+            cost=Decimal('0.000025'),
+        )
     )
 
 

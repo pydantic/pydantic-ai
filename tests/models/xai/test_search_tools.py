@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -790,6 +791,7 @@ async def test_xai_x_search_usage_mapping(allow_model_requests: None):
             output_tokens=30,
             details={'server_side_tools_x_search': 1},
             requests=1,
+            cost=Decimal('0.000025'),
         )
     )
 
@@ -1052,5 +1054,6 @@ async def test_xai_file_search_usage_mapping(allow_model_requests: None):
             output_tokens=30,
             details={'server_side_tools_file_search': 1},
             requests=1,
+            cost=Decimal('0.000025'),
         )
     )

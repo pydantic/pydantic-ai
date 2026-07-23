@@ -1,14 +1,17 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+import warnings
 from copy import copy
 from dataclasses import dataclass, fields
+from decimal import Decimal
 from typing import Annotated, Any
 
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field
 
 from . import _utils
+from ._warnings import CostNotFoundWarning
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
@@ -64,6 +67,8 @@ class UsageBase:
         BeforeValidator(lambda d: d or {}),
     ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
+
+    cost: Decimal | None = None
 
     def __copy__(self) -> UsageBase:
         """Shallow copy that also copies mutable fields like `details`."""
@@ -246,7 +251,8 @@ class RunUsage(UsageBase):
         if isinstance(incr_usage, RunUsage):
             self.requests += incr_usage.requests
             self.tool_calls += incr_usage.tool_calls
-        return _incr_usage_tokens(self, incr_usage)
+        _incr_usage_tokens(self, incr_usage)
+        _incr_usage_cost(self, incr_usage)
 
     def __add__(self, other: RunUsage | RequestUsage) -> RunUsage:
         """Add two RunUsages together.
@@ -256,6 +262,11 @@ class RunUsage(UsageBase):
         new_usage = copy(self)
         new_usage.incr(other)
         return new_usage
+
+
+def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
+    if incr_usage.cost is not None:
+        slf.cost = (slf.cost or 0) + incr_usage.cost
 
 
 def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
@@ -289,6 +300,8 @@ class UsageLimits:
     Each of the limits can be set to `None` to disable that limit.
     """
 
+    cost_limit: Decimal | None = None
+    """The maximum cost allowed in USD."""
     request_limit: int | None = 50
     """The maximum number of requests allowed to the model."""
     tool_calls_limit: int | None = None
@@ -343,6 +356,22 @@ class UsageLimits:
             raise UsageLimitExceeded(  # pragma: lax no cover
                 f'The next request would exceed the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})'
             )
+
+        cost = usage.cost
+        if cost and self.cost_limit is not None and cost > self.cost_limit:
+            raise UsageLimitExceeded(f'The next request would exceed the cost_limit of {self.cost_limit} ({cost=})')
+
+    def check_cost(self, usage: RunUsage) -> None:
+        """Raises a `UsageLimitExceeded` exception if the usage exceeds the cost limit."""
+        if self.cost_limit is not None and usage.cost is None:
+            warnings.warn(
+                CostNotFoundWarning(
+                    'A `cost_limit` is set but cannot be enforced because no cost was calculated for this run. '
+                    'This usually means genai-prices has no pricing data for the model or provider in use.'
+                )
+            )
+        if usage.cost and self.cost_limit is not None and usage.cost > self.cost_limit:
+            raise UsageLimitExceeded(f'Exceeded the cost_limit of {self.cost_limit} ({usage.cost=})')
 
     def check_tokens(self, usage: RunUsage) -> None:
         """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits."""

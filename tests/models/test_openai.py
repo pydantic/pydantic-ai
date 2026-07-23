@@ -1183,6 +1183,7 @@ async def test_openai_audio_url_input(
                 'text_tokens': 72,
             },
             requests=1,
+            cost=Decimal('0.0009225'),
         )
     )
 
@@ -1504,6 +1505,7 @@ async def test_audio_as_binary_content_input(
                 'text_tokens': 9,
             },
             requests=1,
+            cost=Decimal('0.00025'),
         )
     )
 

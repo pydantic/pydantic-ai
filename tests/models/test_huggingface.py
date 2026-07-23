@@ -4,6 +4,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from functools import cached_property
 from typing import Any, Literal, cast
 from unittest.mock import Mock
@@ -216,7 +217,7 @@ async def test_request_simple_usage(allow_model_requests: None, huggingface_api_
 
     result = await agent.run('Hello')
     assert result.output == IsStr()
-    assert result.usage == snapshot(RunUsage(input_tokens=4, output_tokens=258, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=4, output_tokens=258, requests=1, cost=Decimal('0.001818')))
 
 
 @pytest.mark.vcr()

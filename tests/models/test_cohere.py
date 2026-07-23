@@ -5,6 +5,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, cast
 
 import pytest
@@ -200,6 +201,7 @@ async def test_request_simple_usage(allow_model_requests: None):
                 'input_tokens': 1,
                 'output_tokens': 1,
             },
+            cost=Decimal('1.875E-7'),
         )
     )
 
@@ -505,6 +507,7 @@ async def test_request_tool_call(allow_model_requests: None):
             output_tokens=3,
             details={'input_tokens': 4, 'output_tokens': 2},
             tool_calls=1,
+            cost=Decimal('6.375E-7'),
         )
     )
 

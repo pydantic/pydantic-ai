@@ -1,5 +1,6 @@
 import datetime
 from collections.abc import Sequence
+from decimal import Decimal
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
@@ -518,7 +519,13 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
     result = await agent.run('Tell me about Venus')
 
     assert result.usage == snapshot(
-        RunUsage(input_tokens=17, output_tokens=1515, details={'reasoning_tokens': 704}, requests=1)
+        RunUsage(
+            input_tokens=17,
+            output_tokens=1515,
+            details={'reasoning_tokens': 704},
+            requests=1,
+            cost=Decimal('0.00303425'),
+        )
     )
 
     settings = OpenRouterModelSettings(openrouter_usage={'include': True})
@@ -531,6 +538,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
             output_tokens=2177,
             details={'is_byok': 0, 'reasoning_tokens': 960, 'image_tokens': 0},
             requests=1,
+            cost=Decimal('0.00435825'),
         )
     )
 

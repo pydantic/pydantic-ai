@@ -4,6 +4,7 @@ import json
 import os
 from collections.abc import Iterator
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from itertools import count
 from types import SimpleNamespace
 from typing import Any, cast
@@ -154,7 +155,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     assert result.output == snapshot(
         "Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
     )
-    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=7, output_tokens=30))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=7, output_tokens=30, cost=Decimal('0.000004445')))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -442,7 +443,9 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
 
     result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
     assert result.output == snapshot({'temperature': '30°C', 'date': date(2022, 1, 1), 'city': 'London'})
-    assert result.usage == snapshot(RunUsage(requests=3, input_tokens=2019, output_tokens=120, tool_calls=1))
+    assert result.usage == snapshot(
+        RunUsage(requests=3, input_tokens=2019, output_tokens=120, tool_calls=1, cost=Decimal('0.000087465'))
+    )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -609,7 +612,9 @@ async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider
     assert data == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. Known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, Paris is often referred to as "The City of Light" or "The City of Love."'
     )
-    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
+    assert result.usage == snapshot(
+        RunUsage(requests=1, input_tokens=13, output_tokens=82, cost=Decimal('0.000011935'))
+    )
 
 
 async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -3356,7 +3361,9 @@ async def test_bedrock_cache_usage_includes_cache_tokens(allow_model_requests: N
 
     result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
     assert result.output == snapshot('5')
-    assert result.usage == snapshot(RunUsage(input_tokens=1517, cache_read_tokens=1504, output_tokens=5, requests=1))
+    assert result.usage == snapshot(
+        RunUsage(input_tokens=1517, cache_read_tokens=1504, output_tokens=5, requests=1, cost=Decimal('0.00062172'))
+    )
 
 
 @pytest.mark.vcr()
@@ -3393,12 +3400,16 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
     first = await agent.run(run_args)
     assert first.output == snapshot('21')
     first_usage = first.usage
-    assert first_usage == snapshot(RunUsage(input_tokens=1324, cache_write_tokens=1322, output_tokens=5, requests=1))
+    assert first_usage == snapshot(
+        RunUsage(input_tokens=1324, cache_write_tokens=1322, output_tokens=5, requests=1, cost=Decimal('0.00554235'))
+    )
 
     second = await agent.run(run_args)
     assert second.output == snapshot('21')
     second_usage = second.usage
-    assert second_usage == snapshot(RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1))
+    assert second_usage == snapshot(
+        RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1, cost=Decimal('0.00052536'))
+    )
 
 
 @pytest.mark.vcr()

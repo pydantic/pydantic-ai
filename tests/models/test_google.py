@@ -165,6 +165,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
             input_tokens=9,
             output_tokens=43,
             details={'thoughts_tokens': 34, 'text_prompt_tokens': 9},
+            cost=Decimal('0.0001102'),
         )
     )
     assert result.all_messages() == snapshot(
@@ -231,6 +232,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
             output_tokens=35,
             tool_calls=1,
             details={'text_prompt_tokens': 160, 'text_candidates_tokens': 35},
+            cost=Decimal('0.0000300'),
         )
     )
     assert result.all_messages() == snapshot(

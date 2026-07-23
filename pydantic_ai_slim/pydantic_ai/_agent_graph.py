@@ -39,6 +39,7 @@ from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from ._cost import best_effort_usage_cost, fill_response_cost
 from ._deferred_capabilities import parse_loaded_capabilities
 from ._instructions import normalize_toolset_instructions
 from ._run_context import set_current_run_context
@@ -1216,6 +1217,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         run_id=ctx.state.run_id,
                         conversation_id=ctx.state.conversation_id,
                     )
+                    fill_response_cost(partial_response)
                     ctx.state.usage.incr(partial_response.usage)
                     ctx.state.message_history.append(partial_response)
             else:
@@ -1482,6 +1484,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             usage = deepcopy(usage)
 
             counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
+            # Price this request's input tokens so the accumulated cost reflects them. Output tokens don't
+            # exist yet, so this is a lower bound: it only catches a request whose input alone exceeds the limit.
+            counted_usage.cost = best_effort_usage_cost(
+                counted_usage,
+                model_name=model.model_name,
+                provider_api_url=model.base_url,
+                provider_name=model.system,
+            )
             usage.incr(counted_usage)
 
         ctx.deps.usage_limits.check_before_request(usage)
@@ -1646,9 +1656,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> None:
         """Append a model response to history, updating usage tracking."""
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+        fill_response_cost(response)
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+            ctx.deps.usage_limits.check_cost(ctx.state.usage)
         ctx.state.message_history.append(response)
 
     async def _build_retry_node(

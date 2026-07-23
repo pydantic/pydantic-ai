@@ -23,6 +23,8 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
+from pydantic_ai._cost import best_effort_usage_cost, calculate_price_for_usage
+from pydantic_ai._warnings import CostCalculationFailedWarning, CostNotFoundWarning
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -1020,3 +1022,98 @@ def test_usage_limits_explicit_zero():
 
     limits = UsageLimits(input_tokens_limit=100)
     assert limits.input_tokens_limit == 100
+
+
+# --- Cost pricing helpers and cost limits ---------------------------------------------------------
+#
+# These are unit tests: `TestModel`/`FunctionModel` are unknown to genai-prices so they always price to 0,
+# meaning a run's cost never crosses a limit through the public API. The pricing helpers and the cost-limit
+# guards are exercised directly here; the graph wiring (`count_tokens_before_request`) is covered by a VCR-free
+# integration test in `tests/models/test_anthropic.py` against a priceable model.
+
+
+def test_calculate_price_for_usage_requires_model_name():
+    with pytest.raises(AssertionError, match='Model name is required to calculate price'):
+        calculate_price_for_usage(RequestUsage(input_tokens=10))
+
+
+def test_calculate_price_for_usage_provider_name():
+    price = calculate_price_for_usage(RequestUsage(input_tokens=1000), model_name='gpt-4o', provider_name='openai')
+    assert price.total_price == snapshot(Decimal('0.0025'))
+
+
+def test_calculate_price_for_usage_provider_api_url():
+    price = calculate_price_for_usage(
+        RequestUsage(input_tokens=1000), model_name='gpt-4o', provider_api_url='https://api.openai.com/v1'
+    )
+    assert price.total_price == snapshot(Decimal('0.0025'))
+
+
+def test_calculate_price_for_usage_api_url_falls_back_to_provider_name():
+    """An unresolvable `provider_api_url` raises `LookupError` internally and falls back to `provider_name`."""
+    price = calculate_price_for_usage(
+        RequestUsage(input_tokens=1000),
+        model_name='gpt-4o',
+        provider_api_url='https://nope.invalid/v1',
+        provider_name='openai',
+    )
+    assert price.total_price == snapshot(Decimal('0.0025'))
+
+
+def test_best_effort_usage_cost_known_model():
+    cost = best_effort_usage_cost(RequestUsage(input_tokens=1000), model_name='gpt-4o', provider_name='openai')
+    assert cost == snapshot(Decimal('0.0025'))
+
+
+def test_best_effort_usage_cost_unknown_model_returns_none():
+    """Pricing must never fail a run: an unknown model yields `None` instead of raising `LookupError`."""
+    assert (
+        best_effort_usage_cost(RequestUsage(input_tokens=10), model_name='function', provider_name='function') is None
+    )
+
+
+def test_best_effort_usage_cost_unexpected_error_warns(monkeypatch: pytest.MonkeyPatch):
+    """An unexpected (non-lookup) pricing error is downgraded to a warning, never raised."""
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise RuntimeError('kaboom')
+
+    monkeypatch.setattr('pydantic_ai._cost.calc_price', boom)
+    with pytest.warns(CostCalculationFailedWarning, match='Failed to get cost from usage: RuntimeError: kaboom'):
+        cost = best_effort_usage_cost(RequestUsage(input_tokens=10), model_name='gpt-4o', provider_name='openai')
+    assert cost is None
+
+
+def test_check_cost_disabled_by_default():
+    """The default `cost_limit` is `None`, so a run with a real cost is not constrained (regression: not 0)."""
+    assert UsageLimits().cost_limit is None
+    UsageLimits().check_cost(RunUsage(cost=Decimal('1.23')))
+
+
+def test_check_cost_warns_when_no_cost_available():
+    with pytest.warns(CostNotFoundWarning, match='`cost_limit` is set but cannot be enforced'):
+        UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage())
+
+
+def test_check_cost_within_limit_is_silent(recwarn: pytest.WarningsRecorder):
+    UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage(cost=Decimal('0.005')))
+    assert [w for w in recwarn.list if issubclass(w.category, CostNotFoundWarning)] == []
+
+
+def test_check_cost_exceeded():
+    with pytest.raises(
+        UsageLimitExceeded, match=re.escape("Exceeded the cost_limit of 0.01 (usage.cost=Decimal('0.02'))")
+    ):
+        UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage(cost=Decimal('0.02')))
+
+
+def test_check_before_request_cost_exceeded():
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape("The next request would exceed the cost_limit of 0.01 (cost=Decimal('0.02'))"),
+    ):
+        UsageLimits(cost_limit=Decimal('0.01')).check_before_request(RunUsage(cost=Decimal('0.02')))
+
+
+def test_check_before_request_cost_within_limit():
+    UsageLimits(cost_limit=Decimal('0.01')).check_before_request(RunUsage(cost=Decimal('0.005')))

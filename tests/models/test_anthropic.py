@@ -330,6 +330,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
             input_tokens=5,
             output_tokens=10,
             details={'input_tokens': 5, 'output_tokens': 10},
+            cost=Decimal('0.000044'),
         )
     )
     # reset the index so we get the same response again
@@ -343,6 +344,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
             input_tokens=5,
             output_tokens=10,
             details={'input_tokens': 5, 'output_tokens': 10},
+            cost=Decimal('0.000044'),
         )
     )
     assert result.all_messages() == snapshot(
@@ -418,6 +420,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
                 'cache_creation_input_tokens': 4,
                 'cache_read_input_tokens': 6,
             },
+            cost=Decimal('0.00002688'),
         )
     )
     last_message = message(result.all_messages(), ModelResponse, index=-1)
@@ -1978,6 +1981,7 @@ async def test_async_request_text_response(allow_model_requests: None):
             input_tokens=3,
             output_tokens=5,
             details={'input_tokens': 3, 'output_tokens': 5},
+            cost=Decimal('0.0000224'),
         )
     )
 
@@ -2578,6 +2582,7 @@ async def test_stream_structured(allow_model_requests: None):
                 output_tokens=5,
                 tool_calls=1,
                 details={'input_tokens': 20, 'output_tokens': 5},
+                cost=Decimal('0.000036'),
             )
         )
         assert tool_called
@@ -10573,6 +10578,27 @@ async def test_anthropic_count_tokens_with_mock(allow_model_requests: None):
     assert 'messages' in count_tokens_kwargs
 
 
+async def test_anthropic_count_tokens_enforces_cost_limit(allow_model_requests: None):
+    """`cost_limit` is enforced before the request using the cost of the counted input tokens.
+
+    Uses the count_tokens mock so the pre-request cost accumulation in the agent graph runs against a model
+    genai-prices can actually price (unlike TestModel), without needing a recorded request.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # count_tokens reports 10 input tokens, which price above this tiny limit, so the request is blocked up front.
+    with pytest.raises(UsageLimitExceeded, match=r'The next request would exceed the cost_limit of 0\.000001'):
+        await agent.run(
+            'hello',
+            usage_limits=UsageLimits(cost_limit=Decimal('0.000001'), count_tokens_before_request=True),
+        )
+
+
 async def test_anthropic_count_tokens_with_no_messages(allow_model_requests: None):
     """Test count_tokens when messages_ is None (no exception configured)."""
     mock_client = cast(AsyncAnthropic, MockAnthropic())
@@ -10831,6 +10857,7 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
                 'output_tokens': 406,
             },
             requests=1,
+            cost=Decimal('0.0064323'),
         )
     )
 
@@ -10848,6 +10875,7 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
                 'output_tokens': 33,
             },
             requests=1,
+            cost=Decimal('0.0024048'),
         )
     )
 
@@ -10884,6 +10912,7 @@ async def test_anthropic_cache_count_tokens(allow_model_requests: None, anthropi
                 'output_tokens': 414,
             },
             requests=1,
+            cost=Decimal('0.0065523'),
         )
     )
 
@@ -10940,6 +10969,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
                 'output_tokens': 1944,
             },
             requests=1,
+            cost=Decimal('0.01174151'),
         )
     )
 
@@ -10957,6 +10987,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
                 'output_tokens': 44,
             },
             requests=1,
+            cost=Decimal('0.00398101'),
         )
     )
 
@@ -11807,6 +11838,7 @@ async def test_anthropic_compaction_usage_with_cache(allow_model_requests: None,
                 'compaction_cache_creation_input_tokens': 55096,
             },
             requests=1,
+            cost=Decimal('0.20880'),
         )
     )
 
@@ -11847,6 +11879,7 @@ async def test_anthropic_compaction_usage_with_cache_streaming(allow_model_reque
                 'compaction_cache_creation_input_tokens': 55096,
             },
             requests=1,
+            cost=Decimal('0.208566'),
         )
     )
 
