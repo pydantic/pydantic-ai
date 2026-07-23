@@ -19,6 +19,9 @@ For any code change:
 - New or changed tests: `testing-capabilities.md`
 - Unsure whether behavior belongs in harness or Pydantic AI core: `core-boundary.md`
 - Review, pre-PR check, or final self-check: `review-checklist.md`
+- Commands/parsers, processes/containers, network endpoints, resource cleanup,
+  output limits, or CI trust boundaries: `review-checklist.md` "Executable
+  Boundaries" before implementation and review
 
 ## Exemplar
 

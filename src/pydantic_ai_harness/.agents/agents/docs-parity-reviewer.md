@@ -36,10 +36,14 @@ problem as a finding (blocking / warning / nit) with a concrete fix.
    class, constructor params, defaults, tool names, extras, safety semantics)
    and only one of README / unified doc reflects it, that is blocking. A doc
    describing behavior the code no longer has is also blocking.
-2. **Snippets run.** Every code block in both docs has all imports and the
-   pieces needed to actually run (Agent construction, capability wiring). Class
-   names, params, and defaults match the current source. Model ids are unchanged
-   from what the source uses -- a changed model id is blocking.
+2. **Snippets parse and run.** Run `uv run pytest tests/test_doc_snippets.py`;
+   this checks parsing and harness imports only. Execute every changed
+   deterministic snippet unchanged. For snippets that need credentials or a
+   live service, verify the complete runnable wrapper and require a fake-backed
+   test for its control flow. Every block has all imports and capability wiring.
+   Class names, params, and defaults match the source. Model ids are unchanged
+   -- a changed model id is blocking. Illustrative signature pseudo-code uses
+   `{test="skip"}`.
 3. **README <-> unified doc consistency.** The two agree on install extras,
    option names, defaults, and safety caveats. They need not be identical prose,
    but they must not contradict each other or the code.

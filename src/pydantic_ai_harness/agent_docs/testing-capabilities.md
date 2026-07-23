@@ -25,6 +25,21 @@ Direct toolset tests are appropriate when you need to inspect:
 Use the `CodeMode` tests as the current reference for direct `RunContext` and
 `ToolManager` setup.
 
+## Boundary Reproductions
+
+When a capability invokes another parser, process, service, or container, add
+focused tests for each applicable contract:
+
+- Reproduce the installed downstream parser's behavior when available, then
+  test accepted abbreviations, aliases, `--name=value` forms, separators, and
+  normalization through the capability's public entry point.
+- Make cleanup return non-zero and raise. Assert that failure is surfaced and
+  resource identity remains available until cleanup succeeds.
+- Pass a non-default sentinel for each configurable address, endpoint, or path.
+  Assert provisioning, readiness, invocation, and teardown all use it.
+- Assert size limits against the final returned or serialized value, including
+  headers, truncation markers, envelopes, and metadata.
+
 ## Coverage
 
 The project enforces 100% branch coverage with `make testcov`. Tests for a new

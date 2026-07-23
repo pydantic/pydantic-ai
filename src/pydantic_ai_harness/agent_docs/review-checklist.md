@@ -24,6 +24,34 @@ Use this before opening a PR or reviewing a capability change.
   job to its own paths and keeps the aggregate check green when that job is
   skipped. See `capability-authoring.md` "CI And Dependency Footprint".
 
+## Executable Boundaries
+
+Apply these checks when a change invokes a command/parser, process/container,
+or network service, or changes CI:
+
+- Trace user or model input through every transformation to the downstream
+  parser. Verify guards against the syntax that parser accepts, including
+  aliases, abbreviations, normalization, separators, and repeated options.
+- Trace each created resource through readiness, use, and cleanup. Failed
+  cleanup is reported, and tracked identity remains recoverable until cleanup
+  succeeds.
+- Trace each configurable address, endpoint, path, or credential with a
+  non-default sentinel through provisioning, readiness, invocation, and
+  teardown.
+- Measure limits on the final value the caller receives, including framing,
+  truncation markers, envelopes, and metadata.
+- For each CI secret or write permission, trace event/ref -> checked-out code ->
+  credential -> executable step. PR-controlled code must not receive repository
+  or environment secrets; step-level scoping does not create that boundary.
+  Check trusted and fork PR outcomes, including the aggregate required check.
+- Starting from each conditional job's executed command, ensure its path filter
+  includes the task-runner or script entry point and every dependency,
+  configuration, image, and workflow input that can change execution.
+
+Passing coverage alone is not evidence that these contracts hold. For
+downstream-parser and external-runtime claims, run a focused reproduction and
+retain the command and result as review evidence.
+
 ## Stale Or Pre-Merge PRs
 
 Run these checks when adopting, rebasing, or re-reviewing a PR that was opened
