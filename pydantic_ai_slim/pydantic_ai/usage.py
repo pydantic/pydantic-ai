@@ -138,6 +138,9 @@ class UsageBase:
         kv_pairs = (f'{name}={value!r}' for name, value in sorted(self.__dict__.items()) if value)
         return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
+    def __eq__(self, value: object, /) -> bool:
+        return type(self) is type(value) and self.__dict__ == value.__dict__
+
     def has_values(self) -> bool:
         """Whether any values are set and non-zero."""
         return any(self.details.values()) or any(getattr(self, f.name) for f in fields(self) if f.name != 'details')
