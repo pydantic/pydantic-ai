@@ -439,6 +439,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 provider_details=text_meta.get('provider_details'),
                             )
                         )
+                    else:
+                        # AssistantMessage with only tool_calls — clear any stale
+                        # pending metadata so it doesn't attach to the wrong TextPart.
+                        pending_text_metadata = {}
                     if tool_calls_list:
                         for tool_call in tool_calls_list:
                             tool_call_id = tool_call.id
@@ -780,7 +784,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     flush()
                 # Carry TextPart metadata (id, provider_name, provider_details) as a preceding
                 # ActivityMessage so it survives a dump/load round-trip.  Same pattern as FilePart.
+                # Flush before emitting the ActivityMessage so each metadata-bearing TextPart
+                # gets its own AssistantMessage — otherwise multiple TextParts with metadata
+                # would merge into one AssistantMessage and lose the second metadata block.
                 if use_encrypted_value and (part.id is not None or part.provider_name is not None or part.provider_details is not None):
+                    if text_content:
+                        flush()
                     text_meta: dict[str, Any] = {}
                     if part.id is not None:
                         text_meta['id'] = part.id
