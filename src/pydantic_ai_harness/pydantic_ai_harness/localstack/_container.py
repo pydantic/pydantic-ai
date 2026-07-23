@@ -71,10 +71,15 @@ class LocalStackContainer:
     def endpoint_url(self) -> str:
         """URL of the container's edge endpoint.
 
-        Uses LocalStack's `localhost.localstack.cloud` domain (which resolves to
-        `127.0.0.1`) for compatibility with AWS SDKs that need subdomain-style hosts.
+        For the default loopback publish addresses (`127.0.0.1` and the
+        bind-all `0.0.0.0`, both reachable at `127.0.0.1`), uses LocalStack's
+        `localhost.localstack.cloud` domain, which resolves to `127.0.0.1` and
+        supports the subdomain-style hosts some AWS SDKs need. For any other
+        `host_address`, uses that address literally, since
+        `localhost.localstack.cloud` does not resolve there.
         """
-        return f'http://localhost.localstack.cloud:{self._host_port}'
+        host = 'localhost.localstack.cloud' if self._host_address in ('127.0.0.1', '0.0.0.0') else self._host_address
+        return f'http://{host}:{self._host_port}'
 
     @property
     def _readiness_url(self) -> str:
@@ -92,7 +97,10 @@ class LocalStackContainer:
         try:
             await self._wait_until_ready()
         except BaseException:
-            await self._stop()
+            try:
+                await self._stop()
+            except LocalStackError:
+                pass
             raise
         return self
 
@@ -202,13 +210,28 @@ class LocalStackContainer:
         return response.status_code == 200
 
     async def _stop(self) -> None:
-        """Stop the container if one is running, shielded from cancellation."""
+        """Stop the container if one is running, shielded from cancellation.
+
+        Clears `container_id` only after `docker stop` succeeds. A non-zero exit
+        code, a missing docker CLI, or a timeout raises `LocalStackError` and
+        leaves `container_id` set, so the state reflects that the container (and
+        its published ports) may still be running.
+        """
         if self._container_id is None:
             return
         container_id = self._container_id
-        self._container_id = None
         with anyio.CancelScope(shield=True):
             try:
-                await self._run_docker([self._docker_path, 'stop', container_id], self._docker_environment({}))
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                pass
+                result = await self._run_docker([self._docker_path, 'stop', container_id], self._docker_environment({}))
+            except FileNotFoundError as e:
+                raise LocalStackError(
+                    f'Docker CLI {self._docker_path!r} not found while stopping LocalStack container {container_id}.'
+                ) from e
+            except subprocess.TimeoutExpired as e:
+                raise LocalStackError(
+                    f'Docker did not stop the LocalStack container {container_id} within {self._startup_timeout}s.'
+                ) from e
+            if result.returncode != 0:
+                stderr = result.stderr.decode('utf-8', errors='replace').strip()
+                raise LocalStackError(f'Failed to stop LocalStack container {container_id}: {stderr}')
+        self._container_id = None

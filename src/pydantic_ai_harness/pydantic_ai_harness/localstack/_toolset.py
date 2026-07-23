@@ -196,16 +196,24 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         return None
 
     def _check_global_options(self, tokens: Sequence[str]) -> None:
-        """Reject model-supplied AWS globals that can override the injected target or credentials."""
+        """Reject model-supplied AWS globals that can override the injected target or credentials.
+
+        The AWS CLI accepts any unambiguous prefix of a global option name (`--endpoint`
+        for `--endpoint-url`, `--prof` for `--profile`) and a later value overrides an
+        earlier one, so an exact-name check is not enough. Reject any `--` token whose
+        name is a prefix of a forbidden option (the exact name is the full-length prefix).
+        """
         for token in tokens:
             if not token.startswith('--'):
                 continue
             name = token.split('=', 1)[0]
-            if name in _FORBIDDEN_MODEL_GLOBAL_OPTIONS:
+            if len(name) < 3:
+                continue
+            if any(forbidden.startswith(name) for forbidden in _FORBIDDEN_MODEL_GLOBAL_OPTIONS):
                 forbidden = ', '.join(sorted(_FORBIDDEN_MODEL_GLOBAL_OPTIONS))
                 raise ModelRetry(
                     f'Do not pass AWS global options that change the LocalStack target or credentials '
-                    f'({forbidden}); the capability injects them.'
+                    f'({forbidden}), including abbreviations of them; the capability injects them.'
                 )
 
     def _check_service(self, tokens: Sequence[str]) -> None:
@@ -241,7 +249,10 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         if len(text) <= self._max_output_chars:
             return text
         marker = f'[... output truncated, showing last {self._max_output_chars} chars]\n'
-        return marker + text[-self._max_output_chars :]
+        tail_budget = self._max_output_chars - len(marker)
+        if tail_budget <= 0:
+            return text[-self._max_output_chars :]
+        return marker + text[-tail_budget:]
 
     async def aws_cli(self, command: str, *, timeout_seconds: float | None = None) -> str:
         """Run an AWS CLI command against the emulated AWS environment.

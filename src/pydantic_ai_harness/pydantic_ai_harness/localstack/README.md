@@ -67,6 +67,8 @@ localstack start
 Or let the capability manage a fresh Docker container for each run:
 
 ```python
+from pydantic_ai_harness.localstack import LocalStack
+
 LocalStack(manage_container=True)
 ```
 
@@ -110,6 +112,8 @@ container for each run and stops it when the run ends, so the agent always gets
 a fresh, isolated environment. Docker must be installed and running.
 
 ```python
+from pydantic_ai_harness.localstack import LocalStack
+
 LocalStack(
     manage_container=True,
     image='localstack/localstack',
@@ -131,15 +135,19 @@ starts and stops the container when it ends (even if the run raises). Each run
 gets its own container, so concurrent runs of one agent need distinct host ports
 or an externally managed instance (`manage_container=False`).
 
-Managed containers bind to `127.0.0.1` by default. The default image is
+Managed containers bind to `127.0.0.1` by default, reached through
+`localhost.localstack.cloud`. Set `host_address` to publish on a different
+address; a non-loopback value is then also used as the tool endpoint host. The default image is
 `localstack/localstack`, which since LocalStack 2026.03.0 is a single image that
 requires an auth token to start (a free Hobby/OSS token covers community usage).
 When `LOCALSTACK_AUTH_TOKEN` is set in the current process it is forwarded to the
 container automatically; a legacy `LOCALSTACK_API_KEY` value is forwarded when no
 auth token is set, but new setups should use `LOCALSTACK_AUTH_TOKEN`. Auth values
 are forwarded through the Docker CLI environment rather than embedded in the
-`docker run` command arguments. To run without any token, pin an image tag from
-before the account requirement, such as a `localstack/localstack:4.x` release.
+`docker run` command arguments. The default `localstack/localstack` image
+requires a token to start, so a managed run needs one configured. To run
+tokenless, set `image` to a tag from before the account requirement, such as a
+`localstack/localstack:4.x` release.
 
 Some AWS services expose ports outside the gateway. LocalStack reserves
 `4510-4559` for those service endpoints, and Docker-backed services such as
@@ -147,6 +155,8 @@ Lambda need the Docker socket mounted. Enable those explicitly when the services
 you test require them:
 
 ```python
+from pydantic_ai_harness.localstack import LocalStack
+
 LocalStack(
     manage_container=True,
     service_port_range='4510-4559',
@@ -161,15 +171,24 @@ it and the run environment is already trusted.
 The same lifecycle is available standalone as an async context manager:
 
 ```python
+import asyncio
+
 from pydantic_ai_harness.localstack import LocalStackContainer
 
-async with LocalStackContainer(environment={'DEBUG': '1'}) as localstack:
-    ...  # talk to localstack.endpoint_url
+
+async def main() -> None:
+    async with LocalStackContainer(environment={'DEBUG': '1'}) as localstack:
+        ...  # talk to localstack.endpoint_url
+
+
+asyncio.run(main())
 ```
 
 ## Configuration
 
 ```python
+from pydantic_ai_harness.localstack import LocalStack
+
 LocalStack(
     endpoint_url='http://localhost.localstack.cloud:4566',  # edge endpoint (host port is reused when managed)
     region='us-east-1',                    # region for the CLI and environment

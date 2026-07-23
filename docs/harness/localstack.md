@@ -118,15 +118,18 @@ image that requires an auth token to start (a free Hobby/OSS token covers
 community usage). When `LOCALSTACK_AUTH_TOKEN` is set in the current process it
 is forwarded to the container automatically; a legacy `LOCALSTACK_API_KEY` value
 is forwarded when no auth token is set. Auth values are forwarded through the
-Docker CLI environment rather than embedded in the `docker run` arguments. To run
-without any token, pin an image tag from before the account requirement, such as
-a `localstack/localstack:4.x` release.
+Docker CLI environment rather than embedded in the `docker run` arguments. The
+default `localstack/localstack` image requires a token to start, so a managed run
+needs one configured. To run tokenless, set `image` to a tag from before the
+account requirement, such as a `localstack/localstack:4.x` release.
 
 Docker-backed services such as Lambda need the Docker socket mounted, and some
 services expose ports outside the gateway (LocalStack reserves `4510-4559`).
 Enable those explicitly when a service you test requires them:
 
 ```python
+from pydantic_ai_harness.localstack import LocalStack
+
 LocalStack(manage_container=True, service_port_range='4510-4559', mount_docker_socket=True)
 ```
 
@@ -137,10 +140,17 @@ environment is already trusted.
 The same lifecycle is available standalone as an async context manager:
 
 ```python
+import asyncio
+
 from pydantic_ai_harness.localstack import LocalStackContainer
 
-async with LocalStackContainer(environment={'DEBUG': '1'}) as localstack:
-    ...  # talk to localstack.endpoint_url
+
+async def main() -> None:
+    async with LocalStackContainer(environment={'DEBUG': '1'}) as localstack:
+        ...  # talk to localstack.endpoint_url
+
+
+asyncio.run(main())
 ```
 
 ## Configuration

@@ -170,6 +170,30 @@ class TestAwsCli:
         with pytest.raises(ModelRetry, match='Do not pass AWS global options'):
             await _toolset(aws_cli_path=stub).aws_cli(command)
 
+    @pytest.mark.parametrize(
+        'command',
+        [
+            's3 ls --endpoint http://evil',
+            's3 ls --end http://evil',
+            's3 ls --prof prod',
+            's3 ls --no-sign',
+            's3 ls --reg eu-west-1',
+            's3api list-buckets --endpoint=http://evil',
+        ],
+    )
+    async def test_rejects_abbreviated_global_endpoint_or_credential_options(
+        self, command: str, tmp_path: Path
+    ) -> None:
+        stub = _make_stub(tmp_path, 'echo "$@"')
+        with pytest.raises(ModelRetry, match='Do not pass AWS global options'):
+            await _toolset(aws_cli_path=stub).aws_cli(command)
+
+    async def test_allows_safe_options_that_are_not_forbidden_prefixes(self, tmp_path: Path) -> None:
+        stub = _make_stub(tmp_path, 'echo "$@"')
+        result = await _toolset(aws_cli_path=stub).aws_cli('s3 ls --no-paginate --output json')
+        assert '--no-paginate' in result
+        assert '--output json' in result
+
     async def test_scrubs_aws_environment_before_running_cli(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -219,6 +243,21 @@ class TestAwsCli:
         stub = _make_stub(tmp_path, 'printf "%01000d" 0')
         result = await _toolset(max_output_chars=100, aws_cli_path=stub).aws_cli('s3 ls')
         assert 'output truncated' in result
+        assert len(result) <= 100
+
+    async def test_truncation_respects_small_cap_without_marker(self, tmp_path: Path) -> None:
+        stub = _make_stub(tmp_path, 'printf "%01000d" 0')
+        result = await _toolset(max_output_chars=10, aws_cli_path=stub).aws_cli('s3 ls')
+        assert len(result) <= 10
+        assert 'output truncated' not in result
+
+    async def test_truncation_keeps_tail_and_marker_for_normal_cap(self, tmp_path: Path) -> None:
+        stub = _make_stub(tmp_path, 'printf "HEAD"; printf "%0500dTAIL" 0')
+        result = await _toolset(max_output_chars=200, aws_cli_path=stub).aws_cli('s3 ls')
+        assert len(result) <= 200
+        assert 'output truncated' in result
+        assert result.endswith('TAIL')
+        assert 'HEAD' not in result
 
 
 class TestLocalStackHealth:
@@ -246,7 +285,8 @@ class TestLocalStackHealth:
     async def test_over_size_limit_keeps_tail(self) -> None:
         with http_server([HttpResponse(200, 'HEAD' + 'T' * 100)]) as server:
             result = await _toolset(endpoint_url=server.endpoint_url, max_output_chars=100).localstack_health()
-        assert result.endswith('T' * 100)
+        assert len(result) <= 100
+        assert result.endswith('T')
         assert 'HEAD' not in result
         assert 'output truncated' in result
 

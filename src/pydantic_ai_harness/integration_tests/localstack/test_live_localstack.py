@@ -41,7 +41,7 @@ def _auth_environment() -> dict[str, str]:
     message = 'Set LOCALSTACK_AUTH_TOKEN to run live LocalStack integration tests.'
     if _requires_auth_token():
         pytest.fail(message)
-    return {}
+    pytest.skip(message)
 
 
 def _docker_path() -> str:
@@ -96,34 +96,47 @@ def _queue_name() -> str:
     return f'harness-{uuid.uuid4().hex}'
 
 
-def test_auth_token_is_not_required_for_default_live_tests(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Default live tests should exercise community LocalStack without Pro credentials."""
+def test_auth_environment_returns_token_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A configured auth token flows through to the container environment."""
+    monkeypatch.setenv('LOCALSTACK_AUTH_TOKEN', 'test-token')
+    monkeypatch.delenv('LOCALSTACK_API_KEY', raising=False)
+
+    assert _auth_environment() == {'LOCALSTACK_AUTH_TOKEN': 'test-token'}
+
+
+def test_auth_environment_skips_locally_without_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default image requires a token to start, so live tests skip when none is set."""
     monkeypatch.delenv('LOCALSTACK_AUTH_TOKEN', raising=False)
     monkeypatch.delenv('LOCALSTACK_API_KEY', raising=False)
     monkeypatch.delenv('LOCALSTACK_REQUIRE_AUTH_TOKEN', raising=False)
 
-    try:
-        environment = _auth_environment()
-    except pytest.skip.Exception as exc:  # pragma: no cover - regression path
-        pytest.fail(f'default live tests should run against community LocalStack without auth: {exc}')
-
-    assert environment == {}
+    with pytest.raises(pytest.skip.Exception):
+        _auth_environment()
 
 
-def test_default_live_image_is_community_localstack(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Default live tests should not require the Pro image."""
+def test_auth_environment_fails_in_ci_without_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CI sets LOCALSTACK_REQUIRE_AUTH_TOKEN so a missing token fails loudly instead of skipping."""
+    monkeypatch.delenv('LOCALSTACK_AUTH_TOKEN', raising=False)
+    monkeypatch.delenv('LOCALSTACK_API_KEY', raising=False)
+    monkeypatch.setenv('LOCALSTACK_REQUIRE_AUTH_TOKEN', '1')
+
+    with pytest.raises(pytest.fail.Exception):
+        _auth_environment()
+
+
+def test_default_live_image_is_localstack(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live tests default to the single `localstack/localstack` image."""
     monkeypatch.delenv('LOCALSTACK_IMAGE', raising=False)
 
     assert _localstack_image() == 'localstack/localstack'
 
 
 def test_live_container_environment_scopes_requested_services(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Live tests should keep harness-started LocalStack containers narrow enough for CI startup."""
-    monkeypatch.delenv('LOCALSTACK_AUTH_TOKEN', raising=False)
+    """Harness-started containers stay narrow while still carrying the required auth token."""
+    monkeypatch.setenv('LOCALSTACK_AUTH_TOKEN', 'test-token')
     monkeypatch.delenv('LOCALSTACK_API_KEY', raising=False)
-    monkeypatch.delenv('LOCALSTACK_REQUIRE_AUTH_TOKEN', raising=False)
 
-    assert _container_environment('s3') == {'SERVICES': 's3'}
+    assert _container_environment('s3') == {'SERVICES': 's3', 'LOCALSTACK_AUTH_TOKEN': 'test-token'}
 
 
 def test_live_tests_run_on_asyncio_backend(anyio_backend: str) -> None:

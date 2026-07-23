@@ -77,12 +77,42 @@ def _hanging_docker_stub(tmp_path: Path) -> str:
     return str(stub)
 
 
+def _stop_failing_docker_stub(tmp_path: Path) -> str:
+    """A fake `docker` CLI whose `run` succeeds but whose `stop` fails on stderr."""
+    stub = tmp_path / 'docker-stop-fail'
+    stub.write_text(
+        '#!/bin/sh\n'
+        'if [ "$1" = run ]; then\n'
+        '  echo container-abc123\n'
+        '  exit 0\n'
+        'fi\n'
+        'echo "boom: cannot stop" >&2\n'
+        'exit 1\n'
+    )
+    stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return str(stub)
+
+
 class TestProperties:
     def test_endpoint_url(self, tmp_path: Path) -> None:
         docker, _ = _docker_stub(tmp_path)
         assert (
             LocalStackContainer(docker_path=docker, host_port=4599).endpoint_url
             == 'http://localhost.localstack.cloud:4599'
+        )
+
+    def test_endpoint_url_uses_localstack_cloud_for_all_interface_binding(self, tmp_path: Path) -> None:
+        docker, _ = _docker_stub(tmp_path)
+        assert (
+            LocalStackContainer(docker_path=docker, host_address='0.0.0.0', host_port=4599).endpoint_url
+            == 'http://localhost.localstack.cloud:4599'
+        )
+
+    def test_endpoint_url_uses_literal_host_for_custom_binding(self, tmp_path: Path) -> None:
+        docker, _ = _docker_stub(tmp_path)
+        assert (
+            LocalStackContainer(docker_path=docker, host_address='127.0.0.2', host_port=4599).endpoint_url
+            == 'http://127.0.0.2:4599'
         )
 
     def test_readiness_url_uses_host_binding(self, tmp_path: Path) -> None:
@@ -266,20 +296,35 @@ class TestLifecycle:
             async with LocalStackContainer(docker_path=_hanging_docker_stub(tmp_path), startup_timeout=0.05):
                 pass  # pragma: no cover
 
-    async def test_stop_timeout_is_swallowed_when_docker_hangs(self, tmp_path: Path) -> None:
+    async def test_stop_timeout_raises_and_keeps_container_id(self, tmp_path: Path) -> None:
         container = LocalStackContainer(docker_path=_hanging_docker_stub(tmp_path), startup_timeout=0.05)
         container._container_id = 'stuck'
-        await container.__aexit__(None, None, None)
-        assert container.container_id is None
+        with pytest.raises(LocalStackError, match='did not stop the LocalStack container stuck within 0.05s'):
+            await container.__aexit__(None, None, None)
+        assert container.container_id == 'stuck'
+
+    async def test_stop_failure_raises_and_keeps_container_id(self, tmp_path: Path) -> None:
+        container = LocalStackContainer(docker_path=_failing_docker_stub(tmp_path))
+        container._container_id = 'stuck'
+        with pytest.raises(LocalStackError, match='Failed to stop LocalStack container stuck: boom: port in use'):
+            await container.__aexit__(None, None, None)
+        assert container.container_id == 'stuck'
 
     async def test_exit_without_start_is_safe(self, tmp_path: Path) -> None:
         docker, log = _docker_stub(tmp_path)
         await LocalStackContainer(docker_path=docker).__aexit__(None, None, None)
         assert not log.exists()
 
-    async def test_stop_never_raises_if_docker_vanishes(self, tmp_path: Path) -> None:
-        # Cleanup must not raise even if the docker binary is gone by exit time.
+    async def test_stop_missing_docker_raises_and_keeps_container_id(self, tmp_path: Path) -> None:
         container = LocalStackContainer(docker_path='/no/such/docker')
         container._container_id = 'orphan'
-        await container.__aexit__(None, None, None)
-        assert container.container_id is None
+        with pytest.raises(LocalStackError, match='Docker CLI .* not found while stopping'):
+            await container.__aexit__(None, None, None)
+        assert container.container_id == 'orphan'
+
+    async def test_readiness_failure_raises_original_error_even_if_stop_fails(self, tmp_path: Path) -> None:
+        docker = _stop_failing_docker_stub(tmp_path)
+        port = unused_tcp_port()
+        with pytest.raises(LocalStackError, match='did not become ready within 1.0s'):
+            async with LocalStackContainer(docker_path=docker, host_port=port, startup_timeout=1.0, poll_interval=0.01):
+                pass  # pragma: no cover
