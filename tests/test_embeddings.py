@@ -34,7 +34,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, try_import
+from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, TestEnv, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1521,9 +1521,16 @@ class TestGoogle:
         assert model.system == 'google'
         assert urlparse(model.base_url).hostname == 'generativelanguage.googleapis.com'
 
-    async def test_infer_model_google_cloud(self):
-        with patch.dict(os.environ, {'GOOGLE_API_KEY': 'mock-api-key'}):
-            model = infer_embedding_model('google-cloud:gemini-embedding-001')
+    async def test_infer_model_google_cloud(self, env: TestEnv):
+        for name in {
+            'GOOGLE_APPLICATION_CREDENTIALS',
+            'GOOGLE_CLOUD_PROJECT',
+            'GOOGLE_CLOUD_LOCATION',
+            'GEMINI_API_KEY',
+        }:
+            env.remove(name)
+        env.set('GOOGLE_API_KEY', 'mock-api-key')
+        model = infer_embedding_model('google-cloud:gemini-embedding-001')
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
         assert model.system == 'google-cloud'

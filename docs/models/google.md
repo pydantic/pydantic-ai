@@ -103,15 +103,16 @@ from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
-credentials = service_account.Credentials.from_service_account_file(
-    'path/to/service-account.json',
-    scopes=['https://www.googleapis.com/auth/cloud-platform'],
-)
+credentials = service_account.Credentials.from_service_account_file('path/to/service-account.json')
 provider = GoogleCloudProvider(credentials=credentials, project='your-project-id')
 model = GoogleModel('gemini-3-flash-preview', provider=provider)
 agent = Agent(model)
 ...
 ```
+
+!!! note "Credential scopes"
+    [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] automatically applies
+    `https://www.googleapis.com/auth/cloud-platform` to credentials that require scopes. Existing scopes are preserved.
 
 #### API Key
 
@@ -121,7 +122,7 @@ To use Google Cloud with an API key, [create a key](https://cloud.google.com/ver
 export GOOGLE_API_KEY=your-api-key
 ```
 
-You can then use `GoogleModel` via the `GoogleCloudProvider` by name:
+You can then use `GoogleModel` via [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] by name:
 
 ```python {test="ci_only"}
 from pydantic_ai import Agent
@@ -142,6 +143,13 @@ model = GoogleModel('gemini-3-pro-preview', provider=provider)
 agent = Agent(model)
 ...
 ```
+
+!!! note "Authentication precedence"
+    Explicit `credentials` select credential-based authentication. Explicit `project` or `location`
+    selects [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials).
+    The `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_CLOUD_LOCATION`
+    environment variables also take precedence over an API key from the environment. To use
+    Express Mode when those environment variables are set, pass `api_key` explicitly.
 
 #### Customizing Location or Project
 
