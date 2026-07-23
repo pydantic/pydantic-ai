@@ -8,7 +8,13 @@ from typing import Literal, cast
 
 from typing_extensions import assert_never
 
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    ModelAPIError,
+    ModelHTTPError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import download_item
 from pydantic_ai.providers import Provider, infer_provider
@@ -204,13 +210,19 @@ class XaiImageGenerationModel(ImageGenerationModel):
             raise UnexpectedModelBehavior('xAI image generation response did not contain any images')
 
         images: list[GeneratedImage] = []
-        for response in responses:
+        moderated_indices: list[int] = []
+        for index, response in enumerate(responses):
+            # xAI moderation is silent: a flagged slot comes back with `respect_moderation=False` and an
+            # empty payload, and reading its `.base64` raises client-side. Skip it so one flagged slot
+            # doesn't discard the rest of a paid batch.
+            if not response.respect_moderation:
+                moderated_indices.append(index)
+                continue
             try:
                 content = _decode_data_url(response.base64)
             except (ValueError, TypeError) as e:
                 raise UnexpectedModelBehavior(
-                    'xAI image generation response did not contain valid base64 image data',
-                    str({'respect_moderation': response.respect_moderation}),
+                    'xAI image generation response did not contain valid base64 image data'
                 ) from e
             images.append(
                 GeneratedImage(
@@ -220,7 +232,13 @@ class XaiImageGenerationModel(ImageGenerationModel):
                 )
             )
 
+        if not images:
+            raise ContentFilterError('xAI flagged all generated images for content moderation')
+
         first_response = responses[0]
+        provider_details = _response_provider_details(first_response)
+        if moderated_indices:
+            provider_details['moderated_image_indices'] = moderated_indices
         return ImageGenerationResult(
             images=images,
             prompt=prompt,
@@ -229,7 +247,7 @@ class XaiImageGenerationModel(ImageGenerationModel):
             provider_name=self.system,
             provider_url=self.base_url,
             settings=settings,
-            provider_details=_response_provider_details(first_response),
+            provider_details=provider_details,
         )
 
 
@@ -318,6 +336,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 
 
 _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
+    grpc.StatusCode.INVALID_ARGUMENT: 400,
     grpc.StatusCode.UNAUTHENTICATED: 401,
     grpc.StatusCode.PERMISSION_DENIED: 403,
     grpc.StatusCode.NOT_FOUND: 404,

@@ -25,7 +25,13 @@ from pydantic_ai import (
     ImageUrl,
     UploadedFile,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    ModelAPIError,
+    ModelHTTPError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.images import (
     ImageGenerationSettings,
     InstrumentedImageGenerationModel,
@@ -324,10 +330,16 @@ def test_known_google_image_generation_model_names():
 
 
 def test_known_xai_image_generation_model_names():
+    """Pin the curated xAI image models, including the `grok-imagine-image-pro` tier.
+
+    `grok-imagine-image-pro` is a real, released model (xai_sdk `ImageGenerationModel` literal;
+    https://docs.x.ai/developers/models/grok-imagine-image-pro) that was missing from the known set.
+    """
     known_names = get_args(KnownImageGenerationModelName.__value__)
 
     assert {name for name in known_names if name.startswith('xai:')} == {
         'xai:grok-imagine-image',
+        'xai:grok-imagine-image-pro',
         'xai:grok-imagine-image-quality',
     }
 
@@ -1305,9 +1317,17 @@ async def test_xai_image_generation_rejects_mixed_inputs_that_would_be_reordered
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
 @pytest.mark.parametrize('base64_value', ['', 'data:text/plain;base64,aGVsbG8='])
 async def test_xai_image_generation_invalid_response(base64_value: str):
+    """A non-moderated slot with a missing or non-image payload is unexpected behavior.
+
+    Distinct from silent moderation (`respect_moderation=False`, covered separately): here the SDK
+    reports the image respects moderation yet the base64 payload is empty or carries a non-image media
+    type, so we surface `UnexpectedModelBehavior` rather than dropping it as a flagged slot.
+
+    Reference: `xai_sdk.aio.image.ImageResponse.base64` raises when the payload is empty.
+    """
     mock_client = AsyncMock()
     proto = xai_image_pb2.ImageResponse(
-        images=[xai_image_pb2.GeneratedImage(base64=base64_value, respect_moderation=False)],
+        images=[xai_image_pb2.GeneratedImage(base64=base64_value, respect_moderation=True)],
         model='grok-imagine-image',
     )
     mock_client.image.sample.return_value = XaiImageResponse(proto, 0)
@@ -1316,17 +1336,111 @@ async def test_xai_image_generation_invalid_response(base64_value: str):
         provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
     )
 
-    with pytest.raises(UnexpectedModelBehavior, match='did not contain valid base64 image data') as exc_info:
+    with pytest.raises(UnexpectedModelBehavior, match='did not contain valid base64 image data'):
         await model.generate('tiny robot')
 
-    assert exc_info.value.body == "{'respect_moderation': False}"
+
+def _xai_moderated_image_responses(*slots: tuple[bytes | None, bool]) -> list[XaiImageResponse]:
+    """Build one batch `ImageResponse` list mirroring xAI's silent per-slot moderation.
+
+    Each slot is `(image_bytes_or_None, respect_moderation)`. A moderated slot (`respect_moderation=False`)
+    carries an empty `base64` field, exactly as the SDK exposes a flagged image; accessing its `.base64`
+    then raises `ValueError` (`xai_sdk.aio.image.ImageResponse.base64`). All slots share one proto, matching
+    the real `sample_batch` wire shape (one RPC, one response, positional `images[]`).
+    """
+    proto = xai_image_pb2.ImageResponse(
+        images=[
+            xai_image_pb2.GeneratedImage(
+                base64=(f'data:image/jpeg;base64,{base64.b64encode(data).decode()}' if data is not None else ''),
+                respect_moderation=respect_moderation,
+            )
+            for data, respect_moderation in slots
+        ],
+        model='grok-imagine-image',
+        usage=xai_usage_pb2.SamplingUsage(
+            prompt_tokens=7,
+            completion_tokens=11,
+            cost_in_usd_ticks=200_000_000,
+        ),
+    )
+    return [XaiImageResponse(proto, index) for index in range(len(slots))]
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_skips_moderated_batch_slots(monkeypatch: pytest.MonkeyPatch):
+    """One silently-moderated slot must not discard the rest of a paid batch.
+
+    xAI moderation is silent: the RPC succeeds and a flagged slot returns `respect_moderation=False`
+    with an empty payload (`xai_sdk.aio.image.ImageResponse.base64` raises on access). We skip flagged
+    slots, return the clean subset, and surface the flagged indices at result level via
+    `ImageGenerationResult.provider_details['moderated_image_indices']`, keeping per-image
+    `respect_moderation` too.
+
+    References:
+    - `xai_sdk.aio.image.ImageResponse.respect_moderation` / `.base64` (silent-moderation semantics).
+    - Research: local-notes/image-gen-research/xai-grok-imagine-api.md section 4 (Error behavior).
+    """
+    decoded_values: list[str] = []
+    real_decode = xai_images._decode_data_url  # pyright: ignore[reportPrivateUsage]
+
+    def spy_decode(value: str) -> BinaryImage:
+        decoded_values.append(value)
+        return real_decode(value)
+
+    monkeypatch.setattr(xai_images, '_decode_data_url', spy_decode)
+
+    mock_client = AsyncMock()
+    mock_client.image.sample_batch.return_value = _xai_moderated_image_responses(
+        (b'first-image', True),
+        (None, False),
+        (b'third-image', True),
+    )
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    result = await model.generate('tiny robot', settings={'n': 3})
+
+    assert [image.content.data for image in result.images] == [b'first-image', b'third-image']
+    assert all(image.provider_details == {'respect_moderation': True} for image in result.images)
+    assert result.provider_details == snapshot(
+        {'cost_in_usd_ticks': 200000000, 'cost_usd': 0.02, 'moderated_image_indices': [1]}
+    )
+    # Decoding is never attempted on the flagged slot (its `.base64` access would raise).
+    assert decoded_values == snapshot(
+        ['data:image/jpeg;base64,Zmlyc3QtaW1hZ2U=', 'data:image/jpeg;base64,dGhpcmQtaW1hZ2U=']
+    )
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_all_slots_moderated_raises_content_filter():
+    """When every slot is moderated there is nothing to return, so raise a content-filter error.
+
+    A fully-moderated batch is not `UnexpectedModelBehavior` (the RPC behaved as designed) — it is a
+    content-moderation outcome, so we raise the semantically-correct `ContentFilterError`.
+
+    Reference: `xai_sdk.aio.image.ImageResponse.respect_moderation` (silent moderation, per-slot).
+    """
+    mock_client = AsyncMock()
+    mock_client.image.sample_batch.return_value = _xai_moderated_image_responses(
+        (None, False),
+        (None, False),
+    )
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    with pytest.raises(ContentFilterError, match='content moderation'):
+        await model.generate('tiny robot', settings={'n': 2})
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
 async def test_xai_image_generation_response_without_cost_details():
     mock_client = AsyncMock()
     proto = xai_image_pb2.ImageResponse(
-        images=[xai_image_pb2.GeneratedImage(base64='data:image/png;base64,aGVsbG8=')],
+        images=[xai_image_pb2.GeneratedImage(base64='data:image/png;base64,aGVsbG8=', respect_moderation=True)],
         model='grok-imagine-image',
         usage=xai_usage_pb2.SamplingUsage(prompt_tokens=1),
     )
@@ -1398,6 +1512,46 @@ async def test_xai_image_generation_unknown_status_error():
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+@pytest.mark.parametrize(
+    'status_code,expected_http',
+    [
+        (grpc.StatusCode.INVALID_ARGUMENT, 400),
+        (grpc.StatusCode.UNAUTHENTICATED, 401),
+        (grpc.StatusCode.PERMISSION_DENIED, 403),
+    ],
+)
+async def test_xai_image_generation_maps_grpc_status_to_http(status_code: grpc.StatusCode, expected_http: int):
+    """gRPC status codes map to their HTTP-equivalent `ModelHTTPError`.
+
+    xAI's image path is gRPC, so provider errors arrive as `grpc.StatusCode`, not HTTP codes. A bad
+    request (`INVALID_ARGUMENT`) must surface as 400 rather than the generic `ModelAPIError`, and the
+    already-mapped auth codes (`UNAUTHENTICATED`/`PERMISSION_DENIED`) are pinned here too.
+
+    Reference: `_GRPC_STATUS_TO_HTTP` in `pydantic_ai.images.xai`.
+    """
+
+    class TestRpcError(grpc.RpcError):
+        def code(self) -> grpc.StatusCode:
+            return status_code
+
+        def details(self) -> str:
+            return 'boom'
+
+    mock_client = AsyncMock()
+    mock_client.image.sample.side_effect = TestRpcError()
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.generate('tiny robot')
+
+    assert exc_info.value.status_code == expected_http
+    assert exc_info.value.body == 'boom'
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
 @pytest.mark.vcr
 def test_xai_image_generation_vcr(xai_provider: XaiProvider):
     model = XaiImageGenerationModel('grok-imagine-image', provider=xai_provider)
@@ -1419,6 +1573,36 @@ def test_xai_image_generation_vcr(xai_provider: XaiProvider):
     assert result.provider_url == 'https://api.x.ai/v1'
     assert result.usage == RequestUsage()
     assert result.provider_details == {'cost_in_usd_ticks': 200000000, 'cost_usd': 0.02}
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+@pytest.mark.vcr
+def test_xai_image_generation_unlisted_model_vcr(xai_provider: XaiProvider):
+    """`ImageGenerator` completes a real generate() when the model id is supplied as a plain `str`.
+
+    Forward-compat guard: model ids churn faster than `KnownImageGenerationModelName`. Supplying the id
+    through a `str`-typed variable — not the `KnownImageGenerationModelName` / `xai_sdk` Literal — proves
+    the non-Literal branch of `XaiImageGenerationModelName` runs end-to-end against the live API, so a
+    brand-new model id not yet in any Literal still works. Recorded against the real
+    `grok-imagine-image-pro` tier (https://docs.x.ai/developers/models/grok-imagine-image-pro); it is in
+    the curated set, so the `str` annotation (not the model string) is what exercises the forward path.
+
+    Live-API note pinned by the recording: xAI resolves the requested `grok-imagine-image-pro` id to
+    `grok-imagine-image-quality` in the response's `model` field, and `result.model_name` reflects the
+    resolved response model (not the requested id).
+    """
+    model_name: str = 'grok-imagine-image-pro'
+    generator = ImageGenerator(XaiImageGenerationModel(model_name, provider=xai_provider))
+
+    result = generator.generate_sync('A cat with a cowboy hat, dancing in Rome.')
+
+    assert len(result.images) == 1
+    generated_image = result.images[0]
+    assert generated_image.content.media_type == 'image/jpeg'
+    assert len(generated_image.content.data) > 100
+    assert result.model_name == 'grok-imagine-image-quality'
+    assert result.provider_name == 'xai'
+    assert result.provider_url == 'https://api.x.ai/v1'
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
