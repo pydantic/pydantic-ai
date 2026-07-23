@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
-from pydantic_ai._template import TemplateStr
 from pydantic_ai.messages import InstructionPart
+from pydantic_ai.template import TemplateStr
 
 from . import _system_prompt
 from .tools import SystemPromptFunc

@@ -106,6 +106,11 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             return self
         return replace(self, wrapped=new_wrapped)
 
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        self.wrapped._validate_runtime_capabilities(ctx, capabilities)
+
     # --- Get methods ---
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:

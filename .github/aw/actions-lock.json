@@ -1,9 +1,39 @@
 {
   "entries": {
+    "actions/checkout@v6.0.2": {
+      "repo": "actions/checkout",
+      "version": "v6.0.2",
+      "sha": "de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+    },
+    "actions/download-artifact@v8.0.1": {
+      "repo": "actions/download-artifact",
+      "version": "v8.0.1",
+      "sha": "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+    },
     "actions/github-script@v9.0.0": {
       "repo": "actions/github-script",
       "version": "v9.0.0",
       "sha": "3a2844b7e9c422d3c10d287c895573f7108da1b3"
+    },
+    "actions/setup-node@v6.4.0": {
+      "repo": "actions/setup-node",
+      "version": "v6.4.0",
+      "sha": "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e"
+    },
+    "actions/setup-python@v6.2.0": {
+      "repo": "actions/setup-python",
+      "version": "v6.2.0",
+      "sha": "a309ff8b426b58ec0e2a45f0f869d46889d02405"
+    },
+    "actions/upload-artifact@v7.0.1": {
+      "repo": "actions/upload-artifact",
+      "version": "v7.0.1",
+      "sha": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    },
+    "astral-sh/setup-uv@v8.1.0": {
+      "repo": "astral-sh/setup-uv",
+      "version": "v8.1.0",
+      "sha": "08807647e7069bb48b6ef5acd8ec9567f424441b"
     },
     "github/gh-aw-actions/setup-cli@v0.74.8": {
       "repo": "github/gh-aw-actions/setup-cli",
