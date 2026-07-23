@@ -129,7 +129,7 @@ class RealtimeCassette:
                 interactions.append(CassetteMessage(direction=item['direction'], data=item['data']))
         return cls(version=raw.get('version', 1), interactions=interactions)
 
-    def dump(self, path: Path) -> None:  # pragma: no cover - only runs while recording
+    def dump(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         interactions: list[dict[str, Any]] = [
             {'kind': 'message', 'direction': i.direction, 'data': i.data}
@@ -294,7 +294,7 @@ class ReplayWebSocket:
         return self._interactions[self._position]
 
 
-class RecordingWebSocket:  # pragma: no cover - only runs while recording
+class RecordingWebSocket:
     """Wrap a live WebSocket, recording JSON frames (secrets scrubbed, inbound audio truncated)."""
 
     def __init__(self, ws: Any, cassette: RealtimeCassette) -> None:

@@ -519,7 +519,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
 
 def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
-    """Map a raw OpenAI Realtime event to a [`RealtimeCodecEvent`][pydantic_ai.realtime.RealtimeCodecEvent].
+    """Map a raw OpenAI Realtime event to a [`RealtimeCodecEvent`][pydantic_ai.realtime.codec.RealtimeCodecEvent].
 
     Returns `None` for events that carry no session-relevant content (e.g. `session.created`).
     """

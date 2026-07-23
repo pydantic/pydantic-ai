@@ -19,6 +19,7 @@ from pydantic_ai import (
     AbstractToolset,
     Agent,
     AgentRetries,
+    AgentRunResultEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -66,6 +67,7 @@ from pydantic_ai._output import (
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
+    Hooks,
     NativeTool,
     PrepareOutputTools,
     PrepareTools,
@@ -3856,6 +3858,237 @@ async def test_agent_run_result_conversation_id_property() -> None:
     agent = Agent(TestModel(custom_output_text='ok'))
     result = await agent.run('hi', conversation_id='conv-result')
     assert result.conversation_id == 'conv-result'
+
+
+def test_agent_run_id_explicit_override() -> None:
+    agent = Agent(TestModel(custom_output_text='explicit'))
+
+    result = agent.run_sync('hi', run_id='run-app-42')
+    assert result.run_id == 'run-app-42'
+    assert all(m.run_id == 'run-app-42' for m in result.all_messages())
+
+
+def test_agent_run_id_not_inherited_from_message_history() -> None:
+    agent = Agent(TestModel(custom_output_text='continuation'))
+
+    first = agent.run_sync('first turn', run_id='run-first')
+    second = agent.run_sync('second turn', message_history=first.all_messages())
+
+    assert second.run_id != first.run_id
+    assert all(m.run_id == second.run_id for m in second.new_messages())
+
+
+def test_agent_run_id_available_in_run_context() -> None:
+    captured: list[str | None] = []
+
+    def capture_metadata(ctx: RunContext) -> dict[str, Any]:
+        captured.append(ctx.run_id)
+        return {}
+
+    agent = Agent(TestModel(custom_output_text='ctx'), metadata=capture_metadata)
+    result = agent.run_sync('hi', run_id='run-from-ctx')
+
+    assert result.run_id == 'run-from-ctx'
+    assert captured
+    assert all(rid == 'run-from-ctx' for rid in captured)
+
+
+async def test_agent_run_id_surfaces_on_iter_and_async_stream() -> None:
+    """`run_id` is reachable from `AgentRun` and `StreamedRunResult`."""
+    agent = Agent(TestModel(custom_output_text='surfaced'))
+
+    async with agent.iter('hi', run_id='run-iter') as agent_run:
+        assert agent_run.run_id == 'run-iter'
+        async for _ in agent_run:
+            pass
+
+    async with agent.run_stream('hi', run_id='run-async-stream') as stream:
+        assert stream.run_id == 'run-async-stream'
+        await stream.get_output()
+
+
+async def test_after_model_request_fresh_response_stamps_call_tools_node() -> None:
+    """`CallToolsNode.model_response` must be the stamped history object after a hook rewrite."""
+
+    @dataclass
+    class RewriteResponseCap(AbstractCapability):
+        async def after_model_request(
+            self,
+            ctx: RunContext,
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='rewritten')])
+
+    def llm(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='from model')])
+
+    agent = Agent(FunctionModel(llm), capabilities=[RewriteResponseCap()])
+    saw_call_tools = False
+    async with agent.iter('hi', run_id='run-hook') as agent_run:
+        async for node in agent_run:
+            if Agent.is_call_tools_node(node):
+                saw_call_tools = True
+                assert node.model_response.run_id == 'run-hook'
+                assert node.model_response is agent_run.ctx.state.message_history[-1]
+                part = node.model_response.parts[0]
+                assert isinstance(part, TextPart)
+                assert part.content == 'rewritten'
+
+    assert saw_call_tools
+    assert agent_run.result is not None
+    assert agent_run.result.output == 'rewritten'
+
+
+def test_agent_run_id_surfaces_on_sync_stream() -> None:
+    """`run_id` is reachable from `StreamedRunResultSync`."""
+    agent = Agent(TestModel(custom_output_text='surfaced'))
+    result = agent.run_stream_sync('hi', run_id='run-sync-stream')
+    assert result.run_id == 'run-sync-stream'
+
+
+async def test_agent_run_result_run_id_property() -> None:
+    """`AgentRunResult.run_id` returns the run's ID."""
+    agent = Agent(TestModel(custom_output_text='ok'))
+    result = await agent.run('hi', run_id='run-result')
+    assert result.run_id == 'run-result'
+
+
+async def test_agent_run_id_fresh_on_deferred_resume() -> None:
+    """Deferred-tool resume is a new agent run — it gets a fresh `run_id`, not the paused run's."""
+
+    def llm(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='needs_approval', args={}, tool_call_id='approve-me')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def needs_approval() -> str:
+        return 'approved'
+
+    paused = await agent.run('go', run_id='run-hitl-1')
+    assert isinstance(paused.output, DeferredToolRequests)
+    assert paused.run_id == 'run-hitl-1'
+
+    resumed = await agent.run(
+        message_history=paused.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={'approve-me': True}),
+    )
+    assert resumed.run_id != paused.run_id
+    assert all(m.run_id == resumed.run_id for m in resumed.new_messages())
+    # History from the paused run keeps its original stamps.
+    assert all(m.run_id == 'run-hitl-1' for m in resumed.all_messages()[: len(paused.all_messages())])
+
+
+def test_agent_run_id_reuse_in_message_history_raises() -> None:
+    agent = Agent(TestModel(custom_output_text='ok'))
+
+    first = agent.run_sync('first', run_id='run-reuse-me')
+    with pytest.raises(UserError, match=r"`run_id='run-reuse-me'` already appears in `message_history`"):
+        agent.run_sync('second', message_history=first.all_messages(), run_id='run-reuse-me')
+
+
+def test_agent_run_id_empty_string_raises() -> None:
+    agent = Agent(TestModel(custom_output_text='ok'))
+    with pytest.raises(UserError, match=r'`run_id` must be a non-empty string'):
+        agent.run_sync('hi', run_id='')
+
+
+async def test_agent_run_id_stamped_on_request_before_hooks() -> None:
+    """The pending request already carries `run_id` when `before_model_request` hooks see it.
+
+    The request is stamped again after hooks, so this pre-hook stamp is only observable
+    from inside a hook. Not a VCR test: in-memory framework behavior.
+    """
+    seen: list[str | None] = []
+
+    async def capture(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        seen.append(request_context.messages[-1].run_id)
+        return request_context
+
+    agent = Agent(TestModel(custom_output_text='ok'), capabilities=[Hooks(before_model_request=capture)])
+    await agent.run('hi', run_id='run-pre-hook')
+
+    assert seen == ['run-pre-hook']
+
+
+def test_agent_run_id_duplicate_on_model_response_raises() -> None:
+    """The duplicate check scans responses too, not just requests.
+
+    Not a VCR test: the guard raises before any model request is made.
+    """
+    agent = Agent(TestModel(custom_output_text='ok'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='prior')]),
+        ModelResponse(parts=[TextPart(content='prior answer')], run_id='run-dup'),
+    ]
+    with pytest.raises(UserError, match=r"`run_id='run-dup'` already appears in `message_history`"):
+        agent.run_sync('hi', message_history=history, run_id='run-dup')
+
+
+async def test_agent_run_id_on_run_stream_events() -> None:
+    """`run_id=` flows through `run_stream_events` to the run result and message stamps.
+
+    Not a VCR test: id stamping is in-memory framework behavior that a cassette match
+    would not protect.
+    """
+    agent = Agent(TestModel(custom_output_text='streamed'))
+    async with agent.run_stream_events('hi', run_id='run-events') as events:
+        collected = [event async for event in events]
+
+    result_event = collected[-1]
+    assert isinstance(result_event, AgentRunResultEvent)
+    assert result_event.result.run_id == 'run-events'
+    messages = result_event.result.all_messages()
+    assert len(messages) == 2
+    assert all(m.run_id == 'run-events' for m in messages)
+
+
+def test_agent_preserves_model_response_run_id() -> None:
+    """Model responses that already carry a `run_id` (e.g. Prefect cache hits) keep it.
+
+    Soft-fill via `fill_run_metadata`: a pre-set producer `run_id` is preserved on the
+    shared object and in history (same policy as main / #6313).
+    """
+    cached = ModelResponse(parts=[TextPart(content='ok')], run_id='stale-from-cache')
+
+    def llm(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return cached
+
+    agent = Agent(FunctionModel(llm))
+    result = agent.run_sync('hi', run_id='run-current')
+
+    assert result.run_id == 'run-current'
+    responses = [m for m in result.all_messages() if isinstance(m, ModelResponse)]
+    assert responses
+    assert all(m.run_id == 'stale-from-cache' for m in responses)
+    assert cached.run_id == 'stale-from-cache'
+
+
+def test_agent_fill_run_metadata_mutates_unstamped_response_singleton() -> None:
+    """In-place soft-fill stamps unset fields onto a reused ModelResponse singleton.
+
+    Matches main: models that return the same unstamped object across runs will see
+    the first run's `run_id` stick on later runs. Prefect avoids this by stamping
+    before cache persist (`_stamp_response_provenance`).
+    """
+    cached = ModelResponse(parts=[TextPart(content='ok')])
+
+    def llm(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return cached
+
+    agent = Agent(FunctionModel(llm))
+    first = agent.run_sync('hi', run_id='run-a')
+    second = agent.run_sync('hi', run_id='run-b')
+
+    assert first.run_id == 'run-a'
+    assert second.run_id == 'run-b'
+    assert cached.run_id == 'run-a'
+    assert cached is second.all_messages()[-1]
+    assert second.all_messages()[-1].run_id == 'run-a'
 
 
 async def test_agent_run_result_metadata_available() -> None:

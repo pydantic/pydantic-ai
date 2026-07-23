@@ -100,7 +100,7 @@ class XaiRealtimeModelSettings(RealtimeModelSettings, total=False):
 
 
 def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
-    """Map a raw xAI Grok Voice realtime event to a [`RealtimeCodecEvent`][pydantic_ai.realtime.RealtimeCodecEvent].
+    """Map a raw xAI Grok Voice realtime event to a [`RealtimeCodecEvent`][pydantic_ai.realtime.codec.RealtimeCodecEvent].
 
     xAI clones the OpenAI Realtime protocol, so most events map identically via the OpenAI codec.
     The first exception is input audio transcription: xAI emits cumulative

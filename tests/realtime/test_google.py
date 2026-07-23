@@ -44,21 +44,23 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
-    AudioDelta,
     AudioInput,
     InputSpeechStartEvent,
-    InputTranscript,
     RealtimeSession,
     ReconnectedEvent,
     SessionUsageEvent,
-    ToolCall,
-    ToolCallCancelled,
-    ToolResult,
-    Transcript,
     TurnCompleteEvent,
     TurnDetection,
 )
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
+from pydantic_ai.realtime.codec import (
+    AudioDelta,
+    InputTranscript,
+    ToolCall,
+    ToolCallCancelled,
+    ToolResult,
+    Transcript,
+)
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -69,6 +71,7 @@ with try_import() as imports_successful:
     from google.genai import Client, errors as genai_errors, types as genai_types
     from google.genai.live import AsyncSession, ConnectionClosed
 
+    from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.realtime import google as rt_google
     from pydantic_ai.realtime.google import (
@@ -291,6 +294,126 @@ async def test_connect_serializes_shared_client_header_mutations(monkeypatch: py
     assert {captured['traceparent'] for captured in handshake_headers} == {'trace-1', 'trace-2'}
     assert all(sum(key.lower() == 'user-agent' for key in captured) == 1 for captured in handshake_headers)
     assert headers == original_headers
+
+
+class _StopDial(Exception):
+    """Raised from the fake handshake to short-circuit `connect` once headers are captured."""
+
+
+class _FakeWSConnect:
+    async def __aenter__(self) -> None:
+        raise _StopDial()
+
+    async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover - never entered
+        return False
+
+
+def _capture_ws_connect(captured: dict[str, Any]) -> Any:
+    """A stand-in for `google.genai.live.ws_connect` that records the dialed URI and headers."""
+
+    def ws_connect(uri: str, *, additional_headers: dict[str, str] | None = None, **kwargs: Any) -> _FakeWSConnect:
+        captured['uri'] = uri
+        captured['headers'] = dict(additional_headers or {})
+        return _FakeWSConnect()
+
+    return ws_connect
+
+
+async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A gateway provider dials the Live WebSocket through the SDK, which forwards the client's HTTP
+    # headers as the handshake's `additional_headers`. The gateway authenticates on `Authorization:
+    # Bearer <key>` — added to REST calls by its httpx hook, which can't reach this `websockets` dial —
+    # so `connect` must inject the gateway key into the handshake headers itself. Driven end-to-end
+    # through `connect` (patching the SDK's `ws_connect`, as the cassette engine does) so the real URL
+    # derivation and header stack are exercised, not a hand-built dict.
+    provider = gateway_provider('google', api_key='gw-key', base_url='https://gateway.pydantic.dev/proxy')
+    model = GoogleRealtimeModel('gemini-live-2.5-flash', provider=provider)
+    assert model._gateway is True  # pyright: ignore[reportPrivateUsage]
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect(captured))
+    with pytest.raises(_StopDial):
+        async with _connect(model, 'hi'):
+            pass  # pragma: no cover - the dial short-circuits before yielding
+
+    # The SDK swaps https→wss and appends the Vertex BidiGenerateContent path onto the gateway base URL;
+    # the gateway's platform relay accepts exactly this URL and derives the billed model from the setup
+    # frame, so pydantic-ai does not rewrite it.
+    assert captured['uri'] == snapshot(
+        'wss://gateway.pydantic.dev/proxy/google-vertex/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent'
+    )
+    assert captured['headers'].get('Authorization') == 'Bearer gw-key'
+    # `_single_ws_user_agent` still runs, so the handshake carries exactly one user-agent header.
+    assert sum(key.lower() == 'user-agent' for key in captured['headers']) == 1
+    # The injected `Authorization` is removed after the connect so the shared client's later REST
+    # requests fall back to the gateway's httpx hook rather than carrying a stale bearer header.
+    rest_headers = provider.client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
+    assert rest_headers is not None and 'Authorization' not in rest_headers
+
+
+async def test_non_gateway_handshake_has_no_bearer_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A plain `GoogleProvider` is not a gateway provider, so `connect` leaves the handshake auth to the
+    # SDK (the API key travels as `x-goog-api-key`) and adds no `Authorization` header.
+    model = GoogleRealtimeModel(provider=GoogleProvider(api_key='k'))
+    assert model._gateway is False  # pyright: ignore[reportPrivateUsage]
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect(captured))
+    with pytest.raises(_StopDial):
+        async with _connect(model, 'hi'):
+            pass  # pragma: no cover - the dial short-circuits before yielding
+
+    assert 'Authorization' not in captured['headers']
+
+
+def test_ws_gateway_auth_injects_and_restores_bearer() -> None:
+    # `google-genai` forwards the client's HTTP headers as the Live handshake headers, so the gateway
+    # bearer key is injected into them for the connect only, then removed so the shared client's later
+    # REST requests fall back to the gateway's httpx hook. The header dict is the SDK's private one, so
+    # this is a direct unit test.
+    from types import SimpleNamespace
+
+    headers = {'user-agent': 'solo'}
+    client = SimpleNamespace(
+        _api_client=SimpleNamespace(api_key='gw-key', _http_options=SimpleNamespace(headers=headers))
+    )
+    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
+        assert headers == {'user-agent': 'solo', 'Authorization': 'Bearer gw-key'}
+    assert headers == {'user-agent': 'solo'}
+
+
+def test_ws_gateway_auth_noop_without_api_key() -> None:
+    # No key to mirror (e.g. an ADC gateway client), so the handshake headers are left untouched.
+    from types import SimpleNamespace
+
+    headers = {'user-agent': 'solo'}
+    client = SimpleNamespace(_api_client=SimpleNamespace(api_key=None, _http_options=SimpleNamespace(headers=headers)))
+    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
+        assert headers == {'user-agent': 'solo'}
+    assert headers == {'user-agent': 'solo'}
+
+
+def test_ws_gateway_auth_noop_with_existing_authorization() -> None:
+    # A caller-supplied `Authorization` header wins: the gateway key is not layered on top of it.
+    from types import SimpleNamespace
+
+    headers = {'Authorization': 'Bearer caller'}
+    client = SimpleNamespace(
+        _api_client=SimpleNamespace(api_key='gw-key', _http_options=SimpleNamespace(headers=headers))
+    )
+    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
+        assert headers == {'Authorization': 'Bearer caller'}
+    assert headers == {'Authorization': 'Bearer caller'}
+
+
+def test_ws_gateway_auth_noop_without_http_options() -> None:
+    # A custom/fake client without the SDK's private HTTP options simply skips injection.
+    from types import SimpleNamespace
+
+    client = SimpleNamespace(_api_client=None)
+    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
+        assert client._api_client is None
+    assert client._api_client is None
 
 
 # --- provider resolution & capabilities --------------------------------------

@@ -169,6 +169,8 @@ nav:
           - examples/stream-whales.md
       - Realtime:
           - examples/realtime-voice.md
+          - examples/realtime-text-to-audio.md
+          - examples/realtime-handoff.md
           - examples/realtime-camera.md
           - examples/realtime-webrtc.md
       - Complex Workflows:

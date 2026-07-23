@@ -86,7 +86,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     agent = Agent(instructions='Answer in two or three words.')
 
     events: list[Any] = []
-    async with agent.realtime_session(model=model, audio_retention='output') as session:
+    async with agent.realtime_session(model=model, audio_retention='output_audio') as session:
         await session.send('Say a short greeting.')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent

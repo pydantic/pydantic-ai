@@ -31,15 +31,17 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
-    AudioDelta,
-    InputTranscript,
     RealtimeModelProfile,
     ReconnectedEvent,
-    ToolCall,
-    Transcript,
     TurnDetection,
 )
 from pydantic_ai.realtime._base import ConversationCreated, ConversationItemCreated, SessionErrorEvent
+from pydantic_ai.realtime.codec import (
+    AudioDelta,
+    InputTranscript,
+    ToolCall,
+    Transcript,
+)
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import

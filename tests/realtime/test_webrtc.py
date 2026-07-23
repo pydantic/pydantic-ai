@@ -279,7 +279,7 @@ async def test_realtime_session_sideband_rejects_audio_retention() -> None:
     agent = Agent()
     call = WebRTCCall(provider_name='openai', call_id='rtc_x')
     with pytest.raises(UserError, match="can't retain audio"):
-        async with agent.realtime_session(model, provider_session=call, audio_retention='input'):
+        async with agent.realtime_session(model, provider_session=call, audio_retention='input_audio'):
             pass  # pragma: no cover - raises before connecting
 
 
@@ -298,7 +298,8 @@ async def test_base_model_rejects_webrtc() -> None:
     # don't override the WebRTC methods, so the base `RealtimeModel` rejects the whole surface.
     from contextlib import AbstractAsyncContextManager
 
-    from pydantic_ai.realtime import RealtimeConnection, RealtimeModel
+    from pydantic_ai.realtime import RealtimeModel
+    from pydantic_ai.realtime.codec import RealtimeConnection
 
     class _WebSocketOnlyModel(RealtimeModel):
         @property

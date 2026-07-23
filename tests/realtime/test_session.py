@@ -22,6 +22,7 @@ from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
@@ -58,30 +59,16 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
-    AudioDelta,
     AudioInput,
-    CancelResponse,
-    ClearAudio,
-    CommitAudio,
-    CreateResponse,
     InputSpeechEndEvent,
-    InputTranscript,
     InputTranscriptionFailedEvent,
-    RealtimeCodecEvent,
-    RealtimeConnection,
     RealtimeError,
     RealtimeEvent,
-    RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession as _RealtimeSession,
     SessionUsageEvent,
-    ToolCall,
-    ToolCallCancelled,
-    ToolResult,
-    Transcript,
-    TruncateOutput,
     TurnCompleteEvent,
 )
 from pydantic_ai.realtime._base import (
@@ -90,6 +77,22 @@ from pydantic_ai.realtime._base import (
     ImageInput,
     SessionErrorEvent,
     TextInput,
+)
+from pydantic_ai.realtime.codec import (
+    AudioDelta,
+    CancelResponse,
+    ClearAudio,
+    CommitAudio,
+    CreateResponse,
+    InputTranscript,
+    RealtimeCodecEvent,
+    RealtimeConnection,
+    RealtimeInput,
+    ToolCall,
+    ToolCallCancelled,
+    ToolResult,
+    Transcript,
+    TruncateOutput,
 )
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tool_manager import ToolManager
@@ -1359,13 +1362,17 @@ async def test_send_accepts_plain_content() -> None:
 
     await session.send('hello')
     await session.send(BinaryImage(data=b'image', media_type='image/png'))
-    await session.send(BinaryContent(data=b'audio', media_type='audio/wav'))
+    # A WAV container (e.g. retained `SpeechPart.audio`) is unwrapped to the raw PCM the wire expects.
+    await session.send(_wav_content(b'\x01\x02\x03\x04'))
+    # Raw PCM `BinaryContent` passes through verbatim.
+    await session.send(BinaryContent(data=b'\xaa\xbb', media_type='audio/pcm'))
 
     assert conn.sent == snapshot(
         [
             TextInput(text='hello'),
             ImageInput(data=b'image', media_type='image/png'),
-            AudioInput(data=b'audio'),
+            AudioInput(data=b'\x01\x02\x03\x04'),
+            AudioInput(data=b'\xaa\xbb'),
         ]
     )
     assert session.new_messages() == snapshot(
@@ -1418,8 +1425,12 @@ async def test_send_rejects_unsupported_binary_content() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
 
-    with pytest.raises(UserError, match=r"Unsupported binary media type 'application/pdf'.*image and audio"):
+    with pytest.raises(UserError, match=r"Unsupported binary media type 'application/pdf'.*WAV audio, or raw PCM"):
         await session.send(BinaryContent(data=b'document', media_type='application/pdf'))
+
+    # A non-WAV audio container can't be unwrapped, so it's rejected rather than streamed as noise.
+    with pytest.raises(UserError, match=r"Unsupported binary media type 'audio/mpeg'.*WAV audio, or raw PCM"):
+        await session.send(BinaryContent(data=b'\x00mp3', media_type='audio/mpeg'))
 
     assert conn.sent == []
 
@@ -1443,24 +1454,15 @@ async def test_send_enforces_model_profile_guard() -> None:
     assert conn.sent == []
 
 
-async def test_send_dispatches_control_inputs_through_helpers() -> None:
-    # Every control `RealtimeSessionInput` variant routes through its typed helper (which applies the
-    # model-profile guards) rather than reaching the connection raw.
+async def test_send_rejects_control_verbs() -> None:
+    # Turn-control verbs are connection-level vocabulary excluded from `RealtimeSessionInput`; `send()`
+    # rejects them at runtime and directs callers to the dedicated methods (which apply profile guards).
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
-    await session.send(CommitAudio())
-    await session.send(ClearAudio())
-    await session.send(CreateResponse())
-    await session.send(TruncateOutput(audio_end_ms=120))
-    await session.send(CancelResponse())
-    assert conn.sent == [
-        CommitAudio(),
-        ClearAudio(),
-        CreateResponse(),
-        TruncateOutput(audio_end_ms=120),
-        CancelResponse(),
-        CancelResponse(),
-    ]
+    for verb in (CommitAudio(), ClearAudio(), CreateResponse(), CancelResponse(), TruncateOutput(audio_end_ms=120)):
+        with pytest.raises(UserError, match=r'Turn-control verbs cannot be sent.*commit_audio'):
+            await session.send(verb)  # type: ignore[arg-type]
+    assert conn.sent == []
 
 
 async def test_send_rejects_tool_result() -> None:
@@ -1756,7 +1758,7 @@ async def test_audio_retention_output_keeps_assistant_audio() -> None:
             TurnCompleteEvent(),
         ]
     )
-    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='both')
+    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='all')
     _ = await collect_events(session)
     response = session.new_messages()[0]
     assert isinstance(response, ModelResponse)
@@ -1773,7 +1775,7 @@ async def test_audio_retention_output_keeps_assistant_audio() -> None:
 
 async def test_audio_retention_input_keeps_user_audio() -> None:
     conn = FakeRealtimeConnection([InputTranscript(text='hello', is_final=True)])
-    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
     # send_audio before the transcript finalizes buffers into the user part.
     await session.send_audio(b'\xaa\xbb')
     await session.send_audio(b'\xcc')
@@ -1803,7 +1805,7 @@ async def test_audio_retention_uses_profile_rate_for_each_speaker() -> None:
         ]
     )
     profile = RealtimeModelProfile(audio_input_sample_rate=16000, audio_output_sample_rate=24000)
-    session = RealtimeSession(conn, _noop_runner, audio_retention='both', profile=profile)
+    session = RealtimeSession(conn, _noop_runner, audio_retention='all', profile=profile)
     await session.send_audio(b'\xaa\xbb')
     _ = await collect_events(session)
 
@@ -1820,9 +1822,9 @@ async def test_audio_retention_uses_profile_rate_for_each_speaker() -> None:
 
 async def test_clear_audio_discards_retained_input() -> None:
     # `clear_audio()` must drop the locally retained buffer too, or discarded audio would still attach
-    # to the next finalized user turn (with `audio_retention='input'`/`'both'`).
+    # to the next finalized user turn (with `audio_retention='input_audio'`/`'all'`).
     conn = FakeRealtimeConnection([InputTranscript(text='hello', is_final=True)])
-    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')
     await session.clear_audio()  # discards the buffered chunk
     await session.send_audio(b'\xcc')  # only this survives into the finalized user turn
@@ -1850,7 +1852,7 @@ async def test_audio_only_user_turn_finalized_on_speech_stopped() -> None:
         [InputSpeechEndEvent(), Transcript(text='Hi', is_final=True), TurnCompleteEvent()],
         input_transcription_enabled=False,
     )
-    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')
     events = await collect_events(session)
     user_part = SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))
@@ -1879,7 +1881,7 @@ async def test_audio_only_user_turn_finalized_on_turn_complete() -> None:
         [Transcript(text='Hi', is_final=True), TurnCompleteEvent()],
         input_transcription_enabled=False,
     )
-    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')
     _ = await collect_events(session)
     assert session.new_messages() == snapshot(
@@ -1903,7 +1905,7 @@ async def test_audio_retained_with_transcription_enabled_waits_for_transcript() 
         [InputSpeechEndEvent(), InputTranscript(text='hello', is_final=True), TurnCompleteEvent()],
         input_transcription_enabled=True,
     )
-    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')
     _ = await collect_events(session)
     assert session.new_messages() == snapshot(
@@ -1941,7 +1943,7 @@ async def test_input_audio_segmented_by_item_id_across_overlapping_turns() -> No
             yield TurnCompleteEvent()
 
     conn = _Overlapping([])
-    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
     await session.send_audio(b'\xaa')  # turn A's audio, buffered before its boundary fires
     gate_a.set()
     async with session:
@@ -1971,7 +1973,7 @@ async def test_retained_input_audio_dropped_when_transcription_fails() -> None:
             TurnCompleteEvent(),
         ]
     )
-    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
     await session.send_audio(b'\xaa')
     _ = await collect_events(session)
     # Only turn B is recorded (A never finalized), and it carries no audio: A's boundary already consumed
@@ -1992,7 +1994,7 @@ async def test_no_transcription_and_no_input_retention_raises() -> None:
 async def test_no_transcription_with_input_retention_is_allowed() -> None:
     # Disabling transcription is fine as long as input audio is retained (audio-only user turns).
     conn = FakeRealtimeConnection([], input_transcription_enabled=False)
-    RealtimeSession(conn, _noop_runner, audio_retention='input')  # no error
+    RealtimeSession(conn, _noop_runner, audio_retention='input_audio')  # no error
 
 
 async def test_text_output_modality_produces_text_part() -> None:
@@ -2148,7 +2150,7 @@ async def test_handoff_to_standard_agent_run() -> None:
 
 async def test_retained_audio_prepares_for_audio_capable_classic_model() -> None:
     conn = FakeRealtimeConnection([InputTranscript(text='hello', is_final=True)])
-    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')
     _ = await collect_events(session)
 
@@ -2412,7 +2414,7 @@ async def test_agent_realtime_session_audio_retention_forwarded() -> None:
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection([AudioDelta(data=b'\x07'), Transcript(text='hi', is_final=True), TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
-    async with agent.realtime_session(model=model, audio_retention='output') as session:
+    async with agent.realtime_session(model=model, audio_retention='output_audio') as session:
         _ = [e async for e in session]
         response = session.new_messages()[0]
     assert isinstance(response, ModelResponse)
@@ -2481,6 +2483,31 @@ async def test_agent_realtime_session_tool_exception() -> None:
         with pytest.raises(ValueError, match='nope'):
             _ = [e async for e in session]
     assert conn.sent == []
+
+
+async def test_agent_realtime_session_tool_failed_returns_error_result() -> None:
+    """A tool raising `ToolFailed` yields a `failed`, error-key-wrapped result — not a crashed session.
+
+    `tool_manager.handle_call` raises `ToolFailedError` for a `ToolFailed`; the session must answer with
+    the failed result (like `run`/`iter`) rather than let it tear down the session. Realtime providers
+    have no native failed-tool flag, so the failure is wrapped in an `{"error": ...}` object on the
+    string-only tool channel.
+    """
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def boom() -> str:
+        raise ToolFailed('service down')
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='boom', args='{}'), TurnCompleteEvent()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model) as session:
+        events = [e async for e in session]
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert result.part.outcome == 'failed'
+    sent = next(s for s in conn.sent if isinstance(s, ToolResult))
+    assert '"error"' in sent.output  # wrapped so the model sees the failure over the string-only channel
 
 
 async def test_agent_realtime_session_validates_and_coerces_args() -> None:
@@ -2825,7 +2852,7 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
         async def send(self, content: RealtimeInput) -> None:
             if isinstance(content, TextInput):
                 raise RuntimeError('drain send failed')
-            await super().send(content)
+            await super().send(content)  # pragma: no cover - this test only drives the drain's `TextInput` send
 
     conn = _FailingDrain([])
     session = RealtimeSession(conn)
@@ -3186,11 +3213,40 @@ async def test_agent_realtime_session_dynamic_instructions() -> None:
     def extra() -> str:
         return 'Dynamic'
 
+    @agent.instructions
+    def skipped() -> str | None:
+        return None  # a dynamic instruction returning None contributes nothing
+
     conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
         _ = [e async for e in session]
-    assert model.last_instructions == 'Base\nDynamic'
+    # Static literal then dynamic function, double-newline separated — same as `run`/`iter`.
+    assert model.last_instructions == 'Base\n\nDynamic'
+
+
+async def test_agent_realtime_session_dynamic_instructions_see_message_history() -> None:
+    """A dynamic instruction function sees `message_history` via `ctx.messages`, like `run`/`iter`.
+
+    Regression: `realtime_session` used to leave `RunContext.messages` empty, so a dynamic instruction
+    (or a capability `for_run` hook) that read `ctx.messages` saw `[]` even when the caller passed a
+    `message_history`.
+    """
+    agent: Agent[None, str] = Agent()
+
+    @agent.instructions
+    def prior_count(ctx: RunContext) -> str:
+        return f'{len(ctx.messages)} prior messages'
+
+    seed = [
+        ModelRequest(parts=[UserPromptPart(content='earlier question')]),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model, message_history=seed) as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == '2 prior messages'
 
 
 async def test_agent_realtime_session_additional_toolsets() -> None:

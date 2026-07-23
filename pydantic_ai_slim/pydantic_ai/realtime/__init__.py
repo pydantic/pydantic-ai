@@ -29,28 +29,16 @@ from ..messages import (
     SpeechPartDelta,
 )
 from ._base import (
-    DEFAULT_REALTIME_PROFILE,
-    AudioDelta,
     AudioInput,
     AudioRetention,
-    CancelResponse,
-    ClearAudio,
-    CommitAudio,
-    ConversationCreated,
-    ConversationItemCreated,
-    CreateResponse,
     ImageInput,
     InputSpeechEndEvent,
     InputSpeechStartEvent,
-    InputTranscript,
     InputTranscriptionFailedEvent,
     KnownRealtimeTranscriptionModelName,
     RealtimeClientSecret,
-    RealtimeCodecEvent,
-    RealtimeConnection,
     RealtimeError,
     RealtimeEvent,
-    RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
@@ -60,16 +48,10 @@ from ._base import (
     SessionErrorEvent,
     SessionUsageEvent,
     TextInput,
-    ToolCall,
-    ToolCallCancelled,
-    ToolResult,
-    Transcript,
-    TruncateOutput,
     TurnCompleteEvent,
     TurnDetection,
     WebRTCAnswer,
     WebRTCCall,
-    merge_realtime_profile,
 )
 from ._session import RealtimeSession
 
@@ -95,10 +77,10 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
     """Infer a realtime model from a `provider:model` identifier.
 
     Accepts a bare provider (`openai`, `azure`, `xai`, `google`) or a
-    [Pydantic AI Gateway](../gateway.md) route (`gateway/openai:gpt-realtime`), which connects
-    through the gateway's built-in provider — the provider string is passed to the realtime model as
-    its `provider`, so authentication and the base URL come from
-    [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider].
+    [Pydantic AI Gateway](../gateway.md) route (`gateway/openai:gpt-realtime`,
+    `gateway/google:gemini-live-2.5-flash`), which connects through the gateway's built-in provider —
+    the provider string is passed to the realtime model as its `provider`, so authentication and the
+    base URL come from [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider].
     """
     provider, separator, model_name = model.partition(':')
     if not separator or not model_name:
@@ -106,8 +88,7 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
     # `gateway/openai` routes the OpenAI realtime protocol through the Pydantic AI Gateway: the
     # provider string is passed straight to `OpenAIRealtimeModel`, whose handshake reads the gateway
     # base URL and bearer key from `gateway_provider` and already carries the same trace context the
-    # gateway's HTTP request hook would add. Other upstreams aren't proxied for realtime today (xAI
-    # isn't a gateway upstream, and Gemini Live doesn't use the OpenAI protocol).
+    # gateway's HTTP request hook would add. xAI isn't a gateway upstream, so it has no route.
     if provider in ('openai', 'gateway/openai'):
         from .openai import OpenAIRealtimeModel
 
@@ -120,14 +101,17 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
         from .xai import XaiRealtimeModel
 
         return XaiRealtimeModel(model_name)
-    if provider == 'google':
+    # `gateway/google` (and its `gateway/google-cloud` alias) route Gemini Live through the gateway's
+    # Vertex upstream: the provider string flows into `GoogleRealtimeModel`, which resolves it via
+    # `gateway_provider` and adds the gateway's bearer auth to the `google-genai` WebSocket handshake.
+    if provider in ('google', 'gateway/google', 'gateway/google-cloud'):
         from .google import GoogleRealtimeModel
 
-        return GoogleRealtimeModel(model_name)
+        return GoogleRealtimeModel(model_name, provider=provider)
     raise UserError(
         f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `azure`, '
-        '`xai`, and `google`, or `gateway/openai` to route OpenAI realtime '
-        'through the Pydantic AI Gateway.'
+        '`xai`, and `google`, or `gateway/openai` / `gateway/google` to route OpenAI or Gemini Live '
+        'realtime through the Pydantic AI Gateway.'
     )
 
 
@@ -148,27 +132,21 @@ __all__ = (
     'PartDeltaEvent',
     'PartEndEvent',
     'PartStartEvent',
-    # Realtime codec events, control-plane events, inputs, and ABCs.
-    'AudioDelta',
+    # Realtime session ABCs, models, settings, inputs, and the control-plane events a session yields.
+    # The lower-level codec vocabulary (`RealtimeConnection`, codec events, turn-control verbs, and the
+    # profile helpers) lives in [`pydantic_ai.realtime.codec`][pydantic_ai.realtime.codec].
     'AudioInput',
     'AudioRetention',
     'AzureRealtimeModel',
-    'CancelResponse',
-    'ClearAudio',
-    'CommitAudio',
-    'ConversationCreated',
-    'ConversationItemCreated',
-    'CreateResponse',
+    'ImageInput',
+    'InputSpeechStartEvent',
+    'InputSpeechEndEvent',
     'InputTranscriptionFailedEvent',
-    'InputTranscript',
     'KnownRealtimeTranscriptionModelName',
     'KnownRealtimeModelName',
     'RealtimeClientSecret',
-    'RealtimeConnection',
-    'RealtimeCodecEvent',
     'RealtimeEvent',
     'RealtimeError',
-    'RealtimeInput',
     'RealtimeModel',
     'RealtimeModelProfile',
     'RealtimeModelSettings',
@@ -178,20 +156,10 @@ __all__ = (
     'ReconnectedEvent',
     'SessionErrorEvent',
     'SessionUsageEvent',
-    'InputSpeechStartEvent',
-    'InputSpeechEndEvent',
-    'ToolCall',
-    'ToolCallCancelled',
-    'ToolResult',
-    'Transcript',
-    'TruncateOutput',
+    'TextInput',
     'TurnDetection',
     'TurnCompleteEvent',
     'WebRTCAnswer',
     'WebRTCCall',
     'infer_realtime_model',
-    'ImageInput',
-    'TextInput',
-    'DEFAULT_REALTIME_PROFILE',
-    'merge_realtime_profile',
 )

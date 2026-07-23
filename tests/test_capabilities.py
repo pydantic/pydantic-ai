@@ -72,6 +72,7 @@ from pydantic_ai.exceptions import (
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    ToolFailed,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UserError,
@@ -876,6 +877,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-3.1-flash-lite',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/google-cloud:gemini-3.5-flash',
+                        'gateway/google-cloud:gemini-3.5-flash-lite',
+                        'gateway/google-cloud:gemini-3.6-flash',
                         'gateway/google:gemini-2.5-flash',
                         'gateway/google:gemini-2.5-flash-image',
                         'gateway/google:gemini-2.5-flash-lite',
@@ -886,6 +889,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-3.1-flash-lite',
                         'gateway/google:gemini-3.1-pro-preview',
                         'gateway/google:gemini-3.5-flash',
+                        'gateway/google:gemini-3.5-flash-lite',
+                        'gateway/google:gemini-3.6-flash',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
                         'gateway/groq:openai/gpt-oss-120b',
@@ -967,6 +972,8 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-3.1-flash-lite',
                         'google-cloud:gemini-3.1-pro-preview',
                         'google-cloud:gemini-3.5-flash',
+                        'google-cloud:gemini-3.5-flash-lite',
+                        'google-cloud:gemini-3.6-flash',
                         'google-cloud:gemini-flash-latest',
                         'google-cloud:gemini-flash-lite-latest',
                         'google:gemini-2.0-flash',
@@ -983,6 +990,8 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-3.1-flash-lite',
                         'google:gemini-3.1-pro-preview',
                         'google:gemini-3.5-flash',
+                        'google:gemini-3.5-flash-lite',
+                        'google:gemini-3.6-flash',
                         'google:gemini-flash-latest',
                         'google:gemini-flash-lite-latest',
                         'groq:llama-3.1-8b-instant',
@@ -12775,7 +12784,229 @@ class TestNodeStreamingWithHooks:
         assert error_log == ['CallToolsNode']
 
 
-# --- ModelRetry from hooks tests ---
+# --- ToolFailed and ModelRetry from hooks tests ---
+
+
+class _BeforeToolFailedCap(AbstractCapability[Any]):
+    async def before_tool_execute(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        raise ToolFailed('failed before execution')
+
+
+class _WrapToolFailedCap(AbstractCapability[Any]):
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: Any,
+    ) -> Any:
+        try:
+            return await handler(args)
+        except RuntimeError as e:
+            raise ToolFailed('failed during wrapper') from e
+
+
+class _AfterToolFailedCap(AbstractCapability[Any]):
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        result: Any,
+    ) -> Any:
+        raise ToolFailed('failed after execution')
+
+
+class _OnToolExecuteErrorFailedCap(AbstractCapability[Any]):
+    async def on_tool_execute_error(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        error: Exception,
+    ) -> Any:
+        raise ToolFailed('failed while handling error')
+
+
+class _BeforeToolValidateFailedCap(AbstractCapability[Any]):
+    async def before_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+    ) -> str | dict[str, Any]:
+        raise ToolFailed('failed before validation')
+
+
+class _OnToolValidateErrorFailedCap(AbstractCapability[Any]):
+    async def on_tool_validate_error(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: str | dict[str, Any],
+        error: ValidationError | ModelRetry,
+    ) -> dict[str, Any]:
+        raise ToolFailed('failed while handling validation error')
+
+
+class _WrapToolValidateFailedCap(AbstractCapability[Any]):
+    async def wrap_tool_validate(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: str | dict[str, Any],
+        handler: Any,
+    ) -> dict[str, Any]:
+        raise ToolFailed('failed during validate wrapper')
+
+
+def _tool_failed_roundtrip_model(tool_args: str) -> Callable[[list[ModelMessage], AgentInfo], ModelResponse]:
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for msg in messages:
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    return make_text_response(f'got: {part.outcome}:{part.content}')
+        if info.function_tools:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=info.function_tools[0].name, args=tool_args, tool_call_id='call-1')]
+            )
+        return make_text_response('no tools')  # pragma: no cover
+
+    return model_fn
+
+
+def _assert_failed_tool_result(result: AgentRunResult[Any], expected_message: str) -> None:
+    assert result.output == f'got: failed:{expected_message}'
+
+    parts = [part for msg in result.all_messages() for part in msg.parts]
+    tool_return = next(part for part in parts if isinstance(part, ToolReturnPart))
+    assert tool_return.outcome == 'failed'
+    assert tool_return.content == expected_message
+    assert not any(isinstance(part, RetryPromptPart) for part in parts)
+
+
+class TestToolFailedFromHooks:
+    """Tests for raising ToolFailed from capability tool hooks."""
+
+    @pytest.mark.parametrize('hook_name', ['before', 'wrap', 'after', 'on_error'])
+    async def test_tool_execute_hook_tool_failed(self, hook_name: str):
+        tool_call_count = 0
+        cap_type, expected_message, tool_should_run = {
+            'before': (_BeforeToolFailedCap, 'failed before execution', False),
+            'wrap': (_WrapToolFailedCap, 'failed during wrapper', True),
+            'after': (_AfterToolFailedCap, 'failed after execution', True),
+            'on_error': (_OnToolExecuteErrorFailedCap, 'failed while handling error', True),
+        }[hook_name]
+
+        agent = Agent(FunctionModel(_tool_failed_roundtrip_model('{}')), capabilities=[cap_type()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1
+            if hook_name in {'wrap', 'on_error'}:
+                raise RuntimeError('tool failed')
+            return 'tool result'
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, expected_message)
+        assert tool_call_count == int(tool_should_run)
+
+    async def test_deferred_tool_validate_hook_tool_failed(self):
+        """Deferred tool validation can return a failed tool result instead of a deferred request."""
+        tool_call_count = 0
+
+        agent = Agent(
+            FunctionModel(_tool_failed_roundtrip_model('{}')),
+            capabilities=[_BeforeToolValidateFailedCap()],
+            output_type=[str, DeferredToolRequests],
+            retries={'tools': 0, 'output': 2},
+        )
+
+        @agent.tool_plain(requires_approval=True)
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1  # pragma: no cover
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, 'failed before validation')
+        assert tool_call_count == 0
+
+    @pytest.mark.parametrize(
+        ('capability', 'tool_args', 'expected_message'),
+        [
+            pytest.param(
+                _BeforeToolValidateFailedCap(), '{"x":1}', 'failed before validation', id='before_tool_validate'
+            ),
+            pytest.param(
+                _OnToolValidateErrorFailedCap(),
+                '{"x":"bad"}',
+                'failed while handling validation error',
+                id='on_tool_validate_error',
+            ),
+            pytest.param(
+                _WrapToolValidateFailedCap(), '{"x":1}', 'failed during validate wrapper', id='wrap_tool_validate'
+            ),
+        ],
+    )
+    async def test_tool_validate_hook_tool_failed(
+        self, capability: AbstractCapability[Any], tool_args: str, expected_message: str
+    ):
+        """Non-deferred tool validation hooks can report a failed tool result instead of retrying."""
+        tool_call_count = 0
+
+        agent = Agent(
+            FunctionModel(_tool_failed_roundtrip_model(tool_args)),
+            capabilities=[capability],
+            retries={'tools': 0, 'output': 2},
+        )
+
+        @agent.tool_plain
+        def my_tool(x: int) -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1  # pragma: no cover
+            return f'tool result: {x}'  # pragma: no cover
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, expected_message)
+        assert tool_call_count == 0
+
+    async def test_args_validator_tool_failed(self):
+        """An `args_validator` raising `ToolFailed` reports a failed tool result instead of retrying."""
+        tool_call_count = 0
+        expected_message = 'failed in args validator'
+
+        def validate_args(ctx: RunContext[Any]) -> None:
+            raise ToolFailed(expected_message)
+
+        agent = Agent(
+            FunctionModel(_tool_failed_roundtrip_model('{}')),
+            retries={'tools': 0, 'output': 2},
+        )
+
+        @agent.tool_plain(args_validator=validate_args)
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1  # pragma: no cover
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, expected_message)
+        assert tool_call_count == 0
 
 
 class TestModelRetryFromHooks:
@@ -21629,6 +21860,55 @@ async def test_deferred_tool_handler_via_handle_call_external_tool_return():
     assert isinstance(captured_result, _ToolReturn)
     assert captured_result.return_value == 'ext'
     assert captured_result.metadata == {'k': 'v'}
+
+
+async def test_deferred_tool_handler_via_handle_call_tool_failed():
+    """Per-call path: handler-supplied `ToolFailed` raises `ToolFailedError`, matching a tool that raises `ToolFailed` in-process."""
+    from pydantic_ai.exceptions import CallDeferred, ToolFailed, ToolFailedError
+    from pydantic_ai.toolsets import FunctionToolset
+
+    inner_toolset = FunctionToolset()
+
+    @inner_toolset.tool_plain
+    def inner_tool() -> str:
+        raise CallDeferred
+
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(
+            calls={call.tool_call_id: ToolFailed('backend unavailable') for call in requests.calls}
+        )
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('caller_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('final')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        toolsets=[inner_toolset],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    captured_error: Any = None
+
+    @agent.tool
+    async def caller_tool(ctx: RunContext[object]) -> str:
+        nonlocal captured_error
+        assert ctx.tool_manager is not None
+        try:
+            await ctx.tool_manager.handle_call(
+                ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+            )
+        except ToolFailedError as e:
+            captured_error = e
+        return 'done'
+
+    await agent.run('go')
+    assert captured_error is not None
+    assert captured_error.tool_failed.tool_name == 'inner_tool'
+    assert captured_error.tool_failed.tool_call_id == 'inner_1'
+    assert captured_error.tool_failed.content == 'backend unavailable'
+    assert captured_error.tool_failed.outcome == 'failed'
 
 
 def test_deferred_tool_handler_serialization_name():

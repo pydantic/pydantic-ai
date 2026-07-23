@@ -959,6 +959,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -982,6 +983,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -1005,6 +1007,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -1088,6 +1091,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1119,8 +1123,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Resolve the root capability (override > agent default) up front: it's needed both for the
         # capability-supplied model fallback below and for run-time capability assembly further down.
-        override_cap = self._override_root_capability.get()
-        base_capability = self._effective_root_capability()
+        base_capability, base_is_override = self._base_run_capability()
 
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
@@ -1193,7 +1196,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
-        extra_capabilities = [capability.for_agent(self) for capability in extra_capabilities]
+        extra_capabilities = self._bind_run_capabilities(extra_capabilities)
         model_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
         bootstrap_capability: AbstractCapability[AgentDepsT]
         if len(model_layers) > 1:
@@ -1289,6 +1292,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             output_retries_used=0,
             run_step=0,
+            run_id=_agent_graph.resolve_run_id(run_id, message_history),
             conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
 
@@ -1384,7 +1388,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             extra_capabilities=extra_capabilities,
             instrumentation_cap=instrumentation_cap,
             inject_deferred_loader=True,
-            base_is_override=override_cap is not None,
+            base_is_override=base_is_override,
         )
         run_capability = resolved_caps.run_capability
         capabilities_dict = resolved_caps.capabilities
@@ -2345,8 +2349,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
-                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
-                return `None` on success.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the
+                arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
+                terminal failure the model should adapt to instead of retrying. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
@@ -2482,8 +2487,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument — even though the
                 tool function itself does not take `RunContext` when using `tool_plain`.
-                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
-                return `None` on success.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the
+                arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
+                terminal failure the model should adapt to instead of retrying. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
@@ -2594,6 +2600,28 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Return the override capability when present, otherwise the configured root."""
         override = self._override_root_capability.get()
         return override.value if override is not None else self._root_capability
+
+    def _base_run_capability(self) -> tuple[CombinedCapability[AgentDepsT], bool]:
+        """The base capability layer for a run, plus whether it came from `override(root_capability=...)`.
+
+        `iter` and `realtime_session` both resolve the base layer through this so the override is honored
+        identically — KEEP the two call sites in sync (a realtime session that ignored the override would
+        silently drop a `with agent.override(root_capability=...):` block).
+        """
+        override_cap = self._override_root_capability.get()
+        return self._effective_root_capability(), override_cap is not None
+
+    def _bind_run_capabilities(
+        self, extra_capabilities: list[AbstractCapability[AgentDepsT]]
+    ) -> list[AbstractCapability[AgentDepsT]]:
+        """Bind per-run capabilities to this agent via `for_agent` before capability resolution.
+
+        `_resolve_run_capabilities` only ever calls `for_run`, so binding the per-run layer via
+        `for_agent` is the caller's responsibility. `iter` and `realtime_session` both MUST call this —
+        skipping it uses a capability that overrides `for_agent` (e.g. the durability capabilities)
+        unbound, a silent divergence. KEEP the two call sites in sync.
+        """
+        return [capability.for_agent(self) for capability in extra_capabilities]
 
     async def _resolve_model_selection(
         self,
@@ -3088,7 +3116,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 (`send_audio`/`commit_audio`/`clear_audio`) are unavailable and `audio_retention` must be
                 left at `'transcript_only'`. See the realtime docs for the full browser/WebRTC flow.
         """
-        from ..realtime import RealtimeModel, RealtimeSession, infer_realtime_model, merge_realtime_profile
+        from ..realtime import RealtimeModel, RealtimeSession, infer_realtime_model
+        from ..realtime.codec import merge_realtime_profile
 
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
@@ -3101,6 +3130,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage if usage is not None else _usage.RunUsage(),
             model_settings=None,
             conversation_id=conversation_id,
+            # Seed `ctx.messages` from `message_history` like `iter` does, so dynamic `@agent.instructions`
+            # functions and capability `for_run` hooks see the prior conversation. KEEP IN SYNC with `iter`.
+            messages=list(message_history) if message_history else [],
             # A realtime session has no run identity yet (`run_id` stays unset); it gains one once
             # exchange-level hooks land and each exchange becomes an addressable unit.
             max_retries=self._max_tool_retries,
@@ -3112,7 +3144,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # a `RealtimeModel`, never an `InstrumentedModel`, so there's no wrapped model to unwrap; the
         # settings come straight from `_resolve_instrumentation_settings()`. The helper skips injection if
         # the user already supplied an `Instrumentation` capability (agent- or call-level).
-        extra_capabilities = wrap_capability_funcs(capabilities)
+        extra_capabilities = self._bind_run_capabilities(wrap_capability_funcs(capabilities))
         instrumentation_settings = self._resolve_instrumentation_settings()
         instrumentation_cap = (
             InstrumentationCap(settings=instrumentation_settings) if instrumentation_settings is not None else None
@@ -3124,7 +3156,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # will actually win: an explicit `Instrumentation` capability's (agent- or call-level) over the
         # `instrument=`-derived ones, matching the precedence `_resolve_run_capabilities` applies to the
         # tool spans.
-        explicit_instrumentation = find_capability([self._root_capability, *extra_capabilities], InstrumentationCap)
+        explicit_instrumentation = find_capability(
+            [self._effective_root_capability(), *extra_capabilities], InstrumentationCap
+        )
         session_instrumentation_settings = (
             explicit_instrumentation.settings if explicit_instrumentation is not None else instrumentation_settings
         )
@@ -3142,17 +3176,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_context.metadata = self._get_metadata(run_context, metadata)
 
         # Resolve the capability layers and extract their contributions, exactly as `run`/`iter` do via
-        # the shared helper. Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, no
-        # deferred loader (`inject_deferred_loader=False`), no root-capability override, once-only model
-        # settings (below), and the `_keep_native` / `supported_native_tools` gate (below). Keep this in
-        # sync with the `iter` call site.
+        # the shared helpers (`_base_run_capability` honors `override(root_capability=...)` the same way).
+        # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, no deferred loader
+        # (`inject_deferred_loader=False`), once-only model settings (below), and the `_keep_native` /
+        # `supported_native_tools` gate (below). Keep this in sync with the `iter` call site.
+        base_capability, base_is_override = self._base_run_capability()
         resolved_caps = await self._resolve_run_capabilities(
             run_context,
-            base_capability=self._root_capability,
+            base_capability=base_capability,
             extra_capabilities=extra_capabilities,
             instrumentation_cap=instrumentation_cap,
             inject_deferred_loader=False,
-            base_is_override=False,
+            base_is_override=base_is_override,
         )
         run_capability = resolved_caps.run_capability
         # `_resolve_run_capabilities` already registered `run_context.capabilities` for the toolset/connect
@@ -3226,14 +3261,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             literal, instruction_functions = self._get_instructions(
                 additional_instructions=instructions, cap_instructions=resolved_caps.instructions
             )
-            instruction_parts = [literal, *[await fn.run(run_context) for fn in instruction_functions]]
+            # Build `InstructionPart`s (static literal first, then dynamic functions, then dynamic toolset
+            # instructions) and join with the canonical `InstructionPart.join` — same double-newline
+            # separator and static-before-dynamic ordering as the graph run. KEEP IN SYNC with the graph's
+            # `_get_instructions` / `ModelRequestNode`.
+            instruction_parts: list[_messages.InstructionPart] = []
+            if literal:
+                instruction_parts.append(_messages.InstructionPart(content=literal, dynamic=False))
+            for fn in instruction_functions:
+                if text := await fn.run(run_context):
+                    instruction_parts.append(_messages.InstructionPart(content=text, dynamic=True))
             instruction_parts.extend(
-                part.content
-                for part in _instructions.normalize_toolset_instructions(
-                    await tool_manager.toolset.get_instructions(run_context)
-                )
+                _instructions.normalize_toolset_instructions(await tool_manager.toolset.get_instructions(run_context))
             )
-            resolved_instructions = '\n'.join(part for part in instruction_parts if part).strip()
+            resolved_instructions = _messages.InstructionPart.join(instruction_parts)
             request_messages = [
                 *(message_history or ()),
                 _messages.ModelRequest(parts=[], instructions=resolved_instructions or None),

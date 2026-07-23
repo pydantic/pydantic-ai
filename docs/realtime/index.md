@@ -397,9 +397,9 @@ only finalized history audio is wrapped in a WAV container.
 | [`audio_retention`][pydantic_ai.realtime.AudioRetention] | Retains |
 | --- | --- |
 | `'transcript_only'` (default) | Transcripts only; no audio bytes. |
-| `'input'` | The user's spoken audio. |
-| `'output'` | The model's spoken audio. |
-| `'both'` | Both sides' audio. |
+| `'input_audio'` | The user's spoken audio. |
+| `'output_audio'` | The model's spoken audio. |
+| `'all'` | Both sides' audio. |
 
 When you [hand off](#delegating-to-a-text-agent) to a standard model, retained user audio is forwarded
 to models whose profile declares audio-input support; other models receive the transcript instead.
@@ -424,11 +424,11 @@ xAI transcribe the user's audio with a dedicated model, set via `input_transcrip
 | --- | --- |
 | `'auto'` (default) | The provider's recommended transcription model, so user turns are captured under the default `audio_retention='transcript_only'`. Pin a specific id when the transcription model must remain fixed. |
 | An explicit id (e.g. `'gpt-4o-transcribe'`) | Used verbatim. Known ids autocomplete via [`KnownRealtimeTranscriptionModelName`][pydantic_ai.realtime.KnownRealtimeTranscriptionModelName], but any string works. |
-| `None` | Transcription disabled — no transcription model is sent. No user transcripts arrive, so [`audio_retention`](#retaining-audio) **must** be `'input'`/`'both'` to keep the raw audio; each user turn is then finalized as an audio-only [`SpeechPart`][pydantic_ai.messages.SpeechPart] (no transcript, so not usable for a text handoff). Disabling transcription while `audio_retention` doesn't retain input audio raises a `UserError`, since the user's turns would otherwise be silently dropped from history. |
+| `None` | Transcription disabled — no transcription model is sent. No user transcripts arrive, so [`audio_retention`](#retaining-audio) **must** be `'input_audio'`/`'all'` to keep the raw audio; each user turn is then finalized as an audio-only [`SpeechPart`][pydantic_ai.messages.SpeechPart] (no transcript, so not usable for a text handoff). Disabling transcription while `audio_retention` doesn't retain input audio raises a `UserError`, since the user's turns would otherwise be silently dropped from history. |
 
 Gemini transcribes with `google_input_transcription` (on by default) rather than a model id: the
 Live model transcribes natively, so there is no separate transcription model to choose. If
-`google_input_transcription=False`, set `audio_retention='input'` or `'both'`; otherwise session
+`google_input_transcription=False`, set `audio_retention='input_audio'` or `'all'`; otherwise session
 creation raises [`UserError`][pydantic_ai.exceptions.UserError] because user turns could not be
 recorded. If `google_output_transcription=False`, retain output audio to keep assistant audio turns
 in history at all. Transcript-less assistant audio cannot be handed off to a text agent or seeded
@@ -900,11 +900,12 @@ if model.profile['supports_interruption']:
 
 #### Routing through a gateway
 
-Gateway routing currently covers OpenAI realtime.
+Gateway routing covers OpenAI realtime (`gateway/openai`) and Gemini Live (`gateway/google`, which
+proxies the Vertex upstream — see [Gemini gateway](gemini.md#routing-through-the-gateway)).
 
 Realtime models take a `provider=` just like standard models, so you can route a session through the
-[Pydantic AI Gateway](../gateway.md) (or any OpenAI-compatible endpoint that
-exposes a realtime API) by naming the upstream provider:
+[Pydantic AI Gateway](../gateway.md) (or, for OpenAI, any OpenAI-compatible endpoint that exposes a
+realtime API) by naming the upstream provider:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
@@ -950,9 +951,9 @@ Some capabilities are intentionally out of scope:
 ## Implementing a provider
 
 A provider implements two ABCs: [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel]
-(opens a connection) and [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection]
-(sends [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput] and yields the low-level
-[`RealtimeCodecEvent`][pydantic_ai.realtime.RealtimeCodecEvent] vocabulary, which the session
+(opens a connection) and [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection]
+(sends [`RealtimeInput`][pydantic_ai.realtime.codec.RealtimeInput] and yields the low-level
+[`RealtimeCodecEvent`][pydantic_ai.realtime.codec.RealtimeCodecEvent] vocabulary, which the session
 translates into user-facing [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent]s). The OpenAI
 provider in [`pydantic_ai.realtime.openai`][pydantic_ai.realtime.openai] is a reference
 implementation; the same shape applies to Azure OpenAI, Gemini Live, xAI Grok Voice, and others. Inputs a provider

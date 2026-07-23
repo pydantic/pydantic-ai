@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping
+from contextlib import contextmanager
 from typing import Any, ClassVar, cast
 
 from typing_extensions import Self
 
+from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -22,6 +24,7 @@ from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._runtime_toolsets import RuntimeToolsetKind, reject_unsupported_runtime_toolsets
+from ._toolset import guard_run_context_enqueue
 from ._utils import unwrap_model
 
 _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
@@ -146,9 +149,19 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool_config_key=self._tool_config_key,
         )
 
+    def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        """The handler in-boundary event delivery targets for the current run.
+
+        Engines may override to consult per-run state — e.g. DBOS honors the
+        `event_stream_handler` recorded in a wrapper-era workflow's inputs, delivering
+        it exactly the way the wrapper did so recovery replays the recorded step
+        sequence.
+        """
+        return self._event_stream_handler
+
     @property
     def has_wrap_run_event_stream(self) -> bool:
-        return self._event_stream_handler is not None
+        return self._effective_event_stream_handler() is not None
 
     async def wrap_run_event_stream(
         self,
@@ -156,7 +169,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        if self._event_stream_handler is None:
+        if self._effective_event_stream_handler() is None:
             async for event in stream:
                 yield event
             return
@@ -252,6 +265,34 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         # objects) is not spec-serializable, and a durable agent additionally has to be constructed in
         # worker-setup code for its durable units to be registered.
         return None
+
+    def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        """The run context to hand to user code running inside this engine's durable unit.
+
+        User code inside a durable unit (a tool call, a `process_tool_call` hook, an
+        `event_stream_handler`) can't enqueue: the unit's recorded result is replayed on
+        recovery/cache-hit without re-running the code, so an enqueued message would be
+        dropped. This installs the shared `EnqueueGuard` so `enqueue()` raises a clear error
+        instead. Engines whose durable unit degrades to an inline call outside the container
+        (e.g. a DBOS step outside a workflow) override to pass the context through unchanged
+        there; Temporal reconstructs its context across the activity boundary and installs the
+        same guard in `deserialize_run_context`.
+        """
+        return guard_run_context_enqueue(
+            ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun
+        )
+
+    @contextmanager
+    def _durable_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT]]:
+        """Run user code inside a durable unit with `ctx` guarded and set as the ambient context.
+
+        Both the yielded context and `get_current_run_context()` are guarded, so user code can't
+        enqueue whether it reads its argument or the ambient getter (Temporal gets the same guard
+        because its activity-side context comes from `deserialize_run_context`).
+        """
+        guarded = self._durable_run_context(ctx)
+        with set_current_run_context(guarded):
+            yield guarded
 
     @abstractmethod
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:

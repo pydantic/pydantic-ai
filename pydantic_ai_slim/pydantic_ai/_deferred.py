@@ -19,7 +19,7 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import Discriminator, Tag
 
 from . import _utils
-from .exceptions import ModelRetry
+from .exceptions import ModelRetry, ToolFailed
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
 
@@ -119,11 +119,16 @@ class ToolDenied:
 
 
 def _deferred_tool_call_result_discriminator(x: Any) -> str | None:
-    if isinstance(x, dict):
-        if 'kind' in x:
-            return cast(str, x['kind'])
-        elif 'part_kind' in x:
-            return cast(str, x['part_kind'])
+    if isinstance(x, ToolFailed):
+        return 'tool-failed'
+    elif isinstance(x, ModelRetry):
+        return 'model-retry'
+    elif isinstance(x, dict):
+        x_dict = cast(dict[str, Any], x)
+        if 'kind' in x_dict:
+            return cast(str, x_dict['kind'])
+        elif 'part_kind' in x_dict:
+            return cast(str, x_dict['part_kind'])
     else:
         if hasattr(x, 'kind'):
             return cast(str, x.kind)
@@ -136,6 +141,7 @@ DeferredToolApprovalResult: TypeAlias = Annotated[ToolApproved | ToolDenied, Dis
 """Result for a tool call that required human-in-the-loop approval."""
 DeferredToolCallResult: TypeAlias = Annotated[
     Annotated[ToolReturn, Tag('tool-return')]
+    | Annotated[ToolFailed, Tag('tool-failed')]
     | Annotated[ModelRetry, Tag('model-retry')]
     | Annotated[RetryPromptPart, Tag('retry-prompt')],
     Discriminator(_deferred_tool_call_result_discriminator),
