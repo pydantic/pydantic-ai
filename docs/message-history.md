@@ -308,8 +308,6 @@ We export [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAda
 Here's an example showing how:
 
 ```python {title="serialize messages to json"}
-from pydantic_core import to_jsonable_python
-
 from pydantic_ai import (
     Agent,
     ModelMessagesTypeAdapter,  # (1)!
@@ -319,7 +317,9 @@ agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 history_step_1 = result1.all_messages()
-as_python_objects = to_jsonable_python(history_step_1)  # (2)!
+as_python_objects = ModelMessagesTypeAdapter.dump_python(
+    history_step_1, mode='json'
+)  # (2)!
 same_history_as_step_1 = ModelMessagesTypeAdapter.validate_python(as_python_objects)
 
 result2 = agent.run_sync(  # (3)!
@@ -335,9 +335,8 @@ result2 = agent.run_sync(  # (3)!
    ```
 2. Alternatively you can serialize to/from JSON directly:
    ```python {test="skip" lint="skip" format="skip"}
-   from pydantic_core import to_json
    ...
-   as_json_objects = to_json(history_step_1)
+   as_json_objects = ModelMessagesTypeAdapter.dump_json(history_step_1)
    same_history_as_step_1 = ModelMessagesTypeAdapter.validate_json(as_json_objects)
    ```
 3. You can now continue the conversation with history `same_history_as_step_1` despite creating a new agent run.
