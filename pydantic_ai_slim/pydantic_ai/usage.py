@@ -56,14 +56,14 @@ def _serialize_usage(
     inner: core_schema.SerializerFunctionWrapHandler,
     info: core_schema.SerializationInfo,
     *,
-    field_names: frozenset[str],
+    reserved_names: frozenset[str],
     arbitrary_value_serializer: SchemaSerializer,
 ) -> dict[str, Any]:
     serialized = inner(value)
     assert isinstance(serialized, dict)
     result = cast(dict[str, Any], serialized).copy()
     for key, item in value.__dict__.items():
-        if key in field_names:
+        if key in reserved_names:
             continue
         included, item_include = _usage_field_filter(info.include, key, include=True)
         if not included:
@@ -145,8 +145,7 @@ class UsageBase:
     def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
         """Preserve arbitrary usage fields across Pydantic serialization."""
         schema = handler(source_type)
-        field_names = frozenset(field.name for field in dataclasses.fields(source_type))
-        non_arbitrary_keys = field_names | _LEGACY_USAGE_KEYS
+        reserved_names = frozenset(dir(source_type)) | _LEGACY_USAGE_KEYS
         arbitrary_value_serializer = SchemaSerializer(core_schema.any_schema())
 
         def validate(value: Any, inner: core_schema.ValidatorFunctionWrapHandler) -> UsageBase:
@@ -164,7 +163,7 @@ class UsageBase:
             assert isinstance(result, UsageBase)
             if value_dict is not None:
                 for key, item in value_dict.items():
-                    if key not in non_arbitrary_keys:
+                    if key not in reserved_names:
                         setattr(result, key, item)
             return result
 
@@ -177,7 +176,7 @@ class UsageBase:
                 value,
                 inner,
                 info,
-                field_names=field_names,
+                reserved_names=reserved_names,
                 arbitrary_value_serializer=arbitrary_value_serializer,
             )
 

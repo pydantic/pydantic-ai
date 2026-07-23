@@ -463,6 +463,16 @@ def test_usage_arbitrary_fields_pydantic_roundtrip(
     assert adapter.validate_python(usage) is usage
 
 
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_reserved_fields_not_loaded_as_arbitrary(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    loaded = TypeAdapter(usage_type).validate_python({'input_tokens': 5, 'cache_hit_ratio': 0.5})
+
+    assert loaded == usage_type(input_tokens=5)
+    assert 'cache_hit_ratio' not in loaded.__dict__
+
+
 def test_usage_arbitrary_fields_pydantic_serialization_filters():
     adapter = TypeAdapter(RequestUsage)
     usage = RequestUsage(
