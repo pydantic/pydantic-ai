@@ -60,7 +60,6 @@ from ..messages import ModelMessage
 from ..models import ModelRequestParameters
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
-from ..providers.gateway import is_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._base import (
@@ -630,7 +629,6 @@ class OpenAIRealtimeModel(RealtimeModel):
     settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
-    _gateway: bool = field(init=False, default=False, repr=False)
 
     def __post_init__(self, provider: Provider[AsyncOpenAI] | str) -> None:
         if isinstance(provider, str):
@@ -642,7 +640,6 @@ class OpenAIRealtimeModel(RealtimeModel):
                 '`azure:` prefix) for Azure OpenAI realtime.'
             )
         self._provider = provider
-        self._gateway = is_gateway_provider(provider)
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -721,10 +718,7 @@ class OpenAIRealtimeModel(RealtimeModel):
 
     def _realtime_ws_base(self) -> str:
         """The realtime WebSocket URL without a query string, e.g. `wss://api.openai.com/v1/realtime`."""
-        base_url = self._provider.base_url
-        if self._gateway:
-            base_url = f'{base_url.rstrip("/")}/v1'
-        return realtime_websocket_url(base_url)
+        return realtime_websocket_url(self._provider.base_url)
 
     def _realtime_url(self) -> str:
         return f'{self._realtime_ws_base()}?model={self.model}'
@@ -736,8 +730,6 @@ class OpenAIRealtimeModel(RealtimeModel):
     def _webrtc_http_base(self) -> str:
         """The HTTP base URL for realtime signaling, always ending in `/` (e.g. `https://api.openai.com/v1/`)."""
         base_url = self._provider.base_url
-        if self._gateway:
-            base_url = f'{base_url.rstrip("/")}/v1'
         return base_url if base_url.endswith('/') else f'{base_url}/'
 
     def _webrtc_calls_url(self) -> str:

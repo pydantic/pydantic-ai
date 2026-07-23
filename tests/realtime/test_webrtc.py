@@ -135,9 +135,9 @@ async def test_create_client_secret_non_numeric_expires_at() -> None:
         await model.create_client_secret()
 
 
-async def test_create_client_secret_through_gateway_prefixes_v1() -> None:
-    # A gateway-routed provider's base URL ends at `.../openai`; the WebRTC HTTP base inserts the `/v1`
-    # segment the signaling endpoints live under.
+async def test_create_client_secret_through_gateway() -> None:
+    # A gateway-routed provider's base URL ends at `.../openai`; the gateway accepts the `/v1`-less
+    # signaling path, so the client-secret URL is derived straight from that base without a `/v1` segment.
     captured: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -153,7 +153,7 @@ async def test_create_client_secret_through_gateway_prefixes_v1() -> None:
     model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
     secret = await model.create_client_secret()
 
-    assert captured['url'] == 'https://gateway.pydantic.dev/proxy/openai/v1/realtime/client_secrets'
+    assert captured['url'] == 'https://gateway.pydantic.dev/proxy/openai/realtime/client_secrets'
     assert secret.value == 'ek_gw'
 
 
