@@ -671,6 +671,40 @@ async def test_connect_webrtc_sideband_handshake(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.anyio
+async def test_connect_webrtc_sideband_seeds_history_without_served_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sideband whose `session.updated` omits the model seeds prior turns and reports no served model.
+
+    When the control frame doesn't echo a `model`, the served model stays unknown (the FALSE side of the
+    model capture), while the prior conversation is still seeded on the wire after the handshake.
+    """
+    updated = json.dumps({'type': 'session.updated', 'session': {}})
+    ws = FakeWebSocket([updated])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
+    call = WebRTCCall(provider_name='openai', call_id='rtc_seed')
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='My favorite color is teal.')]),
+        ModelResponse(parts=[TextPart(content='Got it, teal.')]),
+    ]
+    async with model.connect_webrtc(
+        call,
+        messages=history,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as conn:
+        _ = [e async for e in conn]
+
+    # No `model` in `session.updated` → the served model is unknown.
+    assert conn.model_name is None
+    # The prior turns are seeded as `conversation.item.create` frames after the initial `session.update`.
+    seeded = [json.loads(frame) for frame in ws.sent[1:]]
+    assert [item['item']['role'] for item in seeded] == ['user', 'assistant']
+    assert seeded[0]['item']['content'] == [{'type': 'input_text', 'text': 'My favorite color is teal.'}]
+    assert seeded[1]['item']['content'] == [{'type': 'output_text', 'text': 'Got it, teal.'}]
+
+
+@pytest.mark.anyio
 async def test_connect_injects_trace_context_into_handshake(monkeypatch: pytest.MonkeyPatch) -> None:
     """An active span propagates `traceparent` into the handshake headers, for gateway/OTel-proxy correlation.
 
@@ -2100,6 +2134,29 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
 
     model = OpenAIRealtimeModel('gpt-realtime', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0))
     async with _connect(model, 'x') as conn:
+        events = [e async for e in conn]
+
+    assert events == [ReconnectedEvent(state_restored=False), Transcript(text='hi', is_final=True)]
+    assert connect.closed == [dropped, good]
+
+
+@pytest.mark.anyio
+async def test_connect_webrtc_sideband_reconnect_closes_previous_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A sideband reconnect through `connect_webrtc()`'s own dial must close the dropped control socket
+    # before opening the next, so sockets don't accumulate across drops. The sideband handshake waits
+    # only for `session.updated` (no `session.created`), so each socket serves just that frame.
+    updated = json.dumps({'type': 'session.updated', 'session': {'model': 'gpt-realtime'}})
+    transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'hi'})
+    dropped = _DropAfterHandshake([updated])
+    good = FakeWebSocket([updated, transcript])
+    connect = _RecordingConnect([dropped, good])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+
+    model = OpenAIRealtimeModel('gpt-realtime', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0))
+    call = WebRTCCall(provider_name='openai', call_id='rtc_reconnect')
+    async with model.connect_webrtc(
+        call, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    ) as conn:
         events = [e async for e in conn]
 
     assert events == [ReconnectedEvent(state_restored=False), Transcript(text='hi', is_final=True)]

@@ -22,6 +22,7 @@ from ..conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime import WebRTCAnswer, WebRTCCall
     from pydantic_ai.realtime._openai_webrtc import parse_call_id
@@ -122,6 +123,38 @@ async def test_create_client_secret_missing_value() -> None:
     model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
     with pytest.raises(UnexpectedModelBehavior, match='did not include a `value`'):
         await model.create_client_secret()
+
+
+async def test_create_client_secret_non_numeric_expires_at() -> None:
+    # A `value` with a non-integer `expires_at` can't be turned into an expiry timestamp, so it's rejected.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={'value': 'ek_x', 'expires_at': 'soon'})
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
+    with pytest.raises(UnexpectedModelBehavior, match='numeric'):
+        await model.create_client_secret()
+
+
+async def test_create_client_secret_through_gateway_prefixes_v1() -> None:
+    # A gateway-routed provider's base URL ends at `.../openai`; the WebRTC HTTP base inserts the `/v1`
+    # segment the signaling endpoints live under.
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured['url'] = str(request.url)
+        return httpx.Response(200, json={'value': 'ek_gw', 'expires_at': 1_700_000_060})
+
+    provider = gateway_provider(
+        'openai',
+        api_key='gw-key',
+        base_url='https://gateway.pydantic.dev/proxy',
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    secret = await model.create_client_secret()
+
+    assert captured['url'] == 'https://gateway.pydantic.dev/proxy/openai/v1/realtime/client_secrets'
+    assert secret.value == 'ek_gw'
 
 
 async def test_create_client_secret_http_error() -> None:
@@ -314,6 +347,9 @@ async def test_base_model_rejects_webrtc() -> None:
             raise NotImplementedError  # pragma: no cover - not exercised by these guard tests
 
     model = _WebSocketOnlyModel()
+    # The base `RealtimeModel` reads these to build its "unsupported" errors, so pin the stand-in's identity.
+    assert model.system == 'ws-only'
+    assert model.model_name == 'ws-only'
     with pytest.raises(UserError, match='does not support WebRTC'):
         await model.answer_webrtc_offer(SAMPLE_SDP_OFFER)
     with pytest.raises(UserError, match='does not support minting client secrets'):
