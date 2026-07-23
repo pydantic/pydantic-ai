@@ -581,6 +581,18 @@ _(This example is complete, it can be run "as is")_
 
 ### Additional Configuration
 
+#### Updating model prices
+
+Price calculations use the data bundled with [`genai-prices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices). To refresh that data hourly in a background thread, call [`update_in_background()`][pydantic_ai.prices.update_in_background] at application startup:
+
+```python {test="skip"}
+from pydantic_ai import prices
+
+prices.update_in_background()
+```
+
+This helper retains shared ownership of the updater for the process lifetime. Do not call it before `os.fork()`; call it for the first time in each final child process because it cannot recover updater state inherited from a parent. For configuration, waiting, or shutdown, use [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices) directly.
+
 #### Usage Limits
 
 Pydantic AI offers a [`UsageLimits`][pydantic_ai.usage.UsageLimits] structure to help you limit your
