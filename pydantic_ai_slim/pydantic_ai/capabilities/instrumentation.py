@@ -22,7 +22,15 @@ from pydantic_ai._instrumentation import (
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._utils import UNSET, Unset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, SkipToolExecution, ToolRetryError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    SkipToolExecution,
+    ToolFailed,
+    ToolFailedError,
+    ToolRetryError,
+)
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
@@ -399,6 +407,12 @@ class Instrumentation(AbstractCapability[Any]):
                 span.record_exception(e, escaped=True)
                 span.set_status(StatusCode.ERROR)
                 raise
+            except ToolFailedError as e:
+                if handle_tool_control_flow and include_content and span.is_recording():
+                    span.set_attribute(names.tool_result_attr, e.tool_failed.model_response_str(wrap_if_error=False))
+                span.record_exception(e, escaped=True)
+                span.set_status(StatusCode.ERROR)
+                raise
             except BaseException as e:
                 span.record_exception(e, escaped=True)
                 span.set_status(StatusCode.ERROR)
@@ -426,13 +440,13 @@ class Instrumentation(AbstractCapability[Any]):
         Successful validation is not span-worthy on its own — the execute-stage span covers the
         normal lifecycle, and emitting a second span here would duplicate it. Only when validation
         ultimately fails (`on_tool_validate_error` did not recover it) do we open a near-zero-width
-        `execute_tool` span marked ERROR, recording the retry prompt the model will see. This
-        restores the pre-#4967 behavior where a tool call rejected before execution stayed visible
-        in traces (#6555).
+        `execute_tool` span marked ERROR, recording the failure the model will see. This restores
+        the pre-#4967 behavior where a tool call rejected before execution stayed visible in traces
+        (#6555).
         """
         try:
             return await handler(args)
-        except (ValidationError, ModelRetry) as error:
+        except (ValidationError, ModelRetry, ToolFailed) as error:
             names = self._instrumentation_names
             with self.settings.tracer.start_as_current_span(
                 names.get_tool_span_name(call.tool_name),
@@ -441,17 +455,20 @@ class Instrumentation(AbstractCapability[Any]):
                 set_status_on_exception=False,
             ) as span:
                 if self.settings.include_content and span.is_recording():
-                    # Mirror `ToolManager._wrap_error_as_retry` to record the retry prompt the model
-                    # will see as the tool result. Duplicated here to avoid importing `ToolManager`.
-                    content = (
-                        error.errors(include_url=False, include_context=False)
-                        if isinstance(error, ValidationError)
-                        else error.message
-                    )
-                    retry_part = RetryPromptPart(
-                        tool_name=call.tool_name, content=content, tool_call_id=call.tool_call_id
-                    )
-                    span.set_attribute(names.tool_result_attr, retry_part.model_response())
+                    if isinstance(error, ToolFailed):
+                        result = error.message
+                    else:
+                        # Mirror `ToolManager._wrap_error_as_retry` to record the retry prompt the
+                        # model will see. Duplicated here to avoid importing `ToolManager`.
+                        content = (
+                            error.errors(include_url=False, include_context=False)
+                            if isinstance(error, ValidationError)
+                            else error.message
+                        )
+                        result = RetryPromptPart(
+                            tool_name=call.tool_name, content=content, tool_call_id=call.tool_call_id
+                        ).model_response()
+                    span.set_attribute(names.tool_result_attr, result)
                 span.record_exception(error, escaped=True)
                 span.set_status(StatusCode.ERROR)
             raise

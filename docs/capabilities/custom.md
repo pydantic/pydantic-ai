@@ -591,6 +591,8 @@ To skip execution and provide a replacement result, raise [`SkipToolExecution(re
 
 Unlike the [generic lifecycle](#error-hooks), the tool validate and execute stages make `wrap_*` the **outermost** hook: `wrap_tool_validate` encloses `before_tool_validate` → validation (recovering via `on_tool_validate_error`) → `after_tool_validate`, and `wrap_tool_execute` encloses `before_tool_execute` → the tool body (recovering via `on_tool_execute_error`) → `after_tool_execute`. A wrapping capability therefore sees the raw pre-`before` args and the final post-`after` result, and its own errors are not eligible for `on_*_error` recovery. Both wraps only ever run for a successfully resolved tool; `wrap_tool_execute` additionally never runs for a call that failed argument validation.
 
+Tool validation and execution hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to request a retry, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a failed tool result without retrying. See [triggering retries and tool failures](../hooks.md#triggering-retries-with-modelretry) for the full pattern.
+
 ### Output hooks
 
 Like tool processing, [output](../output.md) processing has two phases: **validation** (parsing the model's raw output against the output schema) and **processing** (extracting the value and calling any [output function](../output.md#output-functions)). Each phase has its own hooks.
@@ -906,9 +908,9 @@ To return more than one capability from a single factory, wrap them in a [`Combi
 
 !!! note "Durable execution (Temporal, DBOS, Prefect)"
 
-    A dynamic capability whose resolved capability contributes only instructions, model settings, native tools, hooks, or `prepare_tools`/`get_wrapper_toolset` (i.e. no `get_toolset()` of its own) works seamlessly with durable execution — the factory runs in the workflow alongside the rest of the agent loop. This covers the common "load this user's skill from the database and add its instructions" pattern.
+    Dynamic capabilities, including their contributed toolsets, work with durable execution. Set a stable `id` on [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] with all three engines so their activities, steps, or tasks can be registered consistently. Since a bare [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] passed directly to `capabilities=` cannot carry an `id`, wrap it explicitly: `DynamicCapability(my_func, id='...')`.
 
-    However, dynamic capabilities that contribute their own toolset via `get_toolset()` are not yet supported with durable execution. The toolset is only known at run time, so it bypasses the durable wrapper's construction-time toolset registration and would attempt I/O directly inside the workflow. As a workaround, register the toolsets statically via `Agent(toolsets=[...])` (where they get wrapped properly) and have the dynamic capability reference them indirectly — e.g. via [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] to scope which tools are visible per-run, rather than constructing the toolset inside the factory. Full support is tracked in [#5253](https://github.com/pydantic/pydantic-ai/issues/5253).
+    DBOS runs dynamic tool discovery and calls in steps, checkpointing any MCP I/O, while Prefect runs dynamic tool calls in tasks and resolves tools in flow code. Both reuse the capability already resolved for the run inside their steps or tasks. Temporal re-runs the factory inside activities because the activity boundary cannot carry the run's resolved capability. On all three engines the factory itself executes in workflow or flow code, which re-runs on replay, recovery, or flow retry — so keep it deterministic given the run's dependencies and leave I/O to the toolset it returns.
 
 ## Composition and middleware semantics
 

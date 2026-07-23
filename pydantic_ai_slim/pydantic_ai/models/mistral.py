@@ -13,7 +13,13 @@ from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
-from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
+from .._utils import (
+    format_inlined_text_file as _format_inlined_text_file,
+    generate_tool_call_id as _generate_tool_call_id,
+    is_text_like_media_type as _is_text_like_media_type,
+    now_utc as _now_utc,
+    number_to_datetime,
+)
 from ..exceptions import ModelAPIError
 from ..messages import (
     AudioUrl,
@@ -65,7 +71,9 @@ try:
         AudioChunk as MistralAudioChunk,
         ChatCompletionChoiceFinishReason as MistralFinishReason,
         ChatCompletionRequestMessage as MistralMessages,
+        ChatCompletionRequestTool as MistralChatCompletionRequestTool,
         ChatCompletionResponse as MistralChatCompletionResponse,
+        ChatCompletionStreamRequestTool as MistralChatCompletionStreamRequestTool,
         CompletionChunk as MistralCompletionChunk,
         CompletionEvent as MistralCompletionEvent,
         ContentChunk as MistralContentChunk,
@@ -155,7 +163,12 @@ class MistralModelSettings(ModelSettings, total=False):
 
     # ALL FIELDS MUST BE `mistral_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    # This class is a placeholder for any future mistral-specific settings
+    mistral_prompt_cache_key: str
+    """Used by Mistral to improve cache hit rates for similar requests, mirroring `openai_prompt_cache_key`.
+
+    See the [Mistral prompt caching documentation](https://docs.mistral.ai/studio-api/conversations/advanced/prompt-caching)
+    for more information.
+    """
 
 
 @dataclass(init=False)
@@ -274,7 +287,7 @@ class MistralModel(Model[Mistral]):
                 model=str(self._model_name),
                 messages=await self._map_messages(messages, model_request_parameters),
                 n=1,
-                tools=tools or UNSET,
+                tools=cast(list[MistralChatCompletionRequestTool], tools) if tools else UNSET,
                 tool_choice=tool_choice,
                 stream=False,
                 max_tokens=model_settings.get('max_tokens', UNSET),
@@ -286,6 +299,8 @@ class MistralModel(Model[Mistral]):
                 frequency_penalty=model_settings.get('frequency_penalty'),
                 stop=model_settings.get('stop_sequences', None),
                 reasoning_effort=self._translate_thinking(model_request_parameters),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls'),
+                prompt_cache_key=model_settings.get('mistral_prompt_cache_key', UNSET),
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -322,7 +337,7 @@ class MistralModel(Model[Mistral]):
             model=str(self._model_name),
             messages=mistral_messages,
             n=1 if tools else UNSET,
-            tools=tools or UNSET,
+            tools=cast(list[MistralChatCompletionStreamRequestTool], tools) if tools else UNSET,
             tool_choice=tool_choice,
             response_format=response_format,
             stream=True,
@@ -335,6 +350,8 @@ class MistralModel(Model[Mistral]):
             frequency_penalty=model_settings.get('frequency_penalty'),
             stop=model_settings.get('stop_sequences', None),
             reasoning_effort=reasoning_effort,
+            parallel_tool_calls=model_settings.get('parallel_tool_calls'),
+            prompt_cache_key=model_settings.get('mistral_prompt_cache_key', UNSET),
             http_headers={'User-Agent': get_user_agent()},
         )
         assert response, 'An unexpected empty response from Mistral.'
@@ -393,6 +410,8 @@ class MistralModel(Model[Mistral]):
         assert response.choices, 'Unexpected empty response choice.'
 
         choice = response.choices[0]
+        if choice.message is None:  # pragma: no cover
+            raise UnexpectedModelBehavior('Unexpected empty response message from Mistral')
         content = choice.message.content
         tool_calls = choice.message.tool_calls
 
@@ -667,7 +686,17 @@ class MistralModel(Model[Mistral]):
                         image_url.detail = metadata.get('detail', 'auto')
                     content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
-                    if item.is_image:
+                    if _is_text_like_media_type(item.media_type):
+                        content.append(
+                            MistralTextChunk(
+                                text=_format_inlined_text_file(
+                                    item.data.decode('utf-8'),
+                                    media_type=item.media_type,
+                                    identifier=item.identifier,
+                                )
+                            )
+                        )
+                    elif item.is_image:
                         image_url = MistralImageURL(url=item.data_uri)
                         if metadata := item.vendor_metadata:
                             image_url.detail = metadata.get('detail', 'auto')
@@ -676,10 +705,21 @@ class MistralModel(Model[Mistral]):
                         content.append(MistralDocumentURLChunk(document_url=item.data_uri, type='document_url'))
                     else:
                         raise NotImplementedError(
-                            'BinaryContent other than image or PDF is not supported in Mistral user prompts'
+                            'BinaryContent other than text-like, image, or PDF is not supported in Mistral user prompts'
                         )
                 elif isinstance(item, DocumentUrl):
-                    if item.media_type == 'application/pdf':
+                    if _is_text_like_media_type(item.media_type):
+                        downloaded_text = await download_item(item, data_format='text')
+                        content.append(
+                            MistralTextChunk(
+                                text=_format_inlined_text_file(
+                                    downloaded_text['data'],
+                                    media_type=item.media_type,
+                                    identifier=item.identifier,
+                                )
+                            )
+                        )
+                    elif item.media_type == 'application/pdf':
                         if item.force_download:
                             downloaded = await download_item(item, data_format='base64_uri')
                             content.append(
@@ -688,7 +728,9 @@ class MistralModel(Model[Mistral]):
                         else:
                             content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
                     else:
-                        raise NotImplementedError('DocumentUrl other than PDF is not supported in Mistral user prompts')
+                        raise NotImplementedError(
+                            'DocumentUrl other than text-like or PDF is not supported in Mistral user prompts'
+                        )
                 elif isinstance(item, AudioUrl):
                     raise NotImplementedError('AudioUrl is not supported in Mistral user prompts')
                 elif isinstance(item, VideoUrl):

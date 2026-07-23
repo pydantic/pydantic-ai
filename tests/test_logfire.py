@@ -28,6 +28,7 @@ from pydantic_ai.exceptions import (
     CallDeferred,
     ModelRetry,
     SkipToolExecution,
+    ToolFailed,
     UnexpectedModelBehavior,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -487,6 +488,24 @@ def test_logfire(
 
 def _test_logfire_metadata_values_callable_dict(ctx: RunContext[Any]) -> dict[str, str]:
     return {'model_name': ctx.model.model_name}
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_logfire_explicit_run_id(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
+    """An explicit `run_id=` is emitted as `gen_ai.agent.call.id` on the agent run span."""
+    agent = Agent(
+        model=TestModel(custom_output_text='ok'),
+        name='run_id_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+    result = agent.run_sync('Hello', run_id='run-from-api-42')
+    assert result.run_id == 'run-from-api-42'
+
+    summary = get_logfire_summary()
+    agent_run_attrs = next(
+        attrs for attrs in summary.attributes.values() if attrs.get('gen_ai.operation.name') == 'invoke_agent'
+    )
+    assert agent_run_attrs['gen_ai.agent.call.id'] == 'run-from-api-42'
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -1457,10 +1476,10 @@ Fix the errors and try again.\
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize('include_content', [True, False])
-@pytest.mark.parametrize('failure_source', ['schema', 'validator'])
-def test_tool_argument_validation_error_emits_span(
+@pytest.mark.parametrize('failure_source', ['schema', 'validator', 'tool_failed'])
+def test_tool_argument_validation_failure_emits_span(
     get_logfire_summary: Callable[[], LogfireSummary],
-    failure_source: Literal['schema', 'validator'],
+    failure_source: Literal['schema', 'validator', 'tool_failed'],
     include_content: bool,
 ) -> None:
     """A tool call rejected at argument validation emits an ERROR span (regression, #6555).
@@ -1485,6 +1504,8 @@ def test_tool_argument_validation_error_emits_span(
     def validate_args(ctx: RunContext[Any], x: int) -> None:
         if failure_source == 'validator' and ctx.retry == 0:
             raise ModelRetry(f'reject {x}')
+        if failure_source == 'tool_failed' and model_calls == 1:
+            raise ToolFailed(f'cannot validate {x}')
 
     hooks = Hooks()
     wrapped_calls: list[tuple[str, dict[str, Any]]] = []
@@ -1530,8 +1551,14 @@ def test_tool_argument_validation_error_emits_span(
     assert tool_spans[0]['logfire.level_num'] == 17
     assert 'logfire.level_num' not in tool_spans[1]
     if include_content:
-        expected_error = {'schema': 'int_parsing', 'validator': 'reject 2'}[failure_source]
+        expected_error = {
+            'schema': 'int_parsing',
+            'validator': 'reject 2',
+            'tool_failed': 'cannot validate 2',
+        }[failure_source]
         assert expected_error in tool_spans[0]['gen_ai.tool.call.result']
+        if failure_source == 'tool_failed':
+            assert 'Fix the errors and try again.' not in tool_spans[0]['gen_ai.tool.call.result']
         assert tool_spans[1]['gen_ai.tool.call.result'] == '4'
     else:
         assert 'gen_ai.tool.call.result' not in tool_spans[0]
@@ -1722,6 +1749,46 @@ def test_recovered_tool_validation_emits_no_error_span(
     assert len(tool_spans) == 1
     assert 'logfire.level_num' not in tool_spans[0]
     assert tool_spans[0]['gen_ai.tool.call.result'] == '4'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_tool_failed_span_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    """A tool raising `ToolFailed` records the failure as the tool result on the span, like `ModelRetry`.
+
+    Parallel to the retry case in `test_include_tool_args_span_attributes`: the model-visible failure
+    message is recorded as `gen_ai.tool.call.result` when content is included (with no "Fix the errors
+    and try again." suffix, since it's a failure rather than a retry), and excluded when content is off.
+    """
+    my_agent = Agent(
+        model=TestModel(seed=42),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=include_content))],
+    )
+
+    @my_agent.tool_plain
+    async def add_numbers(x: int, y: int) -> int:
+        """Add two numbers together."""
+        raise ToolFailed('numbers service unavailable')
+
+    my_agent.run_sync('Add 42 and 42')
+
+    summary = get_logfire_summary()
+    tool_attributes = next(
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'add_numbers'
+    )
+
+    # Guards the documented "traced as an error in telemetry" behavior for `ToolFailed`
+    # (level 17 = error); this goes through a different branch than `ModelRetry`'s, so it
+    # isn't covered by the retry test. `level_num` is fine here — this file inspects the
+    # Logfire-captured view of the spans.
+    assert tool_attributes['logfire.level_num'] == 17
+    if include_content:
+        assert tool_attributes.get('gen_ai.tool.call.result') == 'numbers service unavailable'
+    else:
+        assert 'gen_ai.tool.call.result' not in tool_attributes
 
 
 class WeatherInfo(BaseModel):
