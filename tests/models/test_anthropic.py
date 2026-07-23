@@ -7363,9 +7363,11 @@ async def test_anthropic_advisor_history_dropped_for_count_tokens(allow_model_re
     # (`betas` stays unset/`Omit`) confirms the tool was stripped from the count-tokens request...
     assert count_tokens_kwargs.get('betas', OMIT) is OMIT
     # ...so the advisor history blocks it would otherwise require must be stripped too.
-    assistant_content = next(msg['content'] for msg in count_tokens_kwargs['messages'] if msg['role'] == 'assistant')
-    blocks = [item for item in assistant_content if isinstance(item, dict)]
-    assert [b.get('type') for b in blocks] == snapshot(['text'])
+    assistant_content = cast(
+        list[dict[str, Any]],
+        next(msg['content'] for msg in count_tokens_kwargs['messages'] if msg['role'] == 'assistant'),
+    )
+    assert [block.get('type') for block in assistant_content] == snapshot(['text'])
 
 
 async def test_anthropic_advisor_dangling_call_replayed_when_active():
