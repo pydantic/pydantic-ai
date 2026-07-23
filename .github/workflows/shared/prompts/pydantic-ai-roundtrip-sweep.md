@@ -48,9 +48,10 @@ existing suite. The bug must be one you triggered and observed.
 - A **UI adapter** (Vercel AI, AG-UI) dropping a field documented as **not sent to the model**
   (application-only annotations such as `TextContent.metadata`), or any field explicitly
   documented as by-design lossy. The UI wire formats have no place to carry application-only
-  fields, so that loss is by design, not a state-loss bug. `ModelMessagesTypeAdapter` round-trips
-  every field faithfully, so a drop *there* is a real bug — don't skip it. See the "What
-  survives a round-trip" note in `docs/message-history.md`.
+  fields, so that loss is by design, not a state-loss bug. `ModelMessagesTypeAdapter` carries
+  every field — a field *dropped* there is a real bug, so don't skip it (JSON-mode normalization
+  of `Any`-typed values, such as a `tuple` in `TextContent.metadata` reloading as a `list`, is
+  not a drop). See the "What survives a round-trip" note in `docs/message-history.md`.
 - Behavior already tracked by an open issue or fixed by an open PR — **search both first**.
 
 ## Deduplication — mandatory BEFORE filing an issue
