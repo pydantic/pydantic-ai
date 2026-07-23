@@ -83,6 +83,7 @@ openrouter = ["openai>=2.45.0"]
 mistral = ["mistralai>=2.4.2,!=2.4.6"]
 bedrock = ["boto3>=1.42.63"]
 zai = ["openai>=2.45.0"]
+snowflake = ["openai>=2.45.0"]
 huggingface = [
     "huggingface-hub>=1.3.4,<2.0.0",
     # huggingface_hub 1.3.x still calls the deprecated hf_xet.download_files() API.

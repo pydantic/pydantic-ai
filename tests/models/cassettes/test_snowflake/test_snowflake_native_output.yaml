@@ -1,0 +1,97 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '365'
+      content-type:
+      - application/json
+      host:
+      - myorg-myaccount.snowflakecomputing.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: The capital of Mexico
+        role: user
+      model: claude-sonnet-4-6
+      response_format:
+        json_schema:
+          name: CityInfo
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+        type: json_schema
+      stream: false
+    uri: https://myorg-myaccount.snowflakecomputing.com/api/v2/cortex/v1/chat/completions
+  response:
+    headers:
+      cache-control:
+      - no-cache
+      content-length:
+      - '791'
+      content-type:
+      - application/json
+      expect-ct:
+      - enforce, max-age=3600
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding, User-Agent
+    parsed_body:
+      choices:
+      - finish_reason: ''
+        index: 0
+        logprobs:
+          content: null
+          refusal: null
+        message:
+          annotations: null
+          audio:
+            data: ''
+            expires_at: 0
+            id: ''
+            transcript: ''
+          content: '{"city": "Mexico City", "country": "Mexico"}'
+          function_call:
+            arguments: ''
+            name: ''
+          refusal: ''
+          role: assistant
+          tool_calls: null
+      created: 1783468052
+      id: ''
+      model: claude-sonnet-4-6
+      object: chat.completion
+      service_tier: ''
+      system_fingerprint: ''
+      usage:
+        completion_tokens: 51
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 668
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 719
+    status:
+      code: 200
+      message: OK
+version: 1
