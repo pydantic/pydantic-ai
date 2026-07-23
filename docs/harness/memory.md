@@ -142,6 +142,27 @@ agent = Agent(
 
 Namespace isolation controls which records the capability addresses. It is not an authorization system for a custom or shared backing store. Validate the identity in application dependencies, restrict backend credentials, and ensure custom stores cannot escape the resolved namespace.
 
+## Multiple memories on one agent
+
+An agent can carry several `Memory` capabilities at once, for example a personal notebook plus a shared org notebook. Two constraints apply:
+
+- Give each instance a distinct `agent_name` or `namespace`. Injected blocks are tracked by their resolved scope, so instances that differ only in their store resolve the same scope and replace each other's injection.
+- All instances define the same tool names, so wrap every instance but one in `prefix_tools` to keep the tool schemas distinct.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness.memory import FileStore, Memory
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[
+        Memory(FileStore('/var/lib/myapp/memory')),
+        Memory(FileStore('/var/lib/myapp/memory'), agent_name='org').prefix_tools('org'),
+    ],
+    defer_model_check=True,
+)
+```
+
 ## Search
 
 `search_memory` performs literal text search and always applies three bounds:

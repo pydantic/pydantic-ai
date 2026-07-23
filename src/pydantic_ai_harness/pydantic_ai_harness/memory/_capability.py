@@ -157,12 +157,14 @@ class Memory(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Add a bounded memory snapshot to only the current user request."""
-        self._remove_previous_injection(request_context.messages)
-        if not self.inject_memory:
-            return request_context
-
         store, scope = self.resolve_scope(ctx)
         scope_hash = hashlib.sha256(scope.encode()).hexdigest()[:16]
+        # Scope-qualify the marker so several `Memory` capabilities on one agent
+        # each refresh only their own injection instead of clobbering each other.
+        marker = f'{_MEMORY_PART_METADATA}:{scope_hash}'
+        self._remove_previous_injection(request_context.messages, marker)
+        if not self.inject_memory:
+            return request_context
         with ctx.tracer.start_as_current_span(
             'memory.inject', record_exception=False, set_status_on_exception=False
         ) as span:
@@ -211,7 +213,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                     files_truncated=files_truncated,
                 )[:content_budget]
                 rendered = f'{_MEMORY_DATA_PREFIX}{rendered}{_MEMORY_DATA_SUFFIX}'
-                part = UserPromptPart([TextContent(rendered, metadata=_MEMORY_PART_METADATA)])
+                part = UserPromptPart([TextContent(rendered, metadata=marker)])
                 latest = request_context.messages[-1]
                 if not isinstance(latest, ModelRequest):  # pragma: no cover - guaranteed by the agent graph
                     raise RuntimeError('model request history must end with a ModelRequest')
@@ -229,7 +231,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                 )
         return request_context
 
-    def _remove_previous_injection(self, messages: list[ModelMessage]) -> None:
+    def _remove_previous_injection(self, messages: list[ModelMessage], marker: str) -> None:
         for index, message in enumerate(messages):
             if not isinstance(message, ModelRequest):
                 continue
@@ -239,10 +241,14 @@ class Memory(AbstractCapability[AgentDepsT]):
                 if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
                     parts.append(part)
                     continue
+                # The bare `_MEMORY_PART_METADATA` match is a compatibility strip for
+                # histories persisted before markers were scope-qualified; without it a
+                # resumed pre-upgrade conversation keeps one stale block permanently.
+                # Removable once pre-upgrade histories are no longer a concern.
                 content = [
                     item
                     for item in part.content
-                    if not (isinstance(item, TextContent) and item.metadata == _MEMORY_PART_METADATA)
+                    if not (isinstance(item, TextContent) and item.metadata in (marker, _MEMORY_PART_METADATA))
                 ]
                 if len(content) == len(part.content):
                     parts.append(part)
