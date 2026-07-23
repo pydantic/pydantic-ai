@@ -273,13 +273,11 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
         slf: The usage to increment.
         incr_usage: The usage to increment by.
     """
-    slf.input_tokens += incr_usage.input_tokens
-    slf.cache_write_tokens += incr_usage.cache_write_tokens
-    slf.cache_read_tokens += incr_usage.cache_read_tokens
-    slf.input_audio_tokens += incr_usage.input_audio_tokens
-    slf.cache_audio_read_tokens += incr_usage.cache_audio_read_tokens
-    slf.output_audio_tokens += incr_usage.output_audio_tokens
-    slf.output_tokens += incr_usage.output_tokens
+    for k in slf.__dict__.keys() | incr_usage.__dict__.keys():
+        slf_value = getattr(slf, k, 0)
+        incr_value = getattr(incr_usage, k, 0)
+        if isinstance(slf_value, (int, float)) and isinstance(incr_value, (int, float)):
+            setattr(slf, k, slf_value + incr_value)
 
     for key, value in incr_usage.details.items():
         # Note: value can be None at runtime from model responses despite the type annotation
