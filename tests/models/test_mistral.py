@@ -59,6 +59,7 @@ with try_import() as imports_successful:
         FunctionCall as MistralFunctionCall,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
+        PredictionTypedDict as MistralPredictionTypedDict,
         ReferenceChunk as MistralReferenceChunk,
         TextChunk,
         TextChunk as MistralTextChunk,
@@ -3611,6 +3612,64 @@ async def test_prompt_cache_key_stream(allow_model_requests: None) -> None:
         text = await result.get_output()
     assert text == 'hello'
     assert mock_client.chat_completion_kwargs[-1]['prompt_cache_key'] == 'conv-123'
+
+
+async def test_prediction_sent(allow_model_requests: None) -> None:
+    """`mistral_prediction` reaches the SDK call when set.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
+    c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    prediction: MistralPredictionTypedDict = {'type': 'content', 'content': 'hello'}
+    result = await agent.run('hello', model_settings=MistralModelSettings(mistral_prediction=prediction))
+    assert result.output == 'hello'
+    assert mock_client.chat_completion_kwargs[-1]['prediction'] == prediction
+
+
+async def test_prediction_unset_without_config(allow_model_requests: None) -> None:
+    """Without `mistral_prediction`, `prediction` is `None` (omitted by the SDK).
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
+    c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'hello'
+    assert mock_client.chat_completion_kwargs[-1]['prediction'] is None
+
+
+async def test_prediction_stream(allow_model_requests: None) -> None:
+    """`mistral_prediction` reaches the SDK call in streaming mode too, and stays `UNSET` by default.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
+    stream = [text_chunk('hello', finish_reason='stop')]
+    mock_client = MockMistralAI(stream=stream)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        await result.get_output()
+    assert mock_client.chat_completion_kwargs[-1]['prediction'] is None
+
+    prediction: MistralPredictionTypedDict = {'type': 'content', 'content': 'hello'}
+    async with agent.run_stream('hello', model_settings=MistralModelSettings(mistral_prediction=prediction)) as result:
+        text = await result.get_output()
+    assert text == 'hello'
+    assert mock_client.chat_completion_kwargs[-1]['prediction'] == prediction
 
 
 async def test_parallel_tool_calls_sent(allow_model_requests: None) -> None:

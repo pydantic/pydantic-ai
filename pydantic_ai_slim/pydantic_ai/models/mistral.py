@@ -82,6 +82,7 @@ try:
         FunctionCall as MistralFunctionCall,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
+        PredictionTypedDict as MistralPredictionTypedDict,
         ReferenceChunk as MistralReferenceChunk,
         ResponseFormatTypedDict as MistralResponseFormatTypedDict,
         TextChunk as MistralTextChunk,
@@ -168,6 +169,13 @@ class MistralModelSettings(ModelSettings, total=False):
 
     See the [Mistral prompt caching documentation](https://docs.mistral.ai/studio-api/conversations/advanced/prompt-caching)
     for more information.
+    """
+
+    mistral_prediction: MistralPredictionTypedDict
+    """Enables [predicted outputs](https://docs.mistral.ai/capabilities/predicted_outputs/), mirroring `openai_prediction`.
+
+    Pass `{'type': 'content', 'content': ...}` with the predicted text. Useful when regenerating content with
+    only small changes, as it can reduce response latency.
     """
 
 
@@ -301,6 +309,7 @@ class MistralModel(Model[Mistral]):
                 reasoning_effort=self._translate_thinking(model_request_parameters),
                 parallel_tool_calls=model_settings.get('parallel_tool_calls'),
                 prompt_cache_key=model_settings.get('mistral_prompt_cache_key', UNSET),
+                prediction=model_settings.get('mistral_prediction'),
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -352,6 +361,7 @@ class MistralModel(Model[Mistral]):
             reasoning_effort=reasoning_effort,
             parallel_tool_calls=model_settings.get('parallel_tool_calls'),
             prompt_cache_key=model_settings.get('mistral_prompt_cache_key', UNSET),
+            prediction=model_settings.get('mistral_prediction'),
             http_headers={'User-Agent': get_user_agent()},
         )
         assert response, 'An unexpected empty response from Mistral.'
