@@ -1,6 +1,6 @@
 # Input and History
 
-Read this file when the user wants multimodal input, message history, or context trimming.
+Read this file when the user wants multimodal input, message history, `run_id` / `conversation_id` correlation, or context trimming.
 
 ## Send Images, Audio, Video, or Documents to the Model
 
@@ -43,6 +43,34 @@ Important distinctions:
 - `all_messages()` returns the full history accumulated so far
 - when `message_history` is non-empty, Pydantic AI assumes the history already carries the system prompt
 - interrupted, hand-built, or context-evicted histories are made provider-valid automatically before each model request — no manual cleanup needed. Repairs only ADD synthesized parts or REMOVE fundamentally-unsendable ones (never silently dropping meaningful content): a tool call with no result gets a synthesized `ToolReturnPart` (marked with `{'pydantic_ai_synthesized_tool_return': True}` in `metadata`), including one whose args were cut off mid-stream; an orphaned tool result (result with no matching call) is dropped; then consecutive compatible messages are merged. Applies to regular tool calls only — builtin/native parts are left untouched (handled by each model's serializer). Duplicate tool results and provider-specific ordering rules are out of scope.
+
+## Correlate Runs with `run_id` and `conversation_id`
+
+Each message carries two identifiers:
+
+- `run_id` — unique per `Agent.run` call (including deferred-tool resume). Surfaces on `RunContext.run_id`, `AgentRunResult.run_id`, message stamps, and OTel `gen_ai.agent.call.id`.
+- `conversation_id` — shared across turns that pass the same `message_history`. Surfaces on `AgentRunResult.conversation_id`, message stamps, and OTel `gen_ai.conversation.id`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+
+agent = Agent(TestModel())
+
+result1 = agent.run_sync('Tell me a joke.', run_id='run-from-api-42')
+result2 = agent.run_sync('Explain?', message_history=result1.all_messages())
+
+assert result1.run_id == 'run-from-api-42'
+assert result1.run_id != result2.run_id  # never inherited from history
+assert result1.conversation_id == result2.conversation_id  # inherited from history
+```
+
+Rules of thumb:
+
+- Pass `run_id=` when your app mints an id before the run starts (e.g. one created, stored, or handed out to a client first) and you want `ctx.run_id` / stamps / OTel to match it.
+- Do **not** pass `run_id=''`, or reuse a `run_id` that already appears on `message_history` — both raise `UserError` because they break `new_messages()` boundary detection. Correlate pause/resume and multi-turn work with `conversation_id` instead. When retrying a failed run with the same `run_id`, rebuild `message_history` without the failed attempt's messages.
+- Pass `conversation_id='new'` to fork a thread off existing history; `'new'` is **not** a sentinel for `run_id`.
+- UI adapters auto-wire protocol thread/chat ids into `conversation_id`. Protocol run ids (e.g. AG-UI `runId`) are **not** mapped into agent `run_id` — pass `run_id=` on the adapter/`Agent.run` if you need them aligned.
 
 ## Manage Context Size
 

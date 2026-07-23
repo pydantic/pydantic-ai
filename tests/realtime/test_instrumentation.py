@@ -40,20 +40,22 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.realtime import (
-    AudioDelta,
-    InputTranscript,
-    RealtimeCodecEvent,
-    RealtimeConnection,
     RealtimeEvent,
-    RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession as _RealtimeSession,
     SessionUsageEvent,
+    TurnCompleteEvent,
+)
+from pydantic_ai.realtime.codec import (
+    AudioDelta,
+    InputTranscript,
+    RealtimeCodecEvent,
+    RealtimeConnection,
+    RealtimeInput,
     ToolCall,
     Transcript,
-    TurnCompleteEvent,
 )
 from pydantic_ai.usage import RequestUsage
 

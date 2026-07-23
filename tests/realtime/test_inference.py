@@ -64,6 +64,26 @@ def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
     assert direct_model._realtime_url().split('?', 1)[0] == 'wss://api.openai.com/v1/realtime'  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.skipif(not imports_successful(), reason='xai-sdk / google-genai not installed')
+def test_infer_realtime_model_gateway_google(env: TestEnv) -> None:
+    # `gateway/google:...` (and its `gateway/google-cloud` alias) route Gemini Live through the gateway's
+    # Vertex upstream: a `GoogleRealtimeModel` whose provider derives its base URL and key from
+    # `gateway_provider`, with the gateway's bearer auth added to the WebSocket handshake.
+    env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'test')
+    env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
+
+    for route in ('gateway/google', 'gateway/google-cloud'):
+        model = infer_realtime_model(f'{route}:gemini-live-2.5-flash')
+        # Name-check the class (rather than importing it) to keep this dispatch test light.
+        assert type(model).__name__ == 'GoogleRealtimeModel'
+        assert model.model_name == 'gemini-live-2.5-flash'
+        # Both shorthands collapse onto the gateway's Google Cloud (Vertex) route, so the handshake
+        # connects through the gateway rather than directly to Vertex.
+        assert getattr(model, '_provider').base_url == 'https://gateway.pydantic.dev/proxy/google-vertex'
+        # `_gateway` gates the handshake bearer-auth injection in `connect`.
+        assert getattr(model, '_gateway') is True
+
+
 def test_azure_rejects_non_azure_provider(env: TestEnv) -> None:
     env.set('OPENAI_API_KEY', 'test')
 
@@ -86,7 +106,7 @@ async def test_agent_realtime_session_infers_string_model() -> None:
         async with agent.realtime_session(model='unknown:voice'):
             pass  # pragma: no cover
 
-    # A non-OpenAI gateway route is rejected: xAI isn't a gateway upstream and Gemini Live isn't the
-    # OpenAI protocol, so only `gateway/openai` is proxied for realtime.
-    with pytest.raises(UserError, match='gateway/openai'):
-        infer_realtime_model('gateway/google:gemini-2.5-flash-native-audio-latest')
+    # A gateway route with no realtime support is rejected before any provider is built: Groq is a
+    # gateway upstream but has no realtime model, so `gateway/groq` isn't a supported realtime route.
+    with pytest.raises(UserError, match='Unknown realtime model provider'):
+        infer_realtime_model('gateway/groq:whisper-voice')

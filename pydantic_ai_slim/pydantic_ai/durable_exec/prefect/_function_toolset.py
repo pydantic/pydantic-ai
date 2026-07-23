@@ -9,10 +9,15 @@ from typing_extensions import deprecated
 
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.durable_exec._toolset import CallToolOperation, DurableFunctionToolset
+from pydantic_ai.durable_exec._toolset import (
+    CallToolOperation,
+    DurableFunctionToolset,
+    unwrap_recorded_tool_call_result,
+    wrap_tool_call_result,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from ._toolset import resolve_tool_task_config
+from ._toolset import guard_task_enqueue, resolve_tool_task_config, with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
 
 
@@ -24,7 +29,8 @@ def _call_tool_operation(wrapped: FunctionToolset[AgentDepsT], base_config: Task
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> Any:
-        return await wrapped.call_tool(tool_name, tool_args, ctx, tool)
+        task_ctx = guard_task_enqueue(ctx)
+        return await wrap_tool_call_result(wrapped.call_tool(tool_name, tool_args, task_ctx, tool))
 
     async def call_tool_operation(
         name: str,
@@ -33,8 +39,13 @@ def _call_tool_operation(wrapped: FunctionToolset[AgentDepsT], base_config: Task
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
     ) -> Any:
-        merged_config = cast('TaskConfig', base_config | dict(config))
-        return await call_tool_task.with_options(name=f'Call Tool: {name}', **merged_config)(name, tool_args, ctx, tool)
+        merged_config = with_non_retryable_errors(cast('TaskConfig', base_config | dict(config)))
+        result = await call_tool_task.with_options(name=f'Call Tool: {name}', **merged_config)(
+            name, tool_args, ctx, tool
+        )
+        # A persisted cache entry written before this task wrapped control-flow exceptions (still
+        # reachable under a custom `cache_policy` that omits `TASK_SOURCE`) holds the raw result.
+        return unwrap_recorded_tool_call_result(result)
 
     return call_tool_operation
 

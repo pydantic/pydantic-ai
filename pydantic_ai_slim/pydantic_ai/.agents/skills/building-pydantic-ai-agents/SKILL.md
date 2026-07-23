@@ -285,8 +285,8 @@ Load only the most relevant reference first. Read additional references only if 
 | Decide what should load eagerly vs on demand, apply progressive disclosure, defer capability loading, or explain `load_capability` | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Add function tools, toolsets, MCP servers, or explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
 | Use provider-native web search, web fetch, or code execution | [Native Tools](./references/NATIVE-TOOLS.md) |
-| Use advanced tool features such as approval, retries, `ToolReturn`, validators, timeouts, or tool search | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
-| Work with multimodal input, message history, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
+| Use advanced tool features such as approval, retries, failed tool results, `ToolReturn`, validators, timeouts, or tool search | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
+| Work with multimodal input, message history, `run_id` / `conversation_id`, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Test or debug agent behavior | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Coordinate multiple agents or build graph workflows | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md#coordinate-multiple-agents) |
 | Call the model directly, expose A2A, use durable execution, embeddings, evals, or third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
@@ -337,8 +337,8 @@ Load exactly one of these unless the task clearly spans multiple families:
 | Progressive disclosure, deferred capabilities, capabilities on demand, and `load_capability` semantics | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Function tools, toolsets, MCP, explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
 | Provider-native tools | [Native Tools](./references/NATIVE-TOOLS.md) |
-| Approval, retries, validators, timeouts, rich tool returns, tool search, and tool-level deferred loading | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
-| Multimodal input, message history, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
+| Approval, retries, failed tool results, validators, timeouts, rich tool returns, tool search, and tool-level deferred loading | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
+| Multimodal input, message history, `run_id` / `conversation_id`, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Testing, request inspection, and Logfire debugging | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Multi-agent patterns, graphs, direct API, A2A, durable execution, embeddings, evals, third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
 

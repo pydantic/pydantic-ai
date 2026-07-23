@@ -67,7 +67,9 @@ class ToolsetTool(Generic[AgentDepsT]):
     Called on every tool call, receiving the schema-validated arguments as keyword args.
     The function should have the same typed parameters as the tool function,
     with `RunContext` as the first argument.
-    Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on failure, return `None` on success.
+    Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the arguments and
+    try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a terminal failure the model
+    should adapt to instead of retrying. Return `None` on success.
     """
 
 

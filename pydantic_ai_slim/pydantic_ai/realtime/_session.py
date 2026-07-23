@@ -1,4 +1,4 @@
-"""A realtime session that wraps a [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection] with automatic tool execution."""
+"""A realtime session that wraps a [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection] with automatic tool execution."""
 
 from __future__ import annotations as _annotations
 
@@ -31,7 +31,7 @@ from .._instrumentation import (
 )
 from .._tool_execution import build_tool_return_part
 from .._utils import cancel_and_drain
-from ..exceptions import ApprovalRequired, CallDeferred, ToolRetryError, UsageLimitExceeded, UserError
+from ..exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError, UsageLimitExceeded, UserError
 from ..messages import (
     BinaryContent,
     DeferredToolRequestsEvent,
@@ -91,6 +91,7 @@ from ._base import (
     Transcript,
     TruncateOutput,
     TurnCompleteEvent,
+    seed_pcm_audio,
 )
 
 if TYPE_CHECKING:
@@ -246,7 +247,7 @@ class _RealtimePendingMessages(list[PendingMessage]):
 
 
 class RealtimeSession:
-    """Wraps a [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection], building message history and auto-executing tools.
+    """Wraps a [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection], building message history and auto-executing tools.
 
     The session translates the connection's low-level codec events into the shared message/part event
     vocabulary from [`pydantic_ai.messages`][pydantic_ai.messages] and accumulates ordinary
@@ -341,8 +342,8 @@ class RealtimeSession:
         self._otel_output_type = 'speech' if output_modality == 'audio' else 'text'
         self._usage_limits = usage_limits
         self._audio_retention = audio_retention
-        self._retain_input = audio_retention in ('input', 'both')
-        self._retain_output = audio_retention in ('output', 'both')
+        self._retain_input = audio_retention in ('input_audio', 'all')
+        self._retain_output = audio_retention in ('output_audio', 'all')
         if retain_images_every_n < 1:
             raise UserError('`retain_images_every_n` must be at least 1.')
         self._retain_images_every_n = retain_images_every_n
@@ -358,7 +359,7 @@ class RealtimeSession:
             raise UserError(
                 "This realtime session can't capture the user's turns: input transcription is disabled "
                 "and `audio_retention` doesn't retain input audio. Enable transcription in the model settings, "
-                "or pass `audio_retention='input'` or `'both'` to keep the "
+                "or pass `audio_retention='input_audio'` or `'all'` to keep the "
                 'raw audio instead.'
             )
         self.usage = usage if usage is not None else RunUsage()
@@ -405,7 +406,7 @@ class RealtimeSession:
         self._user_item_order: deque[str] = deque()
         self._finalized_users_by_id: dict[str, SpeechPart] = {}
         self._finalized_user_item_ids: set[str] = set()
-        # Retained input audio (`audio_retention='input'`/`'both'`). `_input_audio` is the rolling buffer
+        # Retained input audio (`audio_retention='input_audio'`/`'all'`). `_input_audio` is the rolling buffer
         # of audio sent since the last turn boundary; on providers that report a per-item speech-stopped
         # boundary, each segment is cut into `_input_audio_by_id` keyed by its input item id, so overlapping
         # turns whose transcripts finalize out of order still attach their own audio (not a later turn's).
@@ -551,17 +552,19 @@ class RealtimeSession:
     ) -> None:
         """Feed content into the session.
 
-        Accepts a precise [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput], plain
-        text as a `str`, image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], or a
-        sequence of these inputs, dispatched in order. Text and retained images are recorded in
-        session history; audio is recorded later through its transcript and/or `audio_retention`.
-        `retain_images_every_n=1` records every image, while larger values keep the first image and
-        then one of every `N`. Profile-gated operations use the same guards as the dedicated control
-        methods.
+        Accepts a precise [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput] (audio,
+        image, or text), plain text as a `str`, image/audio
+        [`BinaryContent`][pydantic_ai.messages.BinaryContent], or a sequence of these inputs, dispatched
+        in order. Text and retained images are recorded in session history; audio is recorded later
+        through its transcript and/or `audio_retention`. `retain_images_every_n=1` records every image,
+        while larger values keep the first image and then one of every `N`. Sending an image is gated on
+        the model profile's image-input support and raises `UserError` when it is unsupported.
 
-        [`ToolResult`][pydantic_ai.realtime.ToolResult] is deliberately excluded (`RealtimeSessionInput`
-        is [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput] minus `ToolResult`): the session sends
-        tool results itself as each tool completes (see `_execute_tool`).
+        `send()` accepts session content only. Turn-control verbs (`CommitAudio`, `ClearAudio`,
+        `CreateResponse`, `CancelResponse`, `TruncateOutput`) are driven through the dedicated methods
+        (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
+        [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] is sent by the session itself as each tool
+        completes (see `_execute_tool`) — neither is accepted here.
         """
         if isinstance(content, str):
             await self._connection.send(TextInput(text=content))
@@ -571,12 +574,23 @@ class RealtimeSession:
         elif isinstance(content, BinaryContent):
             if content.is_image:
                 await self._send_image(content)
-            elif content.is_audio:
+            elif content.media_type == _WAV_MEDIA_TYPE:
+                # Retained `SpeechPart.audio` (from `audio_retention`) is a WAV container; unwrap it to
+                # raw PCM — matching the seeding path — so a natural round-trip (retain a turn's audio,
+                # then `send()` it back) doesn't stream the WAV header into the buffer as noise.
+                await self.send_audio(
+                    seed_pcm_audio(
+                        content,
+                        provider_name=self._provider_name or 'realtime',
+                        sample_rate=self._profile.get('audio_input_sample_rate', 24000),
+                    )
+                )
+            elif content.media_type == 'audio/pcm':
                 await self.send_audio(content.data)
             else:
                 raise UserError(
                     f'Unsupported binary media type {content.media_type!r} for `session.send()`. '
-                    'Only image and audio content are supported.'
+                    'Send an image, WAV audio, or raw PCM (`audio/pcm`); for a raw PCM byte stream use `send_audio()`.'
                 )
         elif isinstance(content, AudioInput):
             await self.send_audio(content.data)
@@ -586,9 +600,14 @@ class RealtimeSession:
                 ModelRequest(parts=[UserPromptPart(content=content.text)], conversation_id=self._conversation_id)
             )
         elif isinstance(content, ImageInput):
-            await self._send_image(BinaryContent(data=content.data, media_type=content.mime_type))
-        elif isinstance(content, (CommitAudio, ClearAudio, CreateResponse, TruncateOutput, CancelResponse)):
-            await self._send_control(content)
+            await self._send_image(BinaryContent(data=content.data, media_type=content.media_type))
+        elif isinstance(content, (CommitAudio, ClearAudio, CreateResponse, CancelResponse, TruncateOutput)):
+            # Turn-control verbs are connection-level vocabulary, excluded from `RealtimeSessionInput`.
+            # Direct callers to the dedicated methods, which apply the model-profile capability guards.
+            raise UserError(
+                'Turn-control verbs cannot be sent via `session.send()`; use the dedicated methods '
+                '`commit_audio()`, `clear_audio()`, `create_response()`, or `interrupt()`.'
+            )
         elif isinstance(content, (bytes, bytearray)):
             # `bytes` is a `Sequence[int]`, so guard it before the sequence branch below — otherwise it
             # iterates into a confusing per-byte error. Raw input audio goes through `send_audio()`.
@@ -604,25 +623,10 @@ class RealtimeSession:
                 'Tool results are sent automatically by the realtime session and cannot be sent via `session.send()`.'
             )
 
-    async def _send_control(
-        self, content: CommitAudio | ClearAudio | CreateResponse | TruncateOutput | CancelResponse
-    ) -> None:
-        """Dispatch a manual turn-control / interrupt verb to its session method."""
-        if isinstance(content, CommitAudio):
-            await self.commit_audio()
-        elif isinstance(content, ClearAudio):
-            await self.clear_audio()
-        elif isinstance(content, CreateResponse):
-            await self.create_response()
-        elif isinstance(content, TruncateOutput):
-            await self.interrupt(audio_end_ms=content.audio_end_ms)
-        else:
-            await self.interrupt()  # CancelResponse
-
     async def _send_image(self, content: BinaryContent) -> None:
         """Forward an image and retain it according to the session's sampling policy."""
         self._require_capability(self._profile.get('supports_image_input', False), 'send', 'image input')
-        await self._connection.send(ImageInput(data=content.data, mime_type=content.media_type))
+        await self._connection.send(ImageInput(data=content.data, media_type=content.media_type))
         if self._sent_image_count % self._retain_images_every_n == 0:
             self._record_sent_request(
                 ModelRequest(parts=[UserPromptPart(content=[content])], conversation_id=self._conversation_id)
@@ -666,7 +670,7 @@ class RealtimeSession:
             self._profile.get('supports_manual_turn_control', False), 'clear_audio', 'manual turn-taking'
         )
         await self._connection.send(ClearAudio())
-        # Drop the locally retained copy too (with `audio_retention='input'`/`'both'`), or the discarded
+        # Drop the locally retained copy too (with `audio_retention='input_audio'`/`'all'`), or the discarded
         # audio would still be attached to the next finalized user turn.
         self._input_audio.clear()
 
@@ -1035,7 +1039,7 @@ class RealtimeSession:
         else:
             # The calling response is otherwise finalized before execution begins, so this is an
             # invariant fallback: keep the history complete rather than dropping the tool result.
-            self._history.append(request)  # pragma: no cover
+            self._history.append(request)
 
     def _handle_input_transcript(self, text: str, is_final: bool, *, item_id: str | None = None) -> list[RealtimeEvent]:
         if item_id is not None:
@@ -1082,7 +1086,7 @@ class RealtimeSession:
     def _finalize_user(self, *, item_id: str | None = None) -> list[RealtimeEvent]:
         if item_id is None:
             if self._active_user is None:
-                return []  # pragma: no cover
+                return []
             part = self._active_user
             self._active_user = None
             self._user_transcript = ''
@@ -1191,8 +1195,8 @@ class RealtimeSession:
     def _finalize_audio_only_user(self) -> list[RealtimeEvent]:
         """Finalize a user turn from retained input audio when no transcript will arrive.
 
-        With input transcription disabled but input audio retained (`audio_retention='input'`/`'both'`),
-        the user's turn produces no [`InputTranscript`][pydantic_ai.realtime.InputTranscript], so the
+        With input transcription disabled but input audio retained (`audio_retention='input_audio'`/`'all'`),
+        the user's turn produces no [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript], so the
         transcript-driven `_finalize_user` never runs. This is called at each user-turn boundary (speech
         stopped / commit / turn complete) to finalize an audio-only user
         [`SpeechPart`][pydantic_ai.messages.SpeechPart] so the turn still lands in history.
@@ -1370,6 +1374,10 @@ class RealtimeSession:
                     self._tool_manager = await self._tool_manager.for_run_step(
                         replace(ctx, run_step=self._tool_run_step)
                     )
+                # Pin the step-synchronized manager for this call: a concurrent tool task can swap
+                # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
+                # so re-reading the attribute there could run against a different run-step's manager.
+                tool_manager = self._tool_manager
             tool_call = ToolCallPart(tool_name=call.tool_name, args=args, tool_call_id=call.tool_call_id)
 
             async def on_validate(args_valid: bool) -> None:
@@ -1384,13 +1392,20 @@ class RealtimeSession:
                 await self._queue.put(DeferredToolResultsEvent(results))
 
             try:
-                tool_result = await self._tool_manager.handle_call(
+                tool_result = await tool_manager.handle_call(
                     tool_call,
                     on_validate=on_validate,
                     on_inline_deferred=on_inline_deferred,
                 )
             except ToolRetryError as e:
                 result_part = e.tool_retry
+                user_content = None
+            except ToolFailedError as e:
+                # A tool that raised `ToolFailed` yields a `failed` result rather than a retry. Send it
+                # back so the model sees the failure — error-key-wrapped below (via
+                # `model_response_str_and_user_content`) for the string-only tool channel, since realtime
+                # providers have no native failed-tool flag.
+                result_part = e.tool_failed
                 user_content = None
             except (ApprovalRequired, CallDeferred) as e:
                 # `handle_call` already gave the `HandleDeferredToolCalls` capability handler the
@@ -1411,7 +1426,7 @@ class RealtimeSession:
                 )
                 user_content = None
             else:
-                tool_def = self._tool_manager.get_tool_def(call.tool_name)
+                tool_def = tool_manager.get_tool_def(call.tool_name)
                 result_part, user_content = build_tool_return_part(
                     tool_result,
                     call=tool_call,
@@ -1528,6 +1543,12 @@ class RealtimeSession:
 
     def _tool_task_done(self, task: asyncio.Task[None]) -> None:
         self._background_tasks.discard(task)
+        # Surface any exception raised outside `_run_tool`'s own try/except — notably the post-`finally`
+        # `asap` drain, whose `connection.send` can fail if the socket just dropped — mirroring
+        # `_pending_message_task_done`. Otherwise it vanishes with only an "exception was never
+        # retrieved" warning at GC, silently losing the enqueued message with no signal to the consumer.
+        if not task.cancelled() and (error := task.exception()) is not None:
+            self._queue.put_nowait(error)
         # Wake the queue reader so it can finish once both the pump and the last tool are done.
         self._queue.put_nowait(self._queue_changed)
 
