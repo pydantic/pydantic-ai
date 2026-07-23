@@ -108,7 +108,7 @@ def openai_ws_sideband_cassette(
     Stored under a dedicated subdirectory so the WebSocket cassette doesn't collide with the HTTP VCR
     cassette (SDP offer relay) a WebRTC sideband test records under the module-named subdirectory.
     """
-    if not imports_successful():  # pragma: no cover
+    if not imports_successful():
         pytest.skip('openai / websockets not installed')
     with _ws_cassette(request, 'openai', subdir='test_openai_ws_sideband') as cassette:
         yield OpenAIProvider(api_key=openai_api_key), cassette
