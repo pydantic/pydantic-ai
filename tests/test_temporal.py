@@ -6340,6 +6340,10 @@ class WorkflowStreamAgentWorkflow:
             await workflow.wait_condition(lambda: self._released, timeout=timedelta(seconds=30))
         except asyncio.TimeoutError:
             pass
+        # Release any in-flight poll long-poll and wait for the handler to return before completing,
+        # so the workflow doesn't finish with the poll update still running (which fails the task).
+        self.stream.detach_pollers()
+        await workflow.wait_condition(workflow.all_handlers_finished)
         return result.output
 
     @workflow.signal
@@ -6436,6 +6440,10 @@ class FilteredWorkflowStreamAgentWorkflow:
             await workflow.wait_condition(lambda: self._released, timeout=timedelta(seconds=30))
         except asyncio.TimeoutError:
             pass
+        # Release any in-flight poll long-poll and wait for the handler to return before completing,
+        # so the workflow doesn't finish with the poll update still running (which fails the task).
+        self.stream.detach_pollers()
+        await workflow.wait_condition(workflow.all_handlers_finished)
         return result.output
 
     @workflow.signal
