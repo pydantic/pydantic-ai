@@ -53,6 +53,15 @@ FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_file'
 UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 """Activity type for uploaded files stored as AG-UI ActivityMessages."""
 
+TEXT_PART_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_text_part'
+"""Activity type for TextPart metadata (id, provider_name, provider_details) stored as AG-UI ActivityMessages.
+
+AG-UI has no generic per-part metadata carrier on AssistantMessage. TextPart fields beyond
+``content`` (``id``, ``provider_name``, ``provider_details``) are carried as a preceding
+ActivityMessage so they survive a dump/load round-trip. The same pattern is used for
+``FilePart`` (``FILE_ACTIVITY_TYPE``) and ``UploadedFile`` (``UPLOADED_FILE_ACTIVITY_TYPE``).
+"""
+
 
 class FileActivityContent(TypedDict, total=False):
     """Content schema for `ActivityMessage` with `activity_type=pydantic_ai_file`."""
@@ -130,31 +139,70 @@ _ENCRYPTED_VALUE_NAMESPACE: Final = 'pydantic_ai'
 provider blob in the same slot is never mistaken for our data."""
 
 
-def tool_kind_encrypted_value(
-    tool_kind: ToolPartKind | None, outcome: Literal['success', 'failed', 'denied', 'interrupted'] | None = None
-) -> str | None:
-    """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
+def _part_metadata_payload(
+    *,
+    tool_kind: ToolPartKind | None = None,
+    outcome: Literal['success', 'failed', 'denied', 'interrupted'] | None = None,
+    part_id: str | None = None,
+    provider_name: str | None = None,
+    provider_details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the ``pydantic_ai``-namespaced payload for an ``encrypted_value`` blob.
 
-    AG-UI documents `encrypted_value` for opaque, client-echoed reasoning continuity, and its
-    standard reducer can attach it to a message or tool call. AG-UI has no generic per-tool metadata
-    event, so we also use that reducer-compatible carrier for Pydantic AI continuity claims. This is
-    a namespaced compatibility mechanism, not a claim that the payload is encrypted reasoning. Our
-    payload is nested under a `pydantic_ai` key so a genuine provider blob in the same slot (e.g.
-    Google's encrypted thinking on a tool call) is never read as our data. The claim is untrusted
-    coming back in: `parse_encrypted_tool_kind` returns it only when the key is present, and it
-    degrades to a plain part if it doesn't validate.
-
-    A non-`'success'` result outcome rides the same payload: a `ToolMessage` has no outcome slot,
-    so without the claim a dump/load round-trip would upgrade a failed/denied/interrupted return to
-    `'success'` — and since `outcome` can affect how a return is serialized to a provider (e.g. a
-    native error channel), that would silently change the request bytes and break the prompt-cache
-    prefix stability the repaired history is designed to keep.
+    Carries ``tool_kind``, ``outcome``, and part-level metadata (``id``, ``provider_name``,
+    ``provider_details``) so they survive a dump/load round-trip. Only non-None fields are
+    included.
     """
-    payload: dict[str, str] = {}
+    payload: dict[str, Any] = {}
     if tool_kind is not None:
         payload['tool_kind'] = tool_kind
     if outcome is not None and outcome != 'success':
         payload['outcome'] = outcome
+    if part_id is not None:
+        payload['id'] = part_id
+    if provider_name is not None:
+        payload['provider_name'] = provider_name
+    if provider_details is not None:
+        payload['provider_details'] = provider_details
+    return payload
+
+
+def tool_kind_encrypted_value(
+    tool_kind: ToolPartKind | None,
+    outcome: Literal['success', 'failed', 'denied', 'interrupted'] | None = None,
+    *,
+    part_id: str | None = None,
+    provider_name: str | None = None,
+    provider_details: dict[str, Any] | None = None,
+) -> str | None:
+    """Pack a part's metadata into an AG-UI ``encrypted_value`` blob, namespaced under ``pydantic_ai``.
+
+    AG-UI documents ``encrypted_value`` for opaque, client-echoed reasoning continuity, and its
+    standard reducer can attach it to a message or tool call. AG-UI has no generic per-tool metadata
+    event, so we also use that reducer-compatible carrier for Pydantic AI continuity claims. This is
+    a namespaced compatibility mechanism, not a claim that the payload is encrypted reasoning. Our
+    payload is nested under a ``pydantic_ai`` key so a genuine provider blob in the same slot (e.g.
+    Google's encrypted thinking on a tool call) is never read as our data. The claim is untrusted
+    coming back in: ``parse_encrypted_tool_kind`` returns it only when the key is present, and it
+    degrades to a plain part if it doesn't validate.
+
+    A non-``'success'`` result outcome rides the same payload: a ``ToolMessage`` has no outcome slot,
+    so without the claim a dump/load round-trip would upgrade a failed/denied/interrupted return to
+    ``'success'`` — and since ``outcome`` can affect how a return is serialized to a provider (e.g. a
+    native error channel), that would silently change the request bytes and break the prompt-cache
+    prefix stability the repaired history is designed to keep.
+
+    Since 0.1.11 the payload also carries part-level metadata (``id``, ``provider_name``,
+    ``provider_details``) for ``ToolCallPart`` and ``NativeToolCallPart``, fixing the silent field
+    loss reported in issue #5937.
+    """
+    payload = _part_metadata_payload(
+        tool_kind=tool_kind,
+        outcome=outcome,
+        part_id=part_id,
+        provider_name=provider_name,
+        provider_details=provider_details,
+    )
     if not payload:
         return None
     return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: payload})
@@ -171,15 +219,19 @@ def tool_kind_encrypted_value_kwargs(
     *,
     supported: bool,
     outcome: Literal['success', 'failed', 'denied', 'interrupted'] | None = None,
+    part_id: str | None = None,
+    provider_name: str | None = None,
+    provider_details: dict[str, Any] | None = None,
 ) -> _EncryptedValueKwargs:
     """`ToolCall`/`ToolMessage` kwargs carrying claims as an `encrypted_value`, or empty to omit it.
 
-    Carries `tool_kind` and an `'interrupted'` result outcome (see `tool_kind_encrypted_value`).
-    Empty when the target version predates the `encrypted_value` field (`supported=False`) or the part
-    has nothing to carry, so — like the streaming carrier — the field is only ever set when there's a
-    claim to carry, never written as a bare `null` a pre-0.1.11 client wouldn't expect.
+    Carries `tool_kind`, an `'interrupted'` result outcome, and part-level metadata (see
+    `tool_kind_encrypted_value`). Empty when the target version predates the `encrypted_value` field
+    (`supported=False`) or the part has nothing to carry, so — like the streaming carrier — the field
+    is only ever set when there's a claim to carry, never written as a bare `null` a pre-0.1.11 client
+    wouldn't expect.
     """
-    value = tool_kind_encrypted_value(tool_kind, outcome) if supported else None
+    value = tool_kind_encrypted_value(tool_kind, outcome, part_id=part_id, provider_name=provider_name, provider_details=provider_details) if supported else None
     return {'encrypted_value': value} if value is not None else {}
 
 
@@ -245,6 +297,27 @@ def parse_encrypted_outcome(encrypted_value: str | None) -> Literal['failed', 'd
     if outcome == 'failed' or outcome == 'denied' or outcome == 'interrupted':
         return outcome
     return None
+
+
+def parse_encrypted_part_metadata(encrypted_value: str | None) -> dict[str, Any]:
+    """Extract part-level metadata (``id``, ``provider_name``, ``provider_details``) from an ``encrypted_value`` blob.
+
+    Returns a dict with only the fields that were present in the payload. Never returns ``None``
+    — callers can check ``.get('id')`` etc. directly.
+    """
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    if namespaced is None:
+        return {}
+    metadata: dict[str, Any] = {}
+    if 'id' in namespaced:
+        metadata['id'] = namespaced['id']
+    if 'provider_name' in namespaced:
+        metadata['provider_name'] = namespaced['provider_name']
+    if 'provider_details' in namespaced:
+        provider_details = namespaced['provider_details']
+        if isinstance(provider_details, dict):
+            metadata['provider_details'] = provider_details
+    return metadata
 
 
 def parse_builtin_tool_call_id(tool_call_id: str) -> tuple[str, str] | None:
