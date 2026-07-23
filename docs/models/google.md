@@ -329,6 +329,29 @@ print(result.output)
 
 See the [input documentation](../input.md) for more details and examples.
 
+## Image generation
+
+Use [`ImageGenerator`][pydantic_ai.images.ImageGenerator] with a `google:` image model for direct generation and
+reference-image editing through the Gemini API:
+
+```python {title="google_image_generation.py" test="skip"}
+from pydantic_ai import ImageGenerator
+from pydantic_ai.images.google import GoogleImageGenerationSettings
+
+generator = ImageGenerator(
+    'google:gemini-3.1-flash-lite-image',
+    settings=GoogleImageGenerationSettings(
+        google_image_config={'aspect_ratio': '1:1', 'image_size': '1K'}
+    ),
+)
+```
+
+The direct adapter accepts inline images, downloadable image URLs, and Google Files API URIs represented as
+[`UploadedFile`][pydantic_ai.messages.UploadedFile]. The provider name must be `google`. See the
+[image-generation guide](../image-generation.md) for the common API and geometry behavior. The adapter requests an
+image-only response because [`ImageGenerator`][pydantic_ai.images.ImageGenerator] returns generated images rather than
+Gemini's optional conversational text.
+
 ## Model settings
 
 You can customize model behavior using [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings]:

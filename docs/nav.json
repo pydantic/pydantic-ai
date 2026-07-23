@@ -232,6 +232,10 @@
         "slug": "web"
       },
       {
+        "label": "Image Generation",
+        "slug": "image-generation"
+      },
+      {
         "label": "Embeddings",
         "slug": "embeddings"
       },
@@ -491,6 +495,7 @@
           "api/direct",
           "api/durable_exec",
           "api/embeddings",
+          "api/images",
           "api/exceptions",
           "api/ext",
           "api/format_prompt",
