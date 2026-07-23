@@ -30,6 +30,7 @@ nav:
               - Azure: realtime/azure.md
               - xAI: realtime/xai.md
               - Google Gemini: realtime/gemini.md
+              - Amazon Nova Sonic: realtime/bedrock.md
           - Hooks: hooks.md
           - Agent Specs: agent-spec.md
           - message-history.md

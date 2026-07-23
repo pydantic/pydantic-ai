@@ -137,6 +137,14 @@ resilience via session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.Rec
 
 ::: pydantic_ai.realtime.google
 
+## Amazon Bedrock provider
+
+[`BedrockRealtimeModel`][pydantic_ai.realtime.bedrock.BedrockRealtimeModel] connects to Amazon Nova
+Sonic through Bedrock's HTTP/2 bidirectional streaming API. Install the `realtime-bedrock` optional
+group (`pip install "pydantic-ai-slim[realtime-bedrock]"`).
+
+::: pydantic_ai.realtime.bedrock
+
 ## xAI Grok Voice provider
 
 The xAI Grok Voice realtime API provider. Requires the `realtime` and `xai` optional groups

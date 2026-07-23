@@ -768,7 +768,8 @@ limit. **Fix:** combine [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy
 ## Provider support
 
 All providers implement the same [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] interface.
-OpenAI, Azure, and xAI use mono PCM16 at 24 kHz both ways; Gemini uses 16 kHz input and 24 kHz output.
+OpenAI, Azure, and xAI use mono PCM16 at 24 kHz both ways; Gemini and Amazon Nova Sonic use 16 kHz
+input and 24 kHz output.
 
 | Provider | Audio/text output | Image input | Manual turns | Output truncation | Semantic VAD | Input transcription | Native tools | Usage | State-restoring reconnect |
 | --- | --- | :---: | :---: | :---: | :---: | --- | --- | --- | :---: |
@@ -776,6 +777,7 @@ OpenAI, Azure, and xAI use mono PCM16 at 24 kHz both ways; Gemini uses 16 kHz in
 | [Azure OpenAI](azure.md) | Audio or text | ✓ | ✓ | ✓ | ✓ | Dedicated model; `'auto'` default | ✗ | Tokens, audio, cached breakdowns | ✗ |
 | [xAI](xai.md) | Audio | ✗ | ✓ | ✗ | ✗ | Dedicated model; `'auto'` default | ✗ | Tokens, audio buckets, billable seconds | ✓ |
 | [Google Gemini](gemini.md) | One modality/session: audio or text | ✓ | ✗ | ✗ | ✗ | Native; on by default | Search, URL context, code execution; model-dependent | Tokens and modality breakdowns | ✓, when enabled |
+| [Amazon Nova Sonic](bedrock.md) (experimental) | Audio | ✗ | ✓ | ✗ | ✗ | Native; on by default | ✗ | Tokens | ✗ |
 
 Gemini handles barge-in automatically instead of through explicit `interrupt()`. Provider/model
 variants can differ, especially for native tools and reasoning; inspect the profile before branching.
