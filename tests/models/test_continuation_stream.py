@@ -1,8 +1,10 @@
 """Unit tests for the streamed-continuation composite `_ContinuationStreamedResponse`.
 
-These drive the composite directly with a scripted fake model (no HTTP, no cassettes) to
+Most drive the composite directly with a scripted fake model (no HTTP, no cassettes) to
 pin down the provider-agnostic stitching behavior: part-index reindexing across segments,
 merged snapshots/usage, live state transitions, cancellation, and the continuation limit.
+A few exercise the composite through the full agent stack where the behavior under test
+only fires end-to-end (e.g. OTel context teardown on mid-segment interruption).
 
 These are unit tests rather than VCR tests for two reasons: `FunctionModel` can't emit a
 *suspended streaming* segment (the input a real continuation needs), and a cassette wouldn't
@@ -14,6 +16,7 @@ existing recording and pass green. Asserting the stitched indices directly is wh
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -23,7 +26,8 @@ from typing import Any
 import httpx
 import pytest
 
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -33,8 +37,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models._continuation import _ContinuationStreamedResponse, merge_mode, merge_responses
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 pytestmark = pytest.mark.anyio
 
@@ -1189,3 +1194,32 @@ async def test_cancel_suppresses_non_httpx_segment_error() -> None:
 
     assert stream.get().state == 'interrupted'
     assert len(model.cancelled) == 1
+
+
+async def test_streamed_interruption_no_context_detach_error(caplog: pytest.LogCaptureFixture) -> None:
+    """Interrupting a streamed run mid-segment must not log a spurious OTel 'Failed to detach context'.
+
+    This is a public-API test rather than a direct-composite one because the teardown only fires through
+    the full agent stack: `_streaming_handler` captures the OTel context and the composite re-attaches it
+    (`segment_context`) around each segment. Interrupting the stream mid-segment (here via an output-token
+    limit) finalizes the composite's generator with `GeneratorExit` in a different contextvars `Context`;
+    before the fix, `attach_captured_context` detached its token there, which OTel swallows but logs at
+    ERROR under the `opentelemetry.context` logger. See #6569.
+    """
+
+    async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        # Unbounded on purpose: the run is interrupted mid-stream by the output-token limit, so a
+        # bounded loop's completion branch would never be taken (a partial-branch coverage miss).
+        i = 0
+        while True:
+            yield f'word{i} '
+            i += 1
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    with caplog.at_level(logging.ERROR, logger='opentelemetry.context'):
+        with pytest.raises(UsageLimitExceeded):
+            async with agent.run_stream('hi', usage_limits=UsageLimits(output_tokens_limit=5)) as result:
+                async for _ in result.stream_text(delta=True):
+                    pass
+
+    assert not any('Failed to detach context' in record.getMessage() for record in caplog.records)

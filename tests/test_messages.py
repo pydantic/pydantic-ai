@@ -5,7 +5,7 @@ import warnings
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any, cast, get_args, get_origin
+from typing import Annotated, Any, Literal, cast, get_args, get_origin
 
 import pytest
 from pydantic import TypeAdapter
@@ -16,6 +16,10 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
+    DeferredToolRequests,
+    DeferredToolRequestsEvent,
+    DeferredToolResults,
+    DeferredToolResultsEvent,
     DocumentUrl,
     FilePart,
     ImageUrl,
@@ -25,6 +29,7 @@ from pydantic_ai import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
     MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -35,7 +40,10 @@ from pydantic_ai import (
     TextPart,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolApproved,
     ToolCallPart,
+    ToolDenied,
+    ToolReturn,
     ToolReturnPart,
     UploadedFile,
     UserPromptPart,
@@ -800,6 +808,98 @@ def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
     assert deserialized[0].parts[0].content[0].metadata == snapshot({'foo': 'bar'})  # type: ignore[reportUnknownMemberType]
 
 
+def test_deferred_tool_events_serialization_roundtrip():
+    """`DeferredToolRequestsEvent` and `DeferredToolResultsEvent` round-trip through `TypeAdapter(AgentStreamEvent)`.
+
+    Unit test rather than VCR because no model behavior is involved: durable execution backends ship each
+    `AgentStreamEvent` across a process boundary via Pydantic serialization (Temporal sends events from an
+    activity to the workflow, Prefect passes them to tasks), so the new `event_kind` union members must
+    serialize and deserialize by their discriminator.
+    """
+    adapter = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+
+    requests_event = DeferredToolRequestsEvent(
+        requests=DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='call_1')],
+            approvals=[ToolCallPart(tool_name='my_other_tool', args={'x': 1}, tool_call_id='approval_1')],
+            metadata={'call_1': {'foo': 'bar'}},
+        )
+    )
+    serialized = adapter.dump_python(requests_event, mode='json')
+    assert serialized == snapshot(
+        {
+            'requests': {
+                'calls': [
+                    {
+                        'tool_name': 'my_tool',
+                        'args': {'x': 0},
+                        'tool_call_id': 'call_1',
+                        'tool_kind': None,
+                        'id': None,
+                        'provider_name': None,
+                        'provider_details': None,
+                        'part_kind': 'tool-call',
+                    }
+                ],
+                'approvals': [
+                    {
+                        'tool_name': 'my_other_tool',
+                        'args': {'x': 1},
+                        'tool_call_id': 'approval_1',
+                        'tool_kind': None,
+                        'id': None,
+                        'provider_name': None,
+                        'provider_details': None,
+                        'part_kind': 'tool-call',
+                    }
+                ],
+                'metadata': {'call_1': {'foo': 'bar'}},
+            },
+            'event_kind': 'deferred_tool_requests',
+        }
+    )
+    assert adapter.validate_python(serialized) == requests_event
+
+    results_event = DeferredToolResultsEvent(
+        results=DeferredToolResults(
+            approvals={
+                'approval_1': ToolApproved(override_args={'x': 2}),
+                'approval_2': ToolDenied(message='Not allowed'),
+            },
+            calls={
+                'call_1': 'plain value',
+                'call_2': ToolReturn(return_value={'result': 42}, content='Done', metadata={'foo': 'bar'}),
+                'call_3': ModelRetry('Try again'),
+            },
+            metadata={'call_1': {'foo': 'bar'}},
+        )
+    )
+    serialized = adapter.dump_python(results_event, mode='json')
+    assert serialized == snapshot(
+        {
+            'results': {
+                'calls': {
+                    'call_1': 'plain value',
+                    'call_2': {
+                        'return_value': {'result': 42},
+                        'content': 'Done',
+                        'metadata': {'foo': 'bar'},
+                        'kind': 'tool-return',
+                    },
+                    'call_3': {'message': 'Try again', 'kind': 'model-retry'},
+                },
+                'approvals': {
+                    'approval_1': {'override_args': {'x': 2}, 'kind': 'tool-approved'},
+                    'approval_2': {'message': 'Not allowed', 'kind': 'tool-denied'},
+                },
+                'metadata': {'call_1': {'foo': 'bar'}},
+            },
+            'event_kind': 'deferred_tool_results',
+        }
+    )
+    assert adapter.validate_python(serialized) == results_event
+
+
 def test_model_response_convenience_methods():
     response = ModelResponse(parts=[])
     assert response.text == snapshot(None)
@@ -1553,6 +1653,39 @@ def test_tool_return_part_list_structure_preserved():
     assert tool_return_multi_list.model_response_str() == snapshot('[{"a":1},{"b":2}]')
 
 
+@pytest.mark.parametrize(
+    'outcome,expected_str,expected_object',
+    [
+        pytest.param('success', 'Disk full', {'return_value': 'Disk full'}, id='success'),
+        pytest.param('denied', 'Disk full', {'return_value': 'Disk full'}, id='denied'),
+        pytest.param('failed', '{"error":"Disk full"}', {'error': 'Disk full'}, id='failed'),
+    ],
+)
+def test_tool_return_part_model_response_outcome(
+    outcome: Literal['success', 'failed', 'denied'], expected_str: str, expected_object: dict[str, Any]
+) -> None:
+    """Public model-conversion helpers frame only failed results and let native error channels opt out."""
+    part = ToolReturnPart(tool_name='tool', content='Disk full', tool_call_id='call_1', outcome=outcome)
+
+    assert part.model_response_str() == expected_str
+    assert part.model_response_object() == expected_object
+
+    if outcome == 'failed':
+        assert part.model_response_str(wrap_if_error=False) == 'Disk full'
+        assert part.model_response_object(wrap_if_error=False) == {'return_value': 'Disk full'}
+
+        structured = ToolReturnPart(
+            tool_name='tool',
+            content={'error': 'legitimate output'},
+            tool_call_id='call_2',
+            outcome='failed',
+        )
+        assert structured.model_response_str() == '{"error":"{\\"error\\":\\"legitimate output\\"}"}'
+        assert structured.model_response_str(wrap_if_error=False) == '{"error":"legitimate output"}'
+        assert structured.model_response_object() == {'error': '{"error":"legitimate output"}'}
+        assert structured.model_response_object(wrap_if_error=False) == {'error': 'legitimate output'}
+
+
 def test_tool_return_part_content_items():
     img = ImageUrl(url='https://example.com/img.png')
     binary = BinaryContent(data=b'\x89PNG', media_type='image/png')
@@ -1688,6 +1821,21 @@ def test_tool_return_part_model_response_str_and_user_content():
     text, user_content = p_file_only.model_response_str_and_user_content()
     assert text == snapshot('See file d5a901.')
     assert user_content == snapshot(['This is file d5a901:', ImageUrl(url='https://example.com/img.png')])
+
+    # Failed content keeps file references so the trailing user message remains attributable.
+    failed_img = ImageUrl(url='https://example.com/failed.png', identifier='report')
+    p_failed = ToolReturnPart(tool_name='t', content=['Disk full', failed_img], tool_call_id='c5', outcome='failed')
+    text, user_content = p_failed.model_response_str_and_user_content()
+    assert text == snapshot('[{"error":"Disk full"},"See file report."]')
+    assert user_content == snapshot(
+        ['This is file report:', ImageUrl(url='https://example.com/failed.png', identifier='report')]
+    )
+
+    text, user_content = p_failed.model_response_str_and_user_content(wrap_if_error=False)
+    assert text == snapshot('["Disk full","See file report."]')
+    assert user_content == snapshot(
+        ['This is file report:', ImageUrl(url='https://example.com/failed.png', identifier='report')]
+    )
 
 
 def test_args_as_dict_valid_json():

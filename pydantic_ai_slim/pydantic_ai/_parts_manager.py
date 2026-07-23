@@ -761,3 +761,11 @@ class ModelResponsePartsManager:
         if existing_part.provider_name is None or provider_name != existing_part.provider_name:
             return provider_name
         return None
+
+    def apply_event(self, event: ModelResponseStreamEvent) -> None:
+        """Apply a replayed stream event to the managed parts, so `get_parts()` reflects it."""
+        if isinstance(event, PartStartEvent):
+            self.handle_part(vendor_part_id=event.index, part=event.part)
+        elif isinstance(event, PartDeltaEvent):
+            part = self.get_parts()[event.index]
+            self.handle_part(vendor_part_id=event.index, part=event.delta.apply(part))
