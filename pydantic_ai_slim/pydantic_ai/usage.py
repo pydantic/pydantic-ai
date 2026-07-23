@@ -21,7 +21,7 @@ and cost. Adapters that stash these keys in `details` (e.g. Anthropic's streamin
 billed units) keep them accessible on `RequestUsage.details`; only the ambiguous OTel emission is dropped."""
 
 
-@dataclass(repr=False, init=False)
+@dataclass(repr=False, init=False, eq=False)
 class UsageBase:
     input_tokens: Annotated[
         int,
@@ -146,7 +146,7 @@ class UsageBase:
         return any(self.details.values()) or any(v for k, v in self.__dict__.items() if k != 'details')
 
 
-@dataclass(repr=False, init=False)
+@dataclass(repr=False, init=False, eq=False)
 class RequestUsage(UsageBase):
     """LLM usage associated with a single request.
 
@@ -211,7 +211,7 @@ class RequestUsage(UsageBase):
         return cls(details=details)
 
 
-@dataclass(repr=False, init=False)
+@dataclass(repr=False, init=False, eq=False)
 class RunUsage(UsageBase):
     """LLM usage associated with an agent run.
 

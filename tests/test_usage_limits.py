@@ -432,6 +432,16 @@ def test_request_usage_basics():
     assert usage.requests == 1
 
 
+def test_usage_arbitrary_fields():
+    usage = RequestUsage(future_tokens=1, label='original')
+
+    assert usage == RequestUsage(future_tokens=1, label='original')
+    assert usage != RequestUsage(future_tokens=2, label='original')
+
+    result = usage + RequestUsage(future_tokens=2, label='increment')
+    assert result == RequestUsage(future_tokens=3, label='original')
+
+
 def test_cache_hit_ratio():
     """Pure arithmetic on usage fields -- no model request to record."""
     assert RequestUsage(input_tokens=1000, cache_read_tokens=900).cache_hit_ratio == 0.9
