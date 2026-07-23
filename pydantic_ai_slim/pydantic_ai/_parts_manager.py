@@ -700,11 +700,10 @@ class ModelResponsePartsManager:
 
     def _materialize_part(self, part_index: int) -> ManagedPart:
         """Materialize buffered string deltas for one part, caching the result in `_parts`."""
-        if part_index not in self._string_buffers:
-            return self._parts[part_index]
         part = self._materialized_part(part_index)
-        del self._string_buffers[part_index]
-        self._parts[part_index] = part
+        if part_index in self._string_buffers:
+            del self._string_buffers[part_index]
+            self._parts[part_index] = part
         return part
 
     def _materialized_parts(self) -> list[ManagedPart]:
