@@ -7,6 +7,7 @@ from prefect.utilities.hashing import hash_objects
 from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
+from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
 from pydantic_ai.tools import RunContext
 
 _NON_SERIALIZABLE = '<non-serializable>'
@@ -110,10 +111,18 @@ def _strip_cache_excluded_fields(
     if is_dataclass(obj) and not isinstance(obj, type):
         result: dict[str, Any] = {}
         module = type(obj).__module__
-        excluded_fields = _CACHE_EXCLUDED_FIELDS if module == 'pydantic_ai' or module.startswith('pydantic_ai.') else ()
+        is_framework = module == 'pydantic_ai' or module.startswith('pydantic_ai.')
+        excluded_fields = _CACHE_EXCLUDED_FIELDS if is_framework else ()
         for f in fields(obj):
             if f.name not in excluded_fields:
                 value = getattr(obj, f.name)
+                if (
+                    is_framework
+                    and f.name == 'tool_call_id'
+                    and isinstance(value, str)
+                    and value.startswith(TOOL_CALL_ID_PREFIX)
+                ):
+                    value = '<framework-generated>'
                 result[f.name] = _strip_cache_excluded_fields(value)
         return result
     elif _is_dict(obj):

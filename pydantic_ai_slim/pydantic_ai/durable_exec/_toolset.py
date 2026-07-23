@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -118,6 +119,12 @@ class _ModelRetry:
     kind: Literal['model_retry'] = 'model_retry'
 
 
+@dataclass
+class _ToolFailed:
+    message: str
+    kind: Literal['tool_failed'] = 'tool_failed'
+
+
 def _result_discriminator(value: Any) -> str:
     if isinstance(value, ToolReturn) or (is_str_dict(value) and value.get('kind') == 'tool-return'):
         return 'tool-return'
@@ -148,7 +155,7 @@ class _ToolContentResult:
 
 
 CallToolResult = Annotated[
-    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn | _ToolContentResult,
+    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn | _ToolContentResult | _ToolFailed,
     Discriminator('kind'),
 ]
 
@@ -165,6 +172,8 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
         return _CallDeferred(metadata=exc.metadata)
     except ModelRetry as exc:
         return _ModelRetry(message=exc.message)
+    except ToolFailed as exc:
+        return _ToolFailed(message=exc.message)
 
 
 def unwrap_tool_call_result(result: CallToolResult) -> Any:
@@ -176,7 +185,65 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
         raise CallDeferred(metadata=result.metadata)
     if isinstance(result, _ModelRetry):
         raise ModelRetry(result.message)
+    if isinstance(result, _ToolFailed):
+        raise ToolFailed(result.message)
     assert_never(result)
+
+
+class EnqueueGuard(list[PendingMessage]):
+    """Replaces `ctx.pending_messages` inside a durable unit, where enqueueing can't be supported.
+
+    A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
+    across the activity boundary (Temporal) without re-running the code, so messages enqueued
+    inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
+    """
+
+    def __init__(self, message: str):
+        super().__init__()
+        self._message = message
+
+    def append(self, pending: PendingMessage) -> None:
+        raise UserError(self._message)
+
+
+def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:
+    """The shared `ctx.enqueue()` error, worded for one engine's durable unit and container.
+
+    `unit_noun` is the engine's durable unit (`'activity'`/`'step'`/`'task'`) and
+    `container_noun` is its durable container (`'workflow'`/`'flow'`), so every engine
+    raises the same explanation with its own vocabulary.
+    """
+    return (
+        f'`ctx.enqueue()` is not supported inside a durable {unit_noun}: the durable runtime replays '
+        f"the {unit_noun}'s recorded result without re-running your code, so the enqueued messages "
+        f'would be dropped. Enqueue messages from {container_noun}-level code instead.'
+    )
+
+
+def guard_run_context_enqueue(
+    ctx: RunContext[AgentDepsT], *, unit_noun: str, container_noun: str
+) -> RunContext[AgentDepsT]:
+    """Return a copy of `ctx` whose `enqueue()` raises, for running user code inside a durable unit.
+
+    Used by the in-process engines (DBOS steps, Prefect tasks) that pass the live context into
+    the durable unit. Temporal reconstructs its context across the activity boundary and installs
+    the same guard in `deserialize_run_context` instead.
+    """
+    return replace(ctx, pending_messages=EnqueueGuard(enqueue_not_supported_message(unit_noun, container_noun)))
+
+
+def unwrap_recorded_tool_call_result(result: Any) -> Any:
+    """Unwrap a durably-recorded tool result, passing raw pre-wrapper values through.
+
+    Engines that replay recorded durable-unit outputs (DBOS step recovery, Prefect task
+    caches) may hold outputs recorded before the unit wrapped control-flow exceptions as
+    values; those recordings are the raw tool result and are returned unchanged.
+    """
+    if isinstance(
+        result, _ToolReturn | _ToolContentResult | _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolFailed
+    ):
+        return unwrap_tool_call_result(result)
+    return result
 
 
 def resolve_tool_durable_config(
@@ -422,7 +489,7 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        if not self._in_durable_context():  # pragma: no cover
+        if not self._in_durable_context():
             return await self._mcp_toolset.call_tool(name, tool_args, ctx, tool)
         config = self._resolve_tool_config(tool, name)
         if config is False:  # pragma: no cover — no engine's resolver currently permits inline MCP tools

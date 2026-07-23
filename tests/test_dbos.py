@@ -38,12 +38,20 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import MCP, Capability, DynamicCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    ToolFailed,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.models import ModelRequestContext, ModelResolutionContext, create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -57,13 +65,16 @@ from .conftest import IsDatetime, IsNow, IsStr
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
+    from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
     from pydantic_ai.durable_exec.dbos import (
         DBOSAgent,  # pyright: ignore[reportDeprecated]
         DBOSDurability,
         DBOSModel,
         StepConfig,
     )
+    from pydantic_ai.durable_exec.dbos._dynamic_toolset import dbosify_dynamic_toolset
     from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
+    from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
@@ -90,7 +101,7 @@ except ImportError:  # pragma: lax no cover
 from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.capabilities import ProcessEventStream, ResolveModelId, SelectModel, Toolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._inline_snapshot import snapshot
@@ -1399,6 +1410,16 @@ def toggle(ctx: RunContext[ToggleableDeps]):
 dynamic_dbos_agent = DBOSAgent(dynamic_agent)  # pyright: ignore[reportDeprecated]
 
 
+def test_dbos_agent_explicit_run_id(dbos: DBOS):
+    """A pre-minted `run_id=` is preserved through DBOSAgent.run_sync."""
+    agent = Agent(TestModel(custom_output_text='ok'), name='run_id_dbos_agent')
+    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    result = dbos_agent.run_sync('Hello', run_id='run-from-dbos')
+    assert result.run_id == 'run-from-dbos'
+    assert all(m.run_id == 'run-from-dbos' for m in result.all_messages())
+
+
 def test_dynamic_toolset(dbos: DBOS):
     weather_deps = ToggleableDeps('weather')
 
@@ -1880,6 +1901,30 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
     )
 
 
+tool_failed_agent = Agent(TestModel(call_tools=['failing_tool']), name='tool_failed_agent')
+
+
+@tool_failed_agent.tool_plain
+@DBOS.step()
+def failing_tool() -> str:
+    raise ToolFailed('Disk full')
+
+
+tool_failed_dbos_agent = DBOSAgent(tool_failed_agent)  # pyright: ignore[reportDeprecated]
+
+
+async def test_dbos_agent_with_tool_failed(dbos: DBOS):
+    result = await tool_failed_dbos_agent.run('Call the failing tool')
+    tool_returns = [
+        (part.tool_name, part.content, part.outcome)
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+
+    assert tool_returns == [('failing_tool', 'Disk full', 'failed')]
+
+
 class CustomModelSettings(ModelSettings, total=False):
     custom_setting: str
 
@@ -2112,6 +2157,267 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
 
     output = await run_durable_agent()
     assert output == 'Echo: Hello DBOS'
+
+
+async def test_dbos_durability_registers_legacy_workflows_opt_in(dbos: DBOS) -> None:
+    agent = Agent(
+        _durability_fn_model,
+        name='legacy_workflow_compat',
+        capabilities=[DBOSDurability(register_legacy_workflows=True)],
+    )
+    durability = DBOSDurability.from_agent(agent)
+    assert durability is not None
+    assert durability._legacy_run_workflow is not None  # pyright: ignore[reportPrivateUsage]
+    assert durability._legacy_run_sync_workflow is not None  # pyright: ignore[reportPrivateUsage]
+
+    result = await durability._legacy_run_workflow('legacy')  # pyright: ignore[reportPrivateUsage]
+    assert result.output == 'Echo: legacy'
+
+    without_flag = Agent(_durability_fn_model, name='no_legacy_workflows', capabilities=[DBOSDurability()])
+    without_flag_durability = DBOSDurability.from_agent(without_flag)
+    assert without_flag_durability is not None
+    assert without_flag_durability._legacy_run_workflow is None  # pyright: ignore[reportPrivateUsage]
+    assert without_flag_durability._legacy_run_sync_workflow is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_dbos_durability_accepts_legacy_stream_step_shape(dbos: DBOS) -> None:
+    response = ModelResponse(parts=[TextPart(content='legacy stream')], model_name='legacy')
+    agent = Agent(TestModel(), name='legacy_stream_shape', capabilities=[DBOSDurability()])
+    durability = DBOSDurability.from_agent(agent)
+    assert durability is not None
+
+    async def legacy_stream_step(*args: Any) -> ModelResponse:
+        return response
+
+    durability._request_stream_step = legacy_stream_step  # pyright: ignore[reportPrivateUsage]
+
+    @DBOS.workflow()
+    async def run_agent() -> tuple[str, list[str]]:
+        async with agent.run_stream('stream') as result:
+            chunks = [chunk async for chunk in result.stream_text(debounce_by=None)]
+            return await result.get_output(), chunks
+
+    assert await run_agent() == ('legacy stream', ['legacy stream'])
+
+
+# Module-level like real wrapper-era handlers: `DBOSAgent.run` recorded the handler as a
+# workflow input, so it had to be picklable by reference.
+_legacy_handler_events: list[tuple[AgentStreamEvent, bool]] = []
+
+
+async def _legacy_workflow_event_handler(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _legacy_handler_events.append((event, DBOS.step_id is not None))
+
+
+def test_dbos_durability_legacy_run_sync_workflow(dbos: DBOS) -> None:
+    """The opt-in legacy `run_sync` workflow executes the agent like `DBOSAgent.run_sync` did,
+    including honoring a recorded per-run `event_stream_handler` input."""
+    _legacy_handler_events.clear()
+    agent = Agent(
+        TestModel(custom_output_text='legacy sync'),
+        name='legacy_workflow_sync_compat',
+        capabilities=[DBOSDurability(register_legacy_workflows=True)],
+    )
+    durability = DBOSDurability.from_agent(agent)
+    assert durability is not None
+    result = durability._legacy_run_sync_workflow('legacy', event_stream_handler=_legacy_workflow_event_handler)  # pyright: ignore[reportPrivateUsage]
+    assert result.output == 'legacy sync'
+    assert _legacy_handler_events
+
+
+async def test_dbos_durability_legacy_workflow_matches_wrapper_step_sequence(dbos: DBOS) -> None:
+    """A legacy run delivers handler events exactly the way `DBOSAgent` did, so recovery replays.
+
+    Wrapper-era recordings contain only model and MCP steps: model events reached the handler
+    live inside the `__model.request_stream` step, and graph-level events through a direct
+    workflow-level call that consumed no step. Dispatching graph events through the capability's
+    `__event_stream_handler` step would insert step ids the recording doesn't have and fail
+    recovery with `DBOSUnexpectedStepError`.
+    """
+    _legacy_handler_events.clear()
+
+    async def handled_tool() -> str:
+        return 'handled'
+
+    agent = Agent(
+        TestModel(),
+        name='legacy_workflow_handler',
+        tools=[handled_tool],
+        capabilities=[DBOSDurability(register_legacy_workflows=True)],
+    )
+    durability = DBOSDurability.from_agent(agent)
+    assert durability is not None
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        result = await durability._legacy_run_workflow('Hello', event_stream_handler=_legacy_workflow_event_handler)  # pyright: ignore[reportPrivateUsage]
+    assert result.output
+
+    events = [event for event, _ in _legacy_handler_events]
+    assert events
+    assert sum(isinstance(event, FunctionToolCallEvent) for event in events) == 1
+    # Model events arrive live inside the model-request step; graph events at workflow level.
+    assert all(in_step for event, in_step in _legacy_handler_events if isinstance(event, PartStartEvent))
+    assert not any(in_step for event, in_step in _legacy_handler_events if isinstance(event, FunctionToolCallEvent))
+
+    steps = await dbos.list_workflow_steps_async(wfid)
+    step_names = [step['function_name'] for step in steps]
+    assert 'legacy_workflow_handler__model.request_stream' in step_names
+    assert 'legacy_workflow_handler__event_stream_handler' not in step_names
+
+
+async def test_unwrap_recorded_tool_call_result_handles_both_generations() -> None:
+    """Recovery may replay step outputs recorded before control-flow wrapping (raw) or after (wrapped).
+
+    A unit test because a real recovery would need to kill and restart the process mid-workflow;
+    the step-recorded value is exactly what this helper receives on replay.
+    """
+
+    async def raise_model_retry() -> str:
+        raise ModelRetry('again')
+
+    wrapped_result = await wrap_tool_call_result(raise_model_retry())
+    with pytest.raises(ModelRetry, match='again'):
+        unwrap_recorded_tool_call_result(wrapped_result)
+
+    assert unwrap_recorded_tool_call_result('raw recorded output') == 'raw recorded output'
+
+
+async def test_dbos_mcp_model_retry_crosses_step_without_engine_retries(
+    dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ModelRetry` from an MCP tool crosses the step as a value; DBOS must not re-execute the call.
+
+    Previously the raw exception failed the step, so `retries_allowed` re-ran the side-effecting
+    MCP call and surfaced `DBOSMaxStepRetriesExceeded` instead of the agent's retry-prompt loop.
+    """
+    calls = 0
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='retry_mcp')
+
+    async def raise_model_retry(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        nonlocal calls
+        calls += 1
+        raise ModelRetry('try again')
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', raise_model_retry)
+    durable = dbosify_mcp_toolset(
+        mcp_toolset,
+        step_name_prefix='retry_mcp_agent',
+        step_config=StepConfig(retries_allowed=True, max_attempts=3),
+    )
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='boom'),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> int:
+        with pytest.raises(ModelRetry, match='try again'):
+            await durable.call_tool('boom', {}, run_context, tool)
+        return calls
+
+    assert await run_workflow() == 1
+
+
+async def test_dbos_dynamic_tool_model_retry_crosses_step_without_engine_retries(dbos: DBOS) -> None:
+    """`ModelRetry` from a `DynamicToolset` tool crosses the step as a value, like MCP and function tools."""
+    calls = 0
+
+    async def raise_model_retry() -> str:
+        nonlocal calls
+        calls += 1
+        raise ModelRetry('try again')
+
+    dynamic = DynamicToolset[None](lambda ctx: FunctionToolset([raise_model_retry]), id='retry_dynamic')
+    durable = dbosify_dynamic_toolset(
+        dynamic,
+        step_name_prefix='retry_dynamic_agent',
+        step_config=StepConfig(retries_allowed=True, max_attempts=3),
+    )
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='raise_model_retry'),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> int:
+        with pytest.raises(ModelRetry, match='try again'):
+            await durable.call_tool('raise_model_retry', {}, run_context, tool)
+        return calls
+
+    assert await run_workflow() == 1
+
+
+async def test_dbos_mcp_step_rejects_enqueue_in_workflow(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The MCP step path guards enqueue too: a `process_tool_call=` hook receives the run context."""
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='enqueue_mcp')
+
+    async def enqueue_call_tool(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        ctx.enqueue('later')
+        return 'done'
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', enqueue_call_tool)
+    durable = dbosify_mcp_toolset(mcp_toolset, step_name_prefix='enqueue_mcp_agent', step_config={})
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='hook'),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await durable.call_tool('hook', {}, run_context, tool)
+
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
+        await run_workflow()
+
+    # Outside a workflow the step degrades to a plain call and enqueueing keeps working.
+    outside_context = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=[])
+    assert await durable.call_tool('hook', {}, outside_context, tool) == 'done'
+    assert len(outside_context.pending_messages or []) == 1
+
+
+async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None:
+    """`ctx.enqueue()` inside a step-wrapped dynamic tool raises instead of silently dropping.
+
+    Recovery replays the recorded step output without re-executing the tool, so in-step
+    enqueued messages would be lost. Outside a workflow the step degrades to a plain call
+    and enqueueing keeps working.
+    """
+
+    async def enqueue(ctx: RunContext[object]) -> str:
+        ctx.enqueue('later')
+        return 'done'
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_dynamic_enqueue',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([enqueue]), id='enqueue_dynamic')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
+        await run_workflow()
+
+    await agent.run('run')
 
 
 async def test_dbos_durability_parallel_mode_applies_inside_run(dbos: DBOS) -> None:
@@ -2664,6 +2970,44 @@ async def test_dbos_durability_event_stream_handler(dbos: DBOS) -> None:
     steps = await dbos.list_workflow_steps_async(wfid)
     step_names = [step['function_name'] for step in steps]
     assert 'durability_handler__event_stream_handler' in step_names
+
+
+async def test_dbos_durability_event_stream_handler_rejects_enqueue(dbos: DBOS) -> None:
+    """An `event_stream_handler` that enqueues inside a durable step raises, like a tool would.
+
+    The handler runs inside a durable step for both model events (the model-request step) and
+    graph events (the `__event_stream_handler` step); either step's recorded result is replayed
+    without re-running it, so an enqueue would be dropped. The handler catches the error on every
+    event so the run still completes, exercising both delivery paths.
+    """
+    enqueue_errors: list[str] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            with pytest.raises(UserError, match='enqueued messages would be dropped') as exc_info:
+                ctx.enqueue('later')
+            # The ambient current context is guarded too, so reading it instead of the argument
+            # doesn't bypass the guard.
+            ambient = get_current_run_context()
+            assert ambient is not None
+            with pytest.raises(UserError, match='enqueued messages would be dropped'):
+                ambient.enqueue('later')
+            enqueue_errors.append(str(exc_info.value))
+
+    async def handled_tool() -> str:
+        return 'handled'
+
+    durability = DBOSDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='durability_handler_enqueue', tools=[handled_tool], capabilities=[durability])
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        await run_durable_agent()
+    # Guarded on both the model-event (model-request step) and graph-event (dispatch step) paths.
+    assert len(enqueue_errors) > 1
 
 
 async def test_dbos_durability_event_stream_handler_outside_workflow(dbos: DBOS) -> None:

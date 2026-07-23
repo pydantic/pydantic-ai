@@ -1105,7 +1105,7 @@ Pydantic AI enforces the output retry budget differently depending on how the mo
 
 For how the budget appears inside [output validators](output.md#output-validator-functions) — including what `ctx.max_retries` and `ctx.retry` reflect on each path — see the [Output validators](output.md#output-validator-functions) section.
 
-Tool retries are tracked per tool — see [Tool Execution and Retries](tools-advanced.md#tool-retries) for the per-tool counter model and the three configuration levels.
+Tool retries are tracked per tool — see [Tool Execution, Retries, and Failures](tools-advanced.md#tool-retries) for the per-tool counter model and the three configuration levels.
 
 Here's an example:
 
