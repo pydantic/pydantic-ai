@@ -7,6 +7,7 @@ from typing import Literal
 
 import pytest
 from opentelemetry.trace import NoOpTracerProvider
+from pydantic_core import to_json
 
 from pydantic_ai import (
     AudioUrl,
@@ -35,6 +36,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._instrumentation import MessageJsonCache, has_stale_message_json
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
@@ -312,6 +314,94 @@ async def test_instrumented_model_not_recording():
             output_object=None,
         ),
     )
+
+
+def test_input_messages_json_matches_whole_history_with_and_without_cache():
+    """A per-run cache produces output byte-identical to serializing the whole history at once.
+
+    Walks growing prefixes through one shared cache (as an agent run does) and compares each result
+    to both the uncached path and a fresh whole-history `to_json`. The empty `ModelRequest` maps to
+    no OTel message and must be dropped from the array, not emitted as an empty fragment. Unit test:
+    byte-identity between the cached and uncached serialization paths isn't observable through the
+    public API (both produce the same span attribute).
+    """
+    settings = InstrumentationSettings()
+    cache: MessageJsonCache = {}
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('sys'), UserPromptPart('hello')]),
+        ModelRequest(parts=[]),
+        ModelResponse(parts=[ToolCallPart('tool', {'a': 1}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('tool', 'result', 'call_1')]),
+        ModelResponse(parts=[TextPart('done')]),
+    ]
+    for length in range(len(history) + 1):
+        prefix = history[:length]
+        whole = to_json(settings.messages_to_otel_messages(prefix))
+        assert settings._input_messages_json(prefix, cache) == whole  # pyright: ignore[reportPrivateUsage]
+        assert settings._input_messages_json(prefix, None) == whole  # pyright: ignore[reportPrivateUsage]
+
+
+def test_input_messages_json_refreshes_when_message_parts_are_replaced():
+    """A cached message whose `parts` list is reassigned (e.g. dynamic system prompt re-evaluation)
+    is re-serialized rather than served stale, keeping a single entry per message. Unit test: the
+    refresh isn't observable through the public API — cached and refreshed paths emit the same span
+    attribute."""
+    settings = InstrumentationSettings()
+    cache: MessageJsonCache = {}
+    message = ModelRequest(parts=[SystemPromptPart('old', dynamic_ref='ref')])
+
+    before = settings._input_messages_json([message], cache)  # pyright: ignore[reportPrivateUsage]
+    assert b'old' in before
+
+    message.parts = [SystemPromptPart('new', dynamic_ref='ref')]
+    after = settings._input_messages_json([message], cache)  # pyright: ignore[reportPrivateUsage]
+    assert b'new' in after and b'old' not in after
+    assert len(cache) == 1
+
+
+def test_input_messages_json_evicts_entries_for_dropped_messages():
+    """Entries for messages no longer in the input history are evicted, so a pruning or rebuilding
+    history processor keeps the cache (and the messages it holds alive) bounded by the current
+    history instead of accumulating every message ever serialized until run end. Unit test: cache
+    contents and entry identity aren't observable through the public API or recorded HTTP traffic —
+    the memory bound is invisible in span output."""
+    settings = InstrumentationSettings()
+    cache: MessageJsonCache = {}
+    first = ModelRequest(parts=[UserPromptPart('first')])
+    second = ModelResponse(parts=[TextPart('second')])
+    third = ModelRequest(parts=[UserPromptPart('third')])
+
+    settings._input_messages_json([first, second], cache)  # pyright: ignore[reportPrivateUsage]
+    assert set(cache) == {id(first), id(second)}
+    second_entry = cache[id(second)]
+
+    settings._input_messages_json([second, third], cache)  # pyright: ignore[reportPrivateUsage]
+    assert set(cache) == {id(second), id(third)}
+    assert cache[id(second)] is second_entry
+
+
+def test_has_stale_message_json_detection_boundaries():
+    """`has_stale_message_json` flags only entries that are still valid (same `parts` list) yet
+    byte-stale, i.e. a message mutated in place below its `parts` list. Uncached messages are
+    skipped, and so are entries whose `parts` list was reassigned — the next request's
+    serialization would have refreshed those, so they can't have produced a stale span. Unit test:
+    the individual entry states can't be isolated through the public API.
+    """
+    settings = InstrumentationSettings()
+    cache: MessageJsonCache = {}
+    prompt = UserPromptPart('original')
+    request = ModelRequest(parts=[prompt])
+    response = ModelResponse(parts=[TextPart('reply')])
+    settings._input_messages_json([request, response], cache)  # pyright: ignore[reportPrivateUsage]
+
+    assert not has_stale_message_json(settings, [request, response], cache)
+    assert not has_stale_message_json(settings, [ModelRequest(parts=[UserPromptPart('uncached')])], cache)
+
+    prompt.content = 'mutated'
+    assert has_stale_message_json(settings, [request, response], cache)
+
+    request.parts = [UserPromptPart('rebuilt')]
+    assert not has_stale_message_json(settings, [request, response], cache)
 
 
 async def test_instrumented_model_serializes_lone_surrogates_without_crashing(capfire: CaptureLogfire):
