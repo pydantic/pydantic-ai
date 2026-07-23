@@ -14,7 +14,6 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from dirty_equals import IsDatetime
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict
 

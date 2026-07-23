@@ -11,7 +11,6 @@ from typing import Any, Literal, cast
 
 import httpx
 import pytest
-from dirty_equals import IsDatetime
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 from vcr.cassette import Cassette
