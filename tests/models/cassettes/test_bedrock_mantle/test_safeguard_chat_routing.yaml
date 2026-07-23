@@ -1,0 +1,61 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '129'
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    method: POST
+    parsed_body:
+      messages:
+      - content: Reply with exactly SAFE.
+        role: user
+      model: openai.gpt-oss-safeguard-20b
+      stream: false
+    uri: https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover
+      connection:
+      - keep-alive
+      content-length:
+      - '609'
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: SAFE
+          reasoning: 'The user says: "Reply with exactly SAFE." So they want the output "SAFE" only. So I should output exactly
+            the word SAFE, no other characters. They probably want just SAFE. So I respond with SAFE.'
+          refusal: null
+          role: assistant
+      created: 1784247991
+      id: chatcmpl-b170d1a2-ea26-4b70-a984-7a432355f51a
+      model: openai.gpt-oss-safeguard-20b
+      object: chat.completion
+      service_tier: default
+      usage:
+        completion_tokens: 56
+        prompt_tokens: 72
+        total_tokens: 128
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,88 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '116'
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    method: POST
+    parsed_body:
+      input:
+      - content: Reply with exactly OSS.
+        role: user
+      model: openai.gpt-oss-120b
+      stream: false
+    uri: https://bedrock-mantle.us-east-1.api.aws/v1/responses
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover
+      connection:
+      - keep-alive
+      content-length:
+      - '1153'
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      background: false
+      created_at: 1784324967.0
+      error: null
+      id: resp_tpqnu23n2ze2fkjnarhkhnsnfyfgptwo6d6t57if64dfze2jjewq
+      incomplete_details: null
+      instructions: null
+      metadata: {}
+      model: openai.gpt-oss-120b
+      object: response
+      output:
+      - content:
+        - text: 'User says: "Reply with exactly OSS." So response should be exactly "OSS". Probably no extra whitespace or
+            punctuation. Just the three letters. Ensure no extra characters.'
+          type: reasoning_text
+        id: msg_bcb37c51bdc5b9cc
+        status: completed
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          text: OSS
+          type: output_text
+        id: msg_9268df8a6f39fd3e
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      service_tier: default
+      status: completed
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 72
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 45
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 117
+    status:
+      code: 200
+      message: OK
+version: 1
