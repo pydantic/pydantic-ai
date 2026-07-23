@@ -1039,7 +1039,7 @@ class RealtimeSession:
         else:
             # The calling response is otherwise finalized before execution begins, so this is an
             # invariant fallback: keep the history complete rather than dropping the tool result.
-            self._history.append(request)  # pragma: no cover
+            self._history.append(request)
 
     def _handle_input_transcript(self, text: str, is_final: bool, *, item_id: str | None = None) -> list[RealtimeEvent]:
         if item_id is not None:
@@ -1086,7 +1086,7 @@ class RealtimeSession:
     def _finalize_user(self, *, item_id: str | None = None) -> list[RealtimeEvent]:
         if item_id is None:
             if self._active_user is None:
-                return []  # pragma: no cover
+                return []
             part = self._active_user
             self._active_user = None
             self._user_transcript = ''

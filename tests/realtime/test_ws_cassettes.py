@@ -22,7 +22,8 @@ from .ws_cassettes import (
 )
 
 with try_import() as imports_successful:
-    from websockets.exceptions import ConnectionClosedError
+    from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
+    from websockets.frames import Close
 
 pytestmark = pytest.mark.skipif(
     not imports_successful() or not ws_cassettes_available(), reason='PyYAML / websockets not installed'
@@ -30,16 +31,25 @@ pytestmark = pytest.mark.skipif(
 
 
 class _FakeWebSocket:
-    def __init__(self, received: Iterable[str | bytes] | None = None) -> None:
+    marker = 'wrapped'  # only reachable through `RecordingWebSocket.__getattr__`
+
+    def __init__(self, received: Iterable[str | bytes | BaseException] | None = None) -> None:
         self.received = list(received or ())
         self.sent: list[str | bytes] = []
+        self.closed_with: tuple[tuple[object, ...], dict[str, object]] | None = None
 
     async def send(self, message: str | bytes) -> None:
         self.sent.append(message)
 
     async def recv(self, **kwargs: object) -> str | bytes:
         del kwargs
-        return self.received.pop(0)
+        item = self.received.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    async def close(self, *args: object, **kwargs: object) -> None:
+        self.closed_with = (args, kwargs)
 
 
 @pytest.mark.anyio
@@ -242,6 +252,37 @@ async def test_recording_truncates_inbound_audio() -> None:
     assert 0 < len(stored_gemini) < len(long_audio)
     assert isinstance(no_data_stored, CassetteMessage)
     assert no_data_stored.data == gemini_no_data  # unchanged: nothing to truncate
+
+
+@pytest.mark.anyio
+async def test_recording_records_clean_close_while_iterating() -> None:
+    """Unit test: async iteration records inbound frames and persists a clean terminal close."""
+    frame = json.dumps({'type': 'server.event'})
+    fake_ws = _FakeWebSocket([frame, ConnectionClosedOK(Close(1000, 'bye'), None)])
+    cassette = RealtimeCassette()
+    recording = RecordingWebSocket(fake_ws, cassette)
+
+    assert [message async for message in recording] == [frame]
+    assert cassette.interactions == [
+        CassetteMessage(direction='received', data={'type': 'server.event'}),
+        CassetteClose(code=1000, reason='bye', ok=True),
+    ]
+
+
+@pytest.mark.anyio
+async def test_recording_records_error_close_and_delegates_passthrough() -> None:
+    """Unit test: an abnormal disconnect records a non-ok close; `close()` and unknown attrs delegate."""
+    fake_ws = _FakeWebSocket([ConnectionClosedError(Close(1011, 'boom'), None)])
+    cassette = RealtimeCassette()
+    recording = RecordingWebSocket(fake_ws, cassette)
+
+    with pytest.raises(ConnectionClosedError):
+        await recording.recv()
+    assert cassette.interactions == [CassetteClose(code=1011, reason='boom', ok=False)]
+
+    await recording.close(1000, 'done')
+    assert fake_ws.closed_with == ((1000, 'done'), {})
+    assert recording.marker == 'wrapped'  # unknown attribute falls through to the wrapped socket
 
 
 def test_load_round_trips_close_frame(tmp_path: Path) -> None:
