@@ -125,7 +125,7 @@ class UsageBase:
                 if key in _FIRST_CLASS_TOKEN_DETAIL_KEYS:
                     continue
                 # Skipping check for value since spec implies all detail values are relevant
-                if value:
+                if value is not None:
                     result[prefix + key] = value
         return result
 
