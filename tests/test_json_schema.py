@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai._json_schema import JsonSchemaTransformer
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 
 
 class _PassthroughTransformer(JsonSchemaTransformer):
@@ -253,3 +253,32 @@ def test_typeless_anyof_member_still_recursed():
 
     # Single-member union collapses into the member, which is still transformed.
     assert result == {'type': 'integer'}
+
+
+def test_inline_defs_preserves_ref_sibling_keywords():
+    """Test internal schema walking, which has no provider request to cover with VCR."""
+    schema = {
+        'type': 'object',
+        'properties': {
+            'field': {'$ref': '#/$defs/Foo', 'description': 'field-level description', 'default': None},
+        },
+        '$defs': {
+            'Foo': {
+                'type': 'object',
+                'description': 'model-level description',
+                'default': 'model default',
+                'properties': {'x': {'type': 'integer'}},
+            }
+        },
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+    field = result['properties']['field']
+
+    # The referenced definition is inlined...
+    assert field['type'] == 'object'
+    assert field['properties'] == {'x': {'type': 'integer'}}
+    assert '$ref' not in field
+    # ...and the sibling keywords are preserved rather than dropped.
+    assert field['description'] == 'field-level description'
+    assert field['default'] is None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import inspect
 import re
 import threading
 import warnings
@@ -11,6 +12,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from importlib.util import find_spec
 from pathlib import Path
+from types import NoneType
 from typing import Any, cast
 from uuid import UUID
 
@@ -24,14 +26,17 @@ from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._tool_search import ToolSearchCallPart, ToolSearchReturnPart
+from pydantic_ai._utils import Some
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
+from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
     Capability,
     CapabilityOrdering,
+    DynamicCapability,
     HandleDeferredToolCalls,
     ImageGeneration,
     IncludeToolReturnSchemas,
@@ -41,7 +46,10 @@ from pydantic_ai.capabilities import (
     PrepareTools,
     ProcessEventStream,
     ProcessHistory,
+    RaiseContentFilterError,
     ReinjectSystemPrompt,
+    ResolveModelId,
+    SelectModel,
     SetToolMetadata,
     Thinking,
     ThreadExecutor,
@@ -52,6 +60,7 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
     XSearch,
 )
+from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
@@ -63,6 +72,7 @@ from pydantic_ai.exceptions import (
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    ToolFailed,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UserError,
@@ -89,7 +99,15 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import (
+    KnownModelName,
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    ModelResolutionContext,
+    ModelSelectionContext,
+)
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
@@ -109,13 +127,12 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc
 from pydantic_ai.toolsets._capability_owned import resolve_capability_id
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
 )
-from pydantic_ai.toolsets._dynamic import ToolsetFunc
 from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
@@ -132,6 +149,7 @@ def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
             'NativeTool': NativeTool,
+            'RaiseContentFilterError': RaiseContentFilterError,
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'Instrumentation': Instrumentation,
@@ -852,25 +870,27 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-2.5-flash',
                         'gateway/google-cloud:gemini-2.5-flash-image',
                         'gateway/google-cloud:gemini-2.5-flash-lite',
-                        'gateway/google-cloud:gemini-2.5-flash-lite-preview-09-2025',
                         'gateway/google-cloud:gemini-2.5-pro',
                         'gateway/google-cloud:gemini-3-flash-preview',
                         'gateway/google-cloud:gemini-3-pro-image-preview',
                         'gateway/google-cloud:gemini-3.1-flash-image-preview',
-                        'gateway/google-cloud:gemini-3.1-flash-lite-preview',
+                        'gateway/google-cloud:gemini-3.1-flash-lite',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/google-cloud:gemini-3.5-flash',
+                        'gateway/google-cloud:gemini-3.5-flash-lite',
+                        'gateway/google-cloud:gemini-3.6-flash',
                         'gateway/google:gemini-2.5-flash',
                         'gateway/google:gemini-2.5-flash-image',
                         'gateway/google:gemini-2.5-flash-lite',
-                        'gateway/google:gemini-2.5-flash-lite-preview-09-2025',
                         'gateway/google:gemini-2.5-pro',
                         'gateway/google:gemini-3-flash-preview',
                         'gateway/google:gemini-3-pro-image-preview',
                         'gateway/google:gemini-3.1-flash-image-preview',
-                        'gateway/google:gemini-3.1-flash-lite-preview',
+                        'gateway/google:gemini-3.1-flash-lite',
                         'gateway/google:gemini-3.1-pro-preview',
                         'gateway/google:gemini-3.5-flash',
+                        'gateway/google:gemini-3.5-flash-lite',
+                        'gateway/google:gemini-3.6-flash',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
                         'gateway/groq:openai/gpt-oss-120b',
@@ -943,16 +963,17 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-2.5-flash',
                         'google-cloud:gemini-2.5-flash-image',
                         'google-cloud:gemini-2.5-flash-lite',
-                        'google-cloud:gemini-2.5-flash-lite-preview-09-2025',
                         'google-cloud:gemini-2.5-flash-preview-09-2025',
                         'google-cloud:gemini-2.5-pro',
                         'google-cloud:gemini-3-flash-preview',
                         'google-cloud:gemini-3-pro-image-preview',
                         'google-cloud:gemini-3-pro-preview',
                         'google-cloud:gemini-3.1-flash-image-preview',
-                        'google-cloud:gemini-3.1-flash-lite-preview',
+                        'google-cloud:gemini-3.1-flash-lite',
                         'google-cloud:gemini-3.1-pro-preview',
                         'google-cloud:gemini-3.5-flash',
+                        'google-cloud:gemini-3.5-flash-lite',
+                        'google-cloud:gemini-3.6-flash',
                         'google-cloud:gemini-flash-latest',
                         'google-cloud:gemini-flash-lite-latest',
                         'google:gemini-2.0-flash',
@@ -960,16 +981,17 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-2.5-flash',
                         'google:gemini-2.5-flash-image',
                         'google:gemini-2.5-flash-lite',
-                        'google:gemini-2.5-flash-lite-preview-09-2025',
                         'google:gemini-2.5-flash-preview-09-2025',
                         'google:gemini-2.5-pro',
                         'google:gemini-3-flash-preview',
                         'google:gemini-3-pro-image-preview',
                         'google:gemini-3-pro-preview',
                         'google:gemini-3.1-flash-image-preview',
-                        'google:gemini-3.1-flash-lite-preview',
+                        'google:gemini-3.1-flash-lite',
                         'google:gemini-3.1-pro-preview',
                         'google:gemini-3.5-flash',
+                        'google:gemini-3.5-flash-lite',
+                        'google:gemini-3.6-flash',
                         'google:gemini-flash-latest',
                         'google:gemini-flash-lite-latest',
                         'groq:llama-3.1-8b-instant',
@@ -1590,6 +1612,13 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_ImageGeneration',
                     'type': 'object',
                 },
+                'spec_RaiseContentFilterError': {
+                    'additionalProperties': False,
+                    'properties': {'RaiseContentFilterError': {'$ref': '#/$defs/spec_params_RaiseContentFilterError'}},
+                    'required': ['RaiseContentFilterError'],
+                    'title': 'spec_RaiseContentFilterError',
+                    'type': 'object',
+                },
                 'spec_MCP': {
                     'additionalProperties': False,
                     'properties': {'MCP': {'$ref': '#/$defs/spec_params_MCP'}},
@@ -1756,6 +1785,16 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_params_ImageGeneration',
                     'type': 'object',
                 },
+                'spec_params_RaiseContentFilterError': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_RaiseContentFilterError',
+                    'type': 'object',
+                },
                 'spec_params_MCP': {
                     'additionalProperties': False,
                     'properties': {
@@ -1796,6 +1835,8 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [
                                 {'const': 'NativeTool', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_NativeTool'},
+                                {'const': 'RaiseContentFilterError', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
                                 {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
@@ -2010,6 +2051,8 @@ def test_model_json_schema_with_capabilities():
                         'anyOf': [
                             {'const': 'NativeTool', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_NativeTool'},
+                            {'const': 'RaiseContentFilterError', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
                             {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
@@ -5257,6 +5300,72 @@ class TestModelRequestHooks:
         await agent.run('hello')
         assert 'before_model_request' in cap.log
 
+    @pytest.mark.parametrize(
+        ('mode', 'streaming'),
+        [('run', False), ('run_stream', True), ('event_stream_handler', True)],
+    )
+    async def test_before_model_request_sees_selection_context(self, mode: str, streaming: bool):
+        """`before_model_request` sees the selected model ID and effective streaming mode."""
+        contexts: list[ModelRequestContext] = []
+
+        @dataclass
+        class CaptureContext(AbstractCapability[None]):
+            async def before_model_request(
+                self,
+                ctx: RunContext[None],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                contexts.append(request_context)
+                return request_context
+
+        agent = Agent('test', deps_type=type(None), capabilities=[CaptureContext()], defer_model_check=True)
+        if mode == 'run_stream':
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+        elif mode == 'event_stream_handler':
+
+            async def handle_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+                async for _ in stream:
+                    pass
+
+            await agent.run('hello', event_stream_handler=handle_events)
+        else:
+            await agent.run('hello')
+
+        assert [(context.model_id, context.streaming) for context in contexts] == [('test', streaming)]
+
+    async def test_withdrawn_bootstrap_model_id_does_not_leak_to_default(self):
+        """A bootstrap model contribution withdrawn by `for_run` must not leak its selection string as provenance."""
+        model_ids: list[str | None] = []
+
+        @dataclass
+        class BootstrapModel(AbstractCapability[None]):
+            def get_model(self) -> str:
+                return 'bootstrap-alias'
+
+            async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+                return AbstractCapability()
+
+            async def resolve_model_id(
+                self, ctx: ModelResolutionContext[None], *, model_id: KnownModelName | str
+            ) -> Model | None:
+                return TestModel() if model_id == 'bootstrap-alias' else None
+
+        @dataclass
+        class CaptureModelId(AbstractCapability[None]):
+            async def before_model_request(
+                self,
+                ctx: RunContext[None],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                model_ids.append(request_context.model_id)
+                return request_context
+
+        agent = Agent(TestModel(), deps_type=NoneType, capabilities=[BootstrapModel(), CaptureModelId()])
+        await agent.run('hello')
+
+        assert model_ids == [None]
+
     async def test_after_model_request(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
@@ -6879,7 +6988,7 @@ class TestWebSearchCapability:
 
     def test_websearch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
         """WebSearch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch()])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -6920,7 +7029,7 @@ class TestWebSearchCapability:
 
     def test_websearch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -6940,7 +7049,7 @@ class TestWebSearchCapability:
 
     def test_websearch_requires_native_with_constraints(self, allow_model_requests: None):
         """WebSearch(allowed_domains=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch(allowed_domains=['example.com'], local='duckduckgo')])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -7214,7 +7323,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
         """WebFetch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch()])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -7266,7 +7375,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebFetch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -7285,7 +7394,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_max_uses_requires_native(self, allow_model_requests: None):
         """WebFetch(max_uses=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch(max_uses=5, local=True)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -8613,18 +8722,826 @@ from-spec\
         with pytest.warns(UserWarning, match='end_strategy'):
             await agent.run('hello', spec={'end_strategy': 'exhaustive'})
 
-    async def test_spec_tool_retry_override_warns(self):
-        """Run-time specs can only override the output retry budget."""
+    async def test_spec_tool_retry_override(self):
+        """A run-time spec's tool-retry budget replaces the agent default (3 here, not the agent's 1)."""
+        call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response('ok')
+            return ModelResponse(parts=[ToolCallPart('flaky', {})])
 
-        agent = Agent(FunctionModel(model_fn))
+        agent = Agent(FunctionModel(model_fn), retries={'tools': 1})
 
-        with pytest.warns(UserWarning, match=r"retry field 'tools'.*ignored"):
-            result = await agent.run('hello', spec={'retries': {'tools': 5}})
+        @agent.tool_plain
+        def flaky() -> str:
+            nonlocal call_count
+            call_count += 1
+            raise ModelRetry('again')
 
-        assert result.output == 'ok'
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'flaky' exceeded max retries count of 3"):
+            await agent.run('hello', spec={'retries': {'tools': 3}})
+
+        # initial call + 3 retries, following the spec budget (3), not the agent default (1)
+        assert call_count == 4
+
+
+@dataclass
+class _ModelCap(AbstractCapability):
+    """Test capability that supplies a model via `get_model()`."""
+
+    model: Model | KnownModelName | str | None = None
+
+    def get_model(self) -> Model | KnownModelName | str | None:
+        return self.model
+
+
+def _text_model(text: str) -> FunctionModel:
+    """A `FunctionModel` whose response text identifies which model handled the request."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return make_text_response(text)
+
+    return FunctionModel(model_fn)
+
+
+class TestGetModelHook:
+    """Capabilities can supply the agent's model via `get_model()`."""
+
+    async def test_model_less_agent_uses_capability_model(self):
+        """A capability can supply the model for an agent that has none (the headline case)."""
+        agent = Agent(None, capabilities=[_ModelCap(model='test')])
+
+        result = await agent.run('hello')
+        assert result.output == 'success (no tool calls)'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='success (no tool calls)')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_select_model_uses_first_step_dependencies(self):
+        """The convenience capability's bootstrap selector needs live deps, which a provider cassette cannot prove."""
+        small = _text_model('small')
+        frontier = _text_model('frontier')
+        seen_steps: list[int] = []
+
+        def select(ctx: ModelSelectionContext[bool]) -> Model:
+            seen_steps.append(ctx.run_step)
+            assert ctx.model is None
+            assert ctx.messages == []
+            return frontier if ctx.deps else small
+
+        agent = Agent(None, deps_type=bool, capabilities=[SelectModel(select)])
+
+        assert SelectModel.get_serialization_name() is None
+        assert (await agent.run('hello', deps=False)).output == 'small'
+        assert (await agent.run('hello', deps=True)).output == 'frontier'
+        assert seen_steps == [1, 1]
+
+    async def test_model_less_agent_without_capability_model_raises(self):
+        """With no model anywhere (capability returns None), the usual missing-model error is raised."""
+        agent = Agent(None, capabilities=[_ModelCap(model=None)])
+
+        with pytest.raises(UserError, match='`model` must either be set on the agent or included when calling it'):
+            await agent.run('hello')
+
+    async def test_run_model_arg_beats_capability_model(self):
+        """A call-site `run(model=...)` wins over a capability-supplied model."""
+        agent = Agent(None, capabilities=[_ModelCap(model='test')])
+
+        result = await agent.run('hello', model=_text_model('from-run-arg'))
+        assert result.output == 'from-run-arg'
+
+    async def test_run_spec_model_beats_capability_model(self):
+        """A run-level `spec=` model wins over a capability-supplied model."""
+        agent = Agent(None, capabilities=[_ModelCap(model=_text_model('from-capability'))])
+
+        result = await agent.run('hello', spec={'model': 'test'})
+        assert result.output == 'success (no tool calls)'
+
+    async def test_capability_model_beats_agent_constructor(self):
+        """A capability-supplied model wins over the agent constructor's model."""
+        agent = Agent(_text_model('from-constructor'), capabilities=[_ModelCap(model=_text_model('from-capability'))])
+
+        result = await agent.run('hello')
+        assert result.output == 'from-capability'
+
+    async def test_callable_model_instance_is_static(self):
+        """A callable `Model` instance is still a model, not a selector function."""
+        from unittest.mock import Mock
+
+        class CallableModel(FunctionModel):
+            __call__ = Mock(side_effect=AssertionError('model must not be called as a selector'))
+
+        selected = CallableModel(lambda messages, info: make_text_response('selected'))
+        assert (await Agent(None, capabilities=[_ModelCap(model=selected)]).run('hello')).output == 'selected'
+        selected.__call__.assert_not_called()
+
+    async def test_agent_context_with_dynamic_capability_model(self):
+        """The agent context leaves dynamic capability models to the runs that select them."""
+        selected_model = _text_model('from-capability')
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return lambda ctx: selected_model
+
+        agent = Agent(_text_model('from-constructor'), deps_type=NoneType, capabilities=[AdaptiveModel()])
+        async with agent:
+            assert (await agent.run('hello')).output == 'from-capability'
+
+    async def test_agent_context_uses_model_override(self):
+        """The agent context enters an override model instead of a capability model."""
+        agent = Agent(None, capabilities=[_ModelCap(model=_text_model('from-capability'))])
+
+        with agent.override(model=_text_model('from-override')):
+            async with agent:
+                assert (await agent.run('hello')).output == 'from-override'
+
+    async def test_override_model_beats_capability_model(self):
+        """`agent.override(model=...)` wins over a capability-supplied model, per its docs."""
+        agent = Agent(None, capabilities=[_ModelCap(model='test')])
+
+        with agent.override(model=_text_model('from-override')):
+            result = await agent.run('hello')
+        assert result.output == 'from-override'
+
+    async def test_last_non_none_capability_wins(self):
+        """Later capability contributions override earlier ones."""
+        agent = Agent(
+            None,
+            capabilities=[
+                _ModelCap(model=None),
+                _ModelCap(model=_text_model('from-second')),
+                _ModelCap(model=_text_model('from-third')),
+            ],
+        )
+
+        result = await agent.run('hello')
+        assert result.output == 'from-third'
+
+    async def test_callable_selects_model_per_step(self):
+        first = FunctionModel(lambda messages, info: ModelResponse(parts=[ToolCallPart('advance', '{}')]))
+
+        def finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.model_settings == {'max_tokens': 123}
+            return make_text_response('done')
+
+        second = FunctionModel(finish, settings={'max_tokens': 123})
+        selected_steps: list[int] = []
+        selection_history_lengths: list[int] = []
+
+        def select(ctx: ModelSelectionContext[int]) -> Model:
+            selected_steps.append(ctx.run_step)
+            selection_history_lengths.append(len(ctx.messages))
+            ctx.messages.clear()  # The selection context must not expose mutable graph state.
+            assert ctx.deps == 42
+            return first if ctx.run_step == 1 else second
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[int]):
+            def get_model(self) -> Callable[[ModelSelectionContext[int]], Model]:
+                return select
+
+        agent = Agent(None, deps_type=int, capabilities=[AdaptiveModel()])
+
+        @agent.tool_plain
+        def advance() -> str:
+            return 'advanced'
+
+        result = await agent.run('hello', deps=42)
+        assert result.output == 'done'
+        assert selected_steps == [1, 2]
+        assert selection_history_lengths == [0, 2]
+
+    async def test_explicit_run_model_skips_selector(self):
+        from unittest.mock import Mock
+
+        select = Mock(side_effect=AssertionError('selector should not run'))
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return select
+
+        capability = AdaptiveModel()
+        assert capability.get_model() is select
+        select.reset_mock()
+
+        result = await Agent(None, deps_type=NoneType, capabilities=[capability]).run(
+            'hello', model=_text_model('explicit')
+        )
+        assert result.output == 'explicit'
+        select.assert_not_called()
+
+    async def test_selected_model_id_is_resolved_with_deps(self):
+        target = _text_model('resolved')
+
+        def select(ctx: ModelSelectionContext[str]) -> str:
+            return 'alias'
+
+        def resolve(ctx: ModelResolutionContext[str], model_id: str) -> Model | None:
+            assert ctx.deps == 'tenant'
+            return target if model_id == 'alias' else None
+
+        @dataclass
+        class SelectAlias(AbstractCapability[str]):
+            def get_model(self) -> Callable[[ModelSelectionContext[str]], str]:
+                return select
+
+        agent = Agent(None, deps_type=str, capabilities=[SelectAlias(), ResolveModelId(resolve)])
+        result = await agent.run('hello', deps='tenant')
+        assert result.output == 'resolved'
+
+    async def test_constructor_model_id_is_resolved_with_deps(self):
+        target = _text_model('resolved')
+
+        def resolve(ctx: ModelResolutionContext[str], model_id: str) -> Model | None:
+            assert ctx.deps == 'tenant'
+            return target if model_id == 'alias' else None
+
+        agent = Agent('alias', deps_type=str, capabilities=[ResolveModelId(resolve)])
+        assert (await agent.run('hello', deps='tenant')).output == 'resolved'
+
+    async def test_static_model_id_is_resolved_once_per_run(self):
+        requests = 0
+        resolutions = 0
+
+        def request(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal requests
+            requests += 1
+            if requests == 1:
+                return ModelResponse(parts=[ToolCallPart('advance', '{}')])
+            return make_text_response('done')
+
+        selected = FunctionModel(request)
+
+        def resolve(ctx: ModelResolutionContext[None], model_id: str) -> Model | None:
+            nonlocal resolutions
+            resolutions += 1
+            return selected if model_id == 'alias' else None
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[_ModelCap(model='alias'), ResolveModelId(resolve)])
+
+        @agent.tool_plain
+        def advance() -> str:
+            return 'advanced'
+
+        assert (await agent.run('hello')).output == 'done'
+        assert resolutions == 1
+
+    async def test_dynamic_model_id_is_resolved_once_per_run(self):
+        requests = 0
+        selections = 0
+        resolutions = 0
+
+        def request(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal requests
+            requests += 1
+            if requests == 1:
+                return ModelResponse(parts=[ToolCallPart('advance', '{}')])
+            return make_text_response('done')
+
+        selected = FunctionModel(request)
+
+        def select(ctx: ModelSelectionContext[None]) -> str:
+            nonlocal selections
+            selections += 1
+            return 'alias'
+
+        def resolve(ctx: ModelResolutionContext[None], model_id: str) -> Model | None:
+            nonlocal resolutions
+            resolutions += 1
+            return selected if model_id == 'alias' else None
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[SelectModel(select), ResolveModelId(resolve)])
+
+        @agent.tool_plain
+        def advance() -> str:
+            return 'advanced'
+
+        assert (await agent.run('hello')).output == 'done'
+        assert selections == 2
+        assert resolutions == 1
+
+    async def test_unchanged_for_run_selector_is_not_repeated_on_first_step(self):
+        selections = 0
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                # Deliberately return a fresh closure on every configuration read.
+                def select(ctx: ModelSelectionContext[None]) -> Model:
+                    nonlocal selections
+                    selections += 1
+                    return _text_model('selected')
+
+                return select
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[AdaptiveModel()])
+        assert (await agent.run('hello')).output == 'selected'
+        assert selections == 1
+
+    async def test_replaced_for_run_selector_reselects_first_step(self):
+        selections: list[str] = []
+
+        class LifecycleModel(FunctionModel):
+            entered = 0
+            exited = 0
+
+            async def __aenter__(self):
+                self.entered += 1
+                return self
+
+            async def __aexit__(self, *args: Any):
+                self.exited += 1
+
+        bootstrap_model = LifecycleModel(lambda messages, info: make_text_response('bootstrap'))
+        replacement_model = LifecycleModel(lambda messages, info: make_text_response('replacement'))
+
+        def selector(name: str) -> Callable[[ModelSelectionContext[None]], Model]:
+            def select(ctx: ModelSelectionContext[None]) -> Model:
+                selections.append(name)
+                return bootstrap_model if name == 'bootstrap' else replacement_model
+
+            return select
+
+        @dataclass
+        class Replacement(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return selector('replacement')
+
+        @dataclass
+        class Bootstrap(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return selector('bootstrap')
+
+            async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+                return Replacement()
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[Bootstrap()])
+        assert (await agent.run('hello')).output == 'replacement'
+        assert selections == ['bootstrap', 'replacement']
+        assert (bootstrap_model.entered, bootstrap_model.exited) == (1, 1)
+        assert (replacement_model.entered, replacement_model.exited) == (1, 1)
+
+    async def test_replaced_for_run_static_model_is_authoritative(self):
+        @dataclass
+        class Replacement(AbstractCapability[None]):
+            def get_model(self) -> Model:
+                return _text_model('replacement')
+
+        @dataclass
+        class Bootstrap(AbstractCapability[None]):
+            def get_model(self) -> Model:
+                return _text_model('bootstrap')
+
+            async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+                return Replacement()
+
+        assert (await Agent(None, deps_type=NoneType, capabilities=[Bootstrap()]).run('hello')).output == 'replacement'
+
+    async def test_for_run_cannot_remove_only_bootstrap_model(self):
+        @dataclass
+        class Bootstrap(AbstractCapability[None]):
+            def get_model(self) -> Model:
+                return _text_model('bootstrap')
+
+            async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+                return AbstractCapability()
+
+        with pytest.raises(UserError, match='removed the bootstrap model'):
+            await Agent(None, deps_type=NoneType, capabilities=[Bootstrap()]).run('hello')
+
+    async def test_for_run_can_remove_capability_model_when_constructor_model_exists(self):
+        @dataclass
+        class Bootstrap(AbstractCapability[None]):
+            def get_model(self) -> Model:
+                return _text_model('bootstrap')
+
+            async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+                return AbstractCapability()
+
+        agent = Agent(_text_model('constructor'), deps_type=NoneType, capabilities=[Bootstrap()])
+        assert (await agent.run('hello')).output == 'constructor'
+
+    async def test_async_selector_and_repeated_model_lifecycle(self):
+        requests = 0
+
+        class LifecycleModel(FunctionModel):
+            entered = 0
+
+            async def __aenter__(self):
+                self.entered += 1
+                return self
+
+        def request(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal requests
+            requests += 1
+            if requests == 1:
+                return ModelResponse(parts=[ToolCallPart('advance', '{}')])
+            return make_text_response('done')
+
+        selected = LifecycleModel(request)
+
+        async def select(ctx: ModelSelectionContext[None]) -> Model:
+            return selected
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Awaitable[Model]]:
+                return select
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[AdaptiveModel()])
+
+        @agent.tool_plain
+        def advance() -> str:
+            return 'advanced'
+
+        assert (await agent.run('hello')).output == 'done'
+        assert selected.entered == 1
+
+    async def test_run_spec_capability_can_bootstrap_model_less_agent(self, monkeypatch: pytest.MonkeyPatch):
+        @dataclass
+        class SpecModel(AbstractCapability[None]):
+            @classmethod
+            def get_serialization_name(cls) -> str:
+                return 'SpecModel'
+
+            def get_model(self) -> Model:
+                return _text_model('from spec capability')
+
+        monkeypatch.setitem(CAPABILITY_TYPES, 'SpecModel', SpecModel)
+        agent = Agent(None)
+        assert (await agent.run('hello', spec={'capabilities': ['SpecModel']})).output == 'from spec capability'
+
+    async def test_first_model_id_resolver_wins(self):
+        first = _text_model('first')
+        second = _text_model('second')
+        agent = Agent(
+            'alias',
+            capabilities=[
+                ResolveModelId(lambda ctx, model_id: first),
+                ResolveModelId(lambda ctx, model_id: second),
+            ],
+        )
+        assert (await agent.run('hello')).output == 'first'
+
+    async def test_model_id_resolver_delegates_to_registry_backstop(self):
+        calls: list[str] = []
+        registered = _text_model('registered')
+
+        def user_resolver(ctx: ModelResolutionContext[None], model_id: str) -> Model | None:
+            calls.append('user')
+            return None
+
+        def registry_resolver(ctx: ModelResolutionContext[None], model_id: str) -> Model | None:
+            calls.append('registry')
+            return registered if model_id == 'registered-id' else None
+
+        agent = Agent(
+            'registered-id',
+            deps_type=NoneType,
+            capabilities=[ResolveModelId(user_resolver), ResolveModelId(registry_resolver)],
+        )
+        assert (await agent.run('hello')).output == 'registered'
+        assert calls == ['user', 'registry']
+
+    async def test_async_model_id_resolver_and_deferred_resolver(self):
+        from unittest.mock import AsyncMock
+
+        calls: list[str] = []
+        target = _text_model('resolved')
+
+        deferred = AsyncMock(side_effect=AssertionError('deferred model resolver must not run'))
+
+        async def eager(ctx: ModelResolutionContext[None], model_id: str) -> Model | None:
+            calls.append(model_id)
+            return target
+
+        capability = CombinedCapability(
+            [ResolveModelId(deferred, defer_loading=True, id='deferred-resolver'), ResolveModelId(eager)]
+        )
+        agent = Agent('alias', deps_type=NoneType, capabilities=[capability])
+        assert (await agent.run('hello')).output == 'resolved'
+        assert calls == ['alias']
+        deferred.assert_not_awaited()
+        assert ResolveModelId.get_serialization_name() is None
+
+    async def test_override_spec_model_uses_spec_model_id_resolver(self, monkeypatch: pytest.MonkeyPatch):
+        target = _text_model('resolved by spec')
+        bound_agents: list[AbstractAgent[None, Any]] = []
+
+        @dataclass
+        class SpecResolver(AbstractCapability[None]):
+            bound: bool = False
+
+            @classmethod
+            def get_serialization_name(cls) -> str:
+                return 'SpecResolver'
+
+            def for_agent(self, agent: AbstractAgent[None, Any]) -> SpecResolver:
+                bound_agents.append(agent)
+                return replace(self, bound=True)
+
+            def get_model(self) -> Model | None:
+                return target if self.bound else None
+
+            async def resolve_model_id(
+                self, ctx: ModelResolutionContext[None], *, model_id: KnownModelName | str
+            ) -> Model | None:
+                return target if self.bound and model_id == 'custom-id' else None
+
+        monkeypatch.setitem(CAPABILITY_TYPES, 'SpecResolver', SpecResolver)
+        agent = Agent('test')
+
+        with agent.override(spec={'capabilities': ['SpecResolver']}, model='custom-id'):
+            assert (await agent.run('hello')).output == 'resolved by spec'
+
+        with agent.override(spec={'capabilities': ['SpecResolver']}):
+            with agent.override(model='custom-id'):
+                assert (await agent.run('hello')).output == 'resolved by spec'
+
+        with agent.override(spec={'capabilities': ['SpecResolver']}):
+            assert (await agent.run('hello')).output == 'resolved by spec'
+
+        assert bound_agents == [agent, agent, agent]
+
+    async def test_wrapper_subclass_model_id_resolver_is_detected(self):
+        target = _text_model('resolved by wrapper')
+
+        @dataclass
+        class ResolvingWrapper(WrapperCapability[None]):
+            async def resolve_model_id(
+                self, ctx: ModelResolutionContext[None], *, model_id: KnownModelName | str
+            ) -> Model | None:
+                return target if model_id == 'custom-id' else None
+
+        agent = Agent('test', deps_type=NoneType, capabilities=[ResolvingWrapper(wrapped=AbstractCapability[None]())])
+
+        with agent.override(model='custom-id'):
+            assert (await agent.run('hello')).output == 'resolved by wrapper'
+
+    async def test_dynamic_models_are_entered_once_per_run(self):
+        class LifecycleModel(FunctionModel):
+            entered = 0
+            exited = 0
+
+            async def __aenter__(self):
+                self.entered += 1
+                return self
+
+            async def __aexit__(self, *args: Any):
+                self.exited += 1
+
+        first = LifecycleModel(lambda messages, info: ModelResponse(parts=[ToolCallPart('advance', '{}')]))
+        second = LifecycleModel(lambda messages, info: make_text_response('done'))
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return lambda ctx: first if ctx.run_step == 1 else second
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[AdaptiveModel()])
+
+        @agent.tool_plain
+        def advance() -> str:
+            return 'advanced'
+
+        assert (await agent.run('hello')).output == 'done'
+        assert (first.entered, first.exited) == (1, 1)
+        assert (second.entered, second.exited) == (1, 1)
+
+    async def test_selector_can_return_fallback_model(self):
+        def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('primary failed')
+
+        fallback = FallbackModel(FunctionModel(fail), _text_model('fallback'), fallback_on=RuntimeError)
+
+        @dataclass
+        class SelectFallback(AbstractCapability[None]):
+            def get_model(self) -> FallbackModel:
+                return fallback
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[SelectFallback()])
+        assert (await agent.run('hello')).output == 'fallback'
+
+    async def test_cross_run_suspended_resume_rejects_dynamic_model(self):
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return lambda ctx: _text_model('selected')
+
+        history = [ModelResponse(parts=[], state='suspended')]
+        with pytest.raises(UserError, match='cannot be reconstructed unambiguously'):
+            agent = Agent(None, deps_type=NoneType, capabilities=[AdaptiveModel()])
+            await agent.run(message_history=history)
+
+    async def test_cross_run_suspended_resume_rejects_for_run_dynamic_model(self):
+        @dataclass
+        class DynamicModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return lambda ctx: _text_model('selected')
+
+        @dataclass
+        class BootstrapModel(AbstractCapability[None]):
+            def get_model(self) -> Model:
+                return _text_model('bootstrap')
+
+            async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+                return DynamicModel()
+
+        history = [ModelResponse(parts=[], state='suspended')]
+        with pytest.raises(UserError, match='cannot be reconstructed unambiguously'):
+            agent = Agent(None, deps_type=NoneType, capabilities=[BootstrapModel()])
+            await agent.run(message_history=history)
+
+    async def test_system_prompt_parts_uses_selector_when_model_is_omitted(self):
+        selected = _text_model('selected')
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[str]):
+            def get_model(self) -> Callable[[ModelSelectionContext[str]], Model]:
+                return lambda ctx: selected
+
+        agent = Agent(None, deps_type=str, capabilities=[AdaptiveModel()])
+
+        @agent.system_prompt
+        def prompt(ctx: RunContext[str]) -> str:
+            assert ctx.model is selected
+            assert ctx.deps == 'tenant'
+            return 'system prompt'
+
+        assert await agent.system_prompt_parts(deps='tenant') == snapshot(
+            [SystemPromptPart(content='system prompt', timestamp=IsDatetime())]
+        )
+
+    async def test_callable_model_selection_streaming(self):
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield 'selected'
+
+        selected = FunctionModel(stream_function=stream)
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return lambda ctx: selected
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[AdaptiveModel()])
+        async with agent.run_stream('hello') as result:
+            assert await result.get_output() == 'selected'
+
+    async def test_agent_context_does_not_evaluate_dynamic_selector(self):
+        calls = 0
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            nonlocal calls
+            calls += 1
+            return _text_model('selected')
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return select
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[AdaptiveModel()])
+        async with agent:
+            assert calls == 0
+
+        assert (await agent.run('hello')).output == 'selected'
+        assert calls == 1
+
+    async def test_static_capability_model_is_entered_by_agent_context(self):
+        class LifecycleModel(FunctionModel):
+            entered = 0
+            exited = 0
+
+            async def __aenter__(self):
+                self.entered += 1
+                return self
+
+            async def __aexit__(self, *args: Any):
+                self.exited += 1
+
+        selected = LifecycleModel(lambda messages, info: make_text_response('selected'))
+        agent = Agent(None, capabilities=[_ModelCap(model=selected)])
+        async with agent:
+            assert selected.entered == 1
+            assert (await agent.run('hello')).output == 'selected'
+            assert (selected.entered, selected.exited) == (1, 0)
+        assert selected.exited == 1
+
+    async def test_static_capability_model_id_reuses_agent_context_model(self, monkeypatch: pytest.MonkeyPatch):
+        class LifecycleModel(FunctionModel):
+            entered = 0
+            exited = 0
+
+            async def __aenter__(self):
+                self.entered += 1
+                return self
+
+            async def __aexit__(self, *args: Any):
+                self.exited += 1
+
+        inferred_models: list[LifecycleModel] = []
+
+        def infer_model(model_id: str) -> Model:
+            assert model_id == 'custom-model'
+            model = LifecycleModel(lambda messages, info: make_text_response('selected'))
+            inferred_models.append(model)
+            return model
+
+        monkeypatch.setattr('pydantic_ai.models.infer_model', infer_model)
+        agent = Agent(None, capabilities=[_ModelCap(model='custom-model')])
+
+        async with agent:
+            assert (await agent.run('hello')).output == 'selected'
+            assert len(inferred_models) == 1
+            assert (inferred_models[0].entered, inferred_models[0].exited) == (1, 0)
+        assert inferred_models[0].exited == 1
+
+    async def test_system_prompt_parts_resolves_static_capability_model_id(self, monkeypatch: pytest.MonkeyPatch):
+        inferred_models: list[Model] = []
+
+        def infer_model(model_id: str) -> Model:
+            assert model_id == 'custom-model'
+            model = _text_model('selected')
+            inferred_models.append(model)
+            return model
+
+        monkeypatch.setattr('pydantic_ai.models.infer_model', infer_model)
+        agent = Agent(None, capabilities=[_ModelCap(model='custom-model')])
+
+        assert await agent.system_prompt_parts() == []
+        assert len(inferred_models) == 1
+
+        async with agent:
+            assert len(inferred_models) == 2
+            assert await agent.system_prompt_parts() == []
+            assert len(inferred_models) == 2
+
+    async def test_system_prompt_parts_requires_a_model(self):
+        agent = Agent(None)
+        with pytest.raises(UserError, match='supplied by a capability'):
+            await agent.system_prompt_parts()
+
+    def test_mcp_sampling_rejects_dynamic_capability_model(self):
+        selected = _text_model('selected')
+        Agent(None, capabilities=[_ModelCap(model=selected)]).set_mcp_sampling_model()
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return lambda ctx: selected
+
+        agent = Agent(_text_model('constructor'), deps_type=NoneType, capabilities=[AdaptiveModel()])
+        with pytest.raises(UserError, match='requires run dependencies'):
+            agent.set_mcp_sampling_model()
+
+        resolving_agent = Agent(
+            'alias', capabilities=[ResolveModelId(lambda ctx, model_id: selected if model_id == 'alias' else None)]
+        )
+        with pytest.raises(UserError, match='requires run dependencies'):
+            resolving_agent.set_mcp_sampling_model()
+
+    async def test_wrapper_capability_delegates(self):
+        """A `WrapperCapability` surfaces its wrapped leaf's model."""
+        agent = Agent(None, capabilities=[WrapperCapability(wrapped=_ModelCap(model='test'))])
+
+        result = await agent.run('hello')
+        assert result.output == 'success (no tool calls)'
+
+    async def test_combined_capability_uses_last_non_none_model(self):
+        """A `CombinedCapability` uses the last non-`None` model contribution."""
+        agent = Agent(
+            None,
+            capabilities=[
+                CombinedCapability([_ModelCap(model=_text_model('first')), _ModelCap(model=_text_model('last'))])
+            ],
+        )
+
+        result = await agent.run('hello')
+        assert result.output == 'last'
+
+    async def test_capability_returning_none_is_noop(self):
+        """A capability whose `get_model()` returns None (the default) leaves the agent model in place."""
+        agent = Agent(_text_model('from-agent'), capabilities=[_ModelCap(model=None)])
+
+        result = await agent.run('hello')
+        assert result.output == 'from-agent'
 
 
 class TestGetWrapperToolsetHook:
@@ -11368,6 +12285,31 @@ async def test_wrapper_capability_delegates_hooks():
     assert 'after_run' in hook_calls
 
 
+def test_wrapper_capability_for_agent_replaces():
+    """WrapperCapability.for_agent replaces wrapped when its for_agent rebinds.
+
+    Some capabilities (e.g. `TemporalDurability`) snapshot agent state in `for_agent`
+    and return a new instance. The wrapper must propagate that.
+    """
+
+    @dataclass
+    class RebindCap(AbstractCapability[None]):
+        bound_to: str = ''
+
+        def for_agent(self, agent: AbstractAgent[None, Any]) -> AbstractCapability[None]:
+            return RebindCap(bound_to=agent.name or '')
+
+    inner = RebindCap()
+    wrapper = WrapperCapability(wrapped=inner)
+
+    agent = Agent(FunctionModel(_resolve_dummy_model_fn), name='wrapper_for_agent_test')
+    bound = wrapper.for_agent(agent)
+    assert isinstance(bound, WrapperCapability)
+    assert bound is not wrapper
+    assert bound.wrapped is not inner
+    assert cast(RebindCap, bound.wrapped).bound_to == 'wrapper_for_agent_test'
+
+
 async def test_wrapper_capability_for_run_replaces():
     """WrapperCapability.for_run replaces wrapped when it changes."""
     toolset_a = FunctionToolset(id='a')
@@ -11443,6 +12385,29 @@ async def test_wrapper_capability_has_wrap_node_run():
             return await handler(node)  # pragma: no cover
 
     assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True
+
+
+async def test_wrapper_capability_delegates_resolve_model_id():
+    """WrapperCapability delegates `resolve_model_id` (and `has_resolve_model_id`) to the wrapped capability."""
+    resolved = TestModel()
+
+    @dataclass
+    class ResolverCap(AbstractCapability[Any]):
+        async def resolve_model_id(self, ctx: ModelResolutionContext[Any], *, model_id: str) -> Any:
+            return resolved if model_id == 'magic' else None
+
+    wrapper = WrapperCapability(wrapped=ResolverCap())
+    assert wrapper.has_resolve_model_id is True
+
+    agent = Agent('test', capabilities=[wrapper])
+    resolution_ctx = ModelResolutionContext[Any](agent=agent, deps=None)
+    assert await wrapper.resolve_model_id(resolution_ctx, model_id='magic') is resolved
+    assert await wrapper.resolve_model_id(resolution_ctx, model_id='other') is None
+
+    # Wrapping a capability without `resolve_model_id` is a no-op.
+    plain_wrapper = WrapperCapability(wrapped=CustomCapability())
+    assert plain_wrapper.has_resolve_model_id is False
+    assert await plain_wrapper.resolve_model_id(resolution_ctx, model_id='any') is None
 
 
 async def test_wrapper_capability_delegates_model_request_hooks():
@@ -11819,7 +12784,229 @@ class TestNodeStreamingWithHooks:
         assert error_log == ['CallToolsNode']
 
 
-# --- ModelRetry from hooks tests ---
+# --- ToolFailed and ModelRetry from hooks tests ---
+
+
+class _BeforeToolFailedCap(AbstractCapability[Any]):
+    async def before_tool_execute(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        raise ToolFailed('failed before execution')
+
+
+class _WrapToolFailedCap(AbstractCapability[Any]):
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: Any,
+    ) -> Any:
+        try:
+            return await handler(args)
+        except RuntimeError as e:
+            raise ToolFailed('failed during wrapper') from e
+
+
+class _AfterToolFailedCap(AbstractCapability[Any]):
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        result: Any,
+    ) -> Any:
+        raise ToolFailed('failed after execution')
+
+
+class _OnToolExecuteErrorFailedCap(AbstractCapability[Any]):
+    async def on_tool_execute_error(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        error: Exception,
+    ) -> Any:
+        raise ToolFailed('failed while handling error')
+
+
+class _BeforeToolValidateFailedCap(AbstractCapability[Any]):
+    async def before_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+    ) -> str | dict[str, Any]:
+        raise ToolFailed('failed before validation')
+
+
+class _OnToolValidateErrorFailedCap(AbstractCapability[Any]):
+    async def on_tool_validate_error(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: str | dict[str, Any],
+        error: ValidationError | ModelRetry,
+    ) -> dict[str, Any]:
+        raise ToolFailed('failed while handling validation error')
+
+
+class _WrapToolValidateFailedCap(AbstractCapability[Any]):
+    async def wrap_tool_validate(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: str | dict[str, Any],
+        handler: Any,
+    ) -> dict[str, Any]:
+        raise ToolFailed('failed during validate wrapper')
+
+
+def _tool_failed_roundtrip_model(tool_args: str) -> Callable[[list[ModelMessage], AgentInfo], ModelResponse]:
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for msg in messages:
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    return make_text_response(f'got: {part.outcome}:{part.content}')
+        if info.function_tools:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=info.function_tools[0].name, args=tool_args, tool_call_id='call-1')]
+            )
+        return make_text_response('no tools')  # pragma: no cover
+
+    return model_fn
+
+
+def _assert_failed_tool_result(result: AgentRunResult[Any], expected_message: str) -> None:
+    assert result.output == f'got: failed:{expected_message}'
+
+    parts = [part for msg in result.all_messages() for part in msg.parts]
+    tool_return = next(part for part in parts if isinstance(part, ToolReturnPart))
+    assert tool_return.outcome == 'failed'
+    assert tool_return.content == expected_message
+    assert not any(isinstance(part, RetryPromptPart) for part in parts)
+
+
+class TestToolFailedFromHooks:
+    """Tests for raising ToolFailed from capability tool hooks."""
+
+    @pytest.mark.parametrize('hook_name', ['before', 'wrap', 'after', 'on_error'])
+    async def test_tool_execute_hook_tool_failed(self, hook_name: str):
+        tool_call_count = 0
+        cap_type, expected_message, tool_should_run = {
+            'before': (_BeforeToolFailedCap, 'failed before execution', False),
+            'wrap': (_WrapToolFailedCap, 'failed during wrapper', True),
+            'after': (_AfterToolFailedCap, 'failed after execution', True),
+            'on_error': (_OnToolExecuteErrorFailedCap, 'failed while handling error', True),
+        }[hook_name]
+
+        agent = Agent(FunctionModel(_tool_failed_roundtrip_model('{}')), capabilities=[cap_type()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1
+            if hook_name in {'wrap', 'on_error'}:
+                raise RuntimeError('tool failed')
+            return 'tool result'
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, expected_message)
+        assert tool_call_count == int(tool_should_run)
+
+    async def test_deferred_tool_validate_hook_tool_failed(self):
+        """Deferred tool validation can return a failed tool result instead of a deferred request."""
+        tool_call_count = 0
+
+        agent = Agent(
+            FunctionModel(_tool_failed_roundtrip_model('{}')),
+            capabilities=[_BeforeToolValidateFailedCap()],
+            output_type=[str, DeferredToolRequests],
+            retries={'tools': 0, 'output': 2},
+        )
+
+        @agent.tool_plain(requires_approval=True)
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1  # pragma: no cover
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, 'failed before validation')
+        assert tool_call_count == 0
+
+    @pytest.mark.parametrize(
+        ('capability', 'tool_args', 'expected_message'),
+        [
+            pytest.param(
+                _BeforeToolValidateFailedCap(), '{"x":1}', 'failed before validation', id='before_tool_validate'
+            ),
+            pytest.param(
+                _OnToolValidateErrorFailedCap(),
+                '{"x":"bad"}',
+                'failed while handling validation error',
+                id='on_tool_validate_error',
+            ),
+            pytest.param(
+                _WrapToolValidateFailedCap(), '{"x":1}', 'failed during validate wrapper', id='wrap_tool_validate'
+            ),
+        ],
+    )
+    async def test_tool_validate_hook_tool_failed(
+        self, capability: AbstractCapability[Any], tool_args: str, expected_message: str
+    ):
+        """Non-deferred tool validation hooks can report a failed tool result instead of retrying."""
+        tool_call_count = 0
+
+        agent = Agent(
+            FunctionModel(_tool_failed_roundtrip_model(tool_args)),
+            capabilities=[capability],
+            retries={'tools': 0, 'output': 2},
+        )
+
+        @agent.tool_plain
+        def my_tool(x: int) -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1  # pragma: no cover
+            return f'tool result: {x}'  # pragma: no cover
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, expected_message)
+        assert tool_call_count == 0
+
+    async def test_args_validator_tool_failed(self):
+        """An `args_validator` raising `ToolFailed` reports a failed tool result instead of retrying."""
+        tool_call_count = 0
+        expected_message = 'failed in args validator'
+
+        def validate_args(ctx: RunContext[Any]) -> None:
+            raise ToolFailed(expected_message)
+
+        agent = Agent(
+            FunctionModel(_tool_failed_roundtrip_model('{}')),
+            retries={'tools': 0, 'output': 2},
+        )
+
+        @agent.tool_plain(args_validator=validate_args)
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1  # pragma: no cover
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, expected_message)
+        assert tool_call_count == 0
 
 
 class TestModelRetryFromHooks:
@@ -13460,6 +14647,59 @@ def test_ordering_wrapped_by():
     assert _cap_names(combined) == ['PlainCapA', 'WrappedByACap']
 
 
+def test_innermost_binds_after_capability_toolsets():
+    """`innermost` capabilities bind after other capabilities' toolsets are extracted.
+
+    Durability capabilities (the `innermost` tier) wrap `agent.toolsets` in their `for_agent`,
+    so `Agent.__init__` binds them in a second phase, after toolsets contributed by other
+    capabilities (e.g. `Capability(tools=...)`) have been extracted and are visible on the
+    agent. Binding everything in one phase would leave those toolsets invisible to durability
+    and running unwrapped (non-deterministically) inside durable workflows.
+    """
+    seen_tool_names: set[str] = set()
+
+    @dataclass
+    class RecordingInnermostCap(AbstractCapability[Any]):
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> RecordingInnermostCap:
+            for toolset in agent.toolsets:
+                toolset.apply(
+                    lambda leaf: seen_tool_names.update(leaf.tools) if isinstance(leaf, FunctionToolset) else None
+                )
+            # Return a bound copy, like durability capabilities do.
+            return replace(self)
+
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='innermost')
+
+    def greet() -> str:
+        return 'hi'  # pragma: no cover
+
+    original = RecordingInnermostCap()
+    agent = Agent('test', capabilities=[Capability(tools=[greet]), original])
+    assert seen_tool_names == {'greet'}
+    # The bound copy replaced the original in the agent's capability chain.
+    assert not any(cap is original for cap in agent.root_capability.capabilities)
+    assert any(isinstance(cap, RecordingInnermostCap) for cap in agent.root_capability.capabilities)
+
+
+def test_combined_capability_for_agent_binds_children():
+    """`CombinedCapability.for_agent` rebinds children that return new bound instances."""
+
+    @dataclass
+    class BindingCap(AbstractCapability[Any]):
+        bound: bool = False
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> BindingCap:
+            return replace(self, bound=True)
+
+    combined = CombinedCapability([BindingCap(), PlainCapA()])
+    agent = Agent('test')
+    bound = combined.for_agent(agent)
+    assert bound is not combined
+    assert isinstance(bound.capabilities[0], BindingCap)
+    assert bound.capabilities[0].bound is True
+
+
 def test_ordering_requires_present():
     """No error when required capability is present."""
     combined = CombinedCapability([RequiresOutermostCap(), OutermostCap()])
@@ -13675,6 +14915,46 @@ def test_ordering_mixed_type_and_instance_refs():
     assert combined.capabilities[0].__class__ is MixedRefs
 
 
+async def test_ordering_survives_dynamic_capability_resolution():
+    """A factory-returned capability's ordering constraints survive the per-run wrapper.
+
+    `CombinedCapability.for_run` re-sorts the replaced capabilities, so the
+    `ResolvedDynamicCapability` wrapper must delegate `get_ordering` to the resolved
+    capability for its `outermost`/`innermost`/`wraps` declarations to be honored.
+    """
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return OutermostCap()
+
+    combined = CombinedCapability([PlainCapA(), DynamicCapability(factory)])
+    # At construction, the unresolved wrapper has no ordering of its own.
+    assert _cap_names(combined) == ['PlainCapA', 'DynamicCapability']
+
+    ctx = _build_run_context()
+    ctx.agent = Agent(TestModel())
+    run_capability = await combined.for_run(ctx)
+    assert isinstance(run_capability, CombinedCapability)
+    assert _cap_names(run_capability) == ['ResolvedDynamicCapability', 'PlainCapA']
+    assert isinstance(run_capability.capabilities[0], ResolvedDynamicCapability)
+    assert isinstance(run_capability.capabilities[0].wrapped, OutermostCap)
+
+
+async def test_runtime_capability_with_mixed_position_root():
+    """Per-run capabilities can be added to an agent whose root mixes outermost and innermost.
+
+    `Agent.iter()` builds the effective capability by merging per-run capabilities into the
+    agent's `_root_capability`. If `_root_capability` is a `CombinedCapability` whose leaves
+    span tiers (e.g. an outermost-tier cap and an innermost-tier cap), wrapping it in another
+    `CombinedCapability` used to trigger "Conflicting positions in nested CombinedCapability"
+    because the outer sort tried to compute a single effective ordering for the inner group.
+    The fix splats the root container so each leaf participates as a sibling in the outer
+    ordering pass.
+    """
+    agent = Agent(TestModel(), capabilities=[OutermostCap(), InnermostCap()])
+    result = await agent.run('hi', capabilities=[Hooks()])
+    assert result.output == snapshot('success (no tool calls)')
+
+
 # --- Hook recovery tests (after_node_run End→node, ErrorMarker in next_node) ---
 
 
@@ -13810,6 +15090,260 @@ async def test_after_node_run_node_to_end():
     result = await agent.run('hello')
     assert result.output == 'short-circuited'
     assert model_call_count == 1
+
+
+# --- resolve_model_id hook tests ---
+
+
+def _resolve_dummy_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(content='ok')])
+
+
+@dataclass
+class _StringResolver(AbstractCapability[Any]):
+    """Test capability that maps known strings to a fixed FunctionModel."""
+
+    target: FunctionModel
+
+    async def resolve_model_id(self, ctx: ModelResolutionContext[Any], *, model_id: Any) -> Any:
+        if model_id == 'magic-model':
+            return self.target
+        return None
+
+
+@dataclass
+class _PassThroughResolver(AbstractCapability[Any]):
+    """Test capability that always defers, recording what it saw."""
+
+    seen: list[Any] = field(default_factory=list[Any])
+    seen_deps: list[Any] = field(default_factory=list[Any])
+
+    async def resolve_model_id(self, ctx: ModelResolutionContext[Any], *, model_id: Any) -> Any:
+        self.seen.append(model_id)
+        self.seen_deps.append(ctx.deps)
+        return None
+
+
+async def test_resolve_model_id_maps_string_to_model() -> None:
+    """A capability's resolve_model_id maps a runtime string to a Model instance."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='resolved')
+    agent = Agent(name='resolve_test', capabilities=[_StringResolver(target=target)])
+
+    result = await agent.run('hi', model='magic-model')
+    assert result.output == 'ok'
+
+
+async def test_resolve_model_id_returns_none_falls_back_to_infer_model() -> None:
+    """When all capabilities defer, _get_model uses the default infer_model path."""
+    cap = _PassThroughResolver()
+    agent = Agent(name='resolve_pass', capabilities=[cap], defer_model_check=True)
+
+    # 'test' is the special string that infer_model maps to TestModel.
+    result = await agent.run('hi', model='test')
+    assert result.output is not None
+    assert cap.seen == ['test']
+
+
+async def test_resolve_model_id_returns_none_for_unknown_string() -> None:
+    """A resolver that doesn't recognize the string returns None so the next layer can try."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='resolved')
+    cap = _StringResolver(target=target)
+    resolution_ctx = ModelResolutionContext(agent=cast(Any, None), deps=None)
+    assert await cap.resolve_model_id(resolution_ctx, model_id='different-string') is None
+
+
+async def test_resolve_model_id_first_non_none_wins() -> None:
+    """When two capabilities declare resolve_model_id, the first one in the list wins.
+
+    Composition is first-non-None-wins (not each-layer-wraps): only one capability
+    can claim a given string. Per-request *wrapping* of a resolved Model lives in
+    `before_model_request`, not here.
+    """
+    first_target = FunctionModel(_resolve_dummy_model_fn, model_name='first')
+    second_target = FunctionModel(_resolve_dummy_model_fn, model_name='second')
+
+    first = _StringResolver(target=first_target)
+    second = _StringResolver(target=second_target)
+    combined = CombinedCapability([first, second])
+
+    agent = Agent(name='resolve_layered', capabilities=[first, second], defer_model_check=True)
+    result = await combined.resolve_model_id(ModelResolutionContext(agent=agent, deps=None), model_id='magic-model')
+    assert result is first_target
+
+
+def test_resolve_model_id_skipped_for_model_instance() -> None:
+    """The hook is never called when the user passes a Model instance directly."""
+    cap = _PassThroughResolver()
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='direct')
+    agent = Agent(target, name='resolve_skip_instance', capabilities=[cap])
+
+    # No string ever flows through; cap.seen should stay empty.
+    assert agent.model is target
+    assert cap.seen == []
+
+
+async def test_resolve_model_id_invoked_on_override() -> None:
+    """`agent.override(model=string)` routes the string through resolve_model_id."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='override-resolved')
+    cap = _StringResolver(target=target)
+
+    initial_model = FunctionModel(_resolve_dummy_model_fn, model_name='initial')
+    agent = Agent(initial_model, name='resolve_override', capabilities=[cap])
+
+    with agent.override(model='magic-model'):
+        result = await agent.run('hi')
+    assert result.output == 'ok'
+
+
+async def test_resolve_model_id_invoked_on_agent_default_string() -> None:
+    """`Agent(model='string', capabilities=[cap])` routes the default through resolve_model_id at run setup.
+
+    Capabilities with `resolve_model_id` need a shot at the default model string just
+    like they do for runtime overrides. The hook is deps-aware and only fires at run
+    setup, so the agent keeps the raw string at construction (like `defer_model_check`)
+    and resolution happens per run — under different deps, potentially to different models.
+    """
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='default-resolved')
+    cap = _StringResolver(target=target)
+
+    agent = Agent('magic-model', name='resolve_default_string', capabilities=[cap])
+
+    # The default stays a string at construction; the hook can't run without deps.
+    assert agent.model == 'magic-model'
+
+    result = await agent.run('hi')
+    assert result.output == 'ok'
+
+    # No memoization: the raw string is kept so per-run resolution keeps firing.
+    assert agent.model == 'magic-model'
+
+
+async def test_resolve_model_id_receives_deps() -> None:
+    """The hook receives the run's deps on `ctx.deps`, so resolution can be run-dependent."""
+    cap = _PassThroughResolver()
+    agent = Agent(name='resolve_deps', deps_type=str, capabilities=[cap], defer_model_check=True)
+
+    await agent.run('hi', model='test', deps='user-credential')
+    assert cap.seen == ['test']
+    assert cap.seen_deps == ['user-credential']
+
+
+async def test_override_model_string_deferral_considers_override_capabilities() -> None:
+    """`override(model=str)`'s defer-vs-eager choice consults the effective root capability.
+
+    Neither the spec capability nor the agent chain implements `resolve_model_id` here, so
+    the string resolves eagerly via `infer_model` — checked against the spec-supplied root
+    when set in the same call, and against an already-active root override when nested.
+    """
+    agent = Agent(name='override_deferral_effective_root')
+
+    with agent.override(spec={'capabilities': [{'IncludeToolReturnSchemas': {}}]}, model='test'):
+        result = await agent.run('hi')
+        assert result.output is not None
+
+    with agent.override(spec={'capabilities': [{'IncludeToolReturnSchemas': {}}]}):
+        with agent.override(model='test'):
+            result = await agent.run('hi')
+            assert result.output is not None
+
+
+async def test_resolve_model_id_uses_override_root_capability() -> None:
+    """A root-capability override (as set by `override(spec=...)`) owns model-string resolution.
+
+    Not a public-API test: no built-in spec-constructible capability implements
+    `resolve_model_id` yet, so this drives the `_override_root_capability` contextvar —
+    the exact seam `override(spec=...)` sets when a spec replaces the root — directly.
+    Pins that resolution honors the effective (replaced) root, and that the resolved
+    model doesn't get memoized onto `agent.model` past the override's scope.
+    """
+    chain_target = FunctionModel(_resolve_dummy_model_fn, model_name='agent-chain')
+    override_target = FunctionModel(_resolve_dummy_model_fn, model_name='override-root')
+
+    agent = Agent('magic-model', name='resolve_override_root', capabilities=[_StringResolver(target=chain_target)])
+
+    override_root = CombinedCapability[Any]([_StringResolver(target=override_target)])
+    token = agent._override_root_capability.set(Some(override_root))  # pyright: ignore[reportPrivateUsage]
+    try:
+        resolved = await agent._resolve_model_selection(  # pyright: ignore[reportPrivateUsage]
+            agent._pick_raw_model(None),  # pyright: ignore[reportPrivateUsage]
+            capability=agent._effective_root_capability(),  # pyright: ignore[reportPrivateUsage]
+            deps=None,
+        )
+        assert resolved is override_target
+        # No memoization under an override: the raw string default survives.
+        assert agent.model == 'magic-model'
+    finally:
+        agent._override_root_capability.reset(token)  # pyright: ignore[reportPrivateUsage]
+
+    resolved = await agent._resolve_model_selection(  # pyright: ignore[reportPrivateUsage]
+        agent._pick_raw_model(None),  # pyright: ignore[reportPrivateUsage]
+        capability=agent._effective_root_capability(),  # pyright: ignore[reportPrivateUsage]
+        deps=None,
+    )
+    assert resolved is chain_target
+
+
+async def test_resolve_model_id_alias_unusable_outside_run() -> None:
+    """A capability-owned alias default resolves during runs, and says so clearly outside one.
+
+    Sync entry points like `set_mcp_sampling_model` can't invoke the async, deps-aware
+    hook, so an alias only a capability can resolve raises an explanation asking for a
+    concrete model rather than attempting deps-blind resolution.
+    """
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='aliased')
+
+    def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
+        return target if model_id == 'alias' else None
+
+    agent = Agent('alias', name='alias_outside_run', capabilities=[ResolveModelId(resolver)])
+    with pytest.raises(UserError, match='requires run dependencies and cannot be used for MCP sampling'):
+        agent.set_mcp_sampling_model()
+
+    # Inside a run, the alias resolves through the hook as usual.
+    result = await agent.run('hi')
+    assert result.output == 'ok'
+
+
+# --- ResolveModelId capability tests ---
+
+
+async def test_resolve_model_id_capability_sync_resolver() -> None:
+    """`ResolveModelId` wraps a sync resolver function that maps strings to models using deps."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='sync-resolved')
+    seen_deps: list[Any] = []
+
+    def resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
+        seen_deps.append(ctx.deps)
+        return target if model_id == 'alias' else None
+
+    agent = Agent('alias', name='resolve_cap_sync', deps_type=str, capabilities=[ResolveModelId(resolver)])
+    result = await agent.run('hi', deps='credential')
+    assert result.output == 'ok'
+    assert seen_deps == ['credential']
+
+
+async def test_resolve_model_id_capability_async_resolver() -> None:
+    """`ResolveModelId` also accepts an async resolver function."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='async-resolved')
+
+    async def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
+        return target if model_id == 'alias' else None
+
+    agent = Agent(name='resolve_cap_async', capabilities=[ResolveModelId(resolver)])
+    result = await agent.run('hi', model='alias')
+    assert result.output == 'ok'
+
+
+async def test_resolve_model_id_capability_defers_to_infer_model() -> None:
+    """A `ResolveModelId` resolver returning None falls back to the default `infer_model` flow."""
+
+    def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> None:
+        return None
+
+    agent = Agent(name='resolve_cap_defer', capabilities=[ResolveModelId(resolver)])
+    # 'test' is the special string that infer_model maps to TestModel.
+    result = await agent.run('hi', model='test')
+    assert result.output is not None
 
 
 # ===== Pending Message Queue Tests =====
@@ -18324,8 +19858,8 @@ class TestOutputHookEdgeCases:
 
         ctx = RunContext(
             deps=None,
-            model=None,  # type: ignore
-            usage=None,  # type: ignore
+            model=None,  # pyright: ignore[reportArgumentType]
+            usage=None,  # pyright: ignore[reportArgumentType]
             prompt='test',
             run_step=0,
             retry=0,
@@ -18345,8 +19879,8 @@ class TestOutputHookEdgeCases:
 
         ctx = RunContext(
             deps=None,
-            model=None,  # type: ignore
-            usage=None,  # type: ignore
+            model=None,  # pyright: ignore[reportArgumentType]
+            usage=None,  # pyright: ignore[reportArgumentType]
             prompt='test',
             run_step=0,
             retry=0,
@@ -18374,8 +19908,8 @@ class TestOutputHookEdgeCases:
         async def run():
             ctx = RunContext(
                 deps=None,
-                model=None,  # type: ignore
-                usage=None,  # type: ignore
+                model=None,  # pyright: ignore[reportArgumentType]
+                usage=None,  # pyright: ignore[reportArgumentType]
                 prompt='test',
                 run_step=0,
                 retry=0,
@@ -20328,6 +21862,55 @@ async def test_deferred_tool_handler_via_handle_call_external_tool_return():
     assert captured_result.metadata == {'k': 'v'}
 
 
+async def test_deferred_tool_handler_via_handle_call_tool_failed():
+    """Per-call path: handler-supplied `ToolFailed` raises `ToolFailedError`, matching a tool that raises `ToolFailed` in-process."""
+    from pydantic_ai.exceptions import CallDeferred, ToolFailed, ToolFailedError
+    from pydantic_ai.toolsets import FunctionToolset
+
+    inner_toolset = FunctionToolset()
+
+    @inner_toolset.tool_plain
+    def inner_tool() -> str:
+        raise CallDeferred
+
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(
+            calls={call.tool_call_id: ToolFailed('backend unavailable') for call in requests.calls}
+        )
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('caller_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('final')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        toolsets=[inner_toolset],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    captured_error: Any = None
+
+    @agent.tool
+    async def caller_tool(ctx: RunContext[object]) -> str:
+        nonlocal captured_error
+        assert ctx.tool_manager is not None
+        try:
+            await ctx.tool_manager.handle_call(
+                ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+            )
+        except ToolFailedError as e:
+            captured_error = e
+        return 'done'
+
+    await agent.run('go')
+    assert captured_error is not None
+    assert captured_error.tool_failed.tool_name == 'inner_tool'
+    assert captured_error.tool_failed.tool_call_id == 'inner_1'
+    assert captured_error.tool_failed.content == 'backend unavailable'
+    assert captured_error.tool_failed.outcome == 'failed'
+
+
 def test_deferred_tool_handler_serialization_name():
     """HandleDeferredToolCalls is not spec-constructible."""
     assert HandleDeferredToolCalls.get_serialization_name() is None
@@ -21174,6 +22757,178 @@ async def test_deferred_tool_handler_via_hooks_returns_none_when_unhandled():
     assert len(result.output.approvals) == 1
 
 
+# --- Agent-bound capabilities ---
+
+
+@dataclass
+class _AgentBoundCapability(AbstractCapability[Any]):
+    bound_name: str | None = None
+    for_agent_calls: int = 0
+
+    def for_agent(self, agent: AbstractAgent[Any, Any]) -> _AgentBoundCapability:
+        return replace(self, bound_name=agent.name, for_agent_calls=self.for_agent_calls + 1)
+
+    def get_instructions(self) -> str:
+        return f'Bound to {self.bound_name}.'
+
+
+async def test_for_agent_returns_bound_copy() -> None:
+    capability = _AgentBoundCapability()
+
+    first = Agent(TestModel(), name='first', capabilities=[capability])
+    second = Agent(TestModel(), name='second', capabilities=[capability])
+
+    first_bound = next(cap for cap in first.root_capability.capabilities if isinstance(cap, _AgentBoundCapability))
+    second_bound = next(cap for cap in second.root_capability.capabilities if isinstance(cap, _AgentBoundCapability))
+    assert capability.bound_name is None
+    assert first_bound is not capability
+    assert second_bound is not capability
+    assert first_bound.bound_name == 'first'
+    assert second_bound.bound_name == 'second'
+    assert first_bound.for_agent_calls == second_bound.for_agent_calls == 1
+
+    result = await first.run('hello')
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions == 'Bound to first.'
+
+
+def test_wrapper_for_agent_replaces_wrapped_capability() -> None:
+    capability = _AgentBoundCapability()
+    wrapper = WrapperCapability(capability)
+
+    agent = Agent(TestModel(), name='wrapped', capabilities=[wrapper])
+
+    bound_wrapper = next(cap for cap in agent.root_capability.capabilities if isinstance(cap, WrapperCapability))
+    assert bound_wrapper is not wrapper
+    assert cast(_AgentBoundCapability, bound_wrapper.wrapped).bound_name == 'wrapped'
+
+
+def test_wrapper_for_agent_preserves_identity_without_replacement() -> None:
+    """Identity preservation is an internal binding contract that a request cassette cannot observe."""
+    wrapper = WrapperCapability[Any](AbstractCapability[Any]())
+    agent = Agent(TestModel())
+
+    assert wrapper.for_agent(agent) is wrapper
+
+
+async def test_for_agent_composes_with_model_selection_and_resolution() -> None:
+    selected_model = TestModel(custom_output_text='selected')
+
+    @dataclass
+    class BoundModelCapability(AbstractCapability[Any]):
+        model_id: str | None = None
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> BoundModelCapability:
+            return replace(self, model_id=f'bound:{agent.name}')
+
+        def get_model(self) -> str | None:
+            return self.model_id
+
+        async def resolve_model_id(
+            self,
+            ctx: ModelResolutionContext[Any],
+            *,
+            model_id: KnownModelName | str,
+        ) -> Model | None:
+            assert ctx.agent.name == 'selector'
+            return selected_model if model_id == self.model_id else None
+
+    agent = Agent(name='selector', capabilities=[BoundModelCapability()])
+    result = await agent.run('hello')
+    assert result.output == 'selected'
+
+
+async def test_for_agent_can_introduce_model_id_resolution() -> None:
+    selected_model = TestModel(custom_output_text='selected')
+
+    @dataclass
+    class BoundResolver(AbstractCapability[Any]):
+        async def resolve_model_id(
+            self,
+            ctx: ModelResolutionContext[Any],
+            *,
+            model_id: KnownModelName | str,
+        ) -> Model | None:
+            return selected_model if model_id == 'custom-model' else None
+
+    @dataclass
+    class BindingCapability(AbstractCapability[Any]):
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            assert agent.model == 'custom-model'
+            return BoundResolver()
+
+    agent = Agent('custom-model', capabilities=[BindingCapability()])
+    assert (await agent.run('hello')).output == 'selected'
+
+
+async def test_for_agent_can_introduce_resolution_for_known_model_id() -> None:
+    selected_model = TestModel(custom_output_text='selected')
+
+    @dataclass
+    class BoundResolver(AbstractCapability[Any]):
+        async def resolve_model_id(
+            self,
+            ctx: ModelResolutionContext[Any],
+            *,
+            model_id: KnownModelName | str,
+        ) -> Model | None:
+            return selected_model if model_id == 'test' else None
+
+    @dataclass
+    class BindingCapability(AbstractCapability[Any]):
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            assert agent.model == 'test'
+            return BoundResolver()
+
+    agent = Agent('test', capabilities=[BindingCapability()])
+    assert agent.model == 'test'
+    assert (await agent.run('hello')).output == 'selected'
+
+
+def test_for_agent_without_resolver_preserves_unknown_model_error() -> None:
+    with pytest.raises(UserError, match='Unknown model: custom-model'):
+        Agent('custom-model', capabilities=[_AgentBoundCapability()])
+
+
+async def test_for_agent_binds_per_run_capabilities() -> None:
+    capability = _AgentBoundCapability()
+    agent = Agent(TestModel(), name='runner')
+
+    result = await agent.run('hello', capabilities=[capability])
+
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions == 'Bound to runner.'
+    assert capability.for_agent_calls == 0
+
+
+async def test_per_run_binding_can_supply_bootstrap_model_and_resolver() -> None:
+    """Run binding precedes bootstrap selection and resolution, an ordering contract cassettes cannot isolate."""
+    selected_model = TestModel(custom_output_text='run-bound')
+
+    @dataclass
+    class BoundRunModel(AbstractCapability[Any]):
+        def get_model(self) -> str:
+            return 'run-bound-id'
+
+        async def resolve_model_id(
+            self,
+            ctx: ModelResolutionContext[Any],
+            *,
+            model_id: KnownModelName | str,
+        ) -> Model | None:
+            return selected_model if model_id == 'run-bound-id' else None
+
+    @dataclass
+    class BindAtRun(AbstractCapability[Any]):
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            return BoundRunModel()
+
+    agent = Agent(None)
+    result = await agent.run('hello', capabilities=[BindAtRun()])
+
+    assert result.output == 'run-bound'
+
+
 # --- Dynamic capabilities ---
 
 
@@ -21198,7 +22953,7 @@ class _RecordingCapability(AbstractCapability[Any]):
 
 
 async def test_dynamic_capability_factory_called_with_run_context() -> None:
-    """The factory receives the run's RunContext (with deps) once per run."""
+    """The factory receives the run's `RunContext` (with deps) once per run."""
     seen: list[Any] = []
 
     def factory(ctx: RunContext[str]) -> AbstractCapability[Any] | None:
@@ -21209,6 +22964,34 @@ async def test_dynamic_capability_factory_called_with_run_context() -> None:
     await agent.run('hi', deps='admin')
     await agent.run('hi', deps='guest')
     assert seen == ['admin', 'guest']
+
+
+async def test_dynamic_capability_factory_result_is_bound_to_agent() -> None:
+    """A factory's standalone result is agent-bound before its run binding; a cassette cannot observe hook order."""
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return _AgentBoundCapability()
+
+    agent = Agent(TestModel(), name='dynamic', capabilities=[factory])
+    result = await agent.run('hi')
+
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions == 'Bound to dynamic.'
+
+
+async def test_for_run_result_is_not_bound_again() -> None:
+    """A specialized run-bound result skips agent binding; a provider cassette cannot observe that distinction."""
+
+    @dataclass
+    class BuildsRunCapability(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            return _AgentBoundCapability()
+
+    agent = Agent(TestModel(), name='static', capabilities=[BuildsRunCapability()])
+    result = await agent.run('hi')
+
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions == 'Bound to None.'
 
 
 async def test_dynamic_capability_async_factory() -> None:
@@ -21236,6 +23019,29 @@ async def test_dynamic_capability_returning_none_contributes_nothing() -> None:
     request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
     assert request.instructions is None
 
+    dynamic = DynamicCapability(factory)
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    assert await dynamic.for_run(ctx) is dynamic
+
+    # Direct toolset-factory call (unit-style): the standalone fallback — a context without the
+    # run's capability registry, as inside a durable unit — re-resolves the factory, and an async
+    # factory returning `None` still contributes nothing.
+    async def async_none_factory(ctx: RunContext[Any]) -> AbstractCapability[Any] | None:
+        return None
+
+    async_dynamic = DynamicCapability(async_none_factory)
+    resolved = async_dynamic.get_toolset().toolset_func(ctx)
+    assert inspect.isawaitable(resolved)
+    assert await resolved is None
+
+
+def test_dynamic_capability_toolset_is_cached_and_inherits_id() -> None:
+    dynamic = DynamicCapability(lambda ctx: None, id='x')
+    toolset = dynamic.get_toolset()
+
+    assert toolset.id == 'x'
+    assert dynamic.get_toolset() is toolset
+
 
 async def test_dynamic_capability_contributes_instructions_per_run() -> None:
     """Resolved capability's instructions flow through to the model request."""
@@ -21257,7 +23063,8 @@ async def test_dynamic_capability_contributes_instructions_per_run() -> None:
 
 
 async def test_dynamic_capability_contributes_toolset() -> None:
-    """Resolved capability's toolset is exposed to the model and its tools execute."""
+    """The resolved toolset is exposed once while instructions and settings still apply."""
+    calls = 0
     toolset = FunctionToolset()
 
     @toolset.tool_plain
@@ -21266,16 +23073,26 @@ async def test_dynamic_capability_contributes_toolset() -> None:
 
     @dataclass
     class ToolCap(AbstractCapability):
-        def get_toolset(self):
+        def get_instructions(self) -> str:
+            return 'Use the special tool.'
+
+        def get_model_settings(self) -> _ModelSettings:
+            return _ModelSettings(temperature=0.25)
+
+        def get_toolset(self) -> AbstractToolset[Any]:
             return toolset
 
     def factory(ctx: RunContext[bool]) -> AbstractCapability[Any] | None:
+        nonlocal calls
+        calls += 1
         return ToolCap() if ctx.deps else None
 
     seen_tools: list[str] = []
+    seen_temperatures: list[float | None] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen_tools.append(','.join(sorted(t.name for t in info.function_tools)))
+        seen_temperatures.append(info.model_settings.get('temperature') if info.model_settings else None)
         # On the first request call the tool if it's available; on the follow-up
         # request after the tool return, finish.
         already_called = any(
@@ -21296,9 +23113,141 @@ async def test_dynamic_capability_contributes_toolset() -> None:
         if isinstance(p, ToolReturnPart)
     ]
     assert tool_returns == ['used']
+    first_request = next(m for m in with_tool.all_messages() if isinstance(m, ModelRequest))
+    assert first_request.instructions == 'Use the special tool.'
 
     await agent.run('hi', deps=False)
     assert seen_tools == ['special', 'special', '']
+    assert seen_temperatures == [0.25, 0.25, None]
+    assert calls == 2
+
+
+async def test_dynamic_capability_contributes_toolset_function() -> None:
+    """A resolved capability may contribute a toolset *function*; it's evaluated with the run context."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def func_tool() -> str:
+        return 'from func'  # pragma: no cover — the tool listing is what's asserted
+
+    @dataclass
+    class AsyncToolFuncCap(AbstractCapability):
+        def get_toolset(self):
+            async def toolset_func(ctx: RunContext[Any]) -> AbstractToolset[Any] | None:
+                return toolset if ctx.deps else None
+
+            return toolset_func
+
+    @dataclass
+    class SyncToolFuncCap(AbstractCapability):
+        def get_toolset(self):
+            def toolset_func(ctx: RunContext[Any]) -> AbstractToolset[Any] | None:
+                return toolset
+
+            return toolset_func
+
+    seen_tools: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tools.append(','.join(sorted(t.name for t in info.function_tools)))
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        deps_type=bool,
+        capabilities=[DynamicCapability(lambda ctx: AsyncToolFuncCap())],
+    )
+    await agent.run('hi', deps=True)
+    await agent.run('hi', deps=False)
+
+    sync_agent = Agent(
+        FunctionModel(respond),
+        deps_type=bool,
+        capabilities=[DynamicCapability(lambda ctx: SyncToolFuncCap())],
+    )
+    await sync_agent.run('hi', deps=True)
+    assert seen_tools == ['func_tool', '', 'func_tool']
+
+
+async def test_dynamic_capability_instructions_and_tools_share_resolved_state() -> None:
+    """Instructions and tools observe the *same* resolved capability instance per run.
+
+    The factory allocates fresh state on every call, so if the contributed toolset were
+    resolved through a second factory invocation, the tool would see different state than
+    the instructions.
+    """
+    resolution_count = 0
+
+    @dataclass
+    class StatefulCap(AbstractCapability):
+        token: str = ''
+
+        def get_instructions(self) -> str:
+            return f'Token is {self.token}.'
+
+        def get_toolset(self):
+            toolset = FunctionToolset()
+
+            @toolset.tool_plain
+            def read_token() -> str:
+                return self.token
+
+            return toolset
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        nonlocal resolution_count
+        resolution_count += 1
+        return StatefulCap(token=f'run-{resolution_count}')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not tool_returns:
+            return ModelResponse(parts=[ToolCallPart(tool_name='read_token', args={}, tool_call_id='read')])
+        return make_text_response(str(tool_returns[0].content))
+
+    agent = Agent(FunctionModel(respond), capabilities=[factory])
+    result = await agent.run('hi')
+    first_request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert first_request.instructions == 'Token is run-1.'
+    assert result.output == 'run-1'
+    assert resolution_count == 1
+
+
+async def test_dynamic_capability_returning_deferred_capability() -> None:
+    """A factory-returned deferred capability keeps its tools hidden until `load_capability`."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def hidden_tool() -> str:
+        return 'now visible'
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return Capability(
+            id='skills',
+            description='Deferred skills.',
+            toolsets=[toolset],
+            defer_loading=True,
+        )
+
+    seen_defer_flags: list[bool] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        hidden_def = next(t for t in info.function_tools if t.name == 'hidden_tool')
+        # `defer_loading=True` is what keeps the tool off the provider wire until loaded.
+        seen_defer_flags.append(hidden_def.defer_loading)
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'skills'}, tool_call_id='load')]
+            )
+        if not any(part.tool_name == 'hidden_tool' for part in tool_returns):
+            return ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='use')])
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(respond), capabilities=[factory])
+    result = await agent.run('hi')
+    assert result.output == 'done'
+    assert seen_defer_flags == [True, False, False]
 
 
 async def test_dynamic_capability_hooks_fire() -> None:
@@ -21515,13 +23464,12 @@ async def test_dynamic_capability_wraps_func_in_constructor() -> None:
 
 def test_dynamic_capability_rejects_wrapper_fields() -> None:
     """`defer_loading` on the wrapper would otherwise be silently ignored — reject at construction."""
-    from pydantic_ai.capabilities import DynamicCapability
 
     def factory(ctx: RunContext) -> AbstractCapability[Any]:
         return _RecordingCapability(label='x')  # pragma: no cover
 
     with pytest.raises(UserError, match='not supported on `DynamicCapability`'):
-        DynamicCapability(capability_func=factory, defer_loading=True)
+        DynamicCapability(factory, defer_loading=True)
 
 
 # endregion

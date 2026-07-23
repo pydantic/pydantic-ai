@@ -1,6 +1,5 @@
 from importlib.metadata import version as _metadata_version
 
-from ._template import TemplateStr
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -39,6 +38,7 @@ from .exceptions import (
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    ToolFailed,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -111,7 +111,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
-from .models import ModelRequestContext
+from .models import ModelRequestContext, ModelResolutionContext, ModelSelectionContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
     CodeExecutionTool,
@@ -134,6 +134,7 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
+from .template import TemplateStr
 from .tools import (
     AgentNativeTool,
     DeferredToolRequests,
@@ -195,6 +196,7 @@ __all__ = (
     'ApprovalRequired',
     'ConcurrencyLimitExceeded',
     'ModelRetry',
+    'ToolFailed',
     'ModelAPIError',
     'ModelHTTPError',
     'FallbackExceptionGroup',
@@ -328,6 +330,8 @@ __all__ = (
     'format_as_xml',
     # models
     'ModelRequestContext',
+    'ModelResolutionContext',
+    'ModelSelectionContext',
     # settings
     'ModelSettings',
     'ToolChoice',

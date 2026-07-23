@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
@@ -22,7 +22,7 @@ from pydantic_ai._instrumentation import (
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._utils import UNSET, Unset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
@@ -61,6 +61,12 @@ class Instrumentation(AbstractCapability[Any]):
 
     Other capabilities can add attributes to these spans using the OpenTelemetry API
     (`opentelemetry.trace.get_current_span().set_attribute(key, value)`).
+    """
+
+    _safe_at_runtime: ClassVar[bool] = True
+    """Workflow-side only — no toolsets, native tools, or model wrapping introduced — so safe
+    to attach per-run even when a durability capability is bound. Internal flag read by the
+    bundled durable-execution integrations.
     """
 
     settings: InstrumentationSettings = field(default_factory=lambda: _default_settings())
@@ -375,6 +381,12 @@ class Instrumentation(AbstractCapability[Any]):
                     # Tool retries are surfaced as model-visible errors; record the prompt
                     # the model will see as the tool result before re-raising.
                     span.set_attribute(names.tool_result_attr, e.tool_retry.model_response())
+                span.record_exception(e, escaped=True)
+                span.set_status(StatusCode.ERROR)
+                raise
+            except ToolFailedError as e:
+                if handle_tool_control_flow and include_content and span.is_recording():
+                    span.set_attribute(names.tool_result_attr, e.tool_failed.model_response_str(wrap_if_error=False))
                 span.record_exception(e, escaped=True)
                 span.set_status(StatusCode.ERROR)
                 raise

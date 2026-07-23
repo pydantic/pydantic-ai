@@ -40,6 +40,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestContext,
     ModelResponse,
+    ModelResponseStreamEvent,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -49,6 +50,7 @@ from pydantic_ai import (
     RunContext,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UnexpectedModelBehavior,
@@ -66,6 +68,7 @@ from pydantic_ai._sync_stream import (
     _request_exit,  # pyright: ignore[reportPrivateUsage]
     _run_task_to_completion,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -74,9 +77,9 @@ from pydantic_ai.capabilities import (
     WrapModelRequestHandler,
 )
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
+from pydantic_ai.models import CompletedStreamedResponse
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
-from pydantic_ai.models.wrapper import CompletedStreamedResponse
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
@@ -6325,7 +6328,7 @@ async def test_stream_cancel_outranks_incomplete_state_hint():
 
 async def test_completed_streamed_response_cancel_noop():
     response = ModelResponse(parts=[TextPart(content='done')], model_name='test')
-    streamed_response = CompletedStreamedResponse(models.ModelRequestParameters(), response)
+    streamed_response = CompletedStreamedResponse(response, model_request_parameters=models.ModelRequestParameters())
 
     await streamed_response.cancel()
     await streamed_response.cancel()
@@ -6333,6 +6336,279 @@ async def test_completed_streamed_response_cancel_noop():
     assert streamed_response.cancelled
     assert streamed_response.response is response
     assert response.state == 'complete'
+
+
+async def test_completed_streamed_response_metadata():
+    """`CompletedStreamedResponse` forwards `model_name`/`provider_name`/`provider_url`/`timestamp`/`usage` to the response."""
+    ts = datetime.datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    response = ModelResponse(
+        parts=[TextPart(content='done')],
+        model_name='test-model',
+        provider_name='test-provider',
+        provider_url='https://test.example.com',
+        timestamp=ts,
+        usage=RequestUsage(input_tokens=10, output_tokens=20),
+    )
+    streamed_response = CompletedStreamedResponse(response, model_request_parameters=models.ModelRequestParameters())
+
+    assert streamed_response.model_name == 'test-model'
+    assert streamed_response.provider_name == 'test-provider'
+    assert streamed_response.provider_url == 'https://test.example.com'
+    assert streamed_response.timestamp == ts
+    assert streamed_response.usage == RequestUsage(input_tokens=10, output_tokens=20)
+
+    # `model_name` falls back to `''` when the response has none — matches the abstract `str` return type.
+    empty = CompletedStreamedResponse(
+        ModelResponse(parts=[TextPart(content='hi')]), model_request_parameters=models.ModelRequestParameters()
+    )
+    assert empty.model_name == ''
+    assert empty.provider_name is None
+    assert empty.provider_url is None
+
+
+@pytest.fixture
+def replay_mrp() -> models.ModelRequestParameters:
+    return models.ModelRequestParameters(
+        function_tools=[],
+        native_tools=[],
+        output_mode='text',
+        allow_text_output=True,
+        output_tools=[],
+        output_object=None,
+    )
+
+
+@pytest.fixture
+def replay_timestamp() -> datetime.datetime:
+    return datetime.datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def replay_response(replay_timestamp: datetime.datetime) -> ModelResponse:
+    return ModelResponse(
+        parts=[
+            TextPart(content='Hello world'),
+            ThinkingPart(content='Let me think about this'),
+            ToolCallPart(tool_name='get_weather', args='{"city": "London"}', tool_call_id='call_1'),
+        ],
+        model_name='test-model',
+        provider_name='test-provider',
+        provider_url='https://test.example.com',
+        timestamp=replay_timestamp,
+        usage=RequestUsage(input_tokens=10, output_tokens=20),
+    )
+
+
+async def test_replay_streamed_response_cancel_noop(
+    replay_mrp: models.ModelRequestParameters,
+) -> None:
+    """`cancel()` on a replayed `CompletedStreamedResponse` is a no-op — events are replayed locally, no live connection to close."""
+    response = ModelResponse(parts=[TextPart(content='done')], model_name='test')
+    streamed_response = CompletedStreamedResponse(response, model_request_parameters=replay_mrp, replay_events=True)
+
+    await streamed_response.cancel()
+    await streamed_response.cancel()
+
+    assert streamed_response.cancelled
+    assert streamed_response.get() is response
+
+
+async def test_replay_streamed_response_events(
+    replay_mrp: models.ModelRequestParameters, replay_response: ModelResponse
+) -> None:
+    """Verify that `CompletedStreamedResponse(replay_events=True)` replays all part types as stream events.
+
+    Each part is delivered as a single `PartStartEvent` carrying its full content, like a real
+    stream that emits the part in one chunk — deliberately with no follow-up `PartDeltaEvent`, so
+    reducing the stream reconstructs the response exactly instead of doubling the content.
+    """
+    stream = CompletedStreamedResponse(replay_response, model_request_parameters=replay_mrp, replay_events=True)
+    events = [event async for event in stream]
+
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='Hello world')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(
+                index=0,
+                part=TextPart(content='Hello world'),
+                next_part_kind='thinking',
+            ),
+            PartStartEvent(index=1, part=ThinkingPart(content='Let me think about this'), previous_part_kind='text'),
+            PartEndEvent(
+                index=1,
+                part=ThinkingPart(content='Let me think about this'),
+                next_part_kind='tool-call',
+            ),
+            PartStartEvent(
+                index=2,
+                part=ToolCallPart(tool_name='get_weather', args='{"city": "London"}', tool_call_id='call_1'),
+                previous_part_kind='thinking',
+            ),
+            PartEndEvent(
+                index=2,
+                part=ToolCallPart(
+                    tool_name='get_weather',
+                    args='{"city": "London"}',
+                    tool_call_id='call_1',
+                ),
+            ),
+        ]
+    )
+
+    # Round-trip: a standard reducer applies `PartStartEvent.part` as the initial state and then
+    # each `PartDeltaEvent`. Synthesis must emit no deltas — a full-content start followed by a
+    # full-content delta would double the text/thinking/args — so reducing the starts alone must
+    # reconstruct `response.parts` exactly.
+    assert not any(isinstance(event, PartDeltaEvent) for event in events)
+    reduced = {event.index: event.part for event in events if isinstance(event, PartStartEvent)}
+    assert [reduced[index] for index in sorted(reduced)] == replay_response.parts
+
+
+def test_completed_streamed_response_deprecated_positional_init(
+    replay_mrp: models.ModelRequestParameters, replay_response: ModelResponse
+) -> None:
+    """The pre-v3 positional `(model_request_parameters, response)` order still works, with a warning.
+
+    `CompletedStreamedResponse` was public under `pydantic_ai.models.wrapper` with that
+    signature before it moved to `pydantic_ai.models`.
+    """
+    with pytest.warns(PydanticAIDeprecationWarning, match='pass the response first'):
+        stream = CompletedStreamedResponse(replay_mrp, replay_response)  # pyright: ignore[reportDeprecated]
+    assert stream.get() is replay_response
+    assert stream.model_request_parameters is replay_mrp
+
+
+async def test_completed_streamed_response_replay_events(
+    replay_mrp: models.ModelRequestParameters, replay_response: ModelResponse
+) -> None:
+    """`replay_events` is the primary keyword and accepts synthesized or captured events."""
+    stream = CompletedStreamedResponse(
+        model_request_parameters=replay_mrp,
+        response=replay_response,
+        replay_events=True,
+    )
+    replayed_events = [event async for event in stream]
+    assert replayed_events
+
+    buffered_stream = CompletedStreamedResponse(
+        model_request_parameters=replay_mrp,
+        response=replay_response,
+        replay_events=replayed_events,
+    )
+    assert [event async for event in buffered_stream] == replayed_events
+
+
+@pytest.mark.parametrize('events', [True, [PartStartEvent(index=0, part=TextPart(content='hi'))]])
+async def test_completed_streamed_response_deprecated_events(
+    replay_mrp: models.ModelRequestParameters,
+    replay_response: ModelResponse,
+    events: bool | list[ModelResponseStreamEvent],
+) -> None:
+    """`events` remains as a deprecated alias for both supported value forms."""
+    with pytest.warns(PydanticAIDeprecationWarning, match='`events`'):
+        stream = CompletedStreamedResponse(  # pyright: ignore[reportDeprecated]
+            replay_response,
+            model_request_parameters=replay_mrp,
+            events=events,
+        )
+    assert [event async for event in stream]
+
+
+async def test_completed_streamed_response_replay_events_wins_over_deprecated_events(
+    replay_mrp: models.ModelRequestParameters, replay_response: ModelResponse
+) -> None:
+    """An explicit `replay_events` beats the deprecated `events` alias when both are passed."""
+    with pytest.warns(PydanticAIDeprecationWarning, match='`events`'):
+        stream = CompletedStreamedResponse(  # pyright: ignore[reportCallIssue]
+            replay_response,
+            model_request_parameters=replay_mrp,
+            replay_events=True,
+            events=False,
+        )
+    assert [event async for event in stream]
+
+
+def test_completed_streamed_response_deprecated_import_path() -> None:
+    """The pre-v3 `pydantic_ai.models.wrapper` import path still works, with a warning.
+
+    The import is inside the test because triggering the module `__getattr__` shim *is*
+    the behavior under test.
+    """
+    with pytest.warns(PydanticAIDeprecationWarning, match='moved'):
+        from pydantic_ai.models.wrapper import CompletedStreamedResponse as OldCompletedStreamedResponse
+    assert OldCompletedStreamedResponse is CompletedStreamedResponse
+
+
+async def test_replay_streamed_response_buffered_aiter_idempotent(
+    replay_mrp: models.ModelRequestParameters, replay_response: ModelResponse
+) -> None:
+    """`__aiter__` is idempotent on the buffered path — second call returns the same iterator."""
+    buffered: list[ModelResponseStreamEvent] = [PartStartEvent(index=0, part=TextPart(content='hi'))]
+    stream = CompletedStreamedResponse(replay_response, model_request_parameters=replay_mrp, replay_events=buffered)
+    first = stream.__aiter__()
+    second = stream.__aiter__()
+    assert first is second
+
+
+async def test_replay_streamed_response_get(
+    replay_mrp: models.ModelRequestParameters, replay_response: ModelResponse
+) -> None:
+    """`get()` returns the wrapped `ModelResponse`."""
+    stream = CompletedStreamedResponse(replay_response, model_request_parameters=replay_mrp, replay_events=True)
+    assert stream.get() is replay_response
+
+
+async def test_replay_streamed_response_metadata(
+    replay_mrp: models.ModelRequestParameters,
+    replay_response: ModelResponse,
+    replay_timestamp: datetime.datetime,
+) -> None:
+    """Metadata properties delegate to the underlying response."""
+    stream = CompletedStreamedResponse(replay_response, model_request_parameters=replay_mrp, replay_events=True)
+    assert stream.usage == RequestUsage(input_tokens=10, output_tokens=20)
+    assert stream.model_name == 'test-model'
+    assert stream.provider_name == 'test-provider'
+    assert stream.provider_url == 'https://test.example.com'
+    assert stream.timestamp == replay_timestamp
+
+
+async def test_replay_streamed_response_metadata_defaults(
+    replay_mrp: models.ModelRequestParameters,
+) -> None:
+    """When the response lacks provider info, `model_name` defaults to `''` and `provider_name`/`provider_url` to `None`."""
+    response = ModelResponse(parts=[TextPart(content='hi')])
+    stream = CompletedStreamedResponse(response, model_request_parameters=replay_mrp, replay_events=True)
+    assert stream.model_name == ''
+    assert stream.provider_name is None
+    assert stream.provider_url is None
+
+
+async def test_replay_streamed_response_empty_text_part(
+    replay_mrp: models.ModelRequestParameters,
+) -> None:
+    """An empty `TextPart` emits a `PartStartEvent` but no `PartDeltaEvent`."""
+    response = ModelResponse(parts=[TextPart(content='')])
+    stream = CompletedStreamedResponse(response, model_request_parameters=replay_mrp, replay_events=True)
+    events = [event async for event in stream]
+
+    # Empty text: PartStartEvent, FinalResultEvent (from allow_text_output), PartEndEvent
+    assert isinstance(events[0], PartStartEvent)
+    assert isinstance(events[1], FinalResultEvent)
+    assert isinstance(events[2], PartEndEvent)
+
+
+async def test_replay_streamed_response_empty_thinking_part(
+    replay_mrp: models.ModelRequestParameters,
+) -> None:
+    """An empty `ThinkingPart` emits a `PartStartEvent` but no `PartDeltaEvent`."""
+    response = ModelResponse(parts=[ThinkingPart(content='')])
+    stream = CompletedStreamedResponse(response, model_request_parameters=replay_mrp, replay_events=True)
+    events = [event async for event in stream]
+
+    assert len(events) == 2
+    assert isinstance(events[0], PartStartEvent)
+    assert isinstance(events[1], PartEndEvent)
 
 
 async def test_stream_response_state_incomplete_until_finished():
