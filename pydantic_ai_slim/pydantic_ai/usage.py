@@ -145,13 +145,16 @@ class UsageBase:
     def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
         """Preserve arbitrary usage fields across Pydantic serialization."""
         schema = handler(source_type)
-        reserved_names = frozenset(dir(source_type)) | _LEGACY_USAGE_KEYS
+        field_names = frozenset(field.name for field in dataclasses.fields(source_type))
+        reserved_names = field_names | frozenset(dir(source_type)) | _LEGACY_USAGE_KEYS
         arbitrary_value_serializer = SchemaSerializer(core_schema.any_schema())
 
         def validate(value: Any, inner: core_schema.ValidatorFunctionWrapHandler) -> UsageBase:
             if isinstance(value, dict):
                 value_dict = cast(dict[str, Any], value)
                 input_value = value_dict.copy()
+                if not value_dict.get('details'):
+                    input_value['details'] = {}
                 for field_name, legacy_name in _LEGACY_TOKEN_ALIASES:
                     if field_name not in value_dict and legacy_name in value_dict and value_dict[legacy_name] is None:
                         input_value[legacy_name] = 0

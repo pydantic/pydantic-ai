@@ -473,6 +473,15 @@ def test_usage_reserved_fields_not_loaded_as_arbitrary(
     assert 'cache_hit_ratio' not in loaded.__dict__
 
 
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_details_none_deserialization(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    loaded = TypeAdapter(usage_type).validate_python({'details': None})
+
+    assert loaded.details == {}
+
+
 def test_usage_arbitrary_fields_pydantic_serialization_filters():
     adapter = TypeAdapter(RequestUsage)
     usage = RequestUsage(
