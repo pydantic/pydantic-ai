@@ -144,7 +144,7 @@ async def test_create_client_secret(openai_api_key: str, request: pytest.Fixture
     assert secret.value
     assert secret.expires_at.tzinfo is not None
     # The secret expires shortly after recording, so only a live response can remain future-dated.
-    if request.config.getoption('record_mode') == 'rewrite':
+    if request.config.getoption('record_mode') == 'rewrite':  # pragma: no cover - only while recording
         assert secret.expires_at > datetime.now(timezone.utc)
 
 
