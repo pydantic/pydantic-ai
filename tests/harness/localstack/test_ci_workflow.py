@@ -82,8 +82,12 @@ def test_localstack_ci_scopes_the_auth_token_to_the_test_step() -> None:
     lines = _workflow_lines()
 
     # The token is scoped to the integration-test step, not the job-level env, so
-    # the checkout and setup steps never receive the secret.
+    # the checkout and setup steps never receive the secret. The job must not use
+    # a protected environment that creates deployment approval notifications.
     run_index = lines.index('      - run: make integration-localstack')
-    step_block = lines[run_index : run_index + 4]
-    assert '          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}' in step_block
+    step_block = lines[run_index : run_index + 5]
+    assert (
+        '          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }} # zizmor: ignore[secrets-outside-env]'
+    ) in step_block
     assert '      LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}' not in lines
+    assert '    environment: localstack-integration' not in lines
