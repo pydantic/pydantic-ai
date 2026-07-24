@@ -1628,6 +1628,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 (but not `new_messages()`). Hand off from a prior session or a standard
                 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] by passing its messages here.
         """
+        # Infer the agent name from the calling frame like `run`/`iter` do, so an unnamed agent's
+        # realtime session span is labelled with the variable name (e.g. `agent`) rather than a
+        # generic fallback — the name is what backends use to tell agent runs apart.
+        if self.name is None:
+            self._infer_name(inspect.currentframe())
         return AgentRealtime(
             _agent=self,
             _model=model,

@@ -1424,11 +1424,35 @@ class RealtimeSession:
         if self._metadata is not None:
             attributes['metadata'] = safe_to_json(serialize_any(self._metadata)).decode()
             schema_properties['metadata'] = {}
+        # Mirror the classic run span's `final_result` (set by the `Instrumentation` capability): a
+        # realtime session has no single output, so use the most recent assistant reply's text, which the
+        # Logfire UI renders as the run's final response. Gated on `include_content` like the classic span.
+        if settings.include_content and (final_result := self._final_result_text()) is not None:
+            attributes['final_result'] = final_result
         if schema_properties:
             attributes['logfire.json_schema'] = pydantic_core.to_json(
                 {'type': 'object', 'properties': schema_properties}
             ).decode()
         span.set_attributes(attributes)
+
+    def _final_result_text(self) -> str | None:
+        """The most recent assistant reply's text, for the session span's `final_result`.
+
+        Concatenates the text/transcript of the last `ModelResponse` that carries any, so a response
+        that only made a tool call falls through to the spoken reply that followed it.
+        """
+        for message in reversed(self.all_messages()):
+            if not isinstance(message, ModelResponse):
+                continue
+            texts: list[str] = []
+            for part in message.parts:
+                if isinstance(part, TextPart) and part.content:
+                    texts.append(part.content)
+                elif isinstance(part, SpeechPart) and part.transcript:
+                    texts.append(part.transcript)
+            if texts:
+                return ''.join(texts)
+        return None
 
     async def _execute_tool(
         self,

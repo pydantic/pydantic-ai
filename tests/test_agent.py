@@ -4588,6 +4588,17 @@ async def test_agent_name():
     assert my_agent.name == 'my_agent'
 
 
+def test_agent_name_inferred_from_realtime():
+    # `realtime()` infers the agent name from the calling frame like `run`/`iter`, so an unnamed agent's
+    # realtime session span is labelled with the variable name rather than a generic fallback.
+    my_realtime_agent = Agent('test')
+
+    assert my_realtime_agent.name is None
+
+    my_realtime_agent.realtime('openai:gpt-realtime')
+    assert my_realtime_agent.name == 'my_realtime_agent'
+
+
 async def test_agent_name_already_set():
     my_agent = Agent('test', name='fig_tree')
 
