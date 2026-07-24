@@ -7104,7 +7104,11 @@ def test_advisor_tool_max_tokens_validation():
 
 
 def test_anthropic_advisor_tool_request_shape():
-    """`_add_native_tools` emits the advisor tool definition and beta header, translating `caching`."""
+    """`_add_native_tools` emits the advisor tool definition and beta header, translating `caching`.
+
+    This intentionally calls the private mapper because the VCR matcher does not compare request
+    bodies and therefore cannot pin the exact tool definition.
+    """
     m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='test-key'))
 
     full = ModelRequestParameters(
@@ -7243,7 +7247,11 @@ async def test_anthropic_advisor_result_variants(
 
 
 async def test_anthropic_advisor_usage_iterations():
-    """Advisor iteration tokens are recorded under `advisor_*` keys and excluded from request totals."""
+    """Advisor iteration tokens are recorded under `advisor_*` keys and excluded from request totals.
+
+    This intentionally calls the private usage mapper because a VCR test cannot isolate whether
+    advisor iteration tokens were folded into the normalized request totals.
+    """
     usage_with_advisor = BetaUsage(
         input_tokens=100,
         output_tokens=50,
@@ -7313,7 +7321,11 @@ def _advisor_history(m: AnthropicModel) -> list[ModelMessage]:
 
 
 async def test_anthropic_advisor_history_replayed_when_active():
-    """With the advisor tool in the request, advisor call/result blocks round-trip verbatim."""
+    """With the advisor tool in the request, advisor call/result blocks round-trip verbatim.
+
+    This intentionally calls the private message mapper because the VCR matcher does not compare
+    request bodies and therefore cannot pin the exact replayed blocks.
+    """
     m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key='test-key'))
     mrp = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-opus-4-8')])
     _, anthropic_messages = await m._map_message(_advisor_history(m), mrp, {})  # pyright: ignore[reportPrivateUsage]
@@ -7333,7 +7345,11 @@ async def test_anthropic_advisor_history_replayed_when_active():
 
 
 async def test_anthropic_advisor_history_dropped_when_absent():
-    """Without the advisor tool in the request, advisor call/result blocks are stripped from history."""
+    """Without the advisor tool in the request, advisor call/result blocks are stripped from history.
+
+    This intentionally calls the private message mapper because the VCR matcher does not compare
+    request bodies and therefore cannot prove the advisor blocks were omitted.
+    """
     m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key='test-key'))
     mrp = ModelRequestParameters(native_tools=[])
     _, anthropic_messages = await m._map_message(_advisor_history(m), mrp, {})  # pyright: ignore[reportPrivateUsage]
@@ -7371,7 +7387,11 @@ async def test_anthropic_advisor_history_dropped_for_count_tokens(allow_model_re
 
 
 async def test_anthropic_advisor_dangling_call_replayed_when_active():
-    """A dangling advisor call (pause_turn resume) with no paired result replays verbatim when active."""
+    """A dangling advisor call (pause-turn resume) with no paired result replays verbatim when active.
+
+    This intentionally calls the private message mapper because the VCR matcher does not compare
+    request bodies and therefore cannot pin the dangling replay shape.
+    """
     m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key='test-key'))
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='What is 2 + 2?')]),
