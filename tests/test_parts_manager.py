@@ -708,3 +708,26 @@ def test_get_part_by_vendor_id():
     assert part == snapshot(TextPart(content='hello', part_kind='text'))
 
     assert manager.get_part_by_vendor_id('missing') is None
+
+
+def test_apply_event_with_tool_call_delta_and_dovetailed_parts():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+
+    # Create an incomplete ToolCallPartDelta at index 0 (not in get_parts())
+    manager.handle_tool_call_delta(vendor_part_id='tool_0', args='{"arg":')
+
+    # Create TextPart at index 1
+    event_text_start = next(manager.handle_text_delta(vendor_part_id='text_1', content='hello '))
+    assert event_text_start.index == 1
+
+    # Update TextPart at index 1
+    event_text_delta = next(manager.handle_text_delta(vendor_part_id='text_1', content='world'))
+    assert event_text_delta.index == 1
+
+    # Replay on a new manager
+    replay_manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    replay_manager.handle_tool_call_delta(vendor_part_id='tool_0', args='{"arg":')
+    replay_manager.apply_event(event_text_start)
+    replay_manager.apply_event(event_text_delta)
+
+    assert replay_manager.get_parts() == snapshot([TextPart(content='hello world', part_kind='text')])

@@ -535,5 +535,16 @@ class ModelResponsePartsManager:
         if isinstance(event, PartStartEvent):
             self.handle_part(vendor_part_id=event.index, part=event.part)
         elif isinstance(event, PartDeltaEvent):
-            part = self.get_parts()[event.index]
-            self.handle_part(vendor_part_id=event.index, part=event.delta.apply(part))
+            existing_part = self._parts[event.index]
+            delta = event.delta
+            if isinstance(delta, TextPartDelta) and isinstance(existing_part, TextPart):
+                self._parts[event.index] = delta.apply(existing_part)
+            elif isinstance(delta, ThinkingPartDelta) and isinstance(existing_part, ThinkingPart):
+                self._parts[event.index] = delta.apply(existing_part)
+            elif isinstance(delta, ToolCallPartDelta) and isinstance(
+                existing_part, ToolCallPartDelta | ToolCallPart | NativeToolCallPart
+            ):
+                updated_part = delta.apply(existing_part)
+                if isinstance(updated_part, ToolCallPart):
+                    updated_part = self._typed_call_part(updated_part)
+                self._parts[event.index] = updated_part
