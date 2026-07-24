@@ -9,6 +9,7 @@ unit tests use `httpx.MockTransport` only for our own guards, error formatting, 
 
 from __future__ import annotations as _annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,6 +20,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters
 
 from ..conftest import try_import
+from .conftest import _scrub_ephemeral_secret
 
 with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
@@ -111,6 +113,20 @@ def _unused_handler(request: httpx.Request) -> httpx.Response:
 )
 def test_parse_call_id(location: str | None, expected: str | None) -> None:
     assert parse_call_id(location) == expected
+
+
+def test_scrub_ephemeral_secret_redacts_client_secret() -> None:
+    """The VCR `before_record_response` hook redacts the minted `ek_...` client secret from recorded bodies.
+
+    A unit test because the hook only runs while *recording* a cassette; offline replay never invokes it,
+    so a cassette test can't reach it — yet it's the guard that keeps recorded signaling cassettes free of
+    anything secret-shaped.
+    """
+    minted = {'body': {'string': json.dumps({'value': 'ek_live_secret', 'expires_at': 1}).encode()}}
+    assert json.loads(_scrub_ephemeral_secret(minted)['body']['string'])['value'] == 'ek_scrubbed'
+    # A non-secret JSON body is returned unchanged.
+    other = {'body': {'string': b'{"foo": "bar"}'}}
+    assert _scrub_ephemeral_secret(other)['body']['string'] == b'{"foo": "bar"}'
 
 
 # --- client secret minting --------------------------------------------------------------------------
