@@ -860,12 +860,6 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     validator: SchemaValidator
     _function_schema: _function_schema.FunctionSchema | None = None
 
-    @property
-    def single_arg_name(self) -> str | None:
-        if self._function_schema:
-            return self._function_schema.single_arg_name
-        return None
-
     def __init__(
         self,
         output: OutputTypeOrFunction[OutputDataT],
@@ -1478,8 +1472,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             if examples:
                 examples = _process_examples(
                     examples,
-                    single_arg_name=processor.single_arg_name,
-                    parameters_json_schema=processor.object_def.json_schema,
                     outer_typed_dict_key=processor.outer_typed_dict_key,
                 )
 

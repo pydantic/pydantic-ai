@@ -290,8 +290,6 @@ def _validate_timeout(timeout: float | None) -> None:
 
 def _process_examples(
     examples: list[Any],
-    single_arg_name: str | None = None,
-    parameters_json_schema: ObjectJsonSchema | None = None,
     outer_typed_dict_key: str | None = None,
 ) -> list[dict[str, Any]]:
     """Serialize tool examples into the shape sent to the model."""
@@ -300,13 +298,6 @@ def _process_examples(
         processed_example: Any = to_jsonable_python(example)
         if outer_typed_dict_key:
             processed_example = {outer_typed_dict_key: processed_example}
-        elif (
-            single_arg_name
-            and _utils.is_str_dict(processed_example)
-            and list(processed_example) == [single_arg_name]
-            and single_arg_name not in (parameters_json_schema or {}).get('properties', {})
-        ):
-            processed_example = processed_example[single_arg_name]
         if not _utils.is_str_dict(processed_example):
             raise UserError('Tool examples must be JSON objects.')
         processed_examples.append(processed_example)
@@ -329,7 +320,7 @@ class Tool(Generic[ToolAgentDepsT]):
     strict: bool | None
     sequential: bool
     requires_approval: bool
-    examples: list[Any] | None
+    examples: list[dict[str, Any]] | None
     metadata: dict[str, Any] | None
     timeout: float | None
     defer_loading: bool
@@ -357,7 +348,7 @@ class Tool(Generic[ToolAgentDepsT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
-        examples: list[Any] | None = None,
+        examples: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
@@ -474,7 +465,7 @@ class Tool(Generic[ToolAgentDepsT]):
         takes_ctx: bool = False,
         sequential: bool = False,
         args_validator: ArgsValidatorFunc[Any, ...] | None = None,
-        examples: list[Any] | None = None,
+        examples: list[dict[str, Any]] | None = None,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
@@ -530,11 +521,7 @@ class Tool(Generic[ToolAgentDepsT]):
     def tool_def(self) -> ToolDefinition:
         examples = self.examples
         if examples:
-            examples = _process_examples(
-                examples,
-                single_arg_name=self.function_schema.single_arg_name,
-                parameters_json_schema=self.function_schema.json_schema,
-            )
+            examples = _process_examples(examples)
 
         return ToolDefinition(
             name=self.name,

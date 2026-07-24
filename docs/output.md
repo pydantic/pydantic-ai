@@ -366,6 +366,8 @@ _(This example is complete, it can be run "as is")_
 
 You can provide examples of correct output tool usage with the `examples` parameter on [`ToolOutput`][pydantic_ai.output.ToolOutput]. Pydantic AI sends them through Anthropic's native `input_examples` field when the transport supports it. Other providers and legacy Amazon Bedrock include them in the tool description.
 
+Examples are semantic output values. Pydantic AI serializes them into the output tool's input shape but does not validate them locally, so each serialized example must match the output tool's JSON Schema.
+
 ```python {title="output_examples.py"}
 from pydantic import BaseModel
 

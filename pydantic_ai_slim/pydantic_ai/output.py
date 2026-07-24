@@ -122,7 +122,7 @@ class ToolOutput(Generic[OutputDataT]):
     strict: bool | None
     """Whether to use strict mode for the tool."""
     examples: list[Any] | None
-    """Example inputs demonstrating correct tool usage."""
+    """Example output values demonstrating correct output tool usage."""
     sequential: bool
     """Whether this output tool must run as a barrier, not overlapping with other tool calls.
 

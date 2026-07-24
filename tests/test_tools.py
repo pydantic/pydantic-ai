@@ -3461,7 +3461,7 @@ def test_tool_examples_must_be_json_objects():
         return x  # pragma: no cover
 
     with pytest.raises(UserError, match='Tool examples must be JSON objects'):
-        Tool(my_tool, examples=[1]).tool_def
+        Tool(my_tool, examples=[1]).tool_def  # pyright: ignore[reportArgumentType]
 
 
 def test_tool_examples_single_arg_name_collision():
@@ -3515,6 +3515,15 @@ def test_tool_output_examples():
     assert tool_def.examples == [{'response': 1}, {'response': 2}]
 
 
+def test_tool_output_examples_are_not_locally_validated():
+    model = TestModel(profile=ModelProfile(supports_tool_examples=True))
+    Agent('test', output_type=ToolOutput(int, examples=['wrong'])).run_sync('hello', model=model)
+
+    assert model.last_model_request_parameters is not None
+    tool_def = model.last_model_request_parameters.output_tools[0]
+    assert tool_def.examples == [{'response': 'wrong'}]
+
+
 def test_tool_output_examples_preserve_semantic_dict():
     model = TestModel(profile=ModelProfile(supports_tool_examples=True))
     Agent(
@@ -3542,28 +3551,28 @@ def test_tool_output_dict_example_with_outer_key_name():
     assert tool_def.examples == [{'response': {'response': 1}}]
 
 
-def test_tool_examples_flattening():
+def test_tool_examples_for_single_model_arg_use_wire_shape():
     class MyModel(BaseModel):
         x: int
 
     def my_tool(arg: MyModel) -> int:
         return arg.x  # pragma: no cover
 
-    examples = [{'arg': {'x': 1}}, {'arg': {'x': 2}}]
+    examples = [{'x': 1}, {'x': 2}]
     tool = Tool(my_tool, examples=examples)
 
     assert tool.examples == examples
     assert tool.tool_def.examples == [{'x': 1}, {'x': 2}]
 
 
-def test_tool_output_flattening():
+def test_tool_output_examples_for_single_model_arg_use_wire_shape():
     class MyModel(BaseModel):
         x: int
 
     def output_func(arg: MyModel) -> int:
         return arg.x  # pragma: no cover
 
-    examples = [{'arg': {'x': 1}}]
+    examples = [{'x': 1}]
     tool_output = ToolOutput(output_func, examples=examples)
 
     agent = Agent('test', output_type=tool_output)
