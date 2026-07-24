@@ -25,12 +25,12 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 **A PR's current labels therefore say nothing about whether it was auto-reviewed.** Every PR that has ever been auto-reviewed carries no `auto-review` label today. To find out whether — and when — a PR was reviewed, read the label *events*, not the label set:
 
 ```
-gh api repos/pydantic/pydantic-ai/issues/<number>/events --jq '.[] | select(.label.name == "auto-review")'
+gh api repos/pydantic/pydantic-ai/issues/<number>/events --paginate --jq '.[] | select(.label.name == "auto-review")'
 ```
 
 Filtering on the current label (`gh pr view --json labels`) matches nothing and returns an empty result rather than an error.
 
 Two consequences:
 
-- `pydantic-ai-pr-review` skips while the label is present, so the two reviewers never review the same push. The label bot is the maintainer-triggered escalation; the agentic workflow is the automatic pass. Because the label is stripped after the run, a *later* push to the same PR is reviewed by the agentic workflow again.
+- `pydantic-ai-pr-review` reads the labels once, when its `opened`/`synchronize`/`ready_for_review` event fires, and skips if `auto-review` is already present — so the two reviewers usually don't review the same push. The label bot is the maintainer-triggered escalation; the agentic workflow is the automatic pass. Because the label is stripped after the run, a *later* push to the same PR is reviewed by the agentic workflow again. There is a race: labelling a PR while an agentic run for the same head SHA is already in flight starts a second review — `bots.yml` doesn't cancel the running one — so wait for an in-flight agentic run to finish (or cancel it) before adding the label.
 - The label is safe on external-contributor PRs: a maintainer applies it, the checkout does not persist credentials, and the job refuses to run on **any** PR — fork or same-repo branch — whose diff touches `AGENTS.md`, `CLAUDE.md`, or `.claude/`, since the review loads the head's config into its own prompt. A consequence worth knowing: a PR that edits agent config can never be auto-reviewed, and its `Category Classify` check fails by design rather than by breakage.
