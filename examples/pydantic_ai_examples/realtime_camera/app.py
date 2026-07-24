@@ -79,6 +79,7 @@ from pydantic_ai.realtime import (
     PartEndEvent,
     RealtimeEvent,
     RealtimeSession,
+    ReconnectPolicy,
     SpeechPart,
     SpeechPartDelta,
     TurnCompleteEvent,
@@ -302,9 +303,14 @@ def _build_model(params: Mapping[str, str]) -> GoogleRealtimeModel:
         settings['google_turn_coverage'] = coverage
     if vad is not None:
         settings['google_vad'] = vad
+    # Gemini's native-audio preview models occasionally drop the connection with a server-side `1011`
+    # ("internal error"). Enable session resumption and a reconnect policy so a transient drop re-dials
+    # from the latest resumption handle and restores the conversation instead of ending the session.
+    settings['google_enable_session_resumption'] = True
     return GoogleRealtimeModel(
         params.get('model') or MODEL,
         settings=settings,
+        reconnect=ReconnectPolicy(max_attempts=5),
         provider=GoogleCloudProvider(project=GCP_PROJECT, location=GCP_LOCATION)
         if USE_VERTEX
         else 'google',
