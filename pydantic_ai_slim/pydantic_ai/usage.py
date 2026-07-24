@@ -99,9 +99,7 @@ class UsageBase:
     ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
-    _extra: Annotated[dict[str, Any], Field(exclude_if=lambda value: not value)] = dataclasses.field(
-        default_factory=dict[str, Any], repr=False
-    )
+    _extra: dict[str, Any] = dataclasses.field(default_factory=dict[str, Any], repr=False)
     """Usage dimensions not known to this version of Pydantic AI."""
 
     def __init__(self, *, details: dict[str, int] | None = None, **kwargs: Any):
@@ -154,7 +152,12 @@ class UsageBase:
             info: core_schema.SerializationInfo,
         ) -> Any:
             if type(value) is source_type:
-                return inner(value)
+                result = inner(value)
+                assert isinstance(result, dict)
+                result = cast(dict[str, Any], result)
+                if not value._extra:
+                    result.pop('_extra', None)
+                return result
             return _usage_serializer(type(value)).to_python(
                 value,
                 mode=info.mode,
