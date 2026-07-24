@@ -3410,7 +3410,7 @@ def test_tool_from_schema_preserves_positional_args_validator():
         return x  # pragma: no cover
 
     def validate_args(ctx: RunContext[None], x: int) -> None:
-        assert x == 1
+        assert x == 1  # pragma: no cover
 
     tool = Tool.from_schema(
         my_tool,
