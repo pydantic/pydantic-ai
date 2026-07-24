@@ -103,9 +103,6 @@ if TYPE_CHECKING:
 # format is self-describing and portable to classic model adapters. Live `SpeechPartDelta.audio_chunk`
 # values remain raw PCM.
 _WAV_MEDIA_TYPE = 'audio/wav'
-# Recorded as the result of a tool call the model cancelled mid-flight (see `ToolCallCancelled`), so the
-# call still has a matching return in history.
-_CANCELLED_TOOL_RESULT = 'Tool call cancelled before it completed.'
 
 # Fallback for a session created without a model's profile (e.g. directly, in tests): assume
 # everything is supported so no guard fires. Real sessions receive `model.profile`. Native tools are
@@ -416,9 +413,13 @@ class RealtimeSession:
         self._pending_messages_lock = Lock()
         if self._tool_manager.ctx is not None:
             self._tool_manager.ctx.pending_messages = self._pending_messages
-        # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
+        # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can find the specific
         # calls the model abandoned (e.g. on barge-in) without touching the others.
         self._pending_tool_calls: dict[str, tuple[asyncio.Task[None], ToolCallPart]] = {}
+        # Calls the model abandoned mid-flight (a `ToolCallCancelled`). We let the task finish — an
+        # interruption is speech-level, not tool-level, so the tool's work (and side effects) shouldn't
+        # be thrown away — but we don't relay its result to the model, which no longer expects it.
+        self._cancelled_tool_call_ids: set[str] = set()
         # OpenAI-protocol tool results can complete before the response's later `response.done` usage
         # finalizes the calling response. Hold their history requests until the call is present.
         self._pending_tool_returns: list[tuple[ToolCallPart, ModelRequest]] = []
@@ -1555,13 +1556,19 @@ class RealtimeSession:
             wire_content.extend(user_content)
         if call.tool_call_id not in self._tool_calls_awaiting_usage:
             await self._drain_pending_messages('asap')
-        await self._connection.send(
-            ToolResult(
-                tool_call_id=call.tool_call_id,
-                output=output,
-                content=wire_content or None,
+        # If the model abandoned this call mid-flight (a `ToolCallCancelled`), we still let the tool run
+        # to completion and record its result in history, but we don't send the result back — the model
+        # cancelled the call and no longer expects it.
+        abandoned = call.tool_call_id in self._cancelled_tool_call_ids
+        self._cancelled_tool_call_ids.discard(call.tool_call_id)
+        if not abandoned:
+            await self._connection.send(
+                ToolResult(
+                    tool_call_id=call.tool_call_id,
+                    output=output,
+                    content=wire_content or None,
+                )
             )
-        )
         return result_part, user_content
 
     # --- streaming --------------------------------------------------------------------------------
@@ -1698,22 +1705,15 @@ class RealtimeSession:
             await validation_done.wait()
             return False
         if isinstance(event, ToolCallCancelled):
+            # The model abandoned these calls (Gemini sends this when the user interrupts the turn that
+            # owns them). We deliberately let the in-flight task run to completion rather than cancelling
+            # it: an interruption is speech-level, not tool-level, so the tool's work and any side effects
+            # shouldn't be discarded. The call is flagged so `_execute_tool` skips sending its result back
+            # to the model (which no longer expects it); the real result still lands in history when the
+            # task finishes. Ids with no in-flight call already settled, so there is nothing to flag.
             for tool_call_id in event.tool_call_ids:
-                if (pending := self._pending_tool_calls.pop(tool_call_id, None)) is None:
-                    continue
-                task, call_part = pending
-                task.cancel()
-                # Record a cancelled result so the call still has a matching return in history (kept
-                # valid for a handoff), and deliberately don't send a `ToolResult` back to the model —
-                # it abandoned the call.
-                cancelled_part = ToolReturnPart(
-                    tool_name=call_part.tool_name,
-                    content=_CANCELLED_TOOL_RESULT,
-                    tool_call_id=call_part.tool_call_id,
-                    outcome='interrupted',
-                )
-                for out in self._complete_tool_call(call_part, cancelled_part):
-                    await self._queue.put(out)
+                if tool_call_id in self._pending_tool_calls:
+                    self._cancelled_tool_call_ids.add(tool_call_id)
             return False
         if isinstance(event, SessionUsageEvent):
             self.usage.incr(event.usage)
