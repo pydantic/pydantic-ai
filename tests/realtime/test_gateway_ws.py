@@ -5,12 +5,13 @@ connects to the gateway's realtime WebSocket, which relays the provider protocol
 streamed part events and history come back as a direct connection. Recorded once against the live
 gateway with `--record-mode=rewrite`, then replayed offline.
 
-The gateway's OpenAI realtime relay is live, so `gateway/openai` is exercised end-to-end here. The
-gateway's Gemini Live relay goes through Vertex, whose Live API is allowlist-gated and whose Live model
-ids are unpriced in genai-prices (the gateway rejects the upgrade when cost data is required), so a full
-`gateway/google` session can't be recorded yet — that test skips until the route is available. The
-gateway handshake's URL derivation and bearer-auth injection are pinned separately in `test_google.py`
-(`test_gateway_handshake_carries_bearer_auth`).
+The gateway's OpenAI realtime relay is live, so `gateway/openai` is exercised end-to-end here. A full
+`gateway/google` session can't be recorded yet: the gateway relay only matches the OpenAI-shaped
+`/proxy/<route>/realtime` upgrade path, while the `google-genai` SDK dials the native Vertex Bidi path
+(`/proxy/<route>/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent`), so the upgrade
+never reaches the relay (and the Live model ids are unpriced in genai-prices, a second gate). That test
+skips until the gateway accepts the Vertex Bidi upgrade path. The gateway handshake's URL derivation and
+bearer-auth injection are pinned separately in `test_google.py` (`test_gateway_handshake_carries_bearer_auth`).
 """
 
 from __future__ import annotations as _annotations
