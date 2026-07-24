@@ -181,6 +181,7 @@ def test_anthropic_claude_sonnet_4_6():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supports_tool_examples': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
@@ -203,6 +204,7 @@ def test_anthropic_claude_opus_4_7():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supports_tool_examples': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
             'anthropic_supports_fast_speed': True,
@@ -230,6 +232,7 @@ def test_anthropic_claude_haiku_4_5():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supports_tool_examples': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
@@ -248,6 +251,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'supports_tool_examples': True,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_forced_tool_choice': True,
@@ -536,6 +540,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_thinking_variant': 'anthropic',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': True,
+            'supports_tool_examples': False,
         }
     )
 
@@ -563,6 +568,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_thinking_variant': 'anthropic',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': True,
+            'supports_tool_examples': False,
         }
     )
 
@@ -590,6 +596,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_thinking_variant': 'anthropic',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': False,
+            'supports_tool_examples': False,
         }
     )
 
@@ -1448,6 +1455,7 @@ def test_anthropic_unknown_model_returns_some_profile():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'supports_tool_examples': True,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_forced_tool_choice': True,
