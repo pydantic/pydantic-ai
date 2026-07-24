@@ -3230,6 +3230,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         self.render_description(deps) if session_instrumentation_settings is not None else None
                     ),
                     output_modality=(effective_model_settings or {}).get('output_modality', 'audio'),
+                    # Surfaced on the session span so the session's configured native tools and realtime
+                    # settings are inspectable, respecting `include_model_request_parameters`.
+                    model_request_parameters=model_request_parameters,
+                    model_settings=effective_model_settings,
                 )
                 async with session:
                     yield session

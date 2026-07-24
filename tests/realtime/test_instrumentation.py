@@ -47,6 +47,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     InputSpeechStartEvent,
     RealtimeEvent,
@@ -66,6 +67,7 @@ from pydantic_ai.realtime.codec import (
     ToolCall,
     Transcript,
 )
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .test_session import make_tool_manager
@@ -301,6 +303,97 @@ async def test_session_and_tool_spans_with_usage() -> None:
     assert sess.context is not None
     assert chat.parent is not None and chat.parent.span_id == sess.context.span_id
     assert tool.parent is not None and tool.parent.span_id == sess.context.span_id
+
+
+async def test_session_and_chat_spans_carry_request_config() -> None:
+    # `model_request_parameters` (native tools included) and `model_settings` are sent once at connect, so
+    # they're set on the session span and duplicated onto each per-turn `chat` span — matching where the
+    # classic path carries them, so Logfire renders native tools / tool definitions per step.
+    settings, exporter = _settings()
+    conn = _Connection(
+        [
+            ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        provider_name='openai',
+        provider_url='https://api.openai.com/v1',
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[ToolDefinition(name='get_weather')],
+            native_tools=[WebSearchTool()],
+        ),
+        model_settings=RealtimeModelSettings(voice='alloy', max_tokens=4096),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    # The config is identical on the session span and every per-turn `chat` span.
+    for name in ('invoke_agent agent', 'chat gpt-realtime'):
+        attributes = spans[name].attributes
+        assert attributes is not None
+        # `model_request_parameters` is serialized whole, so the session's configured native tools are
+        # inspectable — the reason for surfacing it (e.g. to see which native tools the API was given).
+        params = json.loads(attributes['model_request_parameters'])
+        assert [t['kind'] for t in params['native_tools']] == ['web_search']
+        assert [t['name'] for t in params['function_tools']] == ['get_weather']
+        # The realtime settings vocabulary (voice, ...) is serialized as-is: it has no OTel-spec home.
+        assert json.loads(attributes['model_settings']) == {'voice': 'alloy', 'max_tokens': 4096}
+        # Function/output tools are also emitted as `gen_ai.tool.definitions`, like the classic `chat` span.
+        assert json.loads(attributes['gen_ai.tool.definitions']) == [
+            {'type': 'function', 'name': 'get_weather', 'parameters': {'type': 'object', 'properties': {}}}
+        ]
+        # `max_tokens` is the one realtime setting with an OTel-spec `gen_ai.request.*` home.
+        assert attributes['gen_ai.request.max_tokens'] == 4096
+        # `model_request_parameters` is declared an object so Logfire renders it richly (not a raw string).
+        assert json.loads(attributes['logfire.json_schema'])['properties']['model_request_parameters'] == {
+            'type': 'object'
+        }
+
+    # The `chat` span keeps the semconv `chat` operation and `chat {model}` span name, but renders (via
+    # `logfire.msg`) as `turn {model}`: a realtime step is a conversational turn, not a one-shot request.
+    chat_attributes = spans['chat gpt-realtime'].attributes
+    assert chat_attributes is not None
+    assert chat_attributes['gen_ai.operation.name'] == 'chat'
+    assert chat_attributes['logfire.msg'] == 'turn gpt-realtime'
+
+
+async def test_request_config_respects_include_model_request_parameters() -> None:
+    # `include_model_request_parameters=False` drops the serialized config blobs and tool definitions from
+    # both spans, but `gen_ai.request.max_tokens` — a plain spec attribute — is still emitted, mirroring the
+    # classic path where `model_settings_attributes` runs ungated.
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    settings = InstrumentationSettings(tracer_provider=provider, include_model_request_parameters=False)
+    conn = _Connection(
+        [ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'), TurnCompleteEvent()]
+    )
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+        model_settings=RealtimeModelSettings(max_tokens=4096),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    for name in ('invoke_agent agent', 'chat gpt-realtime'):
+        attributes = spans[name].attributes
+        assert attributes is not None
+        assert 'model_request_parameters' not in attributes
+        assert 'model_settings' not in attributes
+        assert 'gen_ai.tool.definitions' not in attributes
+        # The spec-standard setting is still emitted when the serialized blobs are gated off.
+        assert attributes['gen_ai.request.max_tokens'] == 4096
 
 
 async def test_session_span_records_lifecycle_spans() -> None:
@@ -632,6 +725,9 @@ async def test_session_span_includes_resolved_run_attributes() -> None:
         'gen_ai.system_instructions': {'type': 'array'},
         'pydantic_ai.all_messages': {'type': 'array'},
         'metadata': {},
+        # The agent always resolves a (possibly empty) `ModelRequestParameters`, declared here so the
+        # session span renders it as an object.
+        'model_request_parameters': {'type': 'object'},
     }
 
 

@@ -23,7 +23,9 @@ from typing_extensions import assert_never
 from .._enqueue import PendingMessage, PendingMessagePriority
 from .._instrumentation import (
     InstrumentationNames,
+    build_tool_definitions,
     model_metric_attributes,
+    model_request_parameters_attributes,
     provider_attributes,
     response_attributes,
     response_price_calculation,
@@ -81,6 +83,7 @@ from ._base import (
     RealtimeError,
     RealtimeEvent,
     RealtimeModelProfile,
+    RealtimeModelSettings,
     RealtimeSessionInput,
     ReconnectedEvent,
     SessionErrorEvent,
@@ -96,6 +99,7 @@ from ._base import (
 )
 
 if TYPE_CHECKING:
+    from ..models import ModelRequestParameters
     from ..models.instrumented import InstrumentationSettings
     from ..tools import DeferredToolRequests, DeferredToolResults
 
@@ -323,6 +327,8 @@ class RealtimeSession:
         metadata: dict[str, Any] | None = None,
         agent_description: str | None = None,
         output_modality: Literal['audio', 'text'] = 'audio',
+        model_request_parameters: ModelRequestParameters | None = None,
+        model_settings: RealtimeModelSettings | None = None,
     ) -> None:
         self._connection = connection
         self._tool_manager = tool_manager
@@ -335,6 +341,12 @@ class RealtimeSession:
         self._provider_url = provider_url
         self._agent_name = agent_name
         self._conversation_id = conversation_id
+        # The request parameters and settings the session was opened with. Unlike a classic run — where
+        # each model request can vary — a realtime session sends these once at connect, so they belong on
+        # the session span (set once), not repeated on every per-turn `chat` span. Carrying
+        # `model_request_parameters` is what makes the session's configured native tools inspectable.
+        self._model_request_parameters = model_request_parameters
+        self._model_settings = model_settings
         self._instructions = instructions
         self._metadata = metadata
         self._agent_description = agent_description
@@ -486,6 +498,11 @@ class RealtimeSession:
                 # Match the classic agent-run span's key (see `capabilities/instrumentation.py`) so a
                 # realtime session can be correlated with other runs sharing the conversation id.
                 attributes['gen_ai.conversation.id'] = self._conversation_id
+            # `model_request_parameters` / `model_settings` are sent once at connect (not per turn), so this
+            # session span is their honest scope. They're also duplicated onto each per-turn span so
+            # Logfire's per-step rendering (native tools, tool definitions) fires there too; see
+            # `_request_config_attributes`.
+            attributes.update(self._request_config_attributes(settings))
             # Follow the configured instrumentation version's agent-run naming: the semconv
             # `invoke_agent {name}` when that version is active (v3+), otherwise a bare `realtime`
             # operation name (the classic v2 span name is likewise a bare `agent run`).
@@ -933,6 +950,50 @@ class RealtimeSession:
         if response_recorded:
             self._check_request_limit()
 
+    def _request_config_attributes(self, settings: InstrumentationSettings) -> dict[str, Any]:
+        """OTel attribute *values* for the request config the session was opened with.
+
+        A realtime session sends `model_request_parameters` and `model_settings` once at connect (not per
+        turn), so they're stable for the whole session. They go on the session span — their honest scope —
+        and are duplicated onto each per-turn span, matching where the classic path puts them (the `chat`
+        span) so Logfire's per-step rendering of native tools and `gen_ai.tool.definitions` still fires.
+        `model_request_parameters` (and the serialized realtime `model_settings`, whose vocabulary —
+        `voice`, `output_modality`, `thinking`, `turn_detection`, ... — has no OTel-spec `gen_ai.request.*`
+        equivalent) are gated on `include_model_request_parameters`; `max_tokens`, the one setting with a
+        spec home, is set ungated like the classic path's `model_settings_attributes`.
+
+        The `logfire.json_schema` declarations that make the serialized blobs render as objects (rather
+        than raw strings) are added at span *finalization*: the session span's in `_finalize_span`, the
+        `chat` span's by `handle_messages` (which re-declares `model_request_parameters`) — both rebuild
+        `logfire.json_schema` at the end, so declaring it here would be overwritten. See
+        `_request_config_schema_properties`.
+        """
+        attributes: dict[str, Any] = {}
+        if settings.include_model_request_parameters:
+            if self._model_request_parameters is not None:
+                attributes.update(model_request_parameters_attributes(self._model_request_parameters))
+                if tool_definitions := build_tool_definitions(self._model_request_parameters):
+                    attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
+            if self._model_settings:
+                attributes['model_settings'] = safe_to_json(serialize_any(self._model_settings)).decode()
+        if self._model_settings and (max_tokens := self._model_settings.get('max_tokens')) is not None:
+            attributes['gen_ai.request.max_tokens'] = max_tokens
+        return attributes
+
+    def _request_config_schema_properties(self, settings: InstrumentationSettings) -> dict[str, dict[str, str]]:
+        """`logfire.json_schema` properties declaring the serialized config blobs as objects.
+
+        Merged into the session span's schema in `_finalize_span` so Logfire renders
+        `model_request_parameters` / `model_settings` richly instead of as raw JSON strings.
+        """
+        properties: dict[str, dict[str, str]] = {}
+        if settings.include_model_request_parameters:
+            if self._model_request_parameters is not None:
+                properties['model_request_parameters'] = {'type': 'object'}
+            if self._model_settings:
+                properties['model_settings'] = {'type': 'object'}
+        return properties
+
     def _ensure_chat_span(self) -> None:
         """Open a `chat {model}` span for the assistant response now being assembled, if not already open.
 
@@ -943,13 +1004,16 @@ class RealtimeSession:
         deliberately *not* entered as the current span: `execute_tool` spans run after the response is
         finalized and stay siblings under the session span, matching the classic agent-run tree.
 
-        Attributes are limited to what a realtime session can report honestly. Omitted vs. the classic
-        `chat` span (`open_model_request_span`): `model_request_parameters`,
-        `gen_ai.tool.definitions`, and `gen_ai.request.*` settings (there are no per-turn request
-        parameters or settings). Provider and server attributes, response metadata, usage, cost when
-        pricing data is available, and per-response metrics reuse the classic instrumentation helpers.
+        The session-wide request config (`model_request_parameters`, `model_settings`,
+        `gen_ai.tool.definitions`) is duplicated here from the session span via
+        `_request_config_attributes`, matching where the classic `chat` span (`open_model_request_span`)
+        carries it so Logfire renders native tools and tool definitions per step. Provider and server
+        attributes, response metadata, usage, cost when pricing data is available, and per-response metrics
+        reuse the classic instrumentation helpers.
         Added vs. the classic span: `gen_ai.output.type` (`speech`/`text`), the one semconv attribute
-        specific to voice output.
+        specific to voice output. The span keeps the semconv `chat` operation and `chat {model}` name, but
+        renders (via `logfire.msg`) as `turn {model}` — a realtime step is a conversational turn, not a
+        one-shot request/response, so "turn" reads less confusingly than "chat" in a trace.
         """
         settings = self._instrumentation
         if settings is None or self._chat_span is not None:
@@ -960,11 +1024,19 @@ class RealtimeSession:
             # Mark the turn as realtime too (see the session span), so a backend can tell a realtime
             # `chat` span apart from a classic model-request `chat` span.
             'pydantic_ai.realtime': True,
+            # Render as `turn {model}` while keeping the semconv `chat` operation + span name: a realtime
+            # step is a conversational turn, clearer than "chat" in the Logfire trace view. Verb-first
+            # matches the other span messages (`chat {model}`, `execute_tool {name}`, `invoke_agent {name}`).
+            'logfire.msg': f'turn {self._model_name}' if self._model_name else 'turn',
         }
         if self._model_name:
             attributes['gen_ai.request.model'] = self._model_name
         if self._provider_name:
             attributes.update(provider_attributes(self._provider_name, self._provider_url))
+        # The session-wide request config, duplicated here so Logfire's per-step rendering fires (see
+        # `_request_config_attributes`). `_end_chat_span`'s `handle_messages` re-declares
+        # `model_request_parameters` in the span's `logfire.json_schema`, so it stays richly rendered.
+        attributes.update(self._request_config_attributes(settings))
         name = f'chat {self._model_name}' if self._model_name else 'chat'
         context = self._session_span_context
         assert context is not None
@@ -1447,6 +1519,9 @@ class RealtimeSession:
         if self._metadata is not None:
             attributes['metadata'] = safe_to_json(serialize_any(self._metadata)).decode()
             schema_properties['metadata'] = {}
+        # Declare the session-wide `model_request_parameters` / `model_settings` blobs (set at start by
+        # `_request_config_attributes`) as objects here, since this rebuilds the span's `logfire.json_schema`.
+        schema_properties.update(self._request_config_schema_properties(settings))
         # Mirror the classic run span's `final_result` (set by the `Instrumentation` capability): a
         # realtime session has no single output, so use the most recent assistant reply's text, which the
         # Logfire UI renders as the run's final response. Gated on `include_content` like the classic span.
