@@ -14,6 +14,7 @@ from ..conftest import sanitize_filename, try_import
 from .ws_cassettes import ProviderName, RealtimeCassette, patched_ws_connect, realtime_cassette_plan
 
 with try_import() as imports_successful:
+    from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -119,6 +120,53 @@ def xai_ws_cassette(request: pytest.FixtureRequest, xai_api_key: str) -> Iterato
         pytest.skip('xai-sdk / websockets not installed')
     with _ws_cassette(request, 'xai', skip_if_missing=True) as cassette:
         yield XaiProvider(api_key=xai_api_key), cassette
+
+
+def _gateway_realtime_provider(kind: str, api_key: str | None) -> Provider[Any]:
+    """Build a gateway provider for realtime, mirroring how `gateway/<kind>:...` resolves for a user.
+
+    With a real key, the gateway base URL is inferred from the key's encoded region — the exact path a
+    user reaches. Offline (no key), the placeholder encodes no region, so pin an explicit base URL;
+    replay never dials, so only its stability matters, not the host.
+    """
+    if api_key:  # pragma: no cover - only while recording
+        return gateway_provider(kind, api_key=api_key)
+    return gateway_provider(kind, api_key='mock-gateway-key', base_url='https://gateway.pydantic.info/proxy')
+
+
+@pytest.fixture
+def gateway_openai_ws_cassette(
+    request: pytest.FixtureRequest, gateway_api_key: str | None
+) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
+    """An OpenAI realtime provider that routes through the Pydantic AI Gateway, cassette-backed.
+
+    The gateway relays OpenAI's realtime WebSocket verbatim, so the same OpenAI transport (and its
+    `websockets` reference) is patched; only the provider's base URL and bearer key differ. Recording
+    needs a real `PYDANTIC_AI_GATEWAY_API_KEY`; offline replay never dials, so a placeholder is enough.
+    """
+    if not imports_successful():
+        pytest.skip('openai / websockets not installed')
+    provider = _gateway_realtime_provider('openai', gateway_api_key)
+    with _ws_cassette(request, 'openai') as cassette:
+        yield provider, cassette
+
+
+@pytest.fixture
+def gateway_gemini_ws_cassette(
+    request: pytest.FixtureRequest, gateway_api_key: str | None
+) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
+    """A Gemini Live provider that routes through the gateway's Vertex upstream, cassette-backed.
+
+    Skips (rather than errors) when the cassette is missing offline: recording a full session requires
+    the gateway's Vertex Live route to be reachable, which is currently gated (the Vertex Live API is
+    allowlist-gated and its Live model ids are unpriced in genai-prices, so the gateway rejects the
+    upgrade). Record with `--record-mode=rewrite` once the gateway's Vertex realtime route is available.
+    """
+    if not imports_successful():  # pragma: no cover
+        pytest.skip('google-genai / websockets not installed')
+    provider = _gateway_realtime_provider('google', gateway_api_key)
+    with _ws_cassette(request, 'gemini', skip_if_missing=True) as cassette:
+        yield provider, cassette
 
 
 @pytest.fixture(scope='session')
