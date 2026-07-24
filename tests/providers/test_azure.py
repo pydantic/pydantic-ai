@@ -251,6 +251,41 @@ def test_azure_provider_reads_voice_live_env_prefix(monkeypatch: pytest.MonkeyPa
     provider = AzureProvider()
     assert provider.azure_endpoint == 'https://my-voice-live.cognitiveservices.azure.com'
     assert provider.api_key == 'voice-live-key'
+    assert provider.voice_live_endpoint == 'https://my-voice-live.cognitiveservices.azure.com'
+    assert provider.voice_live_api_key == 'voice-live-key'
+    assert provider.voice_live_api_version == '2026-04-10'
+
+
+def test_azure_provider_voice_live_credentials_are_coherent(monkeypatch: pytest.MonkeyPatch):
+    # With both resource sets configured, the Azure OpenAI (GA) credentials and the Voice Live credentials
+    # are each drawn as one coherent set — never mixed (e.g. GA endpoint with the Voice Live key).
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://ga.openai.azure.com')
+    monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'ga-key')
+    monkeypatch.setenv('OPENAI_API_VERSION', '2024-10-01')
+    monkeypatch.setenv('AZURE_VOICELIVE_ENDPOINT', 'https://vl.services.ai.azure.com')
+    monkeypatch.setenv('AZURE_VOICELIVE_API_KEY', 'vl-key')
+    monkeypatch.setenv('AZURE_VOICELIVE_API_VERSION', '2026-06-01-preview')
+
+    provider = AzureProvider()
+    assert (provider.azure_endpoint, provider.api_key) == ('https://ga.openai.azure.com', 'ga-key')
+    assert provider.voice_live_endpoint == 'https://vl.services.ai.azure.com'
+    assert provider.voice_live_api_key == 'vl-key'
+    assert provider.voice_live_api_version == '2026-06-01-preview'
+
+
+def test_azure_provider_voice_live_falls_back_to_openai_resource(monkeypatch: pytest.MonkeyPatch):
+    # With only the Azure OpenAI resource configured, Voice Live reuses it and defaults the api-version.
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://ga.openai.azure.com')
+    monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'ga-key')
+    monkeypatch.setenv('OPENAI_API_VERSION', '2024-10-01')
+    monkeypatch.delenv('AZURE_VOICELIVE_ENDPOINT', raising=False)
+    monkeypatch.delenv('AZURE_VOICELIVE_API_KEY', raising=False)
+    monkeypatch.delenv('AZURE_VOICELIVE_API_VERSION', raising=False)
+
+    provider = AzureProvider()
+    assert provider.voice_live_endpoint == 'https://ga.openai.azure.com'
+    assert provider.voice_live_api_key == 'ga-key'
+    assert provider.voice_live_api_version == '2026-04-10'
 
 
 def test_azure_provider_foundry_serverless_with_openai_model():

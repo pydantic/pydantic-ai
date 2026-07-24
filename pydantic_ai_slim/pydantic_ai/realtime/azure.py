@@ -30,8 +30,6 @@ from .openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, OpenAIRealtim
 
 __all__ = ('AzureRealtimeModel', 'AzureRealtimeModelSettings', 'AzureTokenCredential')
 
-_AZURE_VOICE_LIVE_API_VERSION = '2026-04-10'
-
 
 class _AccessToken(Protocol):
     token: str
@@ -54,7 +52,17 @@ _ENTRA_SCOPE = 'https://ai.azure.com/.default'
 
 
 class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
-    """Settings specific to Azure realtime models."""
+    """Settings specific to Azure realtime models.
+
+    This inherits every [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]
+    field, but when [`azure_voice_live`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live]
+    is set the Voice Live session config is built from only the cross-protocol fields — `instructions`,
+    `voice`, `turn_detection` (or `azure_voice_live_turn_detection`), `input_transcription_model`,
+    `output_modality`, `max_tokens`, `tool_choice`, and tools. OpenAI-only fields that Voice Live's beta
+    session schema doesn't accept (e.g. `openai_input_noise_reduction`, `openai_output_speed`,
+    `openai_truncation`, `openai_turn_detection`, `thinking`, `parallel_tool_calls`) are **silently
+    ignored** under Voice Live; they still apply on the GA path.
+    """
 
     azure_voice_live: bool
     """Use the Azure AI Voice Live endpoint and beta session protocol instead of the GA endpoint.
@@ -131,12 +139,14 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
 
     def _realtime_url(self, model_settings: OpenAIRealtimeModelSettings | None = None) -> str:
         if model_settings and model_settings.get('azure_voice_live'):
-            parsed = urlparse(self._azure_provider.azure_endpoint)
+            # Voice Live is a distinct resource with its own coherent endpoint/version (see
+            # `AzureProvider.voice_live_*`); never the GA endpoint or a hard-coded version.
+            parsed = urlparse(self._azure_provider.voice_live_endpoint)
             return urlunparse(
                 parsed._replace(
                     scheme='wss',
                     path='/voice-live/realtime',
-                    query=urlencode({'api-version': _AZURE_VOICE_LIVE_API_VERSION, 'model': self.model}),
+                    query=urlencode({'api-version': self._azure_provider.voice_live_api_version, 'model': self.model}),
                 )
             )
         return f'{self._realtime_ws_base()}?{urlencode({"model": self.model})}'
@@ -249,10 +259,13 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             return _AzureRealtimeConnection
         return OpenAIRealtimeConnection
 
-    async def _auth_headers(self) -> dict[str, str]:
+    async def _auth_headers(self, model_settings: OpenAIRealtimeModelSettings | None = None) -> dict[str, str]:
         if (credential := self.credential) is not None:
             # `get_token` is synchronous (and may perform I/O), so run it off the event loop. The token is
             # cached by the credential, so this is cheap after the first call.
             token = await run_sync(lambda: credential.get_token(_ENTRA_SCOPE))
             return {'Authorization': f'Bearer {token.token}'}
+        # A Voice Live session authenticates against the Voice Live resource, so use its coherent key.
+        if model_settings and model_settings.get('azure_voice_live'):
+            return {'api-key': self._azure_provider.voice_live_api_key}
         return {'api-key': self._azure_provider.api_key}
