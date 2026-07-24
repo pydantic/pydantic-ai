@@ -33,4 +33,4 @@ Filtering on the current label (`gh pr view --json labels`) matches nothing and 
 Two consequences:
 
 - `pydantic-ai-pr-review` skips while the label is present, so the two reviewers never review the same push. The label bot is the maintainer-triggered escalation; the agentic workflow is the automatic pass. Because the label is stripped after the run, a *later* push to the same PR is reviewed by the agentic workflow again.
-- The label is safe on external-contributor PRs: a maintainer applies it, and on a fork PR the job refuses to run if the diff touches `AGENTS.md`, `CLAUDE.md`, or `.claude/`.
+- The label is safe on external-contributor PRs: a maintainer applies it, the checkout does not persist credentials, and the job refuses to run on **any** PR — fork or same-repo branch — whose diff touches `AGENTS.md`, `CLAUDE.md`, or `.claude/`, since the review loads the head's config into its own prompt. A consequence worth knowing: a PR that edits agent config can never be auto-reviewed, and its `Category Classify` check fails by design rather than by breakage.
