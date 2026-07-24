@@ -182,11 +182,10 @@ _(This example is complete, it can be run "as is")_
     the web search tool version from the model profile and Anthropic client: `web_search_20260318`
     for models and platforms that support Anthropic's dynamic-filtering web tools, and
     `web_search_20250305` otherwise.
-    The legacy Amazon Bedrock client does not support Anthropic web search, so Pydantic AI raises
-    a `UserError` if you use `WebSearchTool` with `AsyncAnthropicBedrock`.
+    Amazon Bedrock does not support Anthropic web search, so Pydantic AI raises a `UserError` if
+    you use `WebSearchTool` with `AsyncAnthropicBedrock` or `AsyncAnthropicBedrockMantle`.
     On Vertex AI, `WebSearchTool` always uses `web_search_20250305`, as Anthropic does not offer the
     dynamic-filtering version there, so dynamic filtering is unavailable even on otherwise-supported models.
-    For Claude Mythos Preview, `WebSearchTool` is also unavailable on Claude Platform on AWS.
     See the [Anthropic web search docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
     and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
@@ -690,10 +689,9 @@ _(This example is complete, it can be run "as is")_
     the web fetch tool version from the model profile and Anthropic client: `web_fetch_20260318`
     for models and platforms that support Anthropic's dynamic-filtering web tools, and
     `web_fetch_20250910` otherwise.
-    `WebFetchTool` is unavailable on the legacy Amazon Bedrock and Vertex AI Anthropic clients, so
-    Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock` or
+    `WebFetchTool` is unavailable on Amazon Bedrock and Vertex AI, so Pydantic AI raises a
+    `UserError` if you use it with `AsyncAnthropicBedrock`, `AsyncAnthropicBedrockMantle`, or
     `AsyncAnthropicVertex`.
-    For Claude Mythos Preview, `WebFetchTool` is also unavailable on Claude Platform on AWS.
     See the
     [Anthropic web fetch docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool)
     and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)

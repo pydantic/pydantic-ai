@@ -74,7 +74,6 @@ from ..profiles.anthropic import (
     resolve_anthropic_effort,
 )
 from ..providers import Provider, infer_provider
-from ..providers._bedrock_model_names import split_bedrock_model_id
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
@@ -255,14 +254,18 @@ _FAST_MODE_UNSUPPORTED_CLIENTS = (
 # keep the `bm25` default.
 _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 # Anthropic web-tool availability is client/platform-specific:
-# * `AsyncAnthropicBedrock` is the legacy Amazon Bedrock InvokeModel client, where web search/fetch
-#   are unavailable.
+# * Amazon Bedrock does not support server-side web tools on either its legacy InvokeModel client
+#   (`AsyncAnthropicBedrock`) or its Messages API client (`AsyncAnthropicBedrockMantle`).
 # * Vertex AI supports basic web search only.
-# * Direct Anthropic API, Claude Platform on AWS (`AsyncAnthropicBedrockMantle`), and Microsoft
-#   Foundry support dynamic-filtering web tools on supported model profiles.
-_WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
-_WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
-_DYNAMIC_WEB_TOOLS_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+# * Direct Anthropic API and Microsoft Foundry support dynamic-filtering web tools on supported
+#   model profiles.
+_WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
+_WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
+_DYNAMIC_WEB_TOOLS_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicVertex,
+)
 # The advisor tool is available on the direct Anthropic API and Claude Platform on AWS
 # (`AsyncAnthropicBedrockMantle`) only — not on the legacy Bedrock InvokeModel client, Vertex, or
 # Foundry. `AsyncAnthropicBedrockMantle` isn't a subclass of `AsyncAnthropicBedrock`, so the plain
@@ -592,9 +595,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {WebFetchTool}
         if isinstance(client, _ADVISOR_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {AdvisorTool}
-        _, base_model_name = split_bedrock_model_id(self.model_name)
-        if isinstance(client, AsyncAnthropicBedrockMantle) and base_model_name.startswith('claude-mythos-preview'):
-            supported_native_tools = supported_native_tools - {WebSearchTool, WebFetchTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _DYNAMIC_WEB_TOOLS_UNSUPPORTED_CLIENTS
         )

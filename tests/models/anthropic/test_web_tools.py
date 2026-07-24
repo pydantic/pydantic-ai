@@ -2,8 +2,9 @@
 
 The wire tool version (`web_search_20260318` / `web_fetch_20260318` vs the earlier ones) and the
 beta headers are narrowed by the concrete Anthropic client the provider wraps — first-party,
-Bedrock(-Mantle), Vertex, and Foundry each support a different subset. These tests pin that matrix,
-the dynamic-filtering `caller` round-trip on web-fetch history, and live request shapes via VCR.
+the two Bedrock transports, Vertex, and Foundry each support a different subset. These tests pin
+that matrix, the dynamic-filtering `caller` round-trip on web-fetch history, and live request
+shapes via VCR.
 """
 
 from __future__ import annotations as _annotations
@@ -115,11 +116,18 @@ CLIENT_SUPPORT_CASES = [
         expected_tool_types=['web_search_20260318', 'web_fetch_20260318'],
     ),
     ClientSupportCase(
-        id='bedrock-mantle',
+        id='bedrock-mantle-web-search-rejected',
         client_cls=AsyncAnthropicBedrockMantle,
         base_url='https://bedrock-mantle.us-east-1.api.aws',
-        native_tools=[WebSearchTool(), WebFetchTool()],
-        expected_tool_types=['web_search_20260318', 'web_fetch_20260318'],
+        native_tools=[WebSearchTool()],
+        rejected_tool=WebSearchTool,
+    ),
+    ClientSupportCase(
+        id='bedrock-mantle-web-fetch-rejected',
+        client_cls=AsyncAnthropicBedrockMantle,
+        base_url='https://bedrock-mantle.us-east-1.api.aws',
+        native_tools=[WebFetchTool()],
+        rejected_tool=WebFetchTool,
     ),
     ClientSupportCase(
         id='foundry',
@@ -154,22 +162,6 @@ CLIENT_SUPPORT_CASES = [
         client_cls=AsyncAnthropicVertex,
         base_url='https://us-central1-aiplatform.googleapis.com',
         native_tools=[WebFetchTool()],
-        rejected_tool=WebFetchTool,
-    ),
-    ClientSupportCase(
-        id='mythos-preview-mantle-web-search-rejected',
-        client_cls=AsyncAnthropicBedrockMantle,
-        base_url='https://bedrock-mantle.us-east-1.api.aws',
-        native_tools=[WebSearchTool()],
-        model_name='global.anthropic.claude-mythos-preview-v1:0',
-        rejected_tool=WebSearchTool,
-    ),
-    ClientSupportCase(
-        id='mythos-preview-mantle-web-fetch-rejected',
-        client_cls=AsyncAnthropicBedrockMantle,
-        base_url='https://bedrock-mantle.us-east-1.api.aws',
-        native_tools=[WebFetchTool()],
-        model_name='global.anthropic.claude-mythos-preview-v1:0',
         rejected_tool=WebFetchTool,
     ),
 ]
