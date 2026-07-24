@@ -28,6 +28,8 @@ from anyio import Lock
 from typing_extensions import assert_never
 
 try:
+    import websockets
+
     from google.genai import Client, errors as genai_errors, types as genai_types
     from google.genai.live import AsyncSession, ConnectionClosed
 except ImportError as _import_error:
@@ -857,6 +859,17 @@ class GoogleRealtimeModel(RealtimeModel):
                         body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
                     ) from e
                 raise ModelAPIError(model_name=self.model, message=str(e)) from e  # pragma: no cover
+            except websockets.InvalidStatus as e:
+                # A rejected WebSocket upgrade (e.g. bad key → 401) surfaces from `google-genai` as a raw
+                # `websockets` error rather than an `APIError`; the WebSocket is the API here, so map its
+                # HTTP status to `ModelHTTPError` like a regular request.
+                response = e.response
+                body = response.body.decode(errors='replace') if response.body else response.reason_phrase
+                raise ModelHTTPError(status_code=response.status_code, model_name=self.model, body=body) from e
+            except websockets.WebSocketException as e:
+                # Any other raw `websockets` handshake failure the SDK didn't wrap as an `APIError`; no HTTP
+                # status, so surface it as a `ModelAPIError` rather than letting it escape untyped.
+                raise ModelAPIError(model_name=self.model, message=f'WebSocket error during connect: {e}') from e
             # Seed prior conversation once, after the initial connect, as inactive context turns (no
             # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
             # resumption restores server state, and a `ReconnectedEvent` starts a fresh turn.

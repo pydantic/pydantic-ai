@@ -911,6 +911,28 @@ async def test_connect_surfaces_http_upgrade_error(monkeypatch: pytest.MonkeyPat
     assert exc_info.value.body == 'unknown model'
 
 
+@pytest.mark.anyio
+async def test_connect_surfaces_handshake_connection_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The server accepts the upgrade but then closes the socket during the handshake (e.g. a gateway
+    # rejecting an unknown model) instead of sending an `error` event. Without mapping, the session would
+    # die silently; it should surface as a `ModelAPIError` (a WebSocket close carries no HTTP status).
+    from websockets.exceptions import ConnectionClosedError
+    from websockets.frames import Close
+
+    class _ClosingWebSocket(FakeWebSocket):
+        async def recv(self) -> Any:
+            raise ConnectionClosedError(Close(1008, 'unknown model'), None)
+
+    ws = _ClosingWebSocket([])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    model = OpenAIRealtimeModel('gpt-realtime')
+    with pytest.raises(ModelAPIError, match='WebSocket error during realtime handshake') as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover
+    assert exc_info.value.model_name == 'gpt-realtime'
+    assert not isinstance(exc_info.value, ModelHTTPError)  # a close code is not an HTTP status
+
+
 class HangingWebSocket(FakeWebSocket):
     """A websocket whose `recv` never returns, to exercise the handshake timeout."""
 

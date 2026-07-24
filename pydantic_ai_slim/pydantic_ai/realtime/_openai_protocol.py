@@ -666,6 +666,12 @@ def map_connect_errors(model_name: str) -> Generator[None]:
         response = e.response
         body = response.body.decode(errors='replace') if response.body else response.reason_phrase
         raise ModelHTTPError(status_code=response.status_code, model_name=model_name, body=body) from e
+    except websockets.WebSocketException as e:
+        # Any other WebSocket-level handshake failure — the server closed the socket mid-handshake (e.g. a
+        # gateway rejecting an unknown model) instead of sending an `error` event, a bad upgrade, etc.
+        # These carry no HTTP status, so they map to `ModelAPIError` with the underlying detail, ensuring
+        # the session surfaces a typed error rather than dying silently.
+        raise ModelAPIError(model_name=model_name, message=f'WebSocket error during realtime handshake: {e}') from e
 
 
 @dataclass

@@ -1030,6 +1030,34 @@ async def test_connect_maps_rejected_config_to_model_http_error() -> None:
     assert exc_info.value.body == reason
 
 
+async def test_connect_maps_websocket_invalid_status_to_model_http_error() -> None:
+    # A rejected WebSocket upgrade (e.g. a bad key → 401) surfaces from `google-genai` as a raw
+    # `websockets.InvalidStatus`, not an `APIError`. The WebSocket is the API here, so its HTTP status
+    # maps to `ModelHTTPError` rather than escaping untyped.
+    from websockets.datastructures import Headers
+    from websockets.exceptions import InvalidStatus
+    from websockets.http11 import Response
+
+    class _RejectingConnect:
+        async def __aenter__(self) -> Any:
+            raise InvalidStatus(Response(401, 'Unauthorized', Headers(), body=b'bad key'))
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover - never entered
+            return False
+
+    class _Live:
+        def connect(self, *, model: str, config: Any) -> _RejectingConnect:
+            return _RejectingConnect()
+
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})()})())
+    model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover - connect raises before yielding
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.body == 'bad key'
+
+
 async def test_connect_continues_after_empty_server_turn() -> None:
     session = _RecordingSession([[], [_turn('hi')]])
 

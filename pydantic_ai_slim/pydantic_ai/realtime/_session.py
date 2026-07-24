@@ -477,6 +477,10 @@ class RealtimeSession:
                 # The model lives in the attribute, not the span title — matching the classic agent-run
                 # span, which keeps the model on its child `chat` spans only.
                 attributes['gen_ai.request.model'] = self._model_name
+            if self._provider_name:
+                # Provider/server attributes (`gen_ai.provider.name`, the deprecated `gen_ai.system`, and
+                # `server.address`) so the session span identifies the provider, like the `chat` spans.
+                attributes.update(provider_attributes(self._provider_name, self._provider_url))
             if self._agent_description:
                 attributes['gen_ai.agent.description'] = self._agent_description
             if self._conversation_id:
