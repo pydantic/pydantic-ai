@@ -103,12 +103,16 @@ jobs:
               echo "::error::This PR changes >= $TRUNCATION_LIMIT files, so GitHub truncates the file list and the guard cannot prove no protected path was touched. Failing closed — split the change or have a maintainer review it by hand."
               exit 1
             fi
-            # Read via process substitution, NOT a pipeline, so the array is built
-            # in this shell rather than a discarded subshell.
+            # Capture with command substitution, then feed the loop from a here-string.
+            # Both halves matter: a pipeline would run the loop in a subshell and throw
+            # the results away, while a process substitution would swallow a failing
+            # `gh`/`jq` exit status and silently yield zero rows — either way the guard
+            # would report clean. Command substitution lets set -e + pipefail abort.
+            pr_paths_raw=$(printf '%s' "$compare" | jq -r "$FILE_PATHS_JQ")
             pr_paths=()
-            while IFS= read -r line; do pr_paths+=("$line"); done < <(
-              printf '%s' "$compare" | jq -r "$FILE_PATHS_JQ"
-            )
+            while IFS= read -r line; do
+              [ -n "$line" ] && pr_paths+=("$line")
+            done <<< "$pr_paths_raw"
             if [ "${#pr_paths[@]}" -gt 0 ]; then check_paths "${pr_paths[@]}"; fi
           fi
 
@@ -125,8 +129,17 @@ jobs:
           # dead. `gh api --jq` can't take --arg, so pipe to real jq; the --paginate
           # stream of arrays is fine for a leading `.[]`.
           agent_id='pydanty@pydantic\.dev|pydanty\[bot\]@users\.noreply|noreply@anthropic\.com|claude\[bot\]@users\.noreply|^pydanty$|^claude(\[bot\])?$'
-          agent_shas=()
-          while IFS= read -r line; do agent_shas+=("$line"); done < <(
+          # The commits endpoint returns at most 250 commits even with --paginate, so
+          # on a longer PR an agent commit could sit past the cap and never be
+          # examined. Fail closed rather than silently checking a prefix.
+          COMMIT_LIMIT=250
+          commit_total=$(gh api "repos/$REPO/pulls/$PR" --jq '.commits')
+          if [ "$commit_total" -ge "$COMMIT_LIMIT" ]; then
+            echo "::error::This PR has $commit_total commits; the API returns at most $COMMIT_LIMIT, so the guard cannot enumerate every commit's author. Failing closed — a maintainer must review it by hand."
+            exit 1
+          fi
+
+          agent_shas_raw=$(
             gh api "repos/$REPO/pulls/$PR/commits" --paginate | jq -r --arg re "$agent_id" '
               .[]
               | select(
@@ -136,17 +149,22 @@ jobs:
                 )
               | .sha'
           )
+          agent_shas=()
+          while IFS= read -r line; do
+            [ -n "$line" ] && agent_shas+=("$line")
+          done <<< "$agent_shas_raw"
+
           for sha in ${agent_shas[@]+"${agent_shas[@]}"}; do
-            [ -n "$sha" ] || continue
             commit=$(gh api "repos/$REPO/commits/$sha")
             if [ "$(printf '%s' "$commit" | jq '(.files // []) | length')" -ge "$TRUNCATION_LIMIT" ]; then
               echo "::error::Agent commit $sha changes >= $TRUNCATION_LIMIT files; GitHub truncates the file list so the guard cannot verify it. Failing closed."
               exit 1
             fi
+            commit_paths_raw=$(printf '%s' "$commit" | jq -r "$FILE_PATHS_JQ")
             commit_paths=()
-            while IFS= read -r line; do commit_paths+=("$line"); done < <(
-              printf '%s' "$commit" | jq -r "$FILE_PATHS_JQ"
-            )
+            while IFS= read -r line; do
+              [ -n "$line" ] && commit_paths+=("$line")
+            done <<< "$commit_paths_raw"
             if [ "${#commit_paths[@]}" -gt 0 ]; then check_paths "${commit_paths[@]}"; fi
           done
 
