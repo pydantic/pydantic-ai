@@ -45,7 +45,7 @@ class ReasoningCase:
     """The Responses API accepts `reasoning.mode` ('standard' | 'pro')."""
 
     supports_context: bool = False
-    """The Responses API accepts `reasoning.context` ('auto' | 'current_turn' | 'all_turns')."""
+    """The Responses API accepts `reasoning.context='all_turns'`."""
 
 
 # Every cell verified against the live Responses API (2026-07): "enabled by default" = sampling
@@ -71,22 +71,24 @@ REASONING_CASES = [
     ReasoningCase(model='gpt-5.2-mini', can_be_disabled=True),
     ReasoningCase(model='gpt-5.3-codex', can_be_disabled=True),
     ReasoningCase(model='gpt-5.3-mini', can_be_disabled=True),
-    ReasoningCase(model='gpt-5.4', can_be_disabled=True),
-    ReasoningCase(model='gpt-5.4-mini', can_be_disabled=True),
-    ReasoningCase(model='gpt-5.4-nano', can_be_disabled=True),
+    # gpt-5.4 family: opt-in reasoning, and accepts `reasoning.context='all_turns'`
+    ReasoningCase(model='gpt-5.4', can_be_disabled=True, supports_context=True),
+    ReasoningCase(model='gpt-5.4-mini', can_be_disabled=True, supports_context=True),
+    ReasoningCase(model='gpt-5.4-nano', can_be_disabled=True, supports_context=True),
     # -pro and gpt-5.1 codex variants: always reason, no `effort='none'`
     ReasoningCase(model='gpt-5.1-codex', enabled_by_default=True),
     ReasoningCase(model='gpt-5.1-codex-max', enabled_by_default=True),
     ReasoningCase(model='gpt-5.2-pro', enabled_by_default=True),
-    ReasoningCase(model='gpt-5.4-pro', enabled_by_default=True),
-    ReasoningCase(model='gpt-5.5-pro', enabled_by_default=True),
+    ReasoningCase(model='gpt-5.4-pro', enabled_by_default=True, supports_context=True),
+    ReasoningCase(model='gpt-5.5-pro', enabled_by_default=True, supports_context=True),
     # gpt-5.1+ chat variants: always reason at a fixed 'medium' effort (sampling params rejected)
     ReasoningCase(model='gpt-5.1-chat-latest', enabled_by_default=True),
     ReasoningCase(model='gpt-5.2-chat-latest', enabled_by_default=True),
     ReasoningCase(model='gpt-5.3-chat-latest', enabled_by_default=True),
-    # gpt-5.5: reasons by default AND can be turned off, like gpt-5.6 but without `reasoning.mode` or `reasoning.context`
-    ReasoningCase(model='gpt-5.5', enabled_by_default=True, can_be_disabled=True),
-    # gpt-5.6: reasons by default AND can be turned off; the only family with `reasoning.mode` and `reasoning.context`
+    # gpt-5.5: reasons by default AND can be turned off, like gpt-5.6 but without `reasoning.mode`
+    ReasoningCase(model='gpt-5.5', enabled_by_default=True, can_be_disabled=True, supports_context=True),
+    # gpt-5.6: reasons by default AND can be turned off; the only family with `reasoning.mode`, and
+    # (with gpt-5.4/5.5) accepts `reasoning.context='all_turns'`
     ReasoningCase(
         model='gpt-5.6-sol', enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
     ),

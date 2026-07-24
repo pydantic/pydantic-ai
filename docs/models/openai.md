@@ -193,7 +193,7 @@ The setting is ignored on models that don't support reasoning mode, per [`OpenAI
 
 ### Reasoning context
 
-Reasoning models can use OpenAI's [reasoning context](https://developers.openai.com/api/docs/guides/reasoning#reasoning-context) to control which prior-turn reasoning items are available to the model when sampling. `auto` uses the model's default, `current_turn` makes only the active turn's reasoning available, and `all_turns` renders compatible reasoning items from earlier turns into the next sample. `all_turns` requires access to earlier response items via [`previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id], a conversation, or replayed history; on a first request it behaves like `current_turn`.
+Reasoning models can use OpenAI's [reasoning context](https://developers.openai.com/api/docs/guides/reasoning#preserve-reasoning-across-calls) to control which prior-turn reasoning items are available to the model when sampling. `auto` (equivalent to omitting the setting) uses the model's default, `current_turn` makes only the active turn's reasoning available, and `all_turns` renders compatible reasoning items from earlier turns into the next sample. `all_turns` requires access to earlier response items via [`previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id], a conversation, or replayed history; on a first request it behaves like `current_turn`.
 
 Configure the context with [`openai_reasoning_context`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_context]:
 
@@ -207,7 +207,7 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
-`auto` and `current_turn` are sent to any model that supports reasoning. `all_turns` is sent only to models whose profile sets [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context] (currently the GPT-5.6 family); on other models it is ignored.
+`auto` and `current_turn` are sent to any model that supports reasoning. `all_turns` is sent only to models whose profile sets [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context] (currently the GPT-5.4, GPT-5.5, and GPT-5.6 families); on other models it is ignored.
 
 ### Native tools
 

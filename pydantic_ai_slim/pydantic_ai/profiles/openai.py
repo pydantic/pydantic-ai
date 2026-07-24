@@ -98,18 +98,27 @@ _ALWAYS_ON_REASONING = _ReasoningSupport(
 
 _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # GPT-5.6 (sol/terra/luna) reasons by default (at 'medium'), accepts `effort='none'` to turn
-    # reasoning off, and is the only family that supports `reasoning.mode` and is marked for
-    # `reasoning.context='all_turns'`.
+    # reasoning off, and is the only family that supports `reasoning.mode`. The GPT-5.4, -5.5 and
+    # -5.6 families all accept `reasoning.context='all_turns'` (live-verified 2026-07).
     'gpt-5.6': _ReasoningSupport(
         enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
     ),
-    # gpt-5.5 reasons by default like gpt-5.6, but has no `reasoning.mode`.
-    'gpt-5.5-pro': _ALWAYS_ON_REASONING,
-    'gpt-5.5': _ReasoningSupport(
-        enabled_by_default=True, can_be_disabled=True, supports_mode=False, supports_context=False
+    # gpt-5.5 reasons by default like gpt-5.6, but has no `reasoning.mode`. The -pro variant can't
+    # be disabled; both accept `reasoning.context='all_turns'`.
+    'gpt-5.5-pro': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=False, supports_mode=False, supports_context=True
     ),
-    'gpt-5.4-pro': _ALWAYS_ON_REASONING,
-    'gpt-5.4': _OPT_IN_REASONING,
+    'gpt-5.5': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=True, supports_mode=False, supports_context=True
+    ),
+    # gpt-5.4 is opt-in like gpt-5.3 below, but (with its -pro variant) accepts
+    # `reasoning.context='all_turns'`.
+    'gpt-5.4-pro': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=False, supports_mode=False, supports_context=True
+    ),
+    'gpt-5.4': _ReasoningSupport(
+        enabled_by_default=False, can_be_disabled=True, supports_mode=False, supports_context=True
+    ),
     # The GPT-5.1+ chat variants always reason at a fixed 'medium' effort: they reject sampling
     # parameters and any other `reasoning.effort` value, including 'none'.
     'gpt-5.3-chat': _ALWAYS_ON_REASONING,
@@ -254,7 +263,7 @@ class OpenAIModelProfile(ModelProfile, total=False):
     `auto` and `current_turn` are accepted by every reasoning model, so they are gated on
     `openai_supports_reasoning` instead; only `all_turns` requires this flag.
 
-    Currently only supported by the GPT-5.6 family."""
+    Currently supported by the GPT-5.4, GPT-5.5, and GPT-5.6 families."""
 
     openai_responses_requires_function_call_status_none: bool
     """Whether the Responses API requires the `status` field on function tool calls to be `None`. Default: `False`.

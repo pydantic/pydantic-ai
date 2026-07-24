@@ -702,18 +702,19 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     openai_reasoning_context: Literal['auto', 'current_turn', 'all_turns']
     """The reasoning context to use, for models that support it.
 
-    Controls which prior-turn reasoning items the model can use when sampling: `auto` uses the
-    model's default, `current_turn` makes only the active turn's reasoning available, and
-    `all_turns` renders compatible reasoning items from earlier turns into the next sample
-    (requires access to earlier response items via `previous_response_id`, a conversation, or
-    replayed history).
+    Controls which prior-turn reasoning items the model can use when sampling: `auto` (equivalent
+    to omitting the setting) uses the model's default, `current_turn` makes only the active turn's
+    reasoning available, and `all_turns` renders compatible reasoning items from earlier turns into
+    the next sample (requires access to earlier response items via `previous_response_id`, a
+    conversation, or replayed history).
 
     `auto` and `current_turn` are sent to any model that supports reasoning. `all_turns` is sent
     only to models whose profile sets
     [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context]
-    (currently the GPT-5.6 family). A value the resolved profile doesn't support is ignored.
+    (currently the GPT-5.4, GPT-5.5, and GPT-5.6 families). A value the resolved profile doesn't
+    support is ignored.
 
-    See [OpenAI's reasoning context documentation](https://developers.openai.com/api/docs/guides/reasoning#reasoning-context)
+    See [OpenAI's reasoning context documentation](https://developers.openai.com/api/docs/guides/reasoning#preserve-reasoning-across-calls)
     for more details.
     """
 

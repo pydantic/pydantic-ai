@@ -300,16 +300,17 @@ async def test_openai_responses_reasoning_mode_omitted_when_unsupported(
 @pytest.mark.parametrize(
     'provider_name,model_name,reasoning_context,expected_reasoning',
     [
-        # `all_turns` rides `openai_responses_supports_reasoning_context`: sent for GPT-5.6, dropped elsewhere.
+        # `all_turns` rides `openai_responses_supports_reasoning_context`: sent for the GPT-5.4/5.5/5.6
+        # families, dropped for older reasoning models (o-series) that reject the value.
         pytest.param('openai', 'gpt-5.6-sol', 'all_turns', {'effort': 'medium', 'context': 'all_turns'}, id='5.6-all'),
-        pytest.param('openai', 'gpt-5.4', 'all_turns', {'effort': 'medium'}, id='5.4-all-dropped'),
-        pytest.param('openrouter', 'openai/gpt-5.4', 'all_turns', {'effort': 'medium'}, id='or-5.4-all-dropped'),
-        # `auto` and `current_turn` are accepted by every reasoning model, so they ride
-        # `openai_supports_reasoning` and must survive on non-GPT-5.6 models.
-        pytest.param('openai', 'gpt-5.4', 'auto', {'effort': 'medium', 'context': 'auto'}, id='5.4-auto'),
+        pytest.param('openai', 'gpt-5.4', 'all_turns', {'effort': 'medium', 'context': 'all_turns'}, id='5.4-all'),
         pytest.param(
-            'openai', 'gpt-5.4', 'current_turn', {'effort': 'medium', 'context': 'current_turn'}, id='5.4-current'
+            'openrouter', 'openai/gpt-5.4', 'all_turns', {'effort': 'medium', 'context': 'all_turns'}, id='or-5.4-all'
         ),
+        pytest.param('openai', 'o3', 'all_turns', {'effort': 'medium'}, id='o3-all-dropped'),
+        # `auto` and `current_turn` are accepted by every reasoning model, so they ride
+        # `openai_supports_reasoning` and must survive on models without `all_turns` support.
+        pytest.param('openai', 'o3', 'auto', {'effort': 'medium', 'context': 'auto'}, id='o3-auto'),
         pytest.param('openai', 'o3', 'current_turn', {'effort': 'medium', 'context': 'current_turn'}, id='o3-current'),
         pytest.param(
             'openrouter',
