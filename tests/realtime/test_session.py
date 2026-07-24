@@ -1257,30 +1257,29 @@ async def test_early_break_with_running_tool_cancels_task() -> None:
     assert cancelled.is_set()
 
 
-async def test_tool_call_cancellation_lets_tool_finish_without_relaying_result() -> None:
-    # The model cancels an in-flight tool call (e.g. the user barged in mid-call). An interruption is
-    # speech-level, not tool-level, so the running task is NOT cancelled — it finishes and its real
-    # result is recorded in history — but the result is NOT sent back to the model, which abandoned the
-    # call. (Gemini emits `ToolCallCancelled` on such an interruption.)
+async def test_tool_call_cancellation_cancels_running_tool() -> None:
+    # The model cancels an in-flight tool call (e.g. the user barged in mid-call). The running task is
+    # cancelled, no `ToolResult` is sent back to the model, and a cancelled result is recorded so the
+    # call still has a matching return in history.
     started = asyncio.Event()
-    release = asyncio.Event()
-    finished = asyncio.Event()
+    cancelled = asyncio.Event()
     agent: Agent[None, str] = Agent()
 
     @agent.tool_plain
     async def slow() -> str:
         started.set()
-        await release.wait()  # stays in-flight until the cancellation has been delivered
-        finished.set()
-        return 'done'
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return 'never'  # pragma: no cover - always cancelled first
 
     class _CancelAfterStart(FakeRealtimeConnection):
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='c1', tool_name='slow', args='{}')
             await started.wait()  # let the tool task start before the model cancels it
             yield ToolCallCancelled(tool_call_ids=['c1'])
-            release.set()  # now let the (uncancelled) tool run to completion
-            await finished.wait()
 
     events: list[Any] = []
     conn = _CancelAfterStart([])
@@ -1288,11 +1287,11 @@ async def test_tool_call_cancellation_lets_tool_finish_without_relaying_result()
         async for event in session:
             events.append(event)
 
-    assert finished.is_set()  # the tool ran to completion rather than being cancelled
-    assert conn.sent == []  # its result was not relayed to the model
+    assert cancelled.is_set()  # the running tool observed cancellation
+    assert conn.sent == []
     results = [e for e in events if isinstance(e, FunctionToolResultEvent)]
     assert len(results) == 1 and isinstance(results[0].part, ToolReturnPart)
-    # The completed call's real result is in history (valid for a handoff), not a synthetic placeholder.
+    # The cancelled call still has exactly one matching return in history (valid for a handoff).
     returns = [
         part
         for message in session.all_messages()
@@ -1300,7 +1299,9 @@ async def test_tool_call_cancellation_lets_tool_finish_without_relaying_result()
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     ]
-    assert [(part.tool_call_id, part.content) for part in returns] == [('c1', 'done')]
+    assert [(part.tool_call_id, part.content) for part in returns] == [
+        ('c1', 'Tool call cancelled before it completed.')
+    ]
 
 
 async def test_tool_call_cancellation_unknown_id_is_ignored() -> None:
