@@ -1,0 +1,220 @@
+tests/providers/test_bedrock.py
+  s_a1768203f8e01b::t_e123960aa2aea8 91-92
+tests/test_transcript_repair.py
+  s_a1768203f8e01b::t_e123960aa2aea8 875-921
+  s_a1768203f8e01b::t_7c6dda2f733519 873-874
+tests/models/test_huggingface.py
+  s_a1768203f8e01b::t_e123960aa2aea8 141-142,167,308,310,320,327,329,339,348,358,368,495,550,554,557,587,597,608,846,848,865,868,1219-1220
+tests/models/test_google.py
+  s_a1768203f8e01b::t_e123960aa2aea8 17,3686,4949,5286-5310,6774,6776-6778,6812-6842
+  s_a1768203f8e01b::t_06475dfd4fcfb8 6843-6844
+docs/native-tools.md
+  s_a1768203f8e01b::t_e123960aa2aea8 17,173,778-823
+  s_a1768203f8e01b::t_313c701dc586b5 824
+tests/models/test_deepseek.py
+  s_a1768203f8e01b::t_e123960aa2aea8 36
+tests/test_builtin_tools.py
+  s_a1768203f8e01b::t_e123960aa2aea8 78,98,117,129,153
+pydantic_ai_slim/pydantic_ai/native_tools/AGENTS.md
+  s_a1768203f8e01b::t_e123960aa2aea8 5,8
+tests/test_ui_web.py
+  s_a1768203f8e01b::t_e123960aa2aea8 830
+tests/test_cache_prefix_invariant.py
+  s_a1768203f8e01b::t_e123960aa2aea8 1-278
+tests/models/test_openai_responses.py
+  s_a1768203f8e01b::t_e123960aa2aea8 1177-1306,1985-1998,3171,3246,3307,3321,3345,3370,3394,3413,3432,4468,14269-14295
+docs/capabilities/web-search.md
+  s_a1768203f8e01b::t_e123960aa2aea8 9-12
+pydantic_ai_slim/pydantic_ai/models/instrumented.py
+  s_a1768203f8e01b::t_e123960aa2aea8 21-22,24,165,185,208-235,242-243,253
+tests/graph/builder/test_joins_and_reducers.py
+  s_a1768203f8e01b::t_e123960aa2aea8 373-440
+pydantic_ai_slim/pydantic_ai/providers/voyageai.py
+  s_a1768203f8e01b::t_e123960aa2aea8 27
+tests/test_messages.py
+  s_a1768203f8e01b::t_e123960aa2aea8 416
+pydantic_ai_slim/pydantic_ai/capabilities/instrumentation.py
+  s_a1768203f8e01b::t_e123960aa2aea8 5,18,21,28-34,98-101,210-225,292-295
+pydantic_ai_slim/pydantic_ai/providers/openrouter.py
+  s_a1768203f8e01b::t_e123960aa2aea8 13,185-190
+tests/models/cassettes/test_anthropic/test_anthropic_advisor_tool_message_replay.yaml
+  s_a1768203f8e01b::t_e123960aa2aea8 1-232
+docs/durable_execution/dbos.md
+  s_a1768203f8e01b::t_e123960aa2aea8 189-190
+tests/models/cassettes/test_anthropic/test_anthropic_advisor_tool_redacted.yaml
+  s_a1768203f8e01b::t_e123960aa2aea8 1-121
+tests/models/cassettes/test_openrouter/test_openrouter_advisor_tool.yaml
+  s_a1768203f8e01b::t_e123960aa2aea8 1-93
+tests/models/cassettes/test_openrouter/test_openrouter_advisor_tool_stream.yaml
+  s_a1768203f8e01b::t_e123960aa2aea8 1-170
+docs/durable_execution/temporal.md
+  s_a1768203f8e01b::t_e123960aa2aea8 234-235
+tests/models/cassettes/test_anthropic/test_anthropic_advisor_tool.yaml
+  s_a1768203f8e01b::t_e123960aa2aea8 1-124
+pydantic_ai_slim/pydantic_ai/models/cohere.py
+  s_a1768203f8e01b::t_e123960aa2aea8 153
+docs/graph/builder/joins.md
+  s_a1768203f8e01b::t_e123960aa2aea8 335
+pydantic_ai_slim/pydantic_ai/providers/google.py
+  s_a1768203f8e01b::t_e123960aa2aea8 173-176
+pydantic_ai_slim/pydantic_ai/models/google.py
+  s_a1768203f8e01b::t_e123960aa2aea8 163-182,383-393,609,796,798,951,1010-1016,1365,1526
+tests/graph/builder/test_graph_iteration.py
+  s_a1768203f8e01b::t_e123960aa2aea8 317-318
+tests/models/cassettes/test_openai_responses/test_openai_responses_model_web_search_tool_without_external_access.yaml
+  s_a1768203f8e01b::t_e123960aa2aea8 1-155
+tests/models/test_instrumented.py
+  s_a1768203f8e01b::t_e123960aa2aea8 10,39,98,174,319-406,655
+tests/test_cache_prefix_stability.py
+  s_a1768203f8e01b::t_e123960aa2aea8 150-153
+.github/workflows/shared/prompts/pydantic-ai-roundtrip-sweep.md
+  s_a1768203f8e01b::t_e123960aa2aea8 48-54
+pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/references/INPUT-AND-HISTORY.md
+  s_a1768203f8e01b::t_e123960aa2aea8 105-106
+tests/test_logfire.py
+  s_a1768203f8e01b::t_e123960aa2aea8 12-21,1181-1277
+  s_a1768203f8e01b::t_0f22c9538b71d9 1278-1279
+tests/test_function_schema.py
+  s_a1768203f8e01b::t_e123960aa2aea8 6,174,178,191,194
+tests/test_tool_search.py
+  s_a1768203f8e01b::t_e123960aa2aea8 467,2265,2663
+docs/models/google.md
+  s_a1768203f8e01b::t_e123960aa2aea8 161-180,489
+  s_a1768203f8e01b::t_aed5bc3213edbc 490
+tests/conftest.py
+  s_a1768203f8e01b::t_e123960aa2aea8 4,48,51,83-90,215-229,466-467,470-471,547,591-607
+  s_a1768203f8e01b::t_1806afd05d7192 608-609
+pydantic_ai_slim/pydantic_ai/models/openrouter.py
+  s_a1768203f8e01b::t_e123960aa2aea8 22,526-537,561-562,630-635,896,941-952
+  s_a1768203f8e01b::t_b14a389330e5b7 953
+tests/test_temporal.py
+  s_a1768203f8e01b::t_e123960aa2aea8 6242
+pydantic_ai_slim/pydantic_ai/agent/spec.py
+  s_a1768203f8e01b::t_e123960aa2aea8 208
+tests/models/cassettes/test_openai_responses/test_openai_responses_moderation_block_policy.yaml
+  s_a1768203f8e01b::t_e123960aa2aea8 1-269
+tests/test_usage_limits.py
+  s_a1768203f8e01b::t_e123960aa2aea8 438,442
+docs/capabilities/on-demand.md
+  s_a1768203f8e01b::t_e123960aa2aea8 145
+tests/test_ag_ui.py
+  s_a1768203f8e01b::t_e123960aa2aea8 4920
+pydantic_ai_slim/pydantic_ai/capabilities/web_search.py
+  s_a1768203f8e01b::t_e123960aa2aea8 48-50,63,78,93-94,118-123
+docs/durable_execution/prefect.md
+  s_a1768203f8e01b::t_e123960aa2aea8 221-222
+tests/evals/test_dataset.py
+  s_a1768203f8e01b::t_e123960aa2aea8 841,1616,2096
+tests/evals/test_evaluator_common.py
+  s_a1768203f8e01b::t_e123960aa2aea8 217
+tests/evals/test_utils.py
+  s_a1768203f8e01b::t_e123960aa2aea8 164
+tests/graph/builder/test_graph_execution.py
+  s_a1768203f8e01b::t_e123960aa2aea8 69
+tests/models/cassettes/test_google/test_google_model_armor_response_template_real_block.yaml
+  s_a1768203f8e01b::t_e123960aa2aea8 1-65
+tests/models/test_groq.py
+  s_a1768203f8e01b::t_e123960aa2aea8 160
+tests/models/test_tool_choice_unit.py
+  s_a1768203f8e01b::t_e123960aa2aea8 55-61,325-331,360-366,400-406,425,465-466,484,512,569,597,651,667,681,697,721,736,751,767,788
+tests/models/test_cohere.py
+  s_a1768203f8e01b::t_e123960aa2aea8 84,132
+tests/ext/test_langchain.py
+  s_a1768203f8e01b::t_e123960aa2aea8 183,208,231
+tests/typed_agent.py
+  s_a1768203f8e01b::t_e123960aa2aea8 289,317
+tests/providers/test_huggingface.py
+  s_a1768203f8e01b::t_e123960aa2aea8 55
+docs/message-history.md
+  s_a1768203f8e01b::t_e123960aa2aea8 346-357,518-524,548
+tests/models/cassettes/test_openai/test_openai_moderation_block_policy.yaml
+  s_a1768203f8e01b::t_e123960aa2aea8 1-231
+tests/models/cassettes/test_anthropic/test_anthropic_advisor_tool_stream.yaml
+  s_a1768203f8e01b::t_e123960aa2aea8 1-121
+tests/models/cassettes/test_openai/test_openai_moderation_flagged.yaml
+  s_a1768203f8e01b::t_e123960aa2aea8 1-220
+pydantic_ai_slim/pydantic_ai/exceptions.py
+  s_a1768203f8e01b::t_e123960aa2aea8 37,400-419
+docs/tools-advanced.md
+  s_a1768203f8e01b::t_e123960aa2aea8 819-850
+tests/models/test_fallback.py
+  s_a1768203f8e01b::t_e123960aa2aea8 1573,1579
+tests/models/test_openrouter.py
+  s_a1768203f8e01b::t_e123960aa2aea8 29,32,37,42,1027-1156
+  s_a1768203f8e01b::t_d24e1a752c3d31 1157-1158
+tests/cassette_utils.py
+  s_a1768203f8e01b::t_e123960aa2aea8 11-12,15-26,31-275
+  s_a1768203f8e01b::t_c6532593cdeb1f 276
+pydantic_ai_slim/pydantic_ai/models/openai.py
+  s_a1768203f8e01b::t_e123960aa2aea8 2749-2751
+pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/references/NATIVE-TOOLS.md
+  s_a1768203f8e01b::t_e123960aa2aea8 22-23,36
+tests/models/test_anthropic.py
+  s_a1768203f8e01b::t_e123960aa2aea8 68,114-118,164,343,7098-7515,10995-10996
+pydantic_ai_slim/pydantic_ai/native_tools/__init__.py
+  s_a1768203f8e01b::t_e123960aa2aea8 28-29,47-65,195-207,643-714,735
+pydantic_ai_slim/pydantic_ai/models/huggingface.py
+  s_a1768203f8e01b::t_e123960aa2aea8 261,263,274,277,432,445,463,469,478,482,496,504,507,511,527,584
+tests/mcp_server.py
+  s_a1768203f8e01b::t_e123960aa2aea8 182
+pydantic_ai_slim/pydantic_ai/_instrumentation.py
+  s_a1768203f8e01b::t_e123960aa2aea8 10,88-120,166-203,301-302,313-315,394-400
+pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md
+  s_a1768203f8e01b::t_e123960aa2aea8 10
+tests/AGENTS.md
+  s_a1768203f8e01b::t_e123960aa2aea8 11-12,201
+tests/graph/builder/test_graph_edge_cases.py
+  s_a1768203f8e01b::t_e123960aa2aea8 117,120,172,175
+tests/models/test_model_request_parameters.py
+  s_a1768203f8e01b::t_e123960aa2aea8 96
+tests/models/test_openai.py
+  s_a1768203f8e01b::t_e123960aa2aea8 173,2395-2671,4819,4834,4856
+pydantic_ai_slim/pydantic_ai/providers/huggingface.py
+  s_a1768203f8e01b::t_e123960aa2aea8 129
+tests/profiles/test_resolution_matrix.py
+  s_a1768203f8e01b::t_e123960aa2aea8 36,188,211,238,1571,1665
+tests/providers/test_openai.py
+  s_a1768203f8e01b::t_e123960aa2aea8 60
+pydantic_ai_slim/pydantic_ai/profiles/anthropic.py
+  s_a1768203f8e01b::t_e123960aa2aea8 6,258-270,272-276
+pydantic_ai_slim/pydantic_ai/__init__.py
+  s_a1768203f8e01b::t_e123960aa2aea8 35,118,206,312
+pydantic_ai_slim/pydantic_ai/models/anthropic.py
+  s_a1768203f8e01b::t_e123960aa2aea8 56,117-119,210-215,265-269,580-581,597-599,1006-1017,1092-1093,1117-1118,1315,1367-1369,1494-1498,1606,1686-1696,1833-1849,2428-2437,2449-2450,2453-2470,2632-2638,2935-2945,2998-3007,3176-3188
+  s_a1768203f8e01b::t_2ea994da33ceef 3189-3190
+tests/providers/test_mistral.py
+  s_a1768203f8e01b::t_e123960aa2aea8 26
+tests/test_agent.py
+  s_a1768203f8e01b::t_e123960aa2aea8 138-142,1566,1952
+pydantic_ai_slim/pydantic_ai/messages.py
+  s_a1768203f8e01b::t_e123960aa2aea8 515-520
+tests/test_capabilities.py
+  s_a1768203f8e01b::t_e123960aa2aea8 547-587,1520-1524,1598,2000-2003,7042,7083,7103,7377,7429,7448,10065,10076,10080-10093,19928-19929,19949-19950,19978-19979
+pydantic_ai_slim/pydantic_ai/providers/google_cloud.py
+  s_a1768203f8e01b::t_e123960aa2aea8 34,51-56
+tests/test_examples.py
+  s_a1768203f8e01b::t_e123960aa2aea8 307-310,936
+tests/models/test_model.py
+  s_a1768203f8e01b::t_e123960aa2aea8 268-269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "fee59b28a95990f7afd04f8c99842c26ae71bea2",
+  "prompts": {},
+  "humans": {
+    "h_d9dd17644dded9": {
+      "author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_a1768203f8e01b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8f50-dd59-7853-b87c-a4ea7b45eb45",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
