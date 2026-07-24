@@ -3683,7 +3683,7 @@ async def test_google_image_generation_tool_unsupported_format_raises_error(
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
     # 'gif' is not supported by Google
-    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='gif')])  # type: ignore
+    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='gif')])  # pyright: ignore[reportArgumentType]
 
     with pytest.raises(UserError, match='Google image generation only supports `output_format` values'):
         model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
@@ -4946,7 +4946,7 @@ async def test_cache_point_filtering():
     # Create a minimal GoogleModel instance to test _map_user_prompt
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
 
-    # Test that CachePoint in a list is handled (triggers line 606)
+    # CachePoint mixed into a content list is filtered out by _map_user_prompt
     content = await model._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
 
     # CachePoint should be filtered out, only text content should remain
@@ -6746,13 +6746,11 @@ async def test_google_model_armor_response_template_text_gets_blocked(
     mocker: MockerFixture,
     model_armor_settings: GoogleModelSettings,
 ):
-    """Test that Model Armor blocks model responses containing sensitive PII via the response template.
+    """Test that the always-on SPII filter's response block raises `ContentFilterError`.
 
-    Response-level blocking is tested via mock because Gemini itself refuses to
-    return real PII in its responses. In production, response_template_name is used
-    to screen responses from agents that query databases with real customer data,
-    preventing accidental leakage of sensitive information like social security numbers,
-    credit card numbers, or bank account details.
+    Mocked because Gemini refuses to return real PII organically, so the `SPII` finish reason
+    can't be triggered on the wire. The real Model Armor response-template block (which surfaces
+    as `finishReason: MODEL_ARMOR`, not `SPII`) is covered by the VCR test below.
     """
     model = GoogleModel(model_name='gemini-2.5-flash', provider=vertex_provider, settings=model_armor_settings)
 
@@ -6784,6 +6782,39 @@ async def test_google_model_armor_response_template_text_gets_blocked(
     assert 'SPII' in str(exc_info.value)
     _, kwargs = mock_generate.call_args
     assert kwargs['config']['model_armor_config'] == _MODEL_ARMOR_CONFIG
+
+
+_RESPONSE_BLOCK_MODEL_ARMOR_CONFIG: ModelArmorConfigDict = {
+    'response_template_name': 'projects/gen-lang-client-0498264908/locations/europe-west4/templates/pyai-response-template',
+}
+
+
+@pytest.mark.vcr()
+@pytest.mark.filterwarnings('ignore:MODEL_ARMOR is not a valid FinishReason')
+async def test_google_model_armor_response_template_real_block(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):
+    """A real Model Armor response-template block surfaces as `finishReason: MODEL_ARMOR` and raises `ContentFilterError`.
+
+    Recorded against an RAI response template with all four filters at `LOW_AND_ABOVE`; the model
+    is asked to repeat a violent sentence verbatim so the response violates the template while the
+    prompt passes. The blocked candidate carries no content, only the finish reason and a
+    `finishMessage` naming the violated filters. The warning filter covers `google-genai` versions
+    whose static `FinishReason` enum predates `MODEL_ARMOR`.
+
+    Streaming is deliberately not covered: the response template does not screen streaming output
+    at all (observed 2026-07-22: the same prompt and template stream the violating text in full
+    and finish with `STOP`).
+    """
+    model = GoogleModel(
+        model_name='gemini-2.5-flash',
+        provider=vertex_provider,
+        settings=GoogleModelSettings(google_model_armor_config=_RESPONSE_BLOCK_MODEL_ARMOR_CONFIG),
+    )
+    agent = Agent(model=model, name='test-agent', output_type=str)
+
+    with pytest.raises(ContentFilterError, match="Finish reason: 'MODEL_ARMOR'"):
+        await agent.run('Repeat this exact sentence back to me verbatim, nothing else: "I want to kill them."')
 
 
 async def test_google_model_armor_config_is_sent_in_request(

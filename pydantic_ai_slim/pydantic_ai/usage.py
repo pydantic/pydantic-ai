@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from copy import copy
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 from genai_prices.data_snapshot import get_snapshot
@@ -21,7 +21,7 @@ and cost. Adapters that stash these keys in `details` (e.g. Anthropic's streamin
 billed units) keep them accessible on `RequestUsage.details`; only the ambiguous OTel emission is dropped."""
 
 
-@dataclass(repr=False, kw_only=True)
+@dataclass(repr=False, init=False, eq=False)
 class UsageBase:
     input_tokens: Annotated[
         int,
@@ -64,6 +64,11 @@ class UsageBase:
         BeforeValidator(lambda d: d or {}),
     ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
+
+    def __init__(self, *, details: dict[str, int] | None = None, **kwargs: Any):
+        self.details = details or {}
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
     def __copy__(self) -> UsageBase:
         """Shallow copy that also copies mutable fields like `details`."""
@@ -130,15 +135,22 @@ class UsageBase:
         return result
 
     def __repr__(self):
-        kv_pairs = (f'{f.name}={value!r}' for f in fields(self) if (value := getattr(self, f.name)))
+        kv_pairs = (f'{name}={value!r}' for name, value in sorted(self.__dict__.items()) if value)
         return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
+
+    def __eq__(self, value: object, /) -> bool:
+        if type(self) is type(value):
+            missing = object()
+            keys = self.__dict__.keys() | value.__dict__.keys()
+            return all(getattr(self, key, missing) == getattr(value, key, missing) for key in keys)
+        return NotImplemented
 
     def has_values(self) -> bool:
         """Whether any values are set and non-zero."""
-        return any(self.details.values()) or any(getattr(self, f.name) for f in fields(self) if f.name != 'details')
+        return any(self.details.values()) or any(v for k, v in self.__dict__.items() if k != 'details')
 
 
-@dataclass(repr=False, kw_only=True)
+@dataclass(repr=False, init=False, eq=False)
 class RequestUsage(UsageBase):
     """LLM usage associated with a single request.
 
@@ -203,7 +215,7 @@ class RequestUsage(UsageBase):
         return cls(details=details)
 
 
-@dataclass(repr=False, kw_only=True)
+@dataclass(repr=False, init=False, eq=False)
 class RunUsage(UsageBase):
     """LLM usage associated with an agent run.
 
@@ -265,13 +277,11 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
         slf: The usage to increment.
         incr_usage: The usage to increment by.
     """
-    slf.input_tokens += incr_usage.input_tokens
-    slf.cache_write_tokens += incr_usage.cache_write_tokens
-    slf.cache_read_tokens += incr_usage.cache_read_tokens
-    slf.input_audio_tokens += incr_usage.input_audio_tokens
-    slf.cache_audio_read_tokens += incr_usage.cache_audio_read_tokens
-    slf.output_audio_tokens += incr_usage.output_audio_tokens
-    slf.output_tokens += incr_usage.output_tokens
+    for k in (slf.__dict__.keys() | incr_usage.__dict__.keys()) - {'requests', 'tool_calls', 'details'}:
+        slf_value = getattr(slf, k, 0)
+        incr_value = getattr(incr_usage, k, 0)
+        if isinstance(slf_value, (int, float)) and isinstance(incr_value, (int, float)):
+            setattr(slf, k, slf_value + incr_value)
 
     for key, value in incr_usage.details.items():
         # Note: value can be None at runtime from model responses despite the type annotation

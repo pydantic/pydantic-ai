@@ -437,9 +437,12 @@ def pytest_recording_configure(config: Any, vcr: VCR):
         """Match URL paths after scrubbing AWS account IDs from ARNs."""
         path1 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r1.path)
         path2 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r2.path)
-        # Normalize Vertex AI paths by replacing region
+        # Normalize Vertex AI paths by replacing region and project (cassettes may be recorded
+        # against a different GCP project than the fixture default)
         path1 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path1)
         path2 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path2)
+        path1 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path1)
+        path2 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path2)
         if path1 != path2:
             raise AssertionError(f'{path1} != {path2}')
 
@@ -515,7 +518,7 @@ def mock_vcr_aiohttp_content(mocker: MockerFixture):
     # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
     # So we turn `content` into a cached property to return the same one each time.
     # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
-    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # type: ignore
+    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # pyright: ignore[reportArgumentType, reportUnknownVariableType]
     cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
     mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
     mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
@@ -722,6 +725,7 @@ def tiny_video() -> BinaryContent:
 
 os.environ.pop('OPENAI_BASE_URL', None)
 os.environ.pop('ANTHROPIC_BASE_URL', None)
+os.environ.pop('LOGFIRE_EMIT_CONFIGURATION_SPAN', None)
 
 
 @pytest.fixture(scope='session')

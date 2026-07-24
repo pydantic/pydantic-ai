@@ -75,7 +75,7 @@ def test_unless_native_model_supports_builtin():
     from pydantic_ai.models.function import FunctionModel
     from pydantic_ai.tools import ToolDefinition
 
-    model = FunctionModel(lambda m, i: None)  # type: ignore  # supports all builtins
+    model = FunctionModel(lambda m, i: None)  # pyright: ignore[reportArgumentType]  # supports all builtins
     fallback_tool = ToolDefinition(name='my_search', description='Search', unless_native='web_search')
     params = ModelRequestParameters(
         function_tools=[fallback_tool],
@@ -95,7 +95,7 @@ def test_unless_native_model_does_not_support():
     from pydantic_ai.profiles import ModelProfile
     from pydantic_ai.tools import ToolDefinition
 
-    model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+    model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
     fallback_tool = ToolDefinition(name='my_search', description='Search', unless_native='web_search')
     params = ModelRequestParameters(
         function_tools=[fallback_tool],
@@ -114,7 +114,7 @@ def test_unless_native_no_fallback_raises_error():
     from pydantic_ai.models.function import FunctionModel
     from pydantic_ai.profiles import ModelProfile
 
-    model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+    model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
     params = ModelRequestParameters(native_tools=[WebSearchTool()])
     with pytest.raises(UserError, match='not supported by this model'):
         model.prepare_request(None, params)
@@ -126,7 +126,7 @@ def test_unless_native_multiple_fallbacks_for_same_builtin():
     from pydantic_ai.models.function import FunctionModel
     from pydantic_ai.tools import ToolDefinition
 
-    model = FunctionModel(lambda m, i: None)  # type: ignore  # supports all builtins
+    model = FunctionModel(lambda m, i: None)  # pyright: ignore[reportArgumentType]  # supports all builtins
     params = ModelRequestParameters(
         function_tools=[
             ToolDefinition(name='search_a', description='A', unless_native='web_search'),
@@ -150,7 +150,7 @@ def test_unless_native_mixed_support():
 
     # Only supports web search, not code execution
     model = FunctionModel(
-        lambda m, i: None,  # type: ignore
+        lambda m, i: None,  # pyright: ignore[reportArgumentType]
         profile=ModelProfile(supported_native_tools=frozenset({WebSearchTool})),
     )
     params = ModelRequestParameters(
