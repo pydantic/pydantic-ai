@@ -211,6 +211,7 @@ class WebSearchTool(AbstractNativeTool):
     """Controls whether results consumed by completed code execution calls are included in the response.
 
     If `None`, Anthropic uses its default of `'full'`.
+    Only supported by Anthropic models and clients that support dynamic web tools.
 
     Supported by:
 
@@ -430,6 +431,7 @@ class WebFetchTool(AbstractNativeTool):
 
     Set to `False` only when fresh content is required, as bypassing the cache increases latency.
     If `None`, Anthropic uses its default of `True`.
+    Only supported by Anthropic models and clients that support dynamic web tools.
 
     Supported by:
 
@@ -440,6 +442,7 @@ class WebFetchTool(AbstractNativeTool):
     """Controls whether results consumed by completed code execution calls are included in the response.
 
     If `None`, Anthropic uses its default of `'full'`.
+    Only supported by Anthropic models and clients that support dynamic web tools.
 
     Supported by:
 

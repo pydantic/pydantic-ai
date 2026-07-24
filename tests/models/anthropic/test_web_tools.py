@@ -124,7 +124,7 @@ CLIENT_SUPPORT_CASES = [
         id='vertex-web-search',
         client_cls=AsyncAnthropicVertex,
         base_url='https://us-central1-aiplatform.googleapis.com',
-        native_tools=[WebSearchTool(response_inclusion='excluded')],
+        native_tools=[WebSearchTool()],
         expected_tool_types=['web_search_20250305'],
     ),
     ClientSupportCase(
@@ -192,7 +192,27 @@ def test_anthropic_web_tools_client_support(case: ClientSupportCase):
                 'use_cache': False,
             },
         ]
+    else:
+        assert all('response_inclusion' not in tool and 'use_cache' not in tool for tool in tools)
     assert sorted(beta_features) == case.expected_betas
+
+
+@pytest.mark.parametrize(
+    'tool, option',
+    [
+        pytest.param(
+            WebSearchTool(response_inclusion='excluded'), 'response_inclusion', id='search-response-inclusion'
+        ),
+        pytest.param(WebFetchTool(use_cache=False), 'use_cache', id='fetch-use-cache'),
+        pytest.param(WebFetchTool(response_inclusion='excluded'), 'response_inclusion', id='fetch-response-inclusion'),
+    ],
+)
+def test_anthropic_previous_web_tools_reject_new_options(tool: AbstractNativeTool, option: str):
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
+    params = ModelRequestParameters(native_tools=[tool])
+
+    with pytest.raises(UserError, match=rf'`{option}` is not supported by model'):
+        m._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
 
 
 def test_anthropic_explicit_profile_instance_narrows_web_tools():
