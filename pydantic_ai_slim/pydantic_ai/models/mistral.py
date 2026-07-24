@@ -640,7 +640,11 @@ class MistralModel(Model[Mistral]):
                     # (e.g. an empty `ModelResponse` the agent graph retries). Omit it, mirroring
                     # the OpenAI and Anthropic adapters.
                     continue
-                mistral_messages.append(MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls))
+                content: MistralContent = content_chunks
+                if len(message.parts) == 1 and isinstance(message.parts[0], TextPart):
+                    # Mistral returns plain assistant text as a scalar, and its prompt cache requires an identical prefix.
+                    content = message.parts[0].content
+                mistral_messages.append(MistralAssistantMessage(content=content, tool_calls=tool_calls))
             else:
                 assert_never(message)
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):

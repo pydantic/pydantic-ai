@@ -243,6 +243,9 @@ async def test_multiple_completions(allow_model_requests: None):
     assert result.output == 'hello again'
     assert result.usage.input_tokens == 1
     assert result.usage.output_tokens == 1
+    second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
+    assert isinstance(second_call_messages[1], MistralAssistantMessage)
+    assert second_call_messages[1].content == 'world'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
