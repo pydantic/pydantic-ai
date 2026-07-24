@@ -52,8 +52,8 @@ if TYPE_CHECKING:
         KnownRealtimeModelName,
         RealtimeModel,
         RealtimeModelSettings,
-        RealtimeSession,
         RealtimeProviderSession,
+        RealtimeSession,
     )
 
 DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']

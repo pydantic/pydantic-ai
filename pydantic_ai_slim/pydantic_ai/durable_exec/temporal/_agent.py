@@ -56,8 +56,8 @@ if TYPE_CHECKING:
         KnownRealtimeModelName,
         RealtimeModel,
         RealtimeModelSettings,
-        RealtimeSession,
         RealtimeProviderSession,
+        RealtimeSession,
     )
 
 
