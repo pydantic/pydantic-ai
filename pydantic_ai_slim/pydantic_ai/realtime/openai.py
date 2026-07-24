@@ -813,6 +813,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             http_client=self._http_client,
             client_secrets_url=self._webrtc_client_secrets_url(),
             headers=await self._webrtc_headers(),
+            provider_name=self.system,
             session_config=self._webrtc_session_config(instructions, tools, model_settings),
             expires_after_seconds=expires_after_seconds,
         )

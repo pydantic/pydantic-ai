@@ -97,9 +97,10 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
     to connect to `/voice-live/realtime` with the Voice Live beta session protocol. Both use an
     `api-key` header.
 
-    For browser WebRTC (minting client secrets and relaying SDP offers), pass a Microsoft Entra ID
-    `credential` (e.g. `azure.identity.DefaultAzureCredential()`) to authenticate the signaling calls
-    with a bearer token instead of the `api-key`; the browser only ever receives the short-lived
+    Pass a Microsoft Entra ID `credential` (e.g. `azure.identity.DefaultAzureCredential()`) to
+    authenticate every request to the resource — the realtime WebSocket session *and* the browser
+    WebRTC signaling calls — with a bearer token instead of the `api-key` (needed when the resource is
+    locked to managed identity). For browser WebRTC the browser still only ever receives the short-lived
     ephemeral secret, never the Entra token or the API key.
 
     <!-- TODO(voice-live): Keep GA as the default until maintainers decide whether Voice Live should

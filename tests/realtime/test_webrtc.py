@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 import pytest
 
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters
 
 from ..conftest import try_import
@@ -199,8 +199,10 @@ async def test_create_client_secret_http_error() -> None:
         return httpx.Response(401, text='invalid api key')
 
     model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
-    with pytest.raises(UnexpectedModelBehavior, match='401 error minting realtime client secret: invalid api key'):
+    with pytest.raises(ModelHTTPError) as exc_info:
         await model.create_client_secret()
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.body == 'invalid api key'
 
 
 # --- WebRTC offer relay -----------------------------------------------------------------------------
@@ -234,8 +236,10 @@ async def test_answer_webrtc_offer_http_error() -> None:
         return httpx.Response(400, text='bad sdp')
 
     model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
-    with pytest.raises(UnexpectedModelBehavior, match='400 error negotiating realtime WebRTC call: bad sdp'):
+    with pytest.raises(ModelHTTPError) as exc_info:
         await model.answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.body == 'bad sdp'
 
 
 # --- Azure Microsoft Entra ID + endpoints -----------------------------------------------------------
