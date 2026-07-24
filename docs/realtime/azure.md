@@ -53,16 +53,17 @@ speed, server/semantic VAD, and truncation use
 realtime does not expose `temperature`. Input transcription defaults to `'auto'`; see
 [Transcribing user input](index.md#transcribing-user-input).
 
-!!! note "Input transcription needs a deployed transcription model"
+!!! note "Capturing input transcripts needs a deployed transcription model"
     Azure resolves the input-transcription model against your resource's own **deployments**, not
     OpenAI's hosted models. The default (`gpt-realtime-whisper`) is not a deployment, so on a resource
-    without a transcription deployment, input transcription fails with `DeploymentNotFound`. Since that's a
-    misconfiguration that fails every turn (silently dropping spoken user turns), the session **raises**
-    rather than surfacing a recoverable event. Deploy a transcription model (e.g. `whisper`) and set it via
+    without a transcription deployment, input transcription fails with `DeploymentNotFound`. The failed
+    turn remains represented in history as retained audio when available, or as a content-less user
+    [`SpeechPart`][pydantic_ai.messages.SpeechPart] otherwise, but its words are not captured. To capture
+    transcripts, deploy a transcription model (e.g. `whisper`) and set it via
     `input_transcription_model` on
     [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]. If you don't
-    need transcripts, disable transcription with `input_transcription_model=None` and pass
-    `audio_retention='input_audio'` so the spoken turn is still kept as audio.
+    need transcripts, disable transcription with `input_transcription_model=None`; pass
+    `audio_retention='input_audio'` if the spoken turn should be kept as audio rather than a content-less part.
 
 ## Azure AI Voice Live support is coming soon
 

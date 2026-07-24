@@ -349,19 +349,9 @@ class RealtimeSession:
         self._retain_images_every_n = retain_images_every_n
         self._sent_image_count = 0
         # Whether the connection transcribes the user's audio. When it doesn't, no `InputTranscript`
-        # arrives to finalize a user turn, so retained input audio is finalized as an audio-only turn
-        # instead (see `_finalize_audio_only_user`).
+        # arrives to finalize a user turn, so its retained audio or content-less placeholder is finalized
+        # at the turn boundary (see `_finalize_untranscribed_user`).
         self._input_transcription_enabled = connection.input_transcription_enabled
-        if not self._input_transcription_enabled and not self._retain_input:
-            # Neither transcription nor input-audio retention: the user's turns would be silently dropped
-            # from history (nothing to build a user turn from), breaking the session's history/handoff
-            # contract. Make the contradictory config an explicit error rather than a silent gap.
-            raise UserError(
-                "This realtime session can't capture the user's turns: input transcription is disabled "
-                "and `audio_retention` doesn't retain input audio. Enable transcription in the model settings, "
-                "or pass `audio_retention='input_audio'` or `'all'` to keep the "
-                'raw audio instead.'
-            )
         self.usage = usage if usage is not None else RunUsage()
         """Cumulative token usage and tool-call counts for the session, updated as events stream in.
 
@@ -401,6 +391,7 @@ class RealtimeSession:
         # In-flight user request being assembled from input-transcript events.
         self._active_user: SpeechPart | None = None
         self._user_transcript = ''
+        self._user_turn_active = False
         self._active_users_by_id: dict[str, SpeechPart] = {}
         self._user_transcripts_by_id: dict[str, str] = {}
         self._user_item_order: deque[str] = deque()
@@ -664,6 +655,8 @@ class RealtimeSession:
 
     async def send_audio(self, data: bytes) -> None:
         """Stream a chunk of audio to the model."""
+        user_turn_was_active = self._user_turn_active
+        self._user_turn_active = True
         previous_length: int | None = None
         if self._retain_input:
             # Buffer the raw input so the finalized user turn can retain it. A per-item speech-stopped
@@ -674,6 +667,7 @@ class RealtimeSession:
         try:
             await self._connection.send(AudioInput(data=data))
         except BaseException:
+            self._user_turn_active = user_turn_was_active
             if previous_length is not None and len(self._input_audio) == previous_length + len(data):
                 del self._input_audio[previous_length:]
             raise
@@ -684,7 +678,8 @@ class RealtimeSession:
             self._profile.get('supports_manual_turn_control', False), 'commit_audio', 'manual turn-taking'
         )
         await self._connection.send(CommitAudio())
-        for event in self._finalize_audio_only_user():
+        self._user_turn_active = True
+        for event in self._finalize_untranscribed_user():
             await self._queue.put(event)
 
     async def clear_audio(self) -> None:
@@ -696,6 +691,7 @@ class RealtimeSession:
         # Drop the locally retained copy too (with `audio_retention='input_audio'`/`'all'`), or the discarded
         # audio would still be attached to the next finalized user turn.
         self._input_audio.clear()
+        self._user_turn_active = False
 
     async def create_response(self) -> None:
         """Ask the model to respond now (manual turn-taking, after `commit_audio`)."""
@@ -804,7 +800,7 @@ class RealtimeSession:
         return events
 
     def _finalize_assistant_part(self) -> list[RealtimeEvent]:
-        """End the in-flight assistant part, appending it to the current response if it has content."""
+        """End the in-flight assistant part and append it to the current response."""
         if self._active_assistant is None:
             return []
         part = self._active_assistant
@@ -823,8 +819,7 @@ class RealtimeSession:
         self._active_assistant = None
         self._assistant_transcript = ''
         self._output_audio.clear()
-        if part.has_content():
-            self._response_parts.append(part)
+        self._response_parts.append(part)
         return [PartEndEvent(index=index, part=part)]
 
     def _finalize_response(
@@ -965,10 +960,10 @@ class RealtimeSession:
         # Turn boundary for a user turn that wasn't finalized earlier, so history reads user-then-assistant.
         # Gemini emits neither `InputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
         # only partial transcripts — so its user turn is finalized here: `_finalize_user` for a
-        # transcript-driven turn, `_finalize_audio_only_user` for a retained-audio-only one. Both are no-ops
+        # transcript-driven turn, `_finalize_untranscribed_user` otherwise. Both are no-ops
         # when the turn was already finalized (e.g. OpenAI's `is_final` transcript or `commit_audio`).
         events = self._finalize_user()
-        events.extend(self._finalize_audio_only_user())
+        events.extend(self._finalize_untranscribed_user())
         events.extend(self._finalize_assistant_part())
         already_finalized = bool(
             self._response_finalized_before_terminal
@@ -1072,6 +1067,7 @@ class RealtimeSession:
                 return []
             events: list[RealtimeEvent] = []
             if item_id not in self._active_users_by_id:
+                self._user_turn_active = True
                 part = SpeechPart(
                     speaker='user',
                     transcript='',
@@ -1093,6 +1089,7 @@ class RealtimeSession:
 
         events: list[RealtimeEvent] = []
         if self._active_user is None:
+            self._user_turn_active = True
             part = SpeechPart(speaker='user', transcript='')
             self._active_user = part
             self._user_transcript = ''
@@ -1117,6 +1114,7 @@ class RealtimeSession:
             part = self._active_users_by_id.pop(item_id)
             self._user_transcripts_by_id.pop(item_id)
             self._finalized_user_item_ids.add(item_id)
+        self._user_turn_active = False
         # Strip surrounding whitespace at finalization: providers whose transcripts arrive as a cumulative
         # or final snapshot (OpenAI/xAI) already reconcile leading-space drift via `_accumulate_transcript`,
         # but a partial-only stream (Gemini) concatenates deltas verbatim and would otherwise keep the
@@ -1140,8 +1138,7 @@ class RealtimeSession:
                     audio=BinaryContent(data=_pcm_to_wav(segment, sample_rate), media_type=_WAV_MEDIA_TYPE),
                 )
         if item_id is None:
-            if part.has_content():
-                self._history.append(ModelRequest(parts=[part], conversation_id=self._conversation_id))
+            self._history.append(ModelRequest(parts=[part], conversation_id=self._conversation_id))
         else:
             self._finalized_users_by_id[item_id] = part
             self._flush_finalized_user_prefix()
@@ -1157,8 +1154,7 @@ class RealtimeSession:
         while self._user_item_order and self._user_item_order[0] in self._finalized_users_by_id:
             finalized_id = self._user_item_order.popleft()
             finalized = self._finalized_users_by_id.pop(finalized_id)
-            if finalized.has_content():
-                self._history.append(ModelRequest(parts=[finalized], conversation_id=self._conversation_id))
+            self._history.append(ModelRequest(parts=[finalized], conversation_id=self._conversation_id))
 
     def _segment_input_audio(self, item_id: str | None) -> None:
         """Cut the rolling input-audio buffer into `item_id`'s own segment at its speech-stopped boundary.
@@ -1172,29 +1168,51 @@ class RealtimeSession:
             self._input_audio_by_id.setdefault(item_id, bytes(self._input_audio))
             self._input_audio.clear()
 
-    def _drop_input_audio_segment(self, item_id: str | None) -> None:
-        """Discard a retained input-audio segment whose transcript will never arrive (e.g. on failure)."""
-        if item_id is not None:
-            self._input_audio_by_id.pop(item_id, None)
-
-    def _discard_failed_user_item(self, item_id: str | None) -> None:
-        """Drop all state for a user item whose transcription failed.
-
-        A failed transcription never becomes a user turn (its partial text is unreliable), and — crucially —
-        it must not sit at the head of `_user_item_order` blocking later finalized turns from reaching
-        history until the session closes. Drop its retained audio, partial transcript, and ordering entry,
-        mark it closed so stray late events are ignored, then flush any turns it was blocking.
-        """
-        self._drop_input_audio_segment(item_id)
+    def _finalize_failed_user_item(self, item_id: str | None) -> list[RealtimeEvent]:
+        """Finalize a user item whose transcription failed without retaining unreliable partial text."""
+        start_emitted = False
         if item_id is None:
-            return
-        self._active_users_by_id.pop(item_id, None)
-        self._user_transcripts_by_id.pop(item_id, None)
-        self._finalized_users_by_id.pop(item_id, None)
-        if item_id in self._user_item_order:
-            self._user_item_order.remove(item_id)
-        self._finalized_user_item_ids.add(item_id)
-        self._flush_finalized_user_prefix()
+            active = self._active_user
+            start_emitted = active is not None
+            part = replace(active, transcript=None) if active is not None else SpeechPart(speaker='user')
+            self._active_user = None
+            self._user_transcript = ''
+        else:
+            active = self._active_users_by_id.pop(item_id, None)
+            start_emitted = active is not None
+            part = (
+                replace(active, transcript=None)
+                if active is not None
+                else SpeechPart(speaker='user', id=item_id, provider_name=self._provider_name)
+            )
+            self._user_transcripts_by_id.pop(item_id, None)
+            self._finalized_users_by_id.pop(item_id, None)
+            if item_id not in self._user_item_order:
+                self._user_item_order.append(item_id)
+            self._finalized_user_item_ids.add(item_id)
+
+        if self._retain_input:
+            segment = self._input_audio_by_id.pop(item_id, None) if item_id is not None else None
+            if segment is None:
+                segment = bytes(self._input_audio) if self._input_audio else None
+                self._input_audio.clear()
+            if segment:
+                part = replace(
+                    part,
+                    audio=BinaryContent(
+                        data=_pcm_to_wav(segment, self._profile.get('audio_input_sample_rate', 24000)),
+                        media_type=_WAV_MEDIA_TYPE,
+                    ),
+                )
+
+        self._user_turn_active = False
+        if item_id is None:
+            self._history.append(ModelRequest(parts=[part], conversation_id=self._conversation_id))
+        else:
+            self._finalized_users_by_id[item_id] = part
+            self._flush_finalized_user_prefix()
+        end = PartEndEvent(index=0, part=part)
+        return [end] if start_emitted else [PartStartEvent(index=0, part=part), end]
 
     def _flush_pending_users(self) -> None:
         """Preserve transcript-bearing user items that never received an explicit final event."""
@@ -1206,7 +1224,7 @@ class RealtimeSession:
         while self._user_item_order:
             item_id = self._user_item_order.popleft()
             part = self._finalized_users_by_id.pop(item_id, None)
-            if part is not None and part.has_content():
+            if part is not None:
                 self._history.append(ModelRequest(parts=[part], conversation_id=self._conversation_id))
         self._active_users_by_id.clear()
         self._user_transcripts_by_id.clear()
@@ -1215,35 +1233,30 @@ class RealtimeSession:
         # long-lived session (finalized items already popped their own segment above).
         self._input_audio_by_id.clear()
 
-    def _finalize_audio_only_user(self) -> list[RealtimeEvent]:
-        """Finalize a user turn from retained input audio when no transcript will arrive.
+    def _finalize_untranscribed_user(self) -> list[RealtimeEvent]:
+        """Finalize a user turn when no transcript will arrive.
 
-        With input transcription disabled but input audio retained (`audio_retention='input_audio'`/`'all'`),
-        the user's turn produces no [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript], so the
-        transcript-driven `_finalize_user` never runs. This is called at each user-turn boundary (speech
-        stopped / commit / turn complete) to finalize an audio-only user
-        [`SpeechPart`][pydantic_ai.messages.SpeechPart] so the turn still lands in history.
+        This is called at each user-turn boundary when input transcription is disabled. It records retained
+        input audio when available, or a content-less [`SpeechPart`][pydantic_ai.messages.SpeechPart]
+        placeholder otherwise, so every turn remains represented in history.
 
         Gated on transcription being *off*: when it's on we wait for the transcript instead, so an
         (asynchronously delivered) transcript can never race this into a duplicate user turn. A no-op
-        when there's an active transcript-driven user part, nothing retained, or transcription is on.
+        when there's an active transcript-driven user part, no user turn is active, or transcription is on.
         """
-        if self._input_transcription_enabled or not self._retain_input:
+        if self._input_transcription_enabled:
             return []
-        if self._active_user is not None or not self._input_audio:
+        if self._active_user is not None or not self._user_turn_active:
             return []
-        part = SpeechPart(
-            speaker='user',
-            transcript=None,
-            audio=BinaryContent(
-                data=_pcm_to_wav(
-                    bytes(self._input_audio),
-                    self._profile.get('audio_input_sample_rate', 24000),
-                ),
+        audio = None
+        if self._input_audio:
+            audio = BinaryContent(
+                data=_pcm_to_wav(bytes(self._input_audio), self._profile.get('audio_input_sample_rate', 24000)),
                 media_type=_WAV_MEDIA_TYPE,
-            ),
-        )
+            )
+        part = SpeechPart(speaker='user', transcript=None, audio=audio)
         self._input_audio.clear()
+        self._user_turn_active = False
         self._history.append(ModelRequest(parts=[part], conversation_id=self._conversation_id))
         # No deltas to stream (there's no transcript), so bracket the turn with just start/end so a
         # streaming consumer still sees the user turn boundary.
@@ -1269,7 +1282,7 @@ class RealtimeSession:
             if item_id in self._active_users_by_id:
                 events.extend(self._finalize_user(item_id=item_id))
         self._flush_pending_users()
-        events.extend(self._finalize_audio_only_user())
+        events.extend(self._finalize_untranscribed_user())
         self._input_audio.clear()
 
         response_in_flight = bool(
@@ -1289,6 +1302,7 @@ class RealtimeSession:
     def _handle_control_event(self, event: InputSpeechStartEvent | ReconnectedEvent) -> list[RealtimeEvent]:
         if isinstance(event, ReconnectedEvent):
             return self._handle_reconnected(event)
+        self._user_turn_active = True
         return [event]
 
     def _handle_conversation_item(self, event: ConversationItemCreated) -> None:
@@ -1325,9 +1339,9 @@ class RealtimeSession:
             # The user's speech segment ended (server VAD). With transcription enabled and input audio
             # retained, cut the rolling buffer into this item's own segment so a later out-of-order
             # transcript still attaches its own audio; with transcription off there's no lagging transcript,
-            # so `_finalize_audio_only_user` consumes the rolling buffer synchronously here instead.
+            # so `_finalize_untranscribed_user` consumes the rolling buffer synchronously here instead.
             self._segment_input_audio(event.item_id)
-            return [*self._finalize_audio_only_user(), event]
+            return [*self._finalize_untranscribed_user(), event]
         if isinstance(event, TurnCompleteEvent):
             return self._handle_turn_complete(event)
         if isinstance(event, PartStartEvent):
@@ -1339,11 +1353,7 @@ class RealtimeSession:
         if isinstance(event, PartEndEvent):
             return [event]
         if isinstance(event, InputTranscriptionFailedEvent):
-            # This item's transcript won't arrive: discard its state (retained audio, any partial transcript,
-            # ordering entry) so it never becomes a turn and doesn't block later turns, then surface the
-            # failure.
-            self._discard_failed_user_item(event.item_id)
-            return [event]
+            return [*self._finalize_failed_user_item(event.item_id), event]
         # The remaining control-plane events pass through unchanged. `assert_never` makes pyright flag
         # any new non-pump `RealtimeEvent` variant that isn't handled here.
         if isinstance(

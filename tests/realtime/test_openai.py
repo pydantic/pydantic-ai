@@ -77,7 +77,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsStr, try_import
+from ..conftest import try_import
 from .test_session import make_tool_manager
 
 with try_import() as imports_successful:
@@ -529,14 +529,11 @@ def test_map_unhandled_event_returns_none() -> None:
             ),
         ),
         (
-            # A `DeploymentNotFound` transcription failure is a misconfiguration (the transcription model
-            # isn't deployed on the Azure resource), not a transient failure, so it maps to a
-            # non-recoverable error the session raises — unlike `audio_unintelligible` above.
             {
                 'type': 'conversation.item.input_audio_transcription.failed',
                 'error': {'message': 'x', 'type': 'server_error', 'code': 'DeploymentNotFound'},
             },
-            SessionErrorEvent(message=IsStr(regex=r'.*transcription model is not deployed.*'), recoverable=False),
+            InputTranscriptionFailedEvent(message='x', type='server_error', code='DeploymentNotFound'),
         ),
     ],
 )
@@ -1427,10 +1424,6 @@ async def test_connect_rejects_image_url_returning_non_image(monkeypatch: pytest
 async def test_connect_rejects_unseedable_speech_and_response_parts(monkeypatch: pytest.MonkeyPatch) -> None:
     histories = [
         (
-            [ModelRequest(parts=[SpeechPart(speaker='user')])],
-            'without a transcript or retained audio',
-        ),
-        (
             [
                 ModelRequest(
                     parts=[
@@ -1461,6 +1454,19 @@ async def test_connect_rejects_unseedable_speech_and_response_parts(monkeypatch:
             '`FilePart`',
         ),
     ]
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    async with _connect(
+        OpenAIRealtimeModel('gpt-realtime'),
+        'x',
+        messages=[
+            ModelRequest(parts=[SpeechPart(speaker='user')]),
+            ModelResponse(parts=[SpeechPart(speaker='assistant')]),
+        ],
+    ):
+        pass
+    assert not any(json.loads(item).get('type') == 'conversation.item.create' for item in ws.sent)
+
     for history, match in histories:
         ws = FakeWebSocket([_created(), _updated()])
         monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
