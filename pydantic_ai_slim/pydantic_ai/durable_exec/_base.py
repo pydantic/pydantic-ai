@@ -139,6 +139,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
         """Bind to the agent and register this engine's durable units on a new copy."""
+        self._validate_declarative_contract()
         self._check_bindable()
         if not (self.name or agent.name):
             raise UserError(
@@ -153,6 +154,27 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         bound._toolsets_by_id = {}
         bound._bind_to_agent(agent)
         return bound
+
+    def _validate_declarative_contract(self) -> None:
+        """Fail at binding when an engine's declarative durability configuration is incomplete."""
+        cls = type(self)
+        engine_name = getattr(cls, 'engine_name', '') or cls.__name__
+        missing_fields = [
+            field
+            for field in ('engine_name', '_durable_unit_noun', '_durable_container_noun')
+            if not getattr(cls, field, None)
+        ]
+        invalid_kinds = self._wrapped_toolset_kinds - {'function', 'mcp', 'dynamic'}
+        missing_lifecycles = self._wrapped_toolset_kinds - self._toolset_lifecycles.keys()
+        errors: list[str] = []
+        if missing_fields:
+            errors.append(f'required ClassVars are unset: {", ".join(missing_fields)}')
+        if invalid_kinds:
+            errors.append(f'unsupported wrapped toolset kinds: {sorted(invalid_kinds)!r}')
+        if missing_lifecycles:
+            errors.append(f'missing toolset lifecycles for: {sorted(missing_lifecycles)!r}')
+        if errors:
+            raise UserError(f'Invalid {engine_name} declarative durability contract: {"; ".join(errors)}.')
 
     def _check_bindable(self) -> None:
         """Validate that the capability can be bound in the current context."""

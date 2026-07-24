@@ -131,6 +131,58 @@ def test_durability_codecs() -> None:
     assert JSON_CODEC.dump(list[int], value) == value
 
 
+def test_durability_declarative_contract_validates_at_bind_time() -> None:
+    class MissingLifecycleDurability(PrefectDurability):
+        _wrapped_toolset_kinds = frozenset({'function', 'dynamic'})
+        _toolset_lifecycles = {'function': 'enter-always'}
+
+    agent = Agent(TestModel(), name='declarative-contract')
+    with pytest.raises(
+        UserError,
+        match=r"Invalid Prefect declarative durability contract: missing toolset lifecycles for: \['dynamic'\]\.",
+    ):
+        MissingLifecycleDurability().for_agent(agent)
+
+    bound = PrefectDurability().for_agent(agent)
+    assert bound.name == 'declarative-contract'
+
+
+@pytest.mark.parametrize(
+    ('durability_type', 'error'),
+    [
+        (
+            type(
+                'UnknownKindDurability',
+                (PrefectDurability,),
+                {'_wrapped_toolset_kinds': frozenset({'function', 'unknown'})},
+            ),
+            r"unsupported wrapped toolset kinds: \['unknown'\]",
+        ),
+        (
+            type('MissingEngineNameDurability', (PrefectDurability,), {'engine_name': ''}),
+            r'MissingEngineNameDurability declarative durability contract: required ClassVars are unset: engine_name',
+        ),
+        (
+            type(
+                'MissingNounsDurability',
+                (PrefectDurability,),
+                {'_durable_unit_noun': '', '_durable_container_noun': ''},
+            ),
+            (
+                r'Invalid Prefect declarative durability contract: required ClassVars are unset: '
+                r'_durable_unit_noun, _durable_container_noun'
+            ),
+        ),
+    ],
+)
+def test_durability_declarative_contract_rejects_other_invalid_fields(
+    durability_type: type[PrefectDurability[Any]], error: str
+) -> None:
+    agent = Agent(TestModel(), name='invalid-declarative-contract')
+    with pytest.raises(UserError, match=error):
+        durability_type().for_agent(agent)
+
+
 async def test_durability_base_default_hooks() -> None:
     events: list[AgentStreamEvent] = []
 
@@ -2822,6 +2874,27 @@ async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
     await agent.run('run')
 
 
+async def test_prefect_non_streaming_model_request_rejects_enqueue() -> None:
+    def request_with_enqueue(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        ctx = get_current_run_context()
+        assert ctx is not None
+        ctx.enqueue('later')
+        return ModelResponse(parts=[TextPart('unreachable')])
+
+    agent = Agent(
+        FunctionModel(request_with_enqueue),
+        name='prefect_model_enqueue',
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
+        await run_agent()
+
+
 async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:
     """The MCP task path guards enqueue too: a `process_tool_call=` hook receives the run context."""
     mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='enqueue_mcp')
@@ -3097,6 +3170,47 @@ async def test_prefect_durability_continuation_usage_limit_cancels_suspended() -
     # The over-budget merge was still suspended, so the live job was cancelled before raising.
     assert [cancelled.provider_response_id for cancelled in model.cancelled] == ['cont2']
     assert calls_in_task == [('request', True), ('request', True), ('cancel', True)]
+
+
+async def test_prefect_cancellation_rejects_enqueue() -> None:
+    enqueue_rejected = False
+
+    class EnqueueOnCancelModel(ScriptedContinuationModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            nonlocal enqueue_rejected
+            ctx = get_current_run_context()
+            assert ctx is not None
+            with pytest.raises(UserError, match='enqueued messages would be dropped'):
+                ctx.enqueue('later')
+            enqueue_rejected = True
+
+    model = EnqueueOnCancelModel(
+        responses=[
+            scripted_response(
+                texts=['still going'],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            scripted_response(
+                texts=['over budget'],
+                state='suspended',
+                provider_response_id='cont2',
+                input_tokens=100,
+                output_tokens=50,
+            ),
+        ]
+    )
+    agent = Agent(model, name='prefect_cancel_enqueue', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('continue', usage_limits=UsageLimits(total_tokens_limit=50))
+
+    with pytest.raises(UsageLimitExceeded, match='total_tokens_limit'):
+        await run_agent()
+    assert enqueue_rejected
 
 
 async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None:

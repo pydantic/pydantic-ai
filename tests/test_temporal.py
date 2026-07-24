@@ -59,6 +59,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
@@ -261,6 +262,19 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Generator[No
     assert isinstance(exc_info.value.__cause__, ApplicationError)
     assert exc_info.value.__cause__.type == exc_type.__name__
     assert exc_info.value.__cause__.message == exc_message
+
+
+@contextmanager
+def workflow_activity_raises(exc_type: type[Exception], exc_message: str) -> Generator[None]:
+    """Assert an activity failure preserves the user exception through Temporal's cause chain."""
+    with pytest.raises(WorkflowFailureError) as exc_info:
+        yield
+    error: BaseException | None = exc_info.value
+    while error is not None:
+        if isinstance(error, ApplicationError) and error.type == exc_type.__name__ and error.message == exc_message:
+            return
+        error = error.__cause__
+    pytest.fail(f'{exc_type.__name__}({exc_message!r}) not found in the workflow failure cause chain')
 
 
 TEMPORAL_PORT = 7243
@@ -6340,6 +6354,101 @@ class HandlerDurableAgentWorkflow:
         return result.output
 
 
+_ENQUEUE_GUARD_ERROR = (
+    '`ctx.enqueue()` is not supported inside a durable activity: the durable runtime replays '
+    "the activity's recorded result without re-running your code, so the enqueued messages "
+    'would be dropped. Enqueue messages from workflow-level code instead.'
+)
+_enqueue_handler_boundaries: set[str] = set()
+_enqueue_cancellation_rejected = False
+
+
+async def _enqueue_guard_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        with pytest.raises(UserError, match='enqueued messages would be dropped'):
+            ctx.enqueue('later')
+        boundary = 'model' if isinstance(event, (PartStartEvent, PartDeltaEvent)) else 'agent'
+        _enqueue_handler_boundaries.add(boundary)
+
+
+async def _enqueue_guard_tool(ctx: RunContext[Deps]) -> str:
+    ctx.enqueue('later')
+    return 'unreachable'
+
+
+def _enqueue_guard_model_request(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+    ctx = get_current_run_context()
+    assert ctx is not None
+    ctx.enqueue('later')
+    return ModelResponse(parts=[TextPart('unreachable')])
+
+
+class _EnqueueOnCancelModel(ScriptedContinuationModel):
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        global _enqueue_cancellation_rejected
+        ctx = get_current_run_context()
+        assert ctx is not None
+        with pytest.raises(UserError, match='enqueued messages would be dropped'):
+            ctx.enqueue('later')
+        _enqueue_cancellation_rejected = True
+
+
+_enqueue_handler_agent = Agent(
+    TestModel(),
+    name='temporal_handler_enqueue',
+    tools=[_durability_handler_tool],
+    capabilities=[
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_enqueue_guard_handler)
+    ],
+)
+_enqueue_tool_agent = Agent(
+    TestModel(),
+    deps_type=Deps,
+    name='temporal_tool_enqueue',
+    tools=[_enqueue_guard_tool],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_enqueue_model_agent = Agent(
+    FunctionModel(_enqueue_guard_model_request),
+    name='temporal_model_enqueue',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_enqueue_cancel_model = _EnqueueOnCancelModel()
+_enqueue_cancel_agent = Agent(
+    _enqueue_cancel_model,
+    name='temporal_cancel_enqueue',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class EnqueueGuardHandlerWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _enqueue_handler_agent.run('run')).output
+
+
+@workflow.defn
+class EnqueueGuardToolWorkflow:
+    @workflow.run
+    async def run(self) -> None:
+        await _enqueue_tool_agent.run('run', deps=Deps(country='test'))
+
+
+@workflow.defn
+class EnqueueGuardModelWorkflow:
+    @workflow.run
+    async def run(self) -> None:
+        await _enqueue_model_agent.run('run')
+
+
+@workflow.defn
+class EnqueueGuardCancellationWorkflow:
+    @workflow.run
+    async def run(self) -> None:
+        await _enqueue_cancel_agent.run('run', usage_limits=UsageLimits(total_tokens_limit=50))
+
+
 async def test_temporal_durability_event_stream_handler(client: Client) -> None:
     _durability_handler_events.clear()
     bound = TemporalDurability.from_agent(_handler_durable_agent)
@@ -6370,6 +6479,95 @@ async def test_temporal_durability_event_stream_handler(client: Client) -> None:
     assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
     assert any(isinstance(event, PartStartEvent) for event in events)
     assert any(isinstance(event, FinalResultEvent) for event in events)
+
+
+async def test_temporal_event_stream_handler_rejects_enqueue(client: Client) -> None:
+    _enqueue_handler_boundaries.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[EnqueueGuardHandlerWorkflow],
+        plugins=[AgentPlugin(_enqueue_handler_agent)],
+    ):
+        await client.execute_workflow(
+            EnqueueGuardHandlerWorkflow.run,
+            id=EnqueueGuardHandlerWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert _enqueue_handler_boundaries == {'model', 'agent'}
+
+
+async def test_temporal_tool_rejects_enqueue(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[EnqueueGuardToolWorkflow],
+        plugins=[AgentPlugin(_enqueue_tool_agent)],
+    ):
+        with workflow_activity_raises(UserError, _ENQUEUE_GUARD_ERROR):
+            await client.execute_workflow(
+                EnqueueGuardToolWorkflow.run,
+                id=EnqueueGuardToolWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+async def test_temporal_non_streaming_model_request_rejects_enqueue(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[EnqueueGuardModelWorkflow],
+        plugins=[AgentPlugin(_enqueue_model_agent)],
+    ):
+        with workflow_activity_raises(UserError, _ENQUEUE_GUARD_ERROR):
+            await client.execute_workflow(
+                EnqueueGuardModelWorkflow.run,
+                id=EnqueueGuardModelWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+async def test_temporal_cancellation_rejects_enqueue(client: Client) -> None:
+    global _enqueue_cancellation_rejected
+    _enqueue_cancellation_rejected = False
+    _enqueue_cancel_model.reset(
+        responses=[
+            scripted_response(
+                texts=['still going'],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            scripted_response(
+                texts=['over budget'],
+                state='suspended',
+                provider_response_id='cont2',
+                input_tokens=100,
+                output_tokens=50,
+            ),
+        ]
+    )
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[EnqueueGuardCancellationWorkflow],
+        plugins=[AgentPlugin(_enqueue_cancel_agent)],
+    ):
+        with workflow_raises(
+            UsageLimitExceeded,
+            (
+                'Exceeded the total_tokens_limit of 50 (total_tokens=165). Consider raising the limit, or see the docs '
+                'on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits'
+            ),
+        ):
+            await client.execute_workflow(
+                EnqueueGuardCancellationWorkflow.run,
+                id=EnqueueGuardCancellationWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    assert _enqueue_cancellation_rejected
 
 
 async def test_temporal_durability_event_stream_handler_outside_workflow() -> None:

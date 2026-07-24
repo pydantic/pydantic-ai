@@ -2420,6 +2420,27 @@ async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None
     await agent.run('run')
 
 
+async def test_dbos_non_streaming_model_request_rejects_enqueue(dbos: DBOS) -> None:
+    def request_with_enqueue(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        ctx = get_current_run_context()
+        assert ctx is not None
+        ctx.enqueue('later')
+        return ModelResponse(parts=[TextPart('unreachable')])
+
+    agent = Agent(
+        FunctionModel(request_with_enqueue),
+        name='dbos_model_enqueue',
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
+        await run_agent()
+
+
 async def test_dbos_durability_parallel_mode_applies_inside_run(dbos: DBOS) -> None:
     """The configured parallel-execution mode is active for the duration of the run."""
     from pydantic_ai import tool_manager as _tm
@@ -3507,6 +3528,47 @@ async def test_dbos_durability_continuation_usage_limit_cancels_suspended(dbos: 
     step_names = [step['function_name'] for step in steps]
     assert step_names.count('durability_continuation_usage_limit__model.request') == 2
     assert step_names.count('durability_continuation_usage_limit__model.cancel_suspended_response') == 1
+
+
+async def test_dbos_cancellation_rejects_enqueue(dbos: DBOS) -> None:
+    enqueue_rejected = False
+
+    class EnqueueOnCancelModel(ScriptedContinuationModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            nonlocal enqueue_rejected
+            ctx = get_current_run_context()
+            assert ctx is not None
+            with pytest.raises(UserError, match='enqueued messages would be dropped'):
+                ctx.enqueue('later')
+            enqueue_rejected = True
+
+    model = EnqueueOnCancelModel(
+        responses=[
+            scripted_response(
+                texts=['still going'],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            scripted_response(
+                texts=['over budget'],
+                state='suspended',
+                provider_response_id='cont2',
+                input_tokens=100,
+                output_tokens=50,
+            ),
+        ]
+    )
+    agent = Agent(model, name='dbos_cancel_enqueue', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
+        await agent.run('continue', usage_limits=UsageLimits(total_tokens_limit=50))
+
+    with pytest.raises(UsageLimitExceeded, match='total_tokens_limit'):
+        await run_agent()
+    assert enqueue_rejected
 
 
 async def test_dbos_durability_streaming_continuation_chain_in_workflow(dbos: DBOS) -> None:
