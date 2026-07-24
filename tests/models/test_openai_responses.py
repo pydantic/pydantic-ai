@@ -414,6 +414,47 @@ async def test_openai_responses_reasoning_context_defaults_to_all_turns(
     assert get_mock_responses_kwargs(mock_client)[0].get('reasoning') == expected_reasoning
 
 
+@pytest.mark.parametrize(
+    'model_name,model_settings,expected_reasoning',
+    [
+        # Unset + a supporting model: the default puts `all_turns` on the wire.
+        pytest.param('gpt-5.6-sol', OpenAIResponsesModelSettings(), {'context': 'all_turns'}, id='default-supported'),
+        # Unset + a model without `all_turns` support: no `reasoning` object at all, so no
+        # `context` key is sent that the provider would reject.
+        pytest.param('o3', OpenAIResponsesModelSettings(), None, id='default-unsupported'),
+        # An explicit value beats the default, including `auto` (which must not be overridden).
+        pytest.param(
+            'gpt-5.6-sol',
+            OpenAIResponsesModelSettings(openai_reasoning_context='auto'),
+            {'context': 'auto'},
+            id='explicit-auto-wins',
+        ),
+    ],
+)
+async def test_openai_responses_reasoning_context_default_wire_contract(
+    allow_model_requests: None,
+    openai_api_key: str,
+    vcr: Cassette,
+    model_name: str,
+    model_settings: OpenAIResponsesModelSettings,
+    expected_reasoning: dict[str, str] | None,
+):
+    """VCR test: the real Responses API accepts the `reasoning.context` we default to.
+
+    The mock tests above pin the request shape; this records the real request and response so the
+    `reasoning.context` wire contract — including the `all_turns` default applied when the user
+    sets nothing — is validated against the provider rather than only against our own serializer.
+    """
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=model_settings)
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    # A successful answer proves the provider accepted the request we built.
+    assert 'Paris' in result.output
+    assert single_request_body(vcr).get('reasoning') == expected_reasoning
+
+
 async def test_openai_responses_reasoning_mode_pro(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
     """VCR test: the real GPT-5.6 Responses API accepts `reasoning.mode='pro'` end to end.
 
@@ -428,7 +469,7 @@ async def test_openai_responses_reasoning_mode_pro(allow_model_requests: None, o
     result = await agent.run('What is the capital of France? Answer in one word.')
 
     assert result.output == snapshot('Paris')
-    assert single_request_body(vcr)['reasoning'] == snapshot({'mode': 'pro'})
+    assert single_request_body(vcr)['reasoning'] == snapshot({'mode': 'pro', 'context': 'all_turns'})
 
 
 async def test_openai_responses_gpt_5_6_reasoning_off_keeps_sampling_params(
@@ -448,7 +489,7 @@ async def test_openai_responses_gpt_5_6_reasoning_off_keeps_sampling_params(
 
     assert result.output == snapshot('Paris')
     request_body = single_request_body(vcr)
-    assert request_body['reasoning'] == snapshot({'effort': 'none'})
+    assert request_body['reasoning'] == snapshot({'effort': 'none', 'context': 'all_turns'})
     assert request_body['temperature'] == 0.5
 
 
