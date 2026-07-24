@@ -444,6 +444,11 @@ def test_usage_arbitrary_fields():
     assert not hasattr(usage, 'future_tokens')
     usage.future_tokens = 1
 
+    usage.input_tokens = 5
+    del usage.input_tokens
+    assert usage.input_tokens == 0
+    assert 'input_tokens' not in vars(usage)
+
     assert usage == snapshot(RequestUsage(future_tokens=1, label='original'))
     assert usage == RequestUsage(future_tokens=1, label='original')
     assert usage != RequestUsage(future_tokens=2, label='original')
