@@ -1689,8 +1689,8 @@ async def test_connection_send_cancel_when_response_active() -> None:
     conn._pending_response = True  # pyright: ignore[reportPrivateUsage]
     await conn.send(CancelResponse())
     assert json.loads(ws.sent[0]) == {'type': 'response.cancel'}
-    assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
-    assert conn._pending_response is False  # pyright: ignore[reportPrivateUsage]
+    assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]
+    assert conn._pending_response is True  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.anyio
@@ -2371,7 +2371,30 @@ async def test_tool_result_deferred_until_active_response_done() -> None:
 
 
 @pytest.mark.anyio
-async def test_deferred_response_dropped_when_active_response_cancelled() -> None:
+async def test_create_response_waits_for_cancelled_response_done() -> None:
+    ws = PushWebSocket()
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    task = asyncio.create_task(_drain(conn))
+
+    ws.push({'type': 'response.created'})  # a response is now generating
+    await _settle()
+
+    await conn.send(CancelResponse())
+    await conn.send(CreateResponse())
+    await _settle()
+    assert 'response.create' not in ws.sent_types()
+
+    ws.push({'type': 'response.done', 'response': {'status': 'cancelled', 'output': []}})
+    await _settle()
+    assert ws.sent_types().count('response.create') == 1
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.anyio
+async def test_deferred_response_dropped_when_active_response_cancelled_by_server() -> None:
     ws = PushWebSocket()
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     task = asyncio.create_task(_drain(conn))
@@ -2383,7 +2406,8 @@ async def test_deferred_response_dropped_when_active_response_cancelled() -> Non
     await _settle()
     assert 'response.create' not in ws.sent_types()
 
-    # The user barges in: the active response is cancelled, so the deferred response must not replay.
+    # The user barges in and the *server* cancels the active response (no client `interrupt()`): a new
+    # user turn is starting, so the deferred response must not replay over it.
     ws.push({'type': 'response.done', 'response': {'status': 'cancelled', 'output': []}})
     await _settle()
     assert 'response.create' not in ws.sent_types()
@@ -2403,10 +2427,9 @@ async def test_late_cancelled_response_done_does_not_clear_new_response() -> Non
     await _settle()
     await conn.send(CancelResponse())
     await conn.send(TextInput(text='new turn'))
-    ws.push({'type': 'response.created', 'response': {'id': 'resp_new'}})
-    await _settle()
-
     ws.push({'type': 'response.done', 'response': {'id': 'resp_old', 'status': 'cancelled', 'output': []}})
+    await _settle()
+    ws.push({'type': 'response.created', 'response': {'id': 'resp_new'}})
     await _settle()
     await conn.send(CreateResponse())
     assert ws.sent_types().count('response.create') == 1

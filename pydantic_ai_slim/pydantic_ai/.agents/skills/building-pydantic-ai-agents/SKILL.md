@@ -214,10 +214,10 @@ agent = Agent.from_file('agent.yaml')
 
 ### Realtime (speech-to-speech) sessions
 
-For voice models that stream audio over a persistent connection (OpenAI Realtime, Azure AI Voice
-Live, Gemini Live, or xAI Grok Voice), use
+For voice models that stream audio over a persistent connection (OpenAI Realtime, Azure OpenAI,
+Gemini Live, or xAI Grok Voice), use
 `agent.realtime().session()` instead of `run()`. It reuses the agent's tools and instructions and runs
-the tool loop for you. Stream input with `send_audio`/`send`/`send`, and iterate the
+the tool loop for you. Stream input with `send_audio`/`send`, and iterate the
 session to consume the **same part/event vocabulary as a streamed run** — `PartStartEvent` /
 `PartDeltaEvent` / `PartEndEvent` carrying `SpeechPart`s and `ToolCallPart`s, plus
 `FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`InputSpeechStartEvent`,
