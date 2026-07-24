@@ -4,6 +4,7 @@ import os
 from typing import Literal, overload
 
 import httpx
+from typing_extensions import assert_never
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -66,10 +67,11 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
             # the base profile is resolved from (per the AWS model cards). Without this override the
             # image-output guard is bypassed and the request fails with an opaque provider error.
             supports_image_output=False,
-            # Bedrock Mantle proxies the OpenAI models but not OpenAI's server-hosted tools (web search,
-            # code interpreter, file search, image generation, ...); the AWS Mantle docs document only
-            # custom function calling, so the base profile's native tools are disabled to fail with a
-            # clean UserError rather than an opaque provider error.
+            # AWS's server-side tool integrations use Lambda or MCP rather than the OpenAI-native tools
+            # represented by Pydantic AI (web search, code interpreter, file search, image generation, ...):
+            # https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use-server-side.html
+            # Disable the base profile's native tools to fail with a clean UserError rather than an opaque
+            # provider error.
             supported_native_tools=frozenset(),
         ),
     )
@@ -114,7 +116,12 @@ class BedrockMantleProvider(Provider[AsyncOpenAI]):
         (GPT-OSS) are served at `/v1`. Both clients are built eagerly in `__init__` and share transport
         and auth, so this is a pure lookup.
         """
-        return self._client if interface == 'openai-responses' else self._v1_client
+        if interface == 'openai-responses':
+            return self._client
+        elif interface in ('chat', 'responses'):
+            return self._v1_client
+        else:
+            assert_never(interface)
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

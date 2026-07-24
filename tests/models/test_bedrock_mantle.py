@@ -38,6 +38,7 @@ def _provider() -> BedrockMantleProvider:
 
 
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
+@pytest.mark.moves_cache_prefix(reason='replay uses a fresh agent without the original instructions and tools')
 async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) -> None:
     """Mantle GPT-5.6 resets Responses tool-call IDs per response; pydantic-ai must re-qualify them."""
     model = infer_model('bedrock-mantle:openai.gpt-5.6-luna', lambda _: _provider())
@@ -203,6 +204,7 @@ Second tool result: `second result`\
         assert replay_result.output == 'OK'
 
 
+@pytest.mark.moves_cache_prefix(reason='replay uses a fresh agent without the original instructions and tools')
 async def test_reused_tool_call_ids_gpt_5_5(allow_model_requests: None) -> None:
     """The Responses ID reset is a property of the `/openai/v1` endpoint, not just gpt-5.6.
 
@@ -296,8 +298,9 @@ async def test_image_output_unsupported(allow_model_requests: None) -> None:
 
 
 async def test_native_tool_unsupported(allow_model_requests: None) -> None:
-    """Mantle proxies the OpenAI models but not OpenAI's server-hosted tools, so a native tool fails with a
-    clean `UserError` before any request. No cassette: the profile guard raises during request preparation.
+    """Mantle's Lambda/MCP server-side tools differ from Pydantic AI's OpenAI-native tools, so a native
+    tool fails with a clean `UserError` before any request. No cassette: the profile guard raises during
+    request preparation.
     """
     model = infer_model('bedrock-mantle:openai.gpt-5.6-luna', lambda _: _provider())
     agent = Agent(model, capabilities=[NativeTool(WebSearchTool())])
