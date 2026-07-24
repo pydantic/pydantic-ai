@@ -266,7 +266,7 @@ async def test_session_and_tool_spans_with_usage() -> None:
         _ = [e async for e in session]
 
     spans = {s.name: s for s in exporter.get_finished_spans()}
-    assert set(spans) == {'invoke_agent assistant', 'chat gpt-realtime', 'execute_tool get_weather'}
+    assert set(spans) == {'invoke_agent assistant', 'chat gpt-realtime', 'execute_tool get_weather', 'turn complete'}
 
     sess = spans['invoke_agent assistant']
     assert sess.attributes is not None
@@ -303,10 +303,10 @@ async def test_session_and_tool_spans_with_usage() -> None:
     assert tool.parent is not None and tool.parent.span_id == sess.context.span_id
 
 
-async def test_session_span_records_lifecycle_events() -> None:
-    # Barge-ins and turn boundaries have no span of their own, so the session span records them as span
-    # events, making the stream's progression visible. Names are lowercase; `interrupted` is attached
-    # only when true (a clean turn carries no null attribute).
+async def test_session_span_records_lifecycle_spans() -> None:
+    # Barge-ins and turn boundaries have no span of their own, so they surface as zero-duration child
+    # spans under the session span, making the stream's progression visible. Names are lowercase;
+    # `interrupted` is attached only when true (a clean turn carries no null attribute).
     settings, exporter = _settings()
     conn = _Connection(
         [
@@ -318,22 +318,25 @@ async def test_session_span_records_lifecycle_events() -> None:
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
 
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
-    assert sess.events is not None
-    events = {event.name: dict(event.attributes or {}) for event in sess.events}
-    assert events == {'user speech started': {}, 'turn complete': {'interrupted': True}}
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    session_span = spans['invoke_agent agent']
+    lifecycle = {name: dict(spans[name].attributes or {}) for name in ('user speech started', 'turn complete')}
+    assert lifecycle == {'user speech started': {}, 'turn complete': {'interrupted': True}}
+    # They nest under the session span, not the `chat` span.
+    assert session_span.context is not None
+    for name in ('user speech started', 'turn complete'):
+        assert spans[name].parent is not None and spans[name].parent.span_id == session_span.context.span_id
 
 
-async def test_session_span_turn_complete_event_omits_interrupted_when_false() -> None:
-    # A clean (uninterrupted) turn records the `turn complete` event with no `interrupted` attribute,
+async def test_session_span_turn_complete_omits_interrupted_when_false() -> None:
+    # A clean (uninterrupted) turn records the `turn complete` span with no `interrupted` attribute,
     # rather than a null one.
     settings, exporter = _settings()
     conn = _Connection([Transcript(text='hi', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
 
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
-    turn_complete = next(event for event in (sess.events or []) if event.name == 'turn complete')
+    turn_complete = next(s for s in exporter.get_finished_spans() if s.name == 'turn complete')
     assert dict(turn_complete.attributes or {}) == {}
 
 
@@ -486,7 +489,9 @@ async def test_conversation_span_tree() -> None:
                     {'chat gpt-realtime': []},
                     {'execute_tool get_weather': []},
                     {'chat gpt-realtime': []},
+                    {'turn complete': []},
                     {'chat gpt-realtime': []},
+                    {'turn complete': []},
                 ]
             }
         ]
@@ -533,7 +538,7 @@ async def test_explicit_capability_produces_session_chat_and_tool_spans() -> Non
     async with agent.realtime(_Model(conn)).session() as session:
         _ = [e async for e in session]
     spans = {s.name for s in exporter.get_finished_spans()}
-    assert spans == {'invoke_agent assistant', 'chat gpt-realtime', 'execute_tool get_weather'}
+    assert spans == {'invoke_agent assistant', 'chat gpt-realtime', 'execute_tool get_weather', 'turn complete'}
 
 
 async def test_explicit_capability_settings_win_over_instrument() -> None:
@@ -560,6 +565,7 @@ async def test_explicit_capability_settings_win_over_instrument() -> None:
         'invoke_agent assistant',
         'chat gpt-realtime',
         'execute_tool get_weather',
+        'turn complete',
     }
     assert not inst_exporter.get_finished_spans()
 

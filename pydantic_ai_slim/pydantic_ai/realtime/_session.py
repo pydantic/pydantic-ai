@@ -507,18 +507,21 @@ class RealtimeSession:
         return self
 
     def _record_lifecycle_event(self, name: str, **attributes: Any) -> None:
-        """Record a realtime lifecycle moment (barge-in, turn boundary) as an event on the session span.
+        """Record a realtime lifecycle moment (barge-in, turn boundary) as a zero-duration child span.
 
-        Turn boundaries and barge-ins have no request/response of their own, so they surface as span
-        events that make the stream's progression visible in a trace (rather than `logfire.info` calls,
-        which each app would otherwise have to add itself). An event, not a child span, so it doesn't
-        clutter the span tree or double-count. Names are lowercase to match the surrounding spans;
-        attributes whose value is `None` are dropped so the event stays clean. No-op without a span.
+        Turn boundaries and barge-ins have no request/response of their own, so they surface as
+        instantaneous spans under the session span, making the stream's progression visible in a trace
+        (rather than `logfire.info` calls, which each app would otherwise have to add itself). A span
+        rather than a span event because backends surface spans immediately and predictably. Names are
+        lowercase to match the surrounding spans; attributes whose value is `None` are dropped so the
+        span stays clean. No-op when instrumentation is disabled.
         """
-        span = self._session_span
-        if span is None:
+        settings = self._instrumentation
+        context = self._session_span_context
+        if settings is None or context is None:
             return
-        span.add_event(name, attributes={key: value for key, value in attributes.items() if value is not None})
+        attrs = {key: value for key, value in attributes.items() if value is not None}
+        settings.tracer.start_span(name, context=context, attributes=attrs, kind=SpanKind.INTERNAL).end()
 
     async def __aexit__(
         self,
