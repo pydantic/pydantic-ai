@@ -29,7 +29,6 @@ from typing_extensions import assert_never
 
 try:
     import websockets
-
     from google.genai import Client, errors as genai_errors, types as genai_types
     from google.genai.live import AsyncSession, ConnectionClosed
 except ImportError as _import_error:
