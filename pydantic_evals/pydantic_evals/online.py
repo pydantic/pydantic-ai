@@ -259,6 +259,8 @@ class OnlineEvaluator:
     """
 
     def __post_init__(self) -> None:
+        if self.max_concurrency < 1:
+            raise ValueError(f'max_concurrency must be >= 1, got {self.max_concurrency}')
         self.semaphore = threading.Semaphore(self.max_concurrency)
 
 

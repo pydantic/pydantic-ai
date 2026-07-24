@@ -1,0 +1,77 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '169'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2+2? Reply with just the number.
+        role: user
+      model: qwen/qwen3-32b
+      n: 1
+      reasoning_format: parsed
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1228'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '4'
+          reasoning: |
+            Okay, let's see. The user is asking "What is 2+2?" and wants just the number in the reply. Hmm, this is a straightforward arithmetic problem. First, I need to make sure I understand what they're asking. Adding 2 and 2 together. Let me double-check. In basic arithmetic, 2 plus 2 equals 4. I don't think there's any trick here. Maybe they want to confirm if I know the answer or if there's any ambiguity. But in mathematics, 2+2 is definitely 4. No variables, no units, just simple addition. I should just reply with the number as instructed.
+          role: assistant
+      created: 1783016781
+      id: chatcmpl-b258c96b-da0c-4897-a502-f7f1c32900f9
+      model: qwen/qwen3-32b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_d58dbe76cd
+      usage:
+        completion_time: 0.313854355
+        completion_tokens: 142
+        completion_tokens_details:
+          reasoning_tokens: 136
+        prompt_time: 0.00216496
+        prompt_tokens: 21
+        queue_time: 0.105770333
+        total_time: 0.316019315
+        total_tokens: 163
+      usage_breakdown: null
+      x_groq:
+        id: req_01kwj19wv4fhfsedrbsrcgxexy
+        seed: 396669064
+    status:
+      code: 200
+      message: OK
+version: 1

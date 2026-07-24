@@ -1,7 +1,7 @@
 
 # Toolsets
 
-A toolset represents a collection of [tools](tools.md) that can be registered with an agent in one go. They can be reused by different agents, swapped out at runtime or during testing, and composed in order to dynamically filter which tools are available, modify tool definitions, or change tool execution behavior. A toolset can contain locally defined functions, depend on an external service to provide them, or implement custom logic to list available tools and handle them being called. Toolsets can also be provided via [capabilities](capabilities.md), which bundle tools with hooks, instructions, and model settings.
+A toolset represents a collection of [tools](tools.md) that can be registered with an agent in one go. They can be reused by different agents, swapped out at runtime or during testing, and composed in order to dynamically filter which tools are available, modify tool definitions, or change tool execution behavior. A toolset can contain locally defined functions, depend on an external service to provide them, or implement custom logic to list available tools and handle them being called. Toolsets can also be provided via [capabilities](capabilities/overview.md), which bundle tools with hooks, instructions, and model settings.
 
 Toolsets are used (among many other things) to define [MCP servers](mcp/client.md) available to an agent. Pydantic AI includes many kinds of toolsets which are described below, and you can define a [custom toolset](#building-a-custom-toolset) by inheriting from the [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] class.
 
@@ -650,7 +650,7 @@ If your agent needs to be able to call [external tools](deferred-tools.md#extern
 
 When the model calls an external tool, the call is considered to be ["deferred"](deferred-tools.md#deferred-tools), and the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID, which are expected to be passed to the upstream service or frontend that will produce the results.
 
-When the tool call results are received from the upstream service or frontend, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](tools-advanced.md#advanced-tool-returns) object, or a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception in case the tool call failed and the model should [try again](tools-advanced.md#tool-retries). This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
+When the tool call results are received from the upstream service or frontend, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](tools-advanced.md#advanced-tool-returns) object, or an exception in case the tool call failed: a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] if the model should [try again](tools-advanced.md#tool-retries), or a [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] if the failure should be reported to the model as a [failed result](tools-advanced.md#tool-failed) (without consuming the tool's retry budget) so it can decide how to proceed. This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
 
 Note that you need to add `DeferredToolRequests` to the `Agent`'s or `agent.run()`'s [`output_type`](output.md#structured-output) so that the possible types of the agent run output are correctly inferred. For more information, see the [Deferred Tools](deferred-tools.md#deferred-tools) documentation.
 
@@ -796,7 +796,7 @@ _(This example is complete, it can be run "as is")_
 
 ## Dynamically Building a Toolset
 
-Toolsets can be built dynamically ahead of each agent run or run step using a function that takes the agent [run context][pydantic_ai.tools.RunContext] and returns a toolset or `None`. This is useful when a toolset (like an MCP server) depends on information specific to an agent run, like its [dependencies](./dependencies.md).
+Toolsets can be built dynamically ahead of each agent run or run step using a function that takes the agent [run context][pydantic_ai.tools.RunContext] and returns a toolset or `None`. This is useful when a toolset (like an MCP server) depends on information specific to an agent run, like its [dependencies](./dependencies.md) — for example to [connect to an MCP server with per-user credentials](mcp/client.md#per-user-authentication).
 
 To register a dynamic toolset, you can pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `toolsets` argument of the `Agent` constructor, or you can wrap a compliant function in the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator.
 
@@ -863,7 +863,7 @@ To define a fully custom toolset with its own logic to list available tools and 
 You can also override the [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] method to provide a description of how to use the toolset's tools. This will be injected into the agent's instructions and is useful for helping the model understand how to effectively use your toolset's tools.
 
 !!! tip
-    If your toolset also needs to provide model settings or hooks, consider building a [custom capability](capabilities.md#building-custom-capabilities) instead.
+    If your toolset also needs to provide model settings or hooks, consider building a [custom capability](capabilities/custom.md) instead.
 
 The toolset lifecycle provides hooks for managing state at different scopes:
 
@@ -880,11 +880,11 @@ Toolsets support lifecycle hooks for per-run isolation and per-step state manage
 
 ## Third-Party Toolsets
 
-Third-party toolsets can also be wrapped as [capabilities](capabilities.md), which bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem.
+Third-party toolsets can also be wrapped as [capabilities](capabilities/overview.md), which bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem.
 
 ### MCP Servers
 
-Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting to and calling tools on local and remote MCP servers, with the [`MCP` capability](capabilities.md#mcp) as the recommended higher-level entry point. See the [MCP overview](./mcp/overview.md) and [MCP client](./mcp/client.md) documentation for details.
+Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting to and calling tools on local and remote MCP servers, with the [`MCP` capability](capabilities/mcp.md) as the recommended higher-level entry point. See the [MCP overview](./mcp/overview.md) and [MCP client](./mcp/client.md) documentation for details.
 
 ### Agent Skills
 

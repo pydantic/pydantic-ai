@@ -3,7 +3,7 @@
 Pydantic AI can act as an [MCP client](https://modelcontextprotocol.io/quickstart/client), connecting to MCP servers to use their tools as part of an agent run. The [`MCPToolset`][pydantic_ai.mcp.MCPToolset] [toolset](../toolsets.md) wraps the [FastMCP Client](https://gofastmcp.com/clients/) and works with both local (stdio) and remote (Streamable HTTP, SSE) MCP servers.
 
 !!! tip "Recommended: the `MCP` capability"
-    For most use cases, use the [`MCP` capability](../capabilities.md#mcp) — it takes a URL (or any `MCPToolset` input via `local=`) and additionally lets you opt into the model provider's [native MCP support](../native-tools.md#mcp-server-tool) with a single `native=True` flag. Reach for `MCPToolset` directly when you need to manage the client lifecycle yourself, attach the same MCP server to multiple agents, or pass advanced transport / client configuration that doesn't fit the capability shape.
+    For most use cases, use the [`MCP` capability](../capabilities/mcp.md) — it takes a URL (or any `MCPToolset` input via `local=`) and additionally lets you opt into the model provider's [native MCP support](../native-tools.md#mcp-server-tool) with a single `native=True` flag. Reach for `MCPToolset` directly when you need to manage the client lifecycle yourself, attach the same MCP server to multiple agents, or pass advanced transport / client configuration that doesn't fit the capability shape.
 
 ## Install
 
@@ -19,13 +19,15 @@ An [`MCPToolset`][pydantic_ai.mcp.MCPToolset] accepts any of the following as it
 
 - A URL string (Streamable HTTP, or SSE if the path ends in `/sse`)
 - A path to a local Python or Node.js script (run via stdio)
-- A [FastMCP transport](https://gofastmcp.com/clients/transports) like [`StdioTransport`][fastmcp.client.transports.StdioTransport], [`StreamableHttpTransport`][fastmcp.client.transports.StreamableHttpTransport], or [`SSETransport`][fastmcp.client.transports.SSETransport]
-- A pre-built [`fastmcp.Client`][fastmcp.Client] (for advanced FastMCP-specific configuration like [OAuth](https://gofastmcp.com/clients/auth/oauth) or [tool transformation](https://gofastmcp.com/patterns/tool-transformation))
+- A [FastMCP transport](https://gofastmcp.com/clients/transports) like [`StdioTransport`](https://gofastmcp.com/clients/transports), [`StreamableHttpTransport`](https://gofastmcp.com/clients/transports), or [`SSETransport`](https://gofastmcp.com/clients/transports)
+- A pre-built [`fastmcp.Client`](https://gofastmcp.com/clients/client) (for advanced FastMCP-specific configuration like [OAuth](https://gofastmcp.com/clients/auth/oauth) or [tool transformation](https://gofastmcp.com/patterns/tool-transformation))
 - An in-process [FastMCP server](https://gofastmcp.com/servers/) (for testing or single-process deployments — no network round trip)
 
 Each `MCPToolset` instance is a [toolset](../toolsets.md) and can be registered with an [`Agent`][pydantic_ai.Agent] via the `toolsets` argument.
 
 You can use [`async with agent`][pydantic_ai.agent.Agent.__aenter__] to open and close connections to all registered MCP toolsets (and in the case of stdio servers, start and stop the subprocesses) around the context where they'll be used in agent runs. You can also use `async with toolset` to manage the lifecycle of a specific toolset directly, for example if you'd like to share it across multiple agents. If you don't explicitly enter one of these context managers, the toolset will be opened and closed automatically as needed.
+
+Note that a shared `MCPToolset` instance connects to the server as a single identity; if your users have their own credentials for the MCP server, see [per-user authentication](#per-user-authentication).
 
 ### Streamable HTTP
 
@@ -89,7 +91,7 @@ logfire.instrument_pydantic_ai()
 
 ### SSE
 
-The [HTTP + Server-Sent Events](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport is also supported. URLs ending in `/sse` are auto-detected as SSE; for any other path, pass an explicit [`SSETransport`][fastmcp.client.transports.SSETransport].
+The [HTTP + Server-Sent Events](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport is also supported. URLs ending in `/sse` are auto-detected as SSE; for any other path, pass an explicit [`SSETransport`](https://gofastmcp.com/clients/transports).
 
 !!! note
     The SSE transport in MCP is deprecated. You should prefer Streamable HTTP for new deployments.
@@ -104,7 +106,7 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 
 ### Stdio
 
-MCP also offers the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio), where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. Pass a path to a Python or Node.js script, or build a [`StdioTransport`][fastmcp.client.transports.StdioTransport] for full control over the command, arguments, and environment.
+MCP also offers the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio), where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. Pass a path to a Python or Node.js script, or build a [`StdioTransport`](https://gofastmcp.com/clients/transports) for full control over the command, arguments, and environment.
 
 ```python {title="mcp_stdio_client.py" test="skip"}
 from fastmcp.client.transports import StdioTransport
@@ -298,6 +300,20 @@ if __name__ == '__main__':
     mcp.run()
 ```
 
+## Tool errors
+
+When an MCP server reports a tool error, [`MCPToolset`][pydantic_ai.mcp.MCPToolset] lets you choose whether that error should ask the model to retry, appear as a failed tool result, or escape as an exception:
+
+| `tool_error_behavior` | Behavior |
+| --- | --- |
+| `'retry'` | Default. Raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], sending the server error back to the model as a retry prompt. Use this when the model may be able to correct the call. |
+| `'failed'` | Raises [`ToolFailed`][pydantic_ai.exceptions.ToolFailed], which is recorded as a tool result with `outcome='failed'`. Use this when the tool call is complete but failed, and the model should decide what to do next. |
+| `'error'` | Propagates the underlying MCP tool exception and fails the agent run. Use this for errors you want application code to handle outside the model loop. |
+
+Structured error content is serialized as JSON in the model-visible message for both `'retry'` and `'failed'`, so retryability hints and other machine-readable details remain available to the model. Protocol and transport errors are not reported as completed failed tool calls.
+
+This is the MCP equivalent of the [tool retry](../tools-advanced.md#tool-retries) vs [failed tool result](../tools-advanced.md#tool-failed) distinction in local tool code.
+
 ## Tool prefixes to avoid naming conflicts
 
 When connecting to multiple MCP servers that might provide tools with the same name, wrap each `MCPToolset` with [`.prefixed(...)`][pydantic_ai.toolsets.AbstractToolset.prefixed] to prepend a prefix to its tool names:
@@ -432,6 +448,53 @@ if __name__ == '__main__':
 ```
 
 _(This example is complete, it can be run "as is")_
+
+## HTTP authentication
+
+For HTTP transports, `MCPToolset` accepts an `auth` argument: a bearer token string, any [`httpx.Auth`](https://www.python-httpx.org/advanced/authentication/), or the literal string `'oauth'` to enable [FastMCP's OAuth flow](https://gofastmcp.com/clients/auth/oauth). Static headers like API keys can be passed via the `headers` argument instead.
+
+### Per-user authentication
+
+In a multi-user or multi-tenant application, each user typically has their own credentials for the MCP server, such as a tenant-scoped bearer token.
+
+!!! warning "A shared `MCPToolset` instance is a single identity"
+    An `MCPToolset` instance maintains one MCP session that's shared by all concurrent agent runs using it: the connection is established (and authentication resolved) by whichever run needs it first, and only torn down once the last one finishes. Deriving credentials per-request from task-local state like a [`ContextVar`][contextvars.ContextVar] inside an `httpx.Auth` does not work on a shared instance: overlapping runs will silently send their requests with the credentials of whichever run opened the session.
+
+To make requests with the credentials of the user in question, each concurrent run needs its own `MCPToolset` instance so that it establishes its own authenticated session. The recommended way to do this is to build the toolset [dynamically](../toolsets.md#dynamically-building-a-toolset) using the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator: the decorated function is passed the [run context][pydantic_ai.tools.RunContext] and can read the user's credentials from the run's [dependencies](../dependencies.md):
+
+```python {title="mcp_per_user_auth.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.mcp import MCPToolset
+
+
+@dataclass
+class UserDeps:
+    mcp_token: str
+
+
+agent = Agent('openai:gpt-5.2', deps_type=UserDeps)
+
+
+@agent.toolset(per_run_step=False)  # (1)!
+def user_mcp_server(ctx: RunContext[UserDeps]) -> MCPToolset:
+    return MCPToolset('http://localhost:8000/mcp', auth=ctx.deps.mcp_token)
+
+
+async def main():
+    result = await agent.run('What is 7 plus 5?', deps=UserDeps(mcp_token='<token>'))
+    print(result.output)
+    #> The answer is 12.
+```
+
+1. `per_run_step=False` builds the toolset once per run instead of ahead of each run step, so the whole run shares a single MCP session.
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+Because the per-run toolset's session is established inside the run itself, credentials held in a `ContextVar` also resolve correctly with this pattern — but passing them through deps is more explicit and doesn't depend on task-local state.
+
+As an alternative to a dynamic toolset, you can construct a new `MCPToolset` yourself for each request and pass it to the [`toolsets` argument](../toolsets.md) of the agent run methods.
 
 ## Custom TLS / SSL configuration
 

@@ -103,7 +103,11 @@ class JsonSchemaTransformer(ABC):
                 def_schema = self.defs.get(key)
                 if def_schema is None:  # pragma: no cover
                     raise UserError(f'Could not find $ref definition for {key}')
-                schema = def_schema
+                # Keywords sitting alongside the `$ref` (e.g. a field-level `description`
+                # or `default`) are part of the field's own schema and must survive
+                # inlining, so merge them over the referenced definition.
+                siblings = {k: v for k, v in schema.items() if k != '$ref'}
+                schema = {**def_schema, **siblings} if siblings else def_schema
 
         # Handle the schema based on its type / structure
         type_ = schema.get('type')
@@ -112,9 +116,14 @@ class JsonSchemaTransformer(ABC):
         elif type_ == 'array':
             schema = self._handle_array(schema)
         elif type_ is None:
+            schema = self._handle_union(schema, 'allOf')
             schema = self._handle_union(schema, 'anyOf')
             schema = self._handle_union(schema, 'oneOf')
 
+        if type_ is not None:
+            for union_kind in ('allOf', 'anyOf', 'oneOf'):
+                if members := schema.get(union_kind):
+                    schema[union_kind] = [self._handle(member) for member in members]
         # Apply the base transform
         schema = self.transform(schema)
 
@@ -153,7 +162,7 @@ class JsonSchemaTransformer(ABC):
 
         return schema
 
-    def _handle_union(self, schema: JsonSchema, union_kind: Literal['anyOf', 'oneOf']) -> JsonSchema:
+    def _handle_union(self, schema: JsonSchema, union_kind: Literal['allOf', 'anyOf', 'oneOf']) -> JsonSchema:
         try:
             members = schema.pop(union_kind)
         except KeyError:

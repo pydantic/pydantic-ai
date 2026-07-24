@@ -156,9 +156,39 @@ def scrub_xml_credentials(
         headers['content-length'] = [str(len(body.encode('utf-8')))]
 
 
+def _store_json_body(
+    kind: str, data: dict[str, Any], body: str, headers: dict[str, list[str]]
+) -> None:  # pragma: lax no cover
+    """Replace an `application/json` body with a normalized, scrubbed `parsed_body`.
+
+    Some endpoints (e.g. resumable file uploads) send a non-JSON body under an `application/json`
+    content-type; keep the raw body rather than crashing the serializer.
+    """
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        data['body'] = {'string': body} if kind == 'response' else body
+        if 'content-length' in headers:
+            headers['content-length'] = [str(len(body.encode('utf-8')))]
+        return
+    # Normalize smart quotes and special characters
+    data['parsed_body'] = normalize_body(parsed)
+    if 'access_token' in data['parsed_body']:
+        data['parsed_body']['access_token'] = 'scrubbed'
+    if 'id_token' in data['parsed_body']:
+        data['parsed_body']['id_token'] = 'scrubbed'
+    del data['body']
+    # Update content-length to match the body that will be produced during deserialize.
+    # This is necessary because decompression changes the body size, and botocore
+    # verifies content-length against the actual body during cassette replay.
+    if 'content-length' in headers:
+        new_body = json.dumps(data['parsed_body'])
+        headers['content-length'] = [str(len(new_body.encode('utf-8')))]
+
+
 def serialize(cassette_dict: Any):  # pragma: lax no cover
     for interaction in cassette_dict['interactions']:
-        for _kind, data in interaction.items():
+        for kind, data in interaction.items():
             headers: dict[str, list[str]] = data.get('headers', {})
             # make headers lowercase
             headers = {k.lower(): v for k, v in headers.items()}
@@ -198,20 +228,7 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                             except (gzip.BadGzipFile, zlib.error):
                                 pass
                         body = body.decode('utf-8')
-                    parsed = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
-                    # Normalize smart quotes and special characters
-                    data['parsed_body'] = normalize_body(parsed)
-                    if 'access_token' in data['parsed_body']:
-                        data['parsed_body']['access_token'] = 'scrubbed'
-                    if 'id_token' in data['parsed_body']:
-                        data['parsed_body']['id_token'] = 'scrubbed'
-                    del data['body']
-                    # Update content-length to match the body that will be produced during deserialize.
-                    # This is necessary because decompression changes the body size, and botocore
-                    # verifies content-length against the actual body during cassette replay.
-                    if 'content-length' in headers:
-                        new_body = json.dumps(data['parsed_body'])
-                        headers['content-length'] = [str(len(new_body.encode('utf-8')))]
+                    _store_json_body(kind, data, body, headers)  # pyright: ignore[reportUnknownArgumentType]
             scrub_form_credentials(data, content_type)
             scrub_xml_credentials(data, headers, content_type)
 

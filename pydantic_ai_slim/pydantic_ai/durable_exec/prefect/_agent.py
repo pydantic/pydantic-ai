@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, overload
 from prefect import flow, task
 from prefect.context import FlowRunContext
 from prefect.utilities.asyncutils import run_coro_as_sync
+from typing_extensions import deprecated
 
 from pydantic_ai import (
     AbstractToolset,
@@ -17,6 +18,7 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, RunOutputDataT
 from pydantic_ai.capabilities import AgentCapability
@@ -34,6 +36,7 @@ from pydantic_ai.tools import (
     ToolFuncEither,
 )
 
+from .._runtime_toolsets import reject_unsupported_runtime_toolsets
 from ._model import PrefectModel
 from ._toolset import prefectify_toolset
 
@@ -43,6 +46,21 @@ if TYPE_CHECKING:
 from ._types import TaskConfig, default_task_config
 
 
+@deprecated(
+    """`PrefectAgent` is deprecated in favor of the `PrefectDurability` capability. Migrate each constructor argument as follows:
+- With the capability, call `agent.run()` inside a `@flow`; the wrapper did this automatically.
+- `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[PrefectDurability(...)])`.
+- `name=` → set `name=` on `Agent`, or `name=` on `PrefectDurability`.
+- `event_stream_handler=` → pass `event_stream_handler=` to `PrefectDurability`; it runs inside tasks, exactly like before.
+- `mcp_task_config=` → set `mcp_task_config=` on `PrefectDurability`.
+- `model_task_config=` → set `model_task_config=` on `PrefectDurability`.
+- `tool_task_config=` → set `tool_task_config=` on `PrefectDurability`.
+- `tool_task_config_by_name=` → use per-tool `metadata={'prefect': ...}` or a `SetToolMetadata` capability.
+- `event_stream_handler_task_config=` → set `event_stream_handler_task_config=` on `PrefectDurability`.
+- `prefectify_toolset_func=` → not supported on the capability path; open an issue if you need it.
+In-flight flow runs will not resume from cache across the migration and re-execute live on retry; let them finish first if that matters.""",
+    category=PydanticAIDeprecationWarning,
+)
 class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def __init__(
         self,
@@ -81,6 +99,9 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         self._name = name or wrapped.name
         self._event_stream_handler = event_stream_handler
+        self._run_event_stream_handler: ContextVar[EventStreamHandler[AgentDepsT] | None] = ContextVar(
+            '_run_event_stream_handler', default=None
+        )
         if self._name is None:
             raise UserError(
                 "An agent needs to have a unique `name` in order to be used with Prefect. The name will be used to identify the agent's flows and tasks."
@@ -101,7 +122,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         prefect_model = PrefectModel(
             wrapped.model,
             task_config=self._model_task_config,
-            event_stream_handler=self.event_stream_handler,
+            get_event_stream_handler=self._effective_event_stream_handler,
         )
         self._model = prefect_model
 
@@ -138,7 +159,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @property
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
-        handler = self._event_stream_handler or super().event_stream_handler
+        handler = self._effective_event_stream_handler()
         if handler is None:
             return None
         elif FlowRunContext.get() is not None:
@@ -150,7 +171,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     async def _call_event_stream_handler_in_flow(
         self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent]
     ) -> None:
-        handler = self._event_stream_handler or super().event_stream_handler
+        handler = self._effective_event_stream_handler()
         assert handler is not None
 
         # Create a task to handle each event
@@ -169,11 +190,39 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         with self._prefect_overrides():
             return super().toolsets
 
+    def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        # The per-run handler (stashed on the `ContextVar` by `_prefect_overrides`) takes precedence over
+        # the constructor-level handler and the wrapped agent's handler.
+        return self._run_event_stream_handler.get() or self._event_stream_handler or super().event_stream_handler
+
     @contextmanager
-    def _prefect_overrides(self) -> Generator[None]:
-        # Override with PrefectModel and PrefectMCPToolset in the toolsets.
-        with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
-            yield
+    def _prefect_overrides(
+        self,
+        additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        *,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+    ) -> Generator[None]:
+        # Override with PrefectModel and the durable Prefect toolset wrappers.
+        # A per-run `event_stream_handler` is stashed on a `ContextVar` that `PrefectModel` reads inside its
+        # task (via `_effective_event_stream_handler`), so the runtime handler is honored without rebuilding
+        # the model and re-registering its Prefect tasks. When no per-run handler is given, keep whatever an
+        # outer call already stashed (e.g. the `toolsets` property re-entering these overrides).
+        # Per-run toolsets are merged with the constructor-time durable toolsets, but only non-executing
+        # ones are supported: Prefect wraps both function tools and MCP servers in tasks registered up
+        # front, and dynamic toolsets can't be introspected ahead of time.
+        reject_unsupported_runtime_toolsets(
+            additional_toolsets,
+            unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+            engine='Prefect',
+            tool_config_key='prefect',
+        )
+        token = self._run_event_stream_handler.set(event_stream_handler or self._run_event_stream_handler.get())
+        merged_toolsets = [*self._toolsets, *(additional_toolsets or ())]
+        try:
+            with super().override(model=self._model, toolsets=merged_toolsets, tools=[]):
+                yield
+        finally:
+            self._run_event_stream_handler.reset(token)
 
     @overload
     async def run(
@@ -184,6 +233,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -208,6 +258,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -231,6 +282,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -269,6 +321,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -277,14 +330,14 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -296,13 +349,14 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # Mark that we're inside a PrefectAgent flow
             token = self._in_prefect_agent_flow.set(True)
             try:
-                with self._prefect_overrides():
+                with self._prefect_overrides(toolsets, event_stream_handler=event_stream_handler):
                     result = await super(WrapperAgent, self).run(
                         user_prompt,
                         output_type=output_type,
                         message_history=message_history,
                         deferred_tool_results=deferred_tool_results,
                         conversation_id=conversation_id,
+                        run_id=run_id,
                         model=model,
                         instructions=instructions,
                         deps=deps,
@@ -313,7 +367,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         retries=retries,
                         infer_name=infer_name,
                         toolsets=toolsets,
-                        event_stream_handler=event_stream_handler,
+                        # `event_stream_handler` is intentionally not forwarded: `_prefect_overrides` stashed
+                        # it on a `ContextVar`, and the base run resolves it via the `event_stream_handler`
+                        # property. Forwarding it too would also invoke it at the graph level (against the
+                        # empty, already-consumed stream) on top of the in-task invocation.
                         capabilities=capabilities,
                         spec=spec,
                     )
@@ -332,6 +389,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -356,6 +414,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -379,6 +438,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -416,6 +476,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -424,14 +485,14 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -443,15 +504,16 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # Mark that we're inside a PrefectAgent flow
             token = self._in_prefect_agent_flow.set(True)
             try:
-                with self._prefect_overrides():
+                with self._prefect_overrides(toolsets, event_stream_handler=event_stream_handler):
                     # Using `run_coro_as_sync` from Prefect with async `run` to avoid event loop conflicts.
                     result = run_coro_as_sync(
-                        super(PrefectAgent, self).run(
+                        super(PrefectAgent, self).run(  # pyright: ignore[reportDeprecated]
                             user_prompt,
                             output_type=output_type,
                             message_history=message_history,
                             deferred_tool_results=deferred_tool_results,
                             conversation_id=conversation_id,
+                            run_id=run_id,
                             model=model,
                             instructions=instructions,
                             deps=deps,
@@ -462,7 +524,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                             retries=retries,
                             infer_name=infer_name,
                             toolsets=toolsets,
-                            event_stream_handler=event_stream_handler,
+                            # `event_stream_handler` is intentionally not forwarded (stashed on a `ContextVar`
+                            # by `_prefect_overrides` and resolved via the `event_stream_handler` property);
+                            # forwarding it too would invoke it again at the graph level against the empty,
+                            # already-consumed stream on top of the in-task invocation.
                             capabilities=capabilities,
                             spec=spec,
                         )
@@ -482,6 +547,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -506,6 +572,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -530,6 +597,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -565,6 +633,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -573,14 +642,14 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -598,6 +667,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
+            run_id=run_id,
             model=model,
             instructions=instructions,
             deps=deps,
@@ -623,6 +693,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -646,6 +717,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -670,6 +742,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -725,6 +798,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -733,13 +807,13 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -764,6 +838,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
+                run_id=run_id,
                 model=model,
                 instructions=instructions,
                 deps=deps,
@@ -790,6 +865,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -813,6 +889,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -836,6 +913,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -920,6 +998,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             instructions: Optional additional instructions to use for this run.
@@ -928,13 +1007,13 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
+                tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to override
+                just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -945,13 +1024,14 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'Non-Prefect model cannot be set at agent run time inside a Prefect flow, it must be set at agent creation time.'
             )
 
-        with self._prefect_overrides():
+        with self._prefect_overrides(toolsets):
             async with super().iter(
                 user_prompt=user_prompt,
                 output_type=output_type,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
+                run_id=run_id,
                 model=model,
                 instructions=instructions,
                 deps=deps,
@@ -961,7 +1041,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 metadata=metadata,
                 retries=retries,
                 infer_name=infer_name,
-                toolsets=toolsets,
+                toolsets=None,
                 capabilities=capabilities,
                 spec=spec,
                 **_deprecated_kwargs,
@@ -999,8 +1079,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
             retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
-                override the output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries]
-                dict for finer control. When set, any per-run `retries` argument is ignored.
+                override both the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries]
+                dict to override just one (e.g. `retries={'tools': 3}`). When set, any per-run `retries` argument is ignored.
             spec: Optional agent spec to apply as overrides.
         """
         if _utils.is_set(model) and not isinstance(model, PrefectModel):

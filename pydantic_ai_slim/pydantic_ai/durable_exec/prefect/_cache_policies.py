@@ -3,9 +3,14 @@ from typing import Any, TypeGuard
 
 from prefect.cache_policies import INPUTS, RUN_ID, TASK_SOURCE, CachePolicy
 from prefect.context import TaskRunContext
+from prefect.utilities.hashing import hash_objects
+from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
+from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
 from pydantic_ai.tools import RunContext
+
+_NON_SERIALIZABLE = '<non-serializable>'
 
 
 def _is_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
@@ -24,13 +29,46 @@ def _is_toolset_tool(obj: Any) -> TypeGuard[ToolsetTool]:
     return isinstance(obj, ToolsetTool)
 
 
+def _is_run_context(obj: Any) -> TypeGuard[RunContext[object]]:
+    return isinstance(obj, RunContext)
+
+
+def _cacheable_deps(deps: Any) -> Any:
+    """Project `deps` for cache-key hashing, excluding non-serializable values.
+
+    Dependencies routinely hold live resources (HTTP clients, DB connections, locks) that
+    Prefect can't hash; those values are replaced with a stable sentinel rather than failing
+    the task, while serializable siblings still fork the key. Plain non-dataclass and
+    non-`BaseModel` objects are treated as indivisible values.
+    """
+    projected = _strip_cache_excluded_fields(deps)
+
+    def exclude_non_serializable(value: Any) -> Any:
+        if hash_objects(value, raise_on_failure=False) is not None:
+            return value
+        if _is_dict(value):
+            return {key: exclude_non_serializable(item) for key, item in value.items()}
+        if _is_list(value):
+            return [exclude_non_serializable(item) for item in value]
+        if _is_tuple(value):
+            return tuple(exclude_non_serializable(item) for item in value)
+        if isinstance(value, BaseModel):
+            return {name: exclude_non_serializable(getattr(value, name)) for name in type(value).model_fields}
+        return _NON_SERIALIZABLE
+
+    return exclude_non_serializable(projected)
+
+
 def _replace_run_context(
     inputs: dict[str, Any],
 ) -> Any:
     """Replace RunContext objects with a dict containing only hashable fields."""
     for key, value in inputs.items():
-        if isinstance(value, RunContext):
+        if _is_run_context(value):
             inputs[key] = {
+                'deps': _cacheable_deps(value.deps),
+                'agent': value.agent.name if value.agent is not None else None,
+                'model': value.model.model_id,
                 'retries': value.retries,
                 'tool_call_id': value.tool_call_id,
                 'tool_name': value.tool_name,
@@ -47,28 +85,48 @@ def _replace_run_context(
                 # plus the static capability set, so it adds no entropy the two fields above don't.
                 'loaded_capability_ids': sorted(value.loaded_capability_ids),
                 'discovered_tool_names': sorted(value.discovered_tool_names),
+                # A tool or capability may read `usage_limits` to fork its behavior (e.g. budget
+                # disclosure), so two runs identical except for their limits must not share a cache
+                # entry. `_strip_cache_excluded_fields` recurses into the `UsageLimits` dataclass to
+                # hash it by value; `None` (bare/synthetic context) hashes distinctly.
+                'usage_limits': value.usage_limits,
             }
 
     return inputs
 
 
-_CACHE_EXCLUDED_FIELDS = frozenset({'timestamp', 'run_id'})
-"""Fields excluded from cache key computation as they vary per-run."""
+_CACHE_EXCLUDED_FIELDS = frozenset({'timestamp', 'run_id', 'conversation_id'})
+"""Framework dataclass fields excluded from cache key computation as they vary per-run."""
 
 
 def _strip_cache_excluded_fields(
     obj: Any | dict[str, Any] | list[Any] | tuple[Any, ...],
 ) -> Any:
-    """Recursively convert dataclasses to dicts, excluding cache-irrelevant fields."""
+    """Recursively convert dataclasses to dicts, excluding cache-irrelevant fields.
+
+    Only framework (`pydantic_ai.*`) dataclass fields are excluded. Fields on user-provided
+    dataclasses and plain dict keys are meaningful input data and must fork the key even when
+    they share a name with a per-run framework field.
+    """
     if is_dataclass(obj) and not isinstance(obj, type):
         result: dict[str, Any] = {}
+        module = type(obj).__module__
+        is_framework = module == 'pydantic_ai' or module.startswith('pydantic_ai.')
+        excluded_fields = _CACHE_EXCLUDED_FIELDS if is_framework else ()
         for f in fields(obj):
-            if f.name not in _CACHE_EXCLUDED_FIELDS:
+            if f.name not in excluded_fields:
                 value = getattr(obj, f.name)
+                if (
+                    is_framework
+                    and f.name == 'tool_call_id'
+                    and isinstance(value, str)
+                    and value.startswith(TOOL_CALL_ID_PREFIX)
+                ):
+                    value = '<framework-generated>'
                 result[f.name] = _strip_cache_excluded_fields(value)
         return result
     elif _is_dict(obj):
-        return {k: _strip_cache_excluded_fields(v) for k, v in obj.items() if k not in _CACHE_EXCLUDED_FIELDS}
+        return {k: _strip_cache_excluded_fields(v) for k, v in obj.items()}
     elif _is_list(obj):
         return [_strip_cache_excluded_fields(item) for item in obj]
     elif _is_tuple(obj):

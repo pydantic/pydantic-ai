@@ -46,6 +46,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
 
 from ._inline_snapshot import Builder, Custom, customize
+from .cassette_utils import check_cache_prefix_stability
+
+T = TypeVar('T')
 
 __all__ = (
     'IsDatetime',
@@ -61,6 +64,8 @@ __all__ = (
     'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
     'strip_logfire_metrics',
     'remove_schema_descriptions',
+    'message',
+    'message_part',
 )
 
 # Configure VCR logger to WARNING as it is too verbose by default
@@ -73,14 +78,20 @@ pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        'markers',
+        'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
+    )
+
+
 if TYPE_CHECKING:
     from pluggy import Result
     from vcr.cassette import Cassette
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
-
-    T = TypeVar('T')
 
     def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
@@ -435,6 +446,12 @@ def pytest_recording_configure(config: Any, vcr: VCR):
         """Match URL paths after scrubbing AWS account IDs from ARNs."""
         path1 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r1.path)
         path2 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r2.path)
+        # Normalize Vertex AI paths by replacing region and project (cassettes may be recorded
+        # against a different GCP project than the fixture default)
+        path1 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path1)
+        path2 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path2)
+        path1 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path1)
+        path2 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path2)
         if path1 != path2:
             raise AssertionError(f'{path1} != {path2}')
 
@@ -459,6 +476,10 @@ def pytest_recording_configure(config: Any, vcr: VCR):
         # Normalize Bedrock hosts by removing region
         host1_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host1)
         host2_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host2)
+        # Normalize Vertex AI hosts by removing region prefix
+        vertex_host_pattern = re.compile(r'^[a-z0-9-]+-aiplatform\.googleapis\.com$')
+        host1_normalized = vertex_host_pattern.sub('aiplatform.googleapis.com', host1_normalized)
+        host2_normalized = vertex_host_pattern.sub('aiplatform.googleapis.com', host2_normalized)
         if host1_normalized != host2_normalized:
             raise AssertionError(f'{host1} != {host2}')
 
@@ -506,7 +527,7 @@ def mock_vcr_aiohttp_content(mocker: MockerFixture):
     # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
     # So we turn `content` into a cached property to return the same one each time.
     # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
-    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # type: ignore
+    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # pyright: ignore[reportArgumentType, reportUnknownVariableType]
     cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
     mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
     mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
@@ -550,6 +571,25 @@ def fail_partially_used_vcr_cassettes(request: pytest.FixtureRequest, vcr: Casse
     check_vcr_cassette_usage(vcr, strict_usage)
 
 
+@pytest.fixture(autouse=True)
+def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette | None) -> Iterator[None]:
+    """Check final recorded conversations during playback; recording leaves the on-disk cassette unfinished."""
+    yield
+    setup_report = getattr(request.node, 'rep_setup', None)
+    call_report = getattr(request.node, 'rep_call', None)
+    if any(
+        getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
+    ):
+        return
+    if vcr is None or vcr.record_mode != RecordMode.NONE:
+        return
+
+    cassette_path_value = getattr(vcr, '_path', None)
+    if cassette_path_value is None or not (cassette_path := Path(cassette_path_value)).is_file():
+        return
+    check_cache_prefix_stability(request.node, cassette_path)
+
+
 _HttpClientCache: TypeAlias = 'dict[tuple[int, int], httpx.AsyncClient]'
 
 
@@ -573,7 +613,12 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
         return cache[key]
 
     for mod in list(sys.modules.values()):
-        if getattr(mod, 'create_async_http_client', None) is original:
+        # Read the module's own namespace via `__dict__` rather than `getattr`: some
+        # modules (e.g. `transformers` submodules) define a lazy PEP 562 `__getattr__`
+        # that imports submodules on attribute access, and probing every loaded module
+        # with `getattr` would trigger those unrelated (and possibly failing) imports.
+        mod_dict = getattr(mod, '__dict__', None)
+        if mod_dict is not None and mod_dict.get('create_async_http_client', None) is original:
             monkeypatch.setattr(mod, 'create_async_http_client', cached_per_test)
 
     yield cache
@@ -685,18 +730,30 @@ def text_document_content(assets_path: Path) -> BinaryContent:
     return bin_content
 
 
-# Opaque 3-byte payload for roundtrip / serialization tests where the bytes are never decoded by a
-# model and assertions only check structure (e.g. `IsStr()` on base64): keeps inline-snapshot diffs
-# small and avoids CI errors that explode when failure traces include large base64 payloads. When the
-# model has to actually see the content (e.g. VCR tests against provider APIs), use the KB-scale
-# session fixtures above (`image_content`, `audio_content`, `video_content`).
+# `tiny_*` fixtures: opaque 3-byte payloads for roundtrip / serialization tests where the bytes
+# are never decoded by a model and assertions only check structure (e.g. `IsStr()` on base64).
+# Prefer these whenever a real, decodable image is not required: keeps inline-snapshot diffs
+# small and avoids CI errors that explode when failure traces include large base64 payloads.
+# When the model has to actually see the content (e.g. VCR tests against provider APIs), use
+# the KB-scale session fixtures above (`image_content`, `audio_content`, `video_content`).
+@pytest.fixture
+def tiny_image() -> BinaryImage:
+    return BinaryImage(data=b'\x00\x01\x02', media_type='image/jpeg')
+
+
 @pytest.fixture
 def tiny_audio() -> BinaryContent:
     return BinaryContent(data=b'\x10\x11\x12', media_type='audio/mpeg')
 
 
+@pytest.fixture
+def tiny_video() -> BinaryContent:
+    return BinaryContent(data=b'\x20\x21\x22', media_type='video/mp4')
+
+
 os.environ.pop('OPENAI_BASE_URL', None)
 os.environ.pop('ANTHROPIC_BASE_URL', None)
+os.environ.pop('LOGFIRE_EMIT_CONFIGURATION_SPAN', None)
 
 
 @pytest.fixture(scope='session')
@@ -1055,6 +1112,23 @@ def iter_message_parts(
             for part in msg.parts:
                 if isinstance(part, part_type):
                     yield part
+
+
+def message(messages: Sequence[ModelMessage], message_type: type[T], *, index: int = 0) -> T:
+    """Return `messages[index]`, asserting it is an instance of `message_type`."""
+    msg = messages[index]
+    assert isinstance(msg, message_type)
+    return msg
+
+
+def message_part(
+    messages: Sequence[ModelMessage], part_type: type[T], *, message_index: int = 0, part_index: int = 0
+) -> T:
+    """Return `messages[message_index].parts[part_index]`, asserting it is an instance of `part_type`."""
+    msg = messages[message_index]
+    part = msg.parts[part_index]
+    assert isinstance(part, part_type)
+    return part
 
 
 # endregion

@@ -96,6 +96,7 @@ try:
         ImageConfigDict,
         MediaResolution,
         Modality,
+        ModelArmorConfigDict,
         Part,
         PartDict,
         SafetySettingDict,
@@ -138,15 +139,16 @@ LatestGoogleModelNames = Literal[
     'gemini-2.5-flash-preview-09-2025',
     'gemini-2.5-flash-image',
     'gemini-2.5-flash-lite',
-    'gemini-2.5-flash-lite-preview-09-2025',
     'gemini-2.5-pro',
     'gemini-3-flash-preview',
     'gemini-3-pro-image-preview',
     'gemini-3-pro-preview',
     'gemini-3.1-flash-image-preview',
-    'gemini-3.1-flash-lite-preview',
+    'gemini-3.1-flash-lite',
     'gemini-3.1-pro-preview',
     'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.6-flash',
 ]
 """Latest Gemini models."""
 
@@ -158,22 +160,26 @@ allow any name in the type hints.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
 
-_FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
-    GoogleFinishReason.FINISH_REASON_UNSPECIFIED: None,
-    GoogleFinishReason.STOP: 'stop',
-    GoogleFinishReason.MAX_TOKENS: 'length',
-    GoogleFinishReason.SAFETY: 'content_filter',
-    GoogleFinishReason.RECITATION: 'content_filter',
-    GoogleFinishReason.LANGUAGE: 'error',
-    GoogleFinishReason.OTHER: None,
-    GoogleFinishReason.BLOCKLIST: 'content_filter',
-    GoogleFinishReason.PROHIBITED_CONTENT: 'content_filter',
-    GoogleFinishReason.SPII: 'content_filter',
-    GoogleFinishReason.MALFORMED_FUNCTION_CALL: 'error',
-    GoogleFinishReason.IMAGE_SAFETY: 'content_filter',
-    GoogleFinishReason.UNEXPECTED_TOOL_CALL: 'error',
-    GoogleFinishReason.IMAGE_PROHIBITED_CONTENT: 'content_filter',
-    GoogleFinishReason.NO_IMAGE: 'error',
+# Keyed by enum value rather than member: `google.genai`'s `FinishReason` grows members dynamically
+# at parse time for values its installed version doesn't know statically (e.g. `MODEL_ARMOR`),
+# so member-keyed lookups silently miss them.
+_FINISH_REASON_MAP: dict[str, FinishReason | None] = {
+    GoogleFinishReason.FINISH_REASON_UNSPECIFIED.value: None,
+    GoogleFinishReason.STOP.value: 'stop',
+    GoogleFinishReason.MAX_TOKENS.value: 'length',
+    GoogleFinishReason.SAFETY.value: 'content_filter',
+    GoogleFinishReason.RECITATION.value: 'content_filter',
+    GoogleFinishReason.LANGUAGE.value: 'error',
+    GoogleFinishReason.OTHER.value: None,
+    GoogleFinishReason.BLOCKLIST.value: 'content_filter',
+    GoogleFinishReason.PROHIBITED_CONTENT.value: 'content_filter',
+    GoogleFinishReason.SPII.value: 'content_filter',
+    GoogleFinishReason.MALFORMED_FUNCTION_CALL.value: 'error',
+    GoogleFinishReason.IMAGE_SAFETY.value: 'content_filter',
+    GoogleFinishReason.UNEXPECTED_TOOL_CALL.value: 'error',
+    GoogleFinishReason.IMAGE_PROHIBITED_CONTENT.value: 'content_filter',
+    GoogleFinishReason.NO_IMAGE.value: 'error',
+    'MODEL_ARMOR': 'content_filter',
 }
 
 _GOOGLE_IMAGE_SIZE = Literal['512', '1K', '2K', '4K']
@@ -291,6 +297,18 @@ class GoogleModelSettings(ModelSettings, total=False):
     headers sent, and links to Google docs.
     """
 
+    google_model_armor_config: ModelArmorConfigDict
+    """Model Armor configuration for screening prompts and responses. Only supported by the Vertex AI API.
+
+    Specifies the Model Armor templates to use for sanitizing user prompts and model responses.
+    Both fields are optional — omit either to skip screening for that direction.
+
+    Mutually exclusive with `google_safety_settings`: Vertex AI rejects a request that sets both,
+    since Model Armor replaces the built-in safety filters for that request.
+
+    See the [Model Armor docs](https://cloud.google.com/security-command-center/docs/model-armor-overview) for use cases and limitations.
+    """
+
 
 def _warn_on_cached_content_strips(
     cached_content: str | None,
@@ -360,6 +378,17 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
     if top_level := model_settings.get('service_tier'):
         return _TOP_LEVEL_TO_GOOGLE_CLOUD_SERVICE_TIER[top_level]
     return 'pt_then_on_demand'
+
+
+def _map_api_error(e: errors.APIError, model_name: str) -> ModelAPIError:
+    """Map a `google.genai` API error to the pydantic-ai exception to raise in its place."""
+    if (status_code := e.code) >= 400:
+        return ModelHTTPError(
+            status_code=status_code,
+            model_name=model_name,
+            body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+        )
+    return ModelAPIError(model_name=model_name, message=str(e))
 
 
 def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:
@@ -526,7 +555,7 @@ class GoogleModel(Model[Client]):
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
             # The Vertex `countTokens` endpoint accepts native/server-side tools (e.g. Google Search grounding), so we
             # forward `tools` as-is to mirror the real request for an accurate count. This intentionally differs from
-            # `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects them (#5704);
+            # `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects them (https://github.com/pydantic/pydantic-ai/issues/5704);
             # don't copy that strip here.
             config.update(
                 system_instruction=generation_config.get('system_instruction'),
@@ -577,7 +606,7 @@ class GoogleModel(Model[Client]):
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         try:
-            yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
+            yield await self._process_streamed_response(response, model_request_parameters)  # pyright: ignore[reportArgumentType]
         finally:
             aclose = getattr(response, 'aclose', None)
             if aclose is not None:  # pragma: no branch
@@ -764,15 +793,9 @@ class GoogleModel(Model[Client]):
         )
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
-            return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
+            return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
         except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
-                ) from e
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise _map_api_error(e, self._model_name) from e
 
     def _translate_thinking(
         self,
@@ -896,6 +919,7 @@ class GoogleModel(Model[Client]):
             response_json_schema=response_schema,
             response_modalities=modalities,
             image_config=image_config,
+            model_armor_config=model_settings.get('google_model_armor_config'),
         )
 
         if gla_service_tier is not None:
@@ -924,7 +948,7 @@ class GoogleModel(Model[Client]):
             # Add safety ratings to provider details
             if candidate.safety_ratings:
                 provider_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
-            finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+            finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason.value)
         elif candidate is None and response.prompt_feedback and response.prompt_feedback.block_reason:
             block_reason = response.prompt_feedback.block_reason
             provider_details['block_reason'] = block_reason.value
@@ -983,7 +1007,13 @@ class GoogleModel(Model[Client]):
         peekable_response: _utils.PeekableAsyncStream[
             GenerateContentResponse, AsyncIterator[GenerateContentResponse]
         ] = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
+        # `generate_content_stream` doesn't issue the HTTP request until the response
+        # iterator is first advanced, so API errors surface here rather than in
+        # `_generate_content`'s try/except and need the same mapping.
+        try:
+            first_chunk = await peekable_response.peek()
+        except errors.APIError as e:
+            raise _map_api_error(e, self._model_name) from e
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
@@ -1099,9 +1129,18 @@ class GoogleModel(Model[Client]):
                 file_part = await self._map_file_to_part(file)
                 fallback_parts.append(file_part)
 
-        response = part.model_response_object()
-        if fallback_refs:
-            response = {'output': [response, *fallback_refs]}
+        if part.outcome == 'failed':
+            # Google's function-response schema prescribes an `error` key (mirroring the `output` key
+            # used for success) for reporting a failed tool call, so this is Gemini's native error
+            # channel, not the generic `{"error": ...}` wrapper other providers fall back to — hence
+            # `wrap_if_error=False` and the hand-built dict. Gemini surfaces the value as the failure
+            # message, so it stays a plain string: file references are sent as the file parts below
+            # rather than folded into the error text (the success branch nests them under `output`).
+            response = {'error': part.model_response_str(wrap_if_error=False)}
+        else:
+            response = part.model_response_object(wrap_if_error=False)
+            if fallback_refs:
+                response = {'output': [response, *fallback_refs]}
 
         function_response_dict: FunctionResponseDict = {
             'name': part.tool_name,
@@ -1175,8 +1214,16 @@ class GoogleModel(Model[Client]):
             part_dict = {'inline_data': BlobDict(data=resolved[1], mime_type=resolved[2])}
         else:
             part_dict = {'file_data': FileDataDict(file_uri=resolved[1], mime_type=resolved[2])}
-        if isinstance(file, (BinaryContent, VideoUrl, UploadedFile)) and file.vendor_metadata:
-            part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+        if file.vendor_metadata:
+            # `media_resolution` is a per-Part field (not part of `video_metadata`) that applies to
+            # any file type; only per-part resolution supports `MEDIA_RESOLUTION_ULTRA_HIGH`
+            # (Gemini 3), see https://ai.google.dev/gemini-api/docs/media-resolution
+            vendor_metadata = dict(file.vendor_metadata)  # copy to avoid mutating user dict
+            if 'media_resolution' in vendor_metadata:
+                part_dict['media_resolution'] = vendor_metadata.pop('media_resolution')
+            # The remaining keys map to `video_metadata`, which only applies to video parts.
+            if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
+                part_dict['video_metadata'] = VideoMetadataDict(**vendor_metadata)
         return part_dict
 
     async def _map_file_to_function_response_part(
@@ -1241,6 +1288,12 @@ class GeminiStreamedResponse(StreamedResponse):
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
     _has_tool_invocations: bool = field(default=False, init=False)
+    # Empty file_search returns whose contexts are still to arrive in `grounding_metadata` (see
+    # `_fill_empty_file_search_return_content`). Each is reserved in the parts manager keyed by its
+    # `tool_call_id`, with its `PartStartEvent` deferred until it's filled — or until the stream ends.
+    _pending_file_search_returns: list[NativeToolReturnPart] = field(
+        default_factory=list[NativeToolReturnPart], init=False
+    )
 
     async def close_stream(self) -> None:
         try:
@@ -1309,7 +1362,7 @@ class GeminiStreamedResponse(StreamedResponse):
                             r.model_dump(by_alias=True) for r in candidate.safety_ratings
                         ]
 
-                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason.value)
 
                 # Google streams the grounding metadata (including the web search queries and results)
                 # _after_ the text that was generated using it, so it would show up out of order in the stream,
@@ -1417,7 +1470,16 @@ class GeminiStreamedResponse(StreamedResponse):
                     elif part.tool_response:
                         tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
                         tool_response_part.provider_details = provider_details
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
+                        if tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None:
+                            # Reserve the part's slot but defer its `PartStartEvent` until it's filled below,
+                            # so consumers see a single populated file_search result rather than an empty one
+                            # followed by a filled duplicate.
+                            self._pending_file_search_returns.append(tool_response_part)
+                            self._parts_manager.handle_part(
+                                vendor_part_id=tool_response_part.tool_call_id, part=tool_response_part
+                            )
+                        else:
+                            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
                     elif part.executable_code is not None:
                         part_obj = self._handle_executable_code_streaming(part.executable_code)
                         part_obj.provider_details = provider_details
@@ -1438,14 +1500,30 @@ class GeminiStreamedResponse(StreamedResponse):
                     )
                     if file_search_part is not None:
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
+                elif self._pending_file_search_returns:
+                    # Fill every reserved file_search return from the (aggregate) `grounding_metadata`,
+                    # matching the non-streaming path, and emit each filled part's deferred `PartStartEvent`
+                    # under its reserved slot. This relies on the grounding arriving on a chunk that also
+                    # carries a text part (as Gemini does today) so the `candidate.content.parts` guard above
+                    # doesn't `continue` past it; on a hypothetical part-less grounding chunk the fill would be
+                    # deferred to the end-of-stream flush below, surfacing the return with empty content.
+                    still_pending: list[NativeToolReturnPart] = []
+                    for pending in self._pending_file_search_returns:
+                        _fill_empty_file_search_return_content(pending, candidate.grounding_metadata)
+                        if pending.content is None:
+                            still_pending.append(pending)
+                        else:
+                            yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
+                    self._pending_file_search_returns = still_pending
+
+            # Grounding never arrived (or carried no retrieved contexts) for these reserved returns: emit
+            # their deferred `PartStartEvent`s with empty content, so streaming consumers still see every
+            # part present in the final response.
+            for pending in self._pending_file_search_returns:
+                yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
+            self._pending_file_search_returns = []
         except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
-                ) from e
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise _map_api_error(e, self._model_name) from e
 
     def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None
@@ -1786,6 +1864,8 @@ def _process_response_from_parts(
     for part in parts:
         item, code_execution_tool_call_id = _process_part(part, code_execution_tool_call_id, provider_name)
         if item is not None:
+            if isinstance(item, NativeToolReturnPart):
+                _fill_empty_file_search_return_content(item, grounding_metadata)
             items.append(item)
 
     return ModelResponse(
@@ -1858,7 +1938,7 @@ def _metadata_as_usage(
             details[f'{detail.modality.lower()}_{prefix}_tokens'] = detail.token_count
 
     # Gemini streams usage as cumulative snapshots, but a field reported on an earlier chunk can be
-    # absent from a later one (e.g. `cached_content_token_count` when streamed through a gateway, see #5205).
+    # absent from a later one (e.g. `cached_content_token_count` when streamed through a gateway, see https://github.com/pydantic/pydantic-ai/issues/5205).
     # Merge with the usage accumulated so far so those values survive instead of being overwritten with 0.
     if existing_usage:
         details = {**existing_usage.details, **details}
@@ -1970,7 +2050,7 @@ def _extract_file_search_retrieved_contexts(
 
     Returns an empty list if no retrieved contexts are found.
     """
-    if not grounding_chunks:  # pragma: no cover
+    if not grounding_chunks:
         return []
     retrieved_contexts: list[dict[str, Any]] = []
     for chunk in grounding_chunks:
@@ -1991,6 +2071,25 @@ def _extract_file_search_retrieved_contexts(
             context_dict['file_search_store'] = file_search_store
         retrieved_contexts.append(context_dict)
     return retrieved_contexts
+
+
+def _fill_empty_file_search_return_content(
+    item: NativeToolReturnPart, grounding_metadata: GroundingMetadata | None
+) -> None:
+    """Fill an empty file_search `NativeToolReturnPart` from `grounding_metadata` in place.
+
+    On Gemini 3+ the API returns explicit file_search `tool_call`/`tool_response` parts but leaves the
+    `tool_response` content empty, delivering the retrieved contexts in `grounding_metadata` instead — in
+    streaming, several chunks later. Metadata reconstruction is skipped when explicit parts are present (to
+    avoid duplicate parts), so the contexts are recovered by filling the explicit part here. No-op for other
+    tools or when the content is already set.
+    """
+    if item.tool_name != FileSearchTool.kind or item.content is not None:
+        return
+    grounding_chunks = grounding_metadata.grounding_chunks if grounding_metadata else None
+    retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
+    if retrieved_contexts:
+        item.content = retrieved_contexts
 
 
 def _map_file_search_grounding_metadata(
