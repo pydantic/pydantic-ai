@@ -10,6 +10,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
     FunctionToolCallEvent,
@@ -26,6 +27,7 @@ from pydantic_ai.realtime import RealtimeError, TurnCompleteEvent
 from pydantic_ai.realtime._base import SessionErrorEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
+from .conftest import REAL_SDP_OFFER
 from .ws_cassettes import RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
@@ -340,3 +342,50 @@ async def test_audio_in_server_vad_transcribes(
     assert isinstance(user_part, SpeechPart)
     assert user_part.speaker == 'user'
     assert user_part.transcript == snapshot('Hello, my name is Marcelo.')
+
+
+@pytest.mark.vcr
+async def test_webrtc_sideband_text_turn(
+    azure_ws_sideband_cassette: tuple[AzureProvider, RealtimeCassette],
+) -> None:
+    """Azure's secure WebRTC flow end to end: two-step HTTP relay, then run the agent over the sideband.
+
+    The Azure two-step signaling (mint client secret + relay the raw SDP offer) is a VCR cassette; the
+    control WebSocket attached by `call_id` is a WS cassette. This is the Azure counterpart to the OpenAI
+    `test_webrtc_sideband_text_turn`, proving the inherited sideband runs a turn over Azure's `/openai/v1`
+    control URL and `api-key` auth (not just that signaling returns a `call_id`).
+    """
+    provider, cassette = azure_ws_sideband_cassette
+    model = AzureRealtimeModel(
+        'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
+    )
+    agent = Agent(instructions='Answer in two words.')
+
+    answer = await model.answer_webrtc_offer(REAL_SDP_OFFER, instructions='Answer in two words.')
+    assert answer.sdp.startswith('v=0')
+    assert answer.session.provider_name == 'azure'
+    assert answer.session.call_id.startswith('rtc_')
+
+    events: list[Any] = []
+    async with agent.realtime(model).session(provider_session=answer.session) as session:
+        # The sideband doesn't own the audio transport, so the audio methods are unavailable.
+        with pytest.raises(UserError, match='does not own the audio transport'):
+            await session.send_audio(b'\x00\x00')
+
+        await session.send('Say hello.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+                events.append(event)
+                if isinstance(event, TurnCompleteEvent):
+                    break
+
+    # The first control frame applies the session config (no `session.created` handshake wait).
+    assert cassette.interactions[0].data['type'] == 'session.update'  # type: ignore[union-attr]
+
+    assert [event for event in events if isinstance(event, SessionErrorEvent)] == []
+    messages = session.all_messages()
+    assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
+    reply = messages[1]
+    assert isinstance(reply, ModelResponse)
+    assert reply.model_name == 'gpt-realtime'
+    assert isinstance(reply.parts[0], TextPart)
