@@ -155,7 +155,7 @@ def test_from_file_uses_filename_as_default_name(tmp_path: Path):
     """Test that from_file uses filename stem as name."""
     yaml_content = 'cases:\n- name: test\n  inputs:\n    query: hello\n'
     yaml_path = tmp_path / 'my_dataset.yaml'
-    yaml_path.write_text(yaml_content)
+    yaml_path.write_text(yaml_content, encoding='utf-8')
 
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
     assert dataset.name == 'my_dataset'
