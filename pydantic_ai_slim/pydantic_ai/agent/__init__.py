@@ -1450,10 +1450,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             base_native_tools,
             source='override spec capabilities' if override_cap is not None else 'agent capabilities',
         )
-        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
-            tool for cap in resolved_extras for tool in cap.get_native_tools()
-        ]
-        _validate_native_tool_ids(extra_native_tools, source='run capabilities')
+        # Validate each resolved extra capability's native tools separately: two
+        # separate capability layers legitimately targeting the same `unique_id`
+        # is an intended cross-layer override (last-wins downstream), not a
+        # conflict. Only conflicting definitions *within* a single capability
+        # layer are ambiguous and rejected here.
+        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = []
+        for cap in resolved_extras:
+            cap_tools = list(cap.get_native_tools())
+            _validate_native_tool_ids(cap_tools, source='run capabilities')
+            extra_native_tools.extend(cap_tools)
 
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
         # preserving any additional per-run capability-contributed native tools (e.g. from
