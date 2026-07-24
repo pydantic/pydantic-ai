@@ -49,9 +49,10 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
     resource endpoint and API key. The WebSocket transport does not use its OpenAI SDK client or
     `api_version`; it connects to the GA `/openai/v1/realtime` endpoint with an `api-key` header.
 
-    For browser WebRTC (minting client secrets and relaying SDP offers), pass a Microsoft Entra ID
-    `credential` (e.g. `azure.identity.DefaultAzureCredential()`) to authenticate the signaling calls
-    with a bearer token instead of the `api-key`; the browser only ever receives the short-lived
+    Pass a Microsoft Entra ID `credential` (e.g. `azure.identity.DefaultAzureCredential()`) to
+    authenticate every request to the resource — the realtime WebSocket session *and* the browser
+    WebRTC signaling calls — with a bearer token instead of the `api-key` (needed when the resource is
+    locked to managed identity). For browser WebRTC the browser still only ever receives the short-lived
     ephemeral secret, never the Entra token or the API key.
     """
 

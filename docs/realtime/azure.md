@@ -43,9 +43,9 @@ model = AzureRealtimeModel('gpt-realtime', provider=provider)
 [`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel] reuses
 [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] for endpoint and API key, and uses the
 same settings/event protocol as
-[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel]. The WebSocket transport
-authenticates with the API key; browser [WebRTC signaling](#browser-webrtc-and-microsoft-entra-id) can
-additionally use a Microsoft Entra ID token. Noise reduction, output
+[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel]. Both the WebSocket transport
+and browser [WebRTC signaling](#browser-webrtc-and-microsoft-entra-id) authenticate with the API key by
+default, or with a Microsoft Entra ID token when you pass a `credential`. Noise reduction, output
 speed, server/semantic VAD, and truncation use
 [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]. Azure
 realtime does not expose `temperature`. Input transcription defaults to `'auto'`; see
@@ -72,12 +72,13 @@ for the topology, and use
 Azure relays the offer with `webrtcfilter=on`, which limits the events forwarded to the browser to a
 safe subset so the session instructions stay on the server's control connection.
 
-The signaling calls authenticate with the resource's API key by default. To use **Microsoft Entra ID**
-instead — so no API key is involved in minting the browser's short-lived credential — pass a
+Azure requests authenticate with the resource's API key by default. To use **Microsoft Entra ID**
+instead — so no API key is involved, e.g. when the resource is locked to managed identity — pass a
 `credential` (any [`azure.identity`](https://learn.microsoft.com/python/api/overview/azure/identity-readme)
-credential, e.g. `DefaultAzureCredential`). The credential mints a bearer token for the Azure OpenAI
-data plane (scope `https://ai.azure.com/.default`), which requires the **Cognitive Services User** role
-on the resource:
+credential, e.g. `DefaultAzureCredential`). It authenticates **every** request to the resource — the
+realtime WebSocket session and the WebRTC signaling — with a bearer token for the Azure OpenAI data
+plane (scope `https://ai.azure.com/.default`), which requires the **Cognitive Services User** role on
+the resource:
 
 ```python {test="skip" lint="skip"}
 from azure.identity import DefaultAzureCredential
@@ -90,8 +91,8 @@ model = AzureRealtimeModel(
     provider=AzureProvider(azure_endpoint='https://my-resource.openai.azure.com'),
     credential=DefaultAzureCredential(),
 )
-# `answer_webrtc_offer` / `create_client_secret` now authenticate with an Entra bearer token; the
-# browser only ever receives the short-lived ephemeral secret, never the token or the API key.
+# The realtime session, `answer_webrtc_offer`, and `create_client_secret` now authenticate with an Entra
+# bearer token; the browser only ever receives the short-lived ephemeral secret, never it or the API key.
 ```
 
 ## Azure AI Voice Live support is coming soon

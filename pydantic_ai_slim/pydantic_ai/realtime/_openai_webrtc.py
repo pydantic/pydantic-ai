@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
 from .._utils import is_str_dict
-from ..exceptions import UnexpectedModelBehavior
+from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from ._base import RealtimeClientSecret, WebRTCAnswer, WebRTCSession
 
 if TYPE_CHECKING:
@@ -46,15 +46,17 @@ def parse_call_id(location: str | None) -> str | None:
     return None
 
 
-def _raise_for_status(response: httpx.Response, action: str) -> None:
-    """Raise a clear error carrying the provider's response body on a non-2xx WebRTC signaling response."""
-    if not response.is_error:
-        return
-    body = response.text.strip()
-    message = f'{response.status_code} error {action}'
-    if body:  # pragma: no branch - provider errors carry a body
-        message = f'{message}: {body}'
-    raise UnexpectedModelBehavior(message)
+def _raise_for_status(response: httpx.Response, provider_name: str) -> None:
+    """Raise a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] on a non-2xx WebRTC signaling response.
+
+    Signaling failures (401/403 auth, 429 rate limit, 5xx outages) are ordinary provider HTTP errors, not
+    unexpected model output, so they go through the standard HTTP exception hierarchy — callers can catch
+    `ModelHTTPError`, read `status_code`, and apply their own retry policy — with the response body preserved.
+    """
+    if response.is_error:
+        raise ModelHTTPError(
+            status_code=response.status_code, model_name=provider_name, body=response.text.strip() or None
+        )
 
 
 async def mint_client_secret(
@@ -62,6 +64,7 @@ async def mint_client_secret(
     http_client: httpx.AsyncClient,
     client_secrets_url: str,
     headers: dict[str, str],
+    provider_name: str,
     session_config: dict[str, Any],
     expires_after_seconds: int | None,
 ) -> RealtimeClientSecret:
@@ -74,7 +77,7 @@ async def mint_client_secret(
         headers={**headers, 'Content-Type': 'application/json'},
         content=json.dumps(payload),
     )
-    _raise_for_status(response, 'minting realtime client secret')
+    _raise_for_status(response, provider_name)
     data = response.json()
     if not is_str_dict(data) or not isinstance(value := data.get('value'), str):
         raise UnexpectedModelBehavior('Realtime client-secret response did not include a `value`.')
@@ -95,7 +98,7 @@ def _webrtc_answer_from_response(response: httpx.Response, provider_name: str) -
     The created call's id comes back in the `Location` header (e.g. `/v1/realtime/calls/rtc_...`), not
     the SDP body, so it is parsed out and carried on the returned [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession].
     """
-    _raise_for_status(response, 'negotiating realtime WebRTC call')
+    _raise_for_status(response, provider_name)
     location = response.headers.get('location')
     call_id = parse_call_id(location)
     if call_id is None:
