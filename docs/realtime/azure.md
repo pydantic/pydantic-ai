@@ -62,9 +62,11 @@ realtime does not expose `temperature`. Input transcription defaults to `'auto'`
     misconfiguration that fails every turn (silently dropping spoken user turns), the session **raises**
     rather than surfacing a recoverable event. Deploy a transcription model (e.g. `whisper`) and set it via
     `input_transcription_model` on
-    [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]. If you don't
-    need transcripts, disable transcription with `input_transcription_model=None` and pass
-    `audio_retention='input_audio'` so the spoken turn is still kept as audio.
+    [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]. On the
+    server-side path, if you don't need transcripts you can instead disable transcription with
+    `input_transcription_model=None` and pass `audio_retention='input_audio'` so the spoken turn is
+    still kept as audio — but a [WebRTC sideband](#browser-webrtc-and-microsoft-entra-id) receives no
+    audio to retain, so there it must keep transcription (and a deployed transcription model) enabled.
 
 ## Browser WebRTC and Microsoft Entra ID
 
@@ -75,6 +77,21 @@ for the topology, and use
 [`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] exactly as on OpenAI.
 Azure relays the offer with `webrtcfilter=on`, which limits the events forwarded to the browser to a
 safe subset so the session instructions stay on the server's control connection.
+
+!!! warning "A sideband needs a deployed transcription model"
+    The server side of a WebRTC call never receives the user's audio (it flows browser ↔ Azure
+    directly), so the sideband can only record spoken input via a transcription model — the
+    `audio_retention='input_audio'` fallback does not apply. On Azure that model must be **deployed**
+    on your resource; the default `gpt-realtime-whisper` fails with `DeploymentNotFound` until you
+    deploy it (or point `input_transcription_model` at a transcription deployment you already have).
+
+!!! note "The browser's filtered event stream differs from the raw protocol"
+    `webrtcfilter=on` means the events Azure forwards over the browser's data channel are a privacy-safe
+    subset: the browser sees `output_audio_buffer.started` / `output_audio_buffer.stopped` for
+    speaking-state, not the raw `response.created` / `response.done`. A frontend that keys "assistant is
+    speaking" or latency telemetry off `response.*` needs to map the `output_audio_buffer.*` events
+    instead. This affects only client code reading the data channel directly; the server-side session's
+    [event stream](index.md#event-reference) is unaffected.
 
 Azure requests authenticate with the resource's API key by default. To use **Microsoft Entra ID**
 instead — so no API key is involved, e.g. when the resource is locked to managed identity — pass a
