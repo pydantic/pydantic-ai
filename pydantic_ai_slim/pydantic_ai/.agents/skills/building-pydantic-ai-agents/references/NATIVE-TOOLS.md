@@ -80,3 +80,4 @@ Use native tools (`NativeTool(WebSearchTool(...))`) when:
 For Anthropic dynamic web tools, `response_inclusion='excluded'` on `WebSearchTool` or
 `WebFetchTool` omits result blocks consumed by completed code execution calls.
 `WebFetchTool(use_cache=False)` bypasses Anthropic's cache when fresh content is required.
+These options raise `UserError` on models or clients that use earlier web tool versions.
