@@ -88,11 +88,13 @@ try:
         FILE_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
+        TEXT_PART_ACTIVITY_TYPE,
         UPLOADED_FILE_ACTIVITY_TYPE,
         dump_tool_return_content,
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
         parse_encrypted_outcome,
+        parse_encrypted_part_metadata,
         parse_encrypted_tool_kind,
         rehydrate_tool_return_content,
         thinking_encrypted_metadata,
@@ -364,6 +366,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         builder = MessagesBuilder()
         tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
         tool_kinds: dict[str, ToolPartKind] = {}  # Tool call ID to `tool_kind` claim mapping.
+        # Pending TextPart metadata from a preceding ActivityMessage (TEXT_PART_ACTIVITY_TYPE).
+        pending_text_metadata: dict[str, Any] = {}
         # `ToolCall`/`ToolMessage.encrypted_value` only exists on the installed model from 0.1.11
         # onward; older versions drop the client's claim, so the field is only read when present.
         use_encrypted_value = parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= ENCRYPTED_VALUE_VERSION
@@ -425,7 +429,20 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
                 case AssistantMessage(content=content, tool_calls=tool_calls_list):
                     if content:
-                        builder.add(TextPart(content=content))
+                        text_meta = pending_text_metadata
+                        pending_text_metadata = {}
+                        builder.add(
+                            TextPart(
+                                content=content,
+                                id=text_meta.get('id'),
+                                provider_name=text_meta.get('provider_name'),
+                                provider_details=text_meta.get('provider_details'),
+                            )
+                        )
+                    else:
+                        # AssistantMessage with only tool_calls — clear any stale
+                        # pending metadata so it doesn't attach to the wrong TextPart.
+                        pending_text_metadata = {}
                     if tool_calls_list:
                         for tool_call in tool_calls_list:
                             tool_call_id = tool_call.id
@@ -441,6 +458,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             if tool_kind is not None:
                                 tool_kinds[tool_call_id] = tool_kind
 
+                            # Read part-level metadata (id, provider_name, provider_details) from
+                            # the encrypted_value carrier, fixing the silent field loss in #5937.
+                            part_meta = parse_encrypted_part_metadata(tool_call.encrypted_value) if use_encrypted_value else {}
+
                             builtin_id = parse_builtin_tool_call_id(tool_call_id)
                             if builtin_id is not None:
                                 provider_name, original_id = builtin_id
@@ -451,6 +472,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                         tool_call_id=original_id,
                                         provider_name=provider_name,
                                         tool_kind=tool_kind,
+                                        id=part_meta.get('id'),
+                                        provider_details=part_meta.get('provider_details'),
                                     )
                                 )
                             else:
@@ -460,6 +483,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                         tool_call_id=tool_call_id,
                                         args=tool_call.function.arguments,
                                         tool_kind=tool_kind,
+                                        id=part_meta.get('id'),
+                                        provider_name=part_meta.get('provider_name'),
+                                        provider_details=part_meta.get('provider_details'),
                                     )
                                 )
                 case ToolMessage() as tool_msg:
@@ -583,6 +609,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 ]
                             )
                         )
+                    elif activity_msg.activity_type == TEXT_PART_ACTIVITY_TYPE:
+                        # Store metadata for the next TextPart in the following AssistantMessage.
+                        pending_text_metadata = dict(activity_msg.content)
 
                 case _:
                     if TYPE_CHECKING:
@@ -753,6 +782,28 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             if isinstance(part, TextPart):
                 if tool_calls_list:
                     flush()
+                # Carry TextPart metadata (id, provider_name, provider_details) as a preceding
+                # ActivityMessage so it survives a dump/load round-trip.  Same pattern as FilePart.
+                # Flush before emitting the ActivityMessage so each metadata-bearing TextPart
+                # gets its own AssistantMessage — otherwise multiple TextParts with metadata
+                # would merge into one AssistantMessage and lose the second metadata block.
+                if use_encrypted_value and (part.id is not None or part.provider_name is not None or part.provider_details is not None):
+                    if text_content:
+                        flush()
+                    text_meta: dict[str, Any] = {}
+                    if part.id is not None:
+                        text_meta['id'] = part.id
+                    if part.provider_name is not None:
+                        text_meta['provider_name'] = part.provider_name
+                    if part.provider_details is not None:
+                        text_meta['provider_details'] = part.provider_details
+                    result.append(
+                        ActivityMessage(
+                            id=_new_message_id(),
+                            activity_type=TEXT_PART_ACTIVITY_TYPE,
+                            content=text_meta,
+                        )
+                    )
                 text_content.append(part.content)
             elif isinstance(part, ThinkingPart):
                 if use_reasoning:
@@ -772,7 +823,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     ToolCall(
                         id=part.tool_call_id,
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
-                        **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
+                        **tool_kind_encrypted_value_kwargs(
+                            part.tool_kind, supported=use_encrypted_value,
+                            part_id=part.id, provider_name=part.provider_name, provider_details=part.provider_details,
+                        ),
                     )
                 )
             elif isinstance(part, NativeToolCallPart):
@@ -781,7 +835,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     ToolCall(
                         id=prefixed_id,
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
-                        **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
+                        **tool_kind_encrypted_value_kwargs(
+                            part.tool_kind, supported=use_encrypted_value,
+                            part_id=part.id, provider_name=part.provider_name, provider_details=part.provider_details,
+                        ),
                     )
                 )
                 if builtin_return := builtin_returns.get(part.tool_call_id):
