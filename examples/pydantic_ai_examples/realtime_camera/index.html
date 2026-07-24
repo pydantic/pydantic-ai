@@ -293,7 +293,6 @@
       const OUTPUT_RATE = 24000; // and produces 24kHz output
       const FRAME_MS = 1000; // ~1 camera frame per second
       const FRAME_W = 512; // downscale streamed frames to keep bandwidth/cost low
-      const HD_W = 1600; // on-demand snapshot width for redrawing — big enough to read handwriting
       const WATCH_MS = 3500; // in Watch mode, check this often whether to nudge the model to report changes
 
       const $ = (id) => document.getElementById(id);
@@ -342,6 +341,16 @@
         userline.textContent = text; userline.classList.add('show');
         clearTimeout(userTimer); userTimer = setTimeout(() => userline.classList.remove('show'), 3500);
       }
+
+      // The transcript streams in as {speaker, delta} chunks. Accumulate into the current speaker's
+      // bubble, starting a fresh one whenever the speaker changes or the previous turn ended.
+      let streamSpeaker = null, streamText = '';
+      function appendTranscript(speaker, delta) {
+        if (speaker !== streamSpeaker) { streamSpeaker = speaker; streamText = ''; }
+        streamText += delta;
+        if (speaker === 'assistant') showCaption(streamText); else showUser(streamText);
+      }
+      function endTranscript() { streamSpeaker = null; streamText = ''; }
 
       const sourcesEl = $('sources');
       let srcTimer = null;
@@ -481,16 +490,14 @@
         sock.onmessage = (ev) => {
           if (ev.data instanceof ArrayBuffer) { onSpeaking(); playPCM(ev.data); return; }
           const m = JSON.parse(ev.data);
-          if (m.type === 'speech_started') { flushPlayback(); setState('listening'); }
-          else if (m.type === 'user') { showUser(m.text); }
-          else if (m.type === 'assistant') { showCaption(m.text); }
+          if (m.type === 'speech_started') { flushPlayback(); endTranscript(); setState('listening'); }
+          else if (m.type === 'transcript') { appendTranscript(m.speaker, m.delta); }
           else if (m.type === 'sources') { showSources(m.sources); }
-          else if (m.type === 'capture') { captureHd(); }
           else if (m.type === 'drawing_started') { showDrawingLoading(m.request); }
           else if (m.type === 'drawing') { showDrawing(m.html); }
           else if (m.type === 'drawing_error') { board.hidden = true; board.classList.remove('loading'); showCaption('Sorry, I could not redraw that.'); }
           else if (m.type === 'error') { setState('error', m.message || 'the model rejected the session'); stop(); }
-          else if (m.type === 'turn_complete') { if (running && app.dataset.state === 'thinking') setState('listening'); }
+          else if (m.type === 'turn_complete') { endTranscript(); if (running && app.dataset.state === 'thinking') setState('listening'); }
         };
       }
 
@@ -514,8 +521,8 @@
         ensurePlayback();
         mediaStream = await navigator.mediaDevices.getUserMedia({
           audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
-          // Ask for a high-resolution source so the on-demand snapshot for redrawing is sharp; the
-          // streamed frames are still downscaled to FRAME_W to keep the live session cheap.
+          // Prefer the rear camera; frames are downscaled to FRAME_W before streaming to keep the
+          // live session cheap.
           video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
         });
         video.srcObject = mediaStream;
@@ -557,22 +564,6 @@
             reader.readAsDataURL(blob);
           }, 'image/jpeg', 0.6);
         }, FRAME_MS);
-      }
-
-      // Grab a one-off high-resolution snapshot for the redraw tool (requested by the server). Sent as
-      // `frame_hd` so the backend keeps it for the drawing agent but doesn't forward it to Gemini.
-      function captureHd() {
-        if (!sock || sock.readyState !== 1 || !video.videoWidth) return;
-        const scale = Math.min(1, HD_W / video.videoWidth);
-        const c = document.createElement('canvas');
-        c.width = Math.round(video.videoWidth * scale); c.height = Math.round(video.videoHeight * scale);
-        c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
-        c.toBlob((blob) => {
-          if (!blob) return;
-          const reader = new FileReader();
-          reader.onload = () => send({ type: 'frame_hd', data: String(reader.result).split(',')[1], mime: 'image/jpeg' });
-          reader.readAsDataURL(blob);
-        }, 'image/jpeg', 0.92);
       }
 
       function stop() {
