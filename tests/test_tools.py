@@ -3410,7 +3410,7 @@ def test_tool_from_schema_preserves_positional_args_validator():
         return x  # pragma: no cover
 
     def validate_args(ctx: RunContext[None], x: int) -> None:
-        assert x == 1  # pragma: no cover
+        assert x == 1
 
     tool = Tool.from_schema(
         my_tool,
@@ -3423,6 +3423,7 @@ def test_tool_from_schema_preserves_positional_args_validator():
     )
     assert tool.args_validator is validate_args
     assert tool.examples is None
+    validate_args(RunContext(deps=None, model=TestModel(), usage=RunUsage()), 1)
 
 
 def test_function_toolset_add_function_preserves_positional_options():
@@ -3570,7 +3571,7 @@ def test_tool_output_examples_for_single_model_arg_use_wire_shape():
         x: int
 
     def output_func(arg: MyModel) -> int:
-        return arg.x  # pragma: no cover
+        return arg.x
 
     examples = [{'x': 1}]
     tool_output = ToolOutput(output_func, examples=examples)
