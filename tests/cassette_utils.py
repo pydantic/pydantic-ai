@@ -133,7 +133,7 @@ def is_new_user_turn(block: str) -> bool:
     """
     try:
         message = json.loads(block)
-    except Exception:
+    except json.JSONDecodeError:
         return False
     if not is_str_dict(message) or message.get('role') != 'user':
         return False
@@ -174,7 +174,7 @@ def classify_prefix_pair(a: list[PrefixBlock], b: list[PrefixBlock]) -> tuple[st
                 continue
             try:
                 role = json.loads(block).get('role')
-            except Exception:
+            except (AttributeError, TypeError, json.JSONDecodeError):
                 role = None
             if role not in ('system', 'developer'):
                 return block
