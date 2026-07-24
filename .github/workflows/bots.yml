@@ -234,6 +234,13 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
+          # Reviewing a fork PR means reading the fork's code, so this job checks
+          # it out. v7 refuses that by default from `pull_request_target`; the
+          # pwn-request risk it guards is already covered here — no credentials
+          # persist, the reviewer only reads (never executes) the fork's code,
+          # and the guard below rejects any PR that edits the agent config this
+          # job loads. See https://gh.io/securely-using-pull_request_target.
+          allow-unsafe-pr-checkout: true
 
       - name: Check for modified config files
         # Runs for ALL PRs, not just forks: a same-repo branch (e.g. an automated
