@@ -490,7 +490,7 @@ xAI transcribe the user's audio with a dedicated model, set via `input_transcrip
 | --- | --- |
 | `'auto'` (default) | The provider's recommended transcription model, so user turns are captured under the default `audio_retention='transcript_only'`. Pin a specific id when the transcription model must remain fixed. |
 | An explicit id (e.g. `'gpt-4o-transcribe'`) | Used verbatim. Known ids autocomplete via [`KnownRealtimeTranscriptionModelName`][pydantic_ai.realtime.KnownRealtimeTranscriptionModelName], but any string works. |
-| `None` | Transcription disabled — no transcription model is sent. No user transcripts arrive, so [`audio_retention`](#retaining-audio) **must** be `'input_audio'`/`'all'` to keep the raw audio; each user turn is then finalized as an audio-only [`SpeechPart`][pydantic_ai.messages.SpeechPart] (no transcript, so not usable for a text handoff). Disabling transcription while `audio_retention` doesn't retain input audio raises a `UserError`, since the user's turns would otherwise be silently dropped from history. |
+| `None` | Transcription disabled — no transcription model is sent. No user transcripts arrive, so [`audio_retention`](#retaining-audio) **must** be `'input_audio'`/`'all'` to keep the raw audio; each user turn is then finalized as an audio-only [`SpeechPart`][pydantic_ai.messages.SpeechPart] (no transcript, so not usable for a text handoff). Disabling transcription while `audio_retention` doesn't retain input audio raises a `UserError`, since the user's turns would otherwise be silently dropped from history. This applies to the server-side path only: a [WebRTC sideband](#browser-webrtc) receives no audio to retain, so it always needs transcription. |
 
 Gemini transcribes with `google_input_transcription` (on by default) rather than a model id: the
 Live model transcribes natively, so there is no separate transcription model to choose. If
@@ -694,6 +694,15 @@ Because a sideband session doesn't own the audio transport, its audio methods
 `'transcript_only'` (the browser has the audio; the session still records transcripts). Everything else
 is the same session you already know — the [event loop](#the-event-loop), [tools](#tool-calling), and
 [message history](#message-history) all work unchanged, so you can still hand a call off to a text agent.
+
+!!! warning "A sideband needs input transcription — the audio-retention fallback does not apply"
+    Because the sideband never receives the user's audio, the only way its turns reach history is a
+    [transcription model](#transcribing-user-input). The `input_transcription_model=None` +
+    `audio_retention='input_audio'` escape hatch (used on the server-side WebSocket path when you
+    don't want transcripts) is **not** available here: the session has no audio to retain, so it
+    rejects any `audio_retention` other than `'transcript_only'`. Keep transcription enabled — on
+    Azure OpenAI that means the transcription model must be **deployed** on your resource, or every
+    spoken turn fails with `DeploymentNotFound` (see the [Azure page](azure.md#browser-webrtc-and-microsoft-entra-id)).
 
 WebRTC is available for **OpenAI and Azure OpenAI** (see the [OpenAI](openai.md#browser-webrtc) and
 [Azure](azure.md#browser-webrtc-and-microsoft-entra-id) provider pages, including Azure's Microsoft
