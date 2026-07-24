@@ -22,10 +22,12 @@ To use it from your phone you need HTTPS — expose the local server with a Clou
 
 then open the printed `https://<...>.trycloudflare.com` URL on the phone and allow camera + mic.
 
-`CAMERA_REALTIME_MODEL` (default `google:gemini-live-2.5-flash`) and
-`CAMERA_REALTIME_VOICE` (default `Puck`) set the fallback defaults. Model IDs must include the
-provider prefix, for example `google:gemini-live-2.5-flash`, `openai:gpt-realtime`, or
-`azure:<deployment>`. The UI's model, voice, and output modality settings work across providers.
+`CAMERA_REALTIME_MODEL` (default `google:gemini-3.1-flash-live-preview`) and
+`CAMERA_REALTIME_VOICE` (default: the provider's own default voice) set the fallback defaults. Model
+IDs must include the provider prefix, for example `google:gemini-3.1-flash-live-preview`,
+`openai:gpt-realtime-2.1`, or `azure:<deployment>`. The UI's model, voice, and output modality settings
+work across providers. Leaving the voice empty uses each provider's default, so you don't need to
+change it when switching between Gemini and OpenAI (whose voice names differ).
 Language, turn coverage, start/end VAD sensitivity, proactive audio, and affective dialog are
 Gemini-only; OpenAI/Azure map either sensitivity control to cross-provider turn detection instead.
 
@@ -78,6 +80,7 @@ from fastapi.responses import HTMLResponse
 
 from pydantic_ai import Agent, BinaryContent, RunContext
 from pydantic_ai.capabilities import WebSearch
+from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import NativeToolReturnPart
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 from pydantic_ai.realtime import (
@@ -120,8 +123,10 @@ USE_VERTEX = os.environ.get('GOOGLE_GENAI_USE_VERTEXAI', '').lower() in (
     'true',
     'yes',
 )
-MODEL = os.environ.get('CAMERA_REALTIME_MODEL', 'google:gemini-live-2.5-flash')
-VOICE = os.environ.get('CAMERA_REALTIME_VOICE', 'Puck')
+MODEL = os.environ.get('CAMERA_REALTIME_MODEL', 'google:gemini-3.1-flash-live-preview')
+# Empty by default so each provider picks its own default voice — no need to change it when switching
+# between Gemini and OpenAI, whose voice names differ (Gemini rejects `alloy`, OpenAI rejects `Puck`).
+VOICE = os.environ.get('CAMERA_REALTIME_VOICE', '')
 GCP_PROJECT = os.environ.get('GOOGLE_CLOUD_PROJECT')
 GCP_LOCATION = os.environ.get('GOOGLE_CLOUD_LOCATION')
 # `all_input` keeps every camera frame in the model's context and works on both the Developer API and
@@ -138,7 +143,7 @@ AFFECTIVE = os.environ.get('CAMERA_AFFECTIVE', '').lower() in ('1', 'true', 'yes
 # Gemini (same `GOOGLE_API_KEY` as the live session — no extra key). `CAMERA_DRAW_MODEL` takes any
 # `provider:model` string to use a different vision model.
 DRAW = os.environ.get('CAMERA_DRAW', 'true').lower() in ('1', 'true', 'yes')
-DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'google:gemini-3-flash-preview')
+DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'google:gemini-3.5-flash')
 # Grounding with Google Search (a native tool) — on by default; the native-audio Live models
 # support it. Set `CAMERA_WEB_SEARCH=false` to disable, or if your model/region doesn't support it.
 # (We don't also add `WebFetch` here: Gemini 2.5 / native-audio can't combine Google Search grounding
@@ -257,6 +262,14 @@ if DRAW:
                     BinaryContent(data=frame, media_type='image/jpeg'),
                 ]
             )
+        except anyio.get_cancelled_exc_class():
+            # The realtime model cancelled this call mid-draw — e.g. the user barged in, so the provider
+            # abandoned the turn (a `ToolCallCancelled`, which the session maps to task cancellation).
+            # Cancellation is a `BaseException`, so it skips the `except Exception` below; clear the
+            # browser's loading overlay (shielded, since we're unwinding a cancellation) before re-raising.
+            with anyio.CancelScope(shield=True):
+                await ctx.deps.emit({'type': 'drawing_error'})
+            raise
         except Exception as exc:
             await ctx.deps.emit({'type': 'drawing_error'})
             return f'The redraw failed: {exc}'
@@ -298,11 +311,14 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
 
     start, end = params.get('start_sensitivity'), params.get('end_sensitivity')
     common_settings = RealtimeModelSettings(
-        voice=params.get('voice') or VOICE,
         output_modality=cast(
             "Literal['audio', 'text']", params.get('modality', 'audio')
         ),
     )
+    # Only set a voice when one is given; an empty voice lets each provider use its own default, so the
+    # same settings work across Gemini and OpenAI without swapping voice names.
+    if voice := (params.get('voice') or VOICE):
+        common_settings['voice'] = voice
     if isinstance(model, GoogleRealtimeModel):
         settings = GoogleRealtimeModelSettings(
             **common_settings,
@@ -435,6 +451,65 @@ async def _dispatch_text(
         return
 
 
+async def _run_session(
+    session: RealtimeSession,
+    socket: WebSocket,
+    frames: _FrameStore,
+    emit: Callable[[dict[str, object]], Awaitable[None]],
+    send_lock: anyio.Lock,
+) -> None:
+    """Bridge a live session to the browser: model output out, mic audio and camera frames in.
+
+    Two concurrent pumps run until either side ends; when one stops (a disconnect or a provider drop)
+    it cancels the task group so the other unwinds and the session closes.
+    """
+    async with anyio.create_task_group() as tg:
+
+        async def pump_events() -> None:
+            try:
+                async for event in session:
+                    # Model audio goes back as raw binary frames; everything else as JSON.
+                    if (
+                        isinstance(event, PartDeltaEvent)
+                        and isinstance(event.delta, SpeechPartDelta)
+                        and event.delta.audio_chunk is not None
+                    ):
+                        async with send_lock:
+                            await socket.send_bytes(event.delta.audio_chunk)
+                    elif (message := _json_message(event)) is not None:
+                        await emit(message)
+            except Exception:
+                # Log before tearing down so a pump failure (e.g. a provider error surfaced through the
+                # session) is diagnosable instead of a silent disconnect.
+                logfire.exception('Realtime event pump failed')
+            finally:
+                tg.cancel_scope.cancel()
+
+        async def pump_inbound() -> None:
+            try:
+                while True:
+                    message = await socket.receive()
+                    if message.get('type') == 'websocket.disconnect':
+                        break
+                    if (chunk := message.get('bytes')) is not None:
+                        await session.send_audio(chunk)  # raw PCM16 mic audio
+                    elif (text := message.get('text')) is not None:
+                        await _dispatch_text(
+                            session, text, frames.store_streamed, frames.store_hd
+                        )
+            except WebSocketDisconnect:
+                pass
+            except (RealtimeError, websockets.exceptions.ConnectionClosed):
+                # Send-side recovery is not reconnect-aware yet; a provider drop ends this session and
+                # lets the browser reconnect. See https://github.com/pydantic/pydantic-ai/issues/6703.
+                logfire.exception('Realtime inbound pump failed')
+            finally:
+                tg.cancel_scope.cancel()
+
+        tg.start_soon(pump_events)
+        tg.start_soon(pump_inbound)
+
+
 @app.websocket('/ws')
 async def ws(socket: WebSocket) -> None:
     await socket.accept()
@@ -449,52 +524,20 @@ async def ws(socket: WebSocket) -> None:
     frames = _FrameStore()
     deps = CameraDeps(capture_frame=lambda: frames.capture(emit), emit=emit)
 
-    model = _build_model(socket.query_params)
-    async with agent.realtime(model, deps=deps).session() as session:
-        async with anyio.create_task_group() as tg:
+    try:
+        model = _build_model(socket.query_params)
+    except (UserError, ValueError) as exc:
+        # Unknown provider prefix, or a model that can't take camera frames.
+        await emit({'type': 'error', 'message': str(exc)})
+        return
 
-            async def pump_events() -> None:
-                try:
-                    async for event in session:
-                        if (
-                            isinstance(event, PartDeltaEvent)
-                            and isinstance(event.delta, SpeechPartDelta)
-                            and event.delta.audio_chunk is not None
-                        ):
-                            async with send_lock:
-                                await socket.send_bytes(event.delta.audio_chunk)
-                            continue
-                        if (message := _json_message(event)) is not None:
-                            await emit(message)
-                except Exception:
-                    # Log before tearing down so a pump failure (e.g. a provider error surfaced through
-                    # the session) is diagnosable instead of a silent disconnect.
-                    logfire.exception('Realtime event pump failed')
-                    tg.cancel_scope.cancel()
-
-            async def pump_inbound() -> None:
-                try:
-                    while True:
-                        message = await socket.receive()
-                        if message.get('type') == 'websocket.disconnect':
-                            break
-                        if (chunk := message.get('bytes')) is not None:
-                            await session.send_audio(chunk)  # raw PCM16 mic audio
-                        elif (text := message.get('text')) is not None:
-                            await _dispatch_text(
-                                session, text, frames.store_streamed, frames.store_hd
-                            )
-                    tg.cancel_scope.cancel()
-                except WebSocketDisconnect:
-                    tg.cancel_scope.cancel()
-                except (RealtimeError, websockets.exceptions.ConnectionClosed):
-                    # Send-side recovery is not reconnect-aware yet; a provider drop ends this session
-                    # and lets the browser reconnect. See https://github.com/pydantic/pydantic-ai/issues/6703.
-                    logfire.exception('Realtime inbound pump failed')
-                    tg.cancel_scope.cancel()
-
-            tg.start_soon(pump_events)
-            tg.start_soon(pump_inbound)
+    try:
+        async with agent.realtime(model, deps=deps).session() as session:
+            await _run_session(session, socket, frames, emit, send_lock)
+    except ModelAPIError as exc:
+        # The provider rejected the session at connect time — e.g. a voice this model doesn't support,
+        # or an unknown model/deployment. Surface it to the browser instead of a bare disconnect.
+        await emit({'type': 'error', 'message': str(exc)})
 
 
 if __name__ == '__main__':

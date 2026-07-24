@@ -213,12 +213,12 @@
         <div class="caption" id="caption"></div>
         <div class="userline" id="userline"></div>
         <div class="sources" id="sources" hidden></div>
-        <div class="idle-hint">Tap <b>Start</b>, then talk and point your camera at things to ask about them. Show it a hand-drawn sketch and ask it to <b>redraw</b> it as a clean diagram. Use <b>Watch</b> to let it watch and call out changes on its own.</div>
+        <div class="idle-hint">Tap <b>Start</b>, then talk and point your camera at things to ask about them. Show it a hand-drawn sketch and ask it to <b>redraw</b> it as a clean diagram. The model sees your camera the whole time; toggle <b>Watch</b> to have it speak up on its own when the scene changes, instead of only when you ask.</div>
       </div>
 
       <footer class="hud dock">
         <div class="dock-inner">
-          <button class="ico watch" id="watch" title="Watch — let the assistant comment on changes" aria-label="Watch" disabled>
+          <button class="ico watch" id="watch" title="Watch — the model always sees your camera; turn this on to have it speak up on its own when the scene changes, not just when you ask" aria-label="Watch" disabled>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
           <button class="cta" id="toggle">Start</button>
@@ -236,13 +236,16 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
         </button></div>
         <div class="grid">
-          <label>Model<input id="model" class="in" list="models" value="google:gemini-live-2.5-flash" placeholder="provider:model" autocomplete="off" /></label>
+          <label>Model<input id="model" class="in" list="models" value="google:gemini-3.1-flash-live-preview" placeholder="provider:model" autocomplete="off" /></label>
+          <!-- The two recommended models lead; xAI is omitted because it has no image input for the camera.
+               For Azure, replace the deployment name with your own. -->
           <datalist id="models">
-            <option value="google:gemini-live-2.5-flash"></option>
-            <option value="google:gemini-2.5-flash-native-audio-latest"></option>
-            <option value="google:gemini-2.5-flash-native-audio-preview-12-2025"></option>
             <option value="google:gemini-3.1-flash-live-preview"></option>
+            <option value="openai:gpt-realtime-2.1"></option>
+            <option value="openai:gpt-realtime-2.1-mini"></option>
             <option value="openai:gpt-realtime"></option>
+            <option value="azure:gpt-realtime"></option>
+            <option value="google:gemini-2.5-flash-native-audio-latest"></option>
           </datalist>
           <label>Voice <span class="hint">Suggestions are Gemini voices; OpenAI also supports names such as marin and alloy.</span><input id="voice" class="in" list="voices" placeholder="default" autocomplete="off" /></label>
           <datalist id="voices">
@@ -486,6 +489,7 @@
           else if (m.type === 'drawing_started') { showDrawingLoading(m.request); }
           else if (m.type === 'drawing') { showDrawing(m.html); }
           else if (m.type === 'drawing_error') { board.hidden = true; board.classList.remove('loading'); showCaption('Sorry, I could not redraw that.'); }
+          else if (m.type === 'error') { setState('error', m.message || 'the model rejected the session'); stop(); }
           else if (m.type === 'turn_complete') { if (running && app.dataset.state === 'thinking') setState('listening'); }
         };
       }
