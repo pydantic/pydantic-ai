@@ -66,14 +66,12 @@ weak or speculative issue is worse than filing nothing.
 
 ### Deduplication — mandatory BEFORE filing an issue
 
-Search for existing issues that might overlap
-your run's scope. List open issues through the proxied `gh` CLI and filter
-locally — the `/search/issues` endpoint is blocked by the firewall proxy and
-there are no `mcp__github__*` tools:
+Search the open-issue corpus prefetched before the sandbox started for issues
+that might overlap your run's scope:
 
 ```
-gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' \
-  --jq '.[] | select(.pull_request == null) | {number, title, labels: [.labels[].name]}'
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
 ```
 
 Scan the titles for the sweep prefixes (`[bug-hunter]`,
@@ -82,6 +80,9 @@ and for keywords related to whatever subsystem you're investigating.
 If a matching issue already covers the same root cause, call
 `mcp__safeoutputs__noop` immediately — do NOT file a duplicate, even to
 "independently confirm" the bug. Confirming is not value-add.
+
+Do not enumerate issues with `gh` from inside the sandbox; list requests can
+stall until the workflow times out.
 
 ### Sandbox notes
 

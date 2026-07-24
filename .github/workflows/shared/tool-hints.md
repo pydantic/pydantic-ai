@@ -22,26 +22,30 @@ dependencies are **not** pre-installed; run `make install` once before using
 `pytest`, `ruff`, or `pyright`. Prefer `uv run pytest <test_file>` over a bare
 `pytest` call.
 
-**GitHub issue search** — this workflow runs the GitHub toolset in `gh-proxy`
-mode, so there are **no `mcp__github__*` tools**, and the `/search/issues`
-endpoint (`gh issue list --search`, `gh search issues`) returns HTTP 403 via the
-AWF firewall proxy. The issue-**list** endpoint **is** allowed through the
-proxied `gh` CLI, including its server-side `?labels=` filter. When this sweep
-files under a dedicated label, prefer a narrow label query over listing
-everything:
+**GitHub issue and PR search** — use the context prefetched for this workflow
+instead of enumerating GitHub through the proxied `gh` CLI; list/search
+requests from inside the sandbox are blocked or can stall until the workflow
+times out. Issue-filing sweeps provide these files:
 
 ```bash
-gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=<label>&per_page=100' \
-  --jq '.[] | select(.pull_request == null) | {number, title}'
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-pull-requests.json
 ```
 
-If this sweep has no dedicated label, or the label filter is inconclusive, widen
-to a full open-issue scan:
+For a dedicated issue label, filter the local corpus:
 
 ```bash
-gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' \
-  --jq '.[] | select(.pull_request == null) | {number, title, labels: [.labels[].name]}'
+jq '.[] | select(any(.labels[]; .name == "<label>")) | {number, title, url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
 ```
 
-`select(.pull_request == null)` drops PRs, which the issues endpoint also
-returns.
+Do **not** run `gh issue list`, `gh pr list`, `gh search`, or a paginated/list
+`gh api` request from inside the agent. Narrow per-item reads may still be used
+after the local corpus identifies a specific issue or PR. PR reviewers instead
+use `/tmp/gh-aw/.review-context/`; the stale-issues workflow uses
+`/tmp/gh-aw/agent/open-issues.tsv` and `/tmp/gh-aw/agent/issues/`.
+If required prefetched context is missing or unreadable, call
+`mcp__safeoutputs__noop` and report that missing data instead of attempting a
+list request through `gh-proxy`.

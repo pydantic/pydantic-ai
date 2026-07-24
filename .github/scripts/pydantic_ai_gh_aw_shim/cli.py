@@ -154,18 +154,19 @@ INSTRUCTIONS = (
     'pre-installed — run `make install` once before using pytest, ruff, or '
     'pyright. Prefer `uv run pytest <test_file>` over a bare `pytest` call; '
     'uv handles the virtual env automatically.\n\n'
-    '## GitHub issue search\n\n'
-    'The GitHub toolset runs in gh-proxy mode: there are NO `mcp__github__*` '
-    'tools, and the /search/issues endpoint (`gh issue list --search`, '
-    '`gh search issues`) returns HTTP 403 via the AWF firewall proxy. The '
-    'issue-list endpoint IS allowed, including its server-side `?labels=` '
-    'filter. When the sweep files under a dedicated label, prefer a narrow label '
-    "query (`gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=<label>&per_page=100' "
-    "--jq '.[] | select(.pull_request == null) | {number, title}'`); if it has no "
-    'dedicated label or the filter is inconclusive, widen to a full open-issue scan '
-    "(`gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' "
-    "--jq '.[] | select(.pull_request == null) | {number, title, labels: [.labels[].name]}'`). "
-    '`select(.pull_request == null)` drops PRs, which the issues endpoint also returns.'
+    '## GitHub issue and PR search\n\n'
+    'Use the context prefetched for this workflow instead of enumerating GitHub '
+    'through the proxied gh CLI; list/search requests from inside the sandbox '
+    'are blocked or can stall until the workflow times out. Issue-filing sweeps '
+    'provide `/tmp/gh-aw/agent/github-context/open-issues.json` and '
+    '`open-pull-requests.json`; filter their local JSON with jq. PR reviewers '
+    'use `/tmp/gh-aw/.review-context/`; the stale-issues workflow uses '
+    '`/tmp/gh-aw/agent/open-issues.tsv` and `/tmp/gh-aw/agent/issues/`. Do NOT '
+    'run `gh issue list`, `gh pr list`, `gh search`, or a paginated/list `gh api` '
+    'request from inside the agent. Narrow per-item reads may still be used '
+    'after the local corpus identifies a specific item. If required prefetched '
+    'context is missing or unreadable, call `mcp__safeoutputs__noop` and report '
+    'the missing data instead of attempting a list request through gh-proxy.'
 )
 
 # The real task spec rides in `instructions=`; the user message is a trigger.
