@@ -659,7 +659,9 @@ The secure flow keeps the API key server-side — the browser never holds a toke
    sideband with
    [`agent.realtime(model).session(provider_session=call)`][pydantic_ai.agent.AgentRealtime.session].
 
-```python {test="skip" lint="skip"}
+```python
+import asyncio
+
 from pydantic_ai import Agent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
