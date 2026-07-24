@@ -4,7 +4,7 @@ import os
 import threading
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel, Field
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
     Agent,
@@ -216,6 +217,7 @@ async def test_durability_base_default_hooks() -> None:
     assert BaseDurabilityCapability._model_unit_config(base) is None  # pyright: ignore[reportPrivateUsage]
     assert BaseDurabilityCapability._event_unit_config(base) is None  # pyright: ignore[reportPrivateUsage]
     assert BaseDurabilityCapability._toolset_base_config(base, 'function') is None  # pyright: ignore[reportPrivateUsage]
+    assert BaseDurabilityCapability._serialization_failure(base, ValueError()) is None  # pyright: ignore[reportPrivateUsage]
     assert BaseDurabilityCapability._normalize_unit_config(base, {'x': 1}) == {'x': 1}  # pyright: ignore[reportPrivateUsage]
     resolve_tool_config = BaseDurabilityCapability._build_resolve_tool_config(base, {'base': 1})  # pyright: ignore[reportPrivateUsage]
     tool = ToolsetTool(
@@ -293,6 +295,44 @@ async def test_durability_base_default_hooks() -> None:
 
     await force_sequential()
     PrefectDurability._force_sequential_tools_in_durable_context = False  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_durability_base_serialization_failure_hook() -> None:
+    class NonRetryableError(Exception):
+        pass
+
+    class JsonDurability(PrefectDurability[Any]):
+        _codec = JSON_CODEC
+
+        def __init__(self, *, map_failure: bool) -> None:
+            super().__init__(name='json-durability')
+            self.map_failure = map_failure
+
+        async def run_durable_unit(
+            self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
+        ) -> Any:
+            return await fn()
+
+        def _serialization_failure(self, exc: Exception) -> BaseException | None:
+            if self.map_failure:
+                return NonRetryableError('non-retryable serialization failure')
+            return None
+
+    async def non_serializable() -> object:
+        return object()
+
+    mapped = JsonDurability(map_failure=True)
+    with pytest.raises(NonRetryableError, match='non-retryable serialization failure') as exc_info:
+        await mapped._durable_operation(  # pyright: ignore[reportPrivateUsage]
+            'mapped', non_serializable, tp=object, inputs=(), config=None
+        )
+    assert isinstance(exc_info.value.__cause__, PydanticSerializationError)
+
+    unmapped = JsonDurability(map_failure=False)
+    with pytest.raises(PydanticSerializationError, match='Unable to serialize unknown type'):
+        await unmapped._durable_operation(  # pyright: ignore[reportPrivateUsage]
+            'unmapped', non_serializable, tp=object, inputs=(), config=None
+        )
 
 
 # `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`.

@@ -6,6 +6,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, G
 from contextlib import contextmanager
 from typing import Any, ClassVar, Literal, TypeVar
 
+from pydantic_core import PydanticSerializationError
 from typing_extensions import Self
 
 from pydantic_ai import FunctionToolset, ToolsetTool
@@ -368,13 +369,29 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         Mirrors what the JSON engines hand-write (dump inside `_inner`, validate outside). For the
         identity codec both are no-ops, so object engines pass the live value straight through.
         """
-        codec = self._codec
 
         async def unit() -> Any:
-            return codec.dump(tp, await fn())
+            return self._encode(tp, await fn())
 
         payload = await self.run_durable_unit(name, unit, inputs=inputs, config=config)
-        return codec.load(tp, payload)
+        return self._codec.load(tp, payload)
+
+    def _encode(self, tp: Any, value: Any) -> Any:
+        """Encode a durable-unit result, mapping deterministic serialization failures when configured."""
+        try:
+            return self._codec.dump(tp, value)
+        except (PydanticSerializationError, TypeError) as exc:
+            mapped = self._serialization_failure(exc)
+            if mapped is not None:
+                raise mapped from exc
+            raise
+
+    def _serialization_failure(self, exc: Exception) -> BaseException | None:
+        """Map serialization failure to an engine's non-retryable error, or return `None`.
+
+        JSON-journal engines override this to return their terminal/non-retryable error type.
+        """
+        return None
 
     def _unit_name(self, kind: str, **parts: Any) -> str:
         """Compose the durable-unit name for one operation.
