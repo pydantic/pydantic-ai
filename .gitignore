@@ -37,6 +37,8 @@ AGENTS.override.md
 !.agents/skills/i-have-adhd/SKILL.md
 !.agents/skills/poweruser-feature-audit/
 !.agents/skills/poweruser-feature-audit/SKILL.md
+!.agents/skills/pushing-commits-to-the-repo/
+!.agents/skills/pushing-commits-to-the-repo/SKILL.md
 .claude/*
 !.claude/plans/
 !.claude/skills/
@@ -47,6 +49,7 @@ AGENTS.override.md
 !.claude/skills/testing-skill
 !.claude/skills/i-have-adhd
 !.claude/skills/poweruser-feature-audit
+!.claude/skills/pushing-commits-to-the-repo
 .github/.review-context/
 /.cursor/
 /.devcontainer/
