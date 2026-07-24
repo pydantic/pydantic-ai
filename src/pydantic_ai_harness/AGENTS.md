@@ -51,6 +51,18 @@ Before implementing or reviewing a capability change:
    retired; ACP is the sole remaining experimental capability (see
    `agent_docs/capability-authoring.md`, "Capability Submodules And Exports").
 
+## Branch context (optional)
+
+`.agents/skills/branch-context/` is opt-in per-branch state for work that spans
+sessions: an issue brief, an append-only decisions log, and session handoffs.
+The scaffolding (`SKILL.md`, scripts, `*.template.md`) is committed; the
+instances are git-ignored and created per branch.
+
+- If `.agents/skills/branch-context/issue-brief.md` exists, read it plus
+  `pr-decisions.md` and the latest handoff before making design decisions.
+- To adopt a branch, instantiate the surfaces from the templates or run
+  `/adopt-pr`. Contributors who never instantiate them can ignore this section.
+
 ## Capabilities API reference
 
 When implementing a new capability, reference these docs:
