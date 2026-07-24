@@ -1330,7 +1330,7 @@ class TestLoadMCPToolsets:
         }
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps(config))
+            config_path.write_text(json.dumps(config), encoding='utf-8')
             toolsets = load_mcp_toolsets(config_path)
         assert len(toolsets) == 1
 
@@ -1342,7 +1342,7 @@ class TestLoadMCPToolsets:
         }
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps(config))
+            config_path.write_text(json.dumps(config), encoding='utf-8')
             toolsets = load_mcp_toolsets(config_path)
         # Single server entry, wrapped with `.prefixed('alpha')`.
         assert len(toolsets) == 1
@@ -1364,7 +1364,7 @@ class TestLoadMCPToolsets:
         }
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps(config))
+            config_path.write_text(json.dumps(config), encoding='utf-8')
             toolsets = load_mcp_toolsets(config_path)
         from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
@@ -1390,7 +1390,7 @@ class TestLoadMCPToolsets:
         }
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps(config))
+            config_path.write_text(json.dumps(config), encoding='utf-8')
             toolsets = load_mcp_toolsets(config_path)
 
         wrapped = toolsets[0].wrapped  # type: ignore[attr-defined]
@@ -1407,7 +1407,7 @@ class TestLoadMCPToolsets:
         config = {'mcpServers': {'alpha': {'url': 'https://${MCP_TEST_UNDEFINED}/mcp'}}}
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps(config))
+            config_path.write_text(json.dumps(config), encoding='utf-8')
             with pytest.raises(ValueError, match=r'\$\{MCP_TEST_UNDEFINED\} is not defined'):
                 load_mcp_toolsets(config_path)
 
@@ -1415,7 +1415,7 @@ class TestLoadMCPToolsets:
         """The config root must be a JSON object; a list / scalar at the root raises a descriptive error."""
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps(['not an object']))
+            config_path.write_text(json.dumps(['not an object']), encoding='utf-8')
             with pytest.raises(ValueError, match='Expected JSON object at root'):
                 load_mcp_toolsets(config_path)
 
@@ -1423,7 +1423,7 @@ class TestLoadMCPToolsets:
         """The config must have an `mcpServers` object."""
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps({'someOtherKey': {}}))
+            config_path.write_text(json.dumps({'someOtherKey': {}}), encoding='utf-8')
             with pytest.raises(ValueError, match='Expected `mcpServers` object'):
                 load_mcp_toolsets(config_path)
 
@@ -1432,7 +1432,7 @@ class TestLoadMCPToolsets:
         config = {'mcpServers': {'alpha': {'something': 'else'}}}
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps(config))
+            config_path.write_text(json.dumps(config), encoding='utf-8')
             with pytest.raises(ValueError, match=r"MCP server config 'alpha' must have either"):
                 load_mcp_toolsets(config_path)
 
@@ -1453,7 +1453,7 @@ class TestLoadMCPToolsets:
         }
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps(config))
+            config_path.write_text(json.dumps(config), encoding='utf-8')
             toolsets = load_mcp_toolsets(config_path)
         assert len(toolsets) == 1
 
