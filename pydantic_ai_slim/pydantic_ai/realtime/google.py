@@ -884,6 +884,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # id-less calls don't collide.
         self._tool_calls: dict[str, tuple[str, str | None]] = {}
         self._call_index = 0
+        self._native_part_index = 0
         # The `tool_call_id` generated for the most recent `executable_code` part, reused to pair the
         # following `code_execution_result` return with its call — mirroring the classic `GoogleModel`
         # streaming path, which threads a single id from the code part to its result.
@@ -1041,7 +1042,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
             self._turn_interrupted = True
             events.append(InputSpeechStartEvent())
         native_tool_parts += _map_grounding_parts(content, self._provider_name)
-        for index, part in enumerate(native_tool_parts):
+        for part in native_tool_parts:
+            index = self._native_part_index
+            self._native_part_index += 1
             events.extend((PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part)))
         # `turn_complete` is emitted by `_map_message` *after* the message's `usage_metadata`, not here:
         # Gemini packs `turnComplete` and `usageMetadata` into the same message, and the session
@@ -1074,6 +1077,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
             interrupted = self._turn_interrupted
             events.append(TurnCompleteEvent(interrupted=interrupted))
             self._turn_interrupted = False
+            self._native_part_index = 0
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.
         update = message.session_resumption_update
         if update is not None and update.new_handle:

@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.realtime import RealtimeError, TurnCompleteEvent
 from pydantic_ai.realtime._base import SessionErrorEvent
+from pydantic_ai.usage import RunUsage
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
@@ -98,10 +99,15 @@ async def test_text_in_audio_out_turn(
     assert isinstance(part.audio, BinaryContent)
     assert part.audio.media_type == 'audio/wav'
     assert len(part.audio.data) > 0
-    assert session.usage.requests == 1
-    assert session.usage.input_tokens > 0
-    assert session.usage.output_tokens > 0
-    assert session.usage.output_audio_tokens > 0
+    assert session.usage == snapshot(
+        RunUsage(
+            input_tokens=16,
+            output_tokens=98,
+            output_audio_tokens=82,
+            details={'input_text_tokens': 16, 'input_image_tokens': 0, 'output_text_tokens': 16},
+            requests=1,
+        )
+    )
 
 
 async def test_tool_call_round(azure_ws_cassette: tuple[AzureProvider, RealtimeCassette]) -> None:

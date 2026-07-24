@@ -898,6 +898,31 @@ def test_map_code_execution_to_native_tool_parts() -> None:
     ]
 
 
+def test_native_tool_part_indexes_increase_across_messages_and_reset_each_turn() -> None:
+    conn = _conn(_RecordingSession())
+
+    def message(code: str, *, turn_complete: bool = False) -> genai_types.LiveServerMessage:
+        return genai_types.LiveServerMessage(
+            server_content=genai_types.LiveServerContent(
+                model_turn=genai_types.Content(
+                    parts=[
+                        genai_types.Part(
+                            executable_code=genai_types.ExecutableCode(code=code, language=genai_types.Language.PYTHON)
+                        )
+                    ]
+                ),
+                turn_complete=turn_complete,
+            )
+        )
+
+    first = conn._map_message(message('print(1)'))  # pyright: ignore[reportPrivateUsage]
+    second = conn._map_message(message('print(2)', turn_complete=True))  # pyright: ignore[reportPrivateUsage]
+    next_turn = conn._map_message(message('print(3)'))  # pyright: ignore[reportPrivateUsage]
+
+    assert [event.index for event in first + second if isinstance(event, PartStartEvent)] == [0, 1]
+    assert [event.index for event in next_turn if isinstance(event, PartStartEvent)] == [0]
+
+
 def test_map_grounding_absent_yields_no_sources() -> None:
     conn = _conn(_RecordingSession())
     message = genai_types.LiveServerMessage(

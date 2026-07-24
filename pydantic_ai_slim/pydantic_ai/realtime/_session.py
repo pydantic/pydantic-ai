@@ -567,10 +567,13 @@ class RealtimeSession:
         completes (see `_execute_tool`) — neither is accepted here.
         """
         if isinstance(content, str):
-            await self._connection.send(TextInput(text=content))
-            self._record_sent_request(
-                ModelRequest(parts=[UserPromptPart(content=content)], conversation_id=self._conversation_id)
-            )
+            request = ModelRequest(parts=[UserPromptPart(content=content)], conversation_id=self._conversation_id)
+            self._record_sent_request(request)
+            try:
+                await self._connection.send(TextInput(text=content))
+            except BaseException:
+                self._remove_sent_request(request)
+                raise
         elif isinstance(content, BinaryContent):
             if content.is_image:
                 await self._send_image(content)
@@ -595,10 +598,13 @@ class RealtimeSession:
         elif isinstance(content, AudioInput):
             await self.send_audio(content.data)
         elif isinstance(content, TextInput):
-            await self._connection.send(content)
-            self._record_sent_request(
-                ModelRequest(parts=[UserPromptPart(content=content.text)], conversation_id=self._conversation_id)
-            )
+            request = ModelRequest(parts=[UserPromptPart(content=content.text)], conversation_id=self._conversation_id)
+            self._record_sent_request(request)
+            try:
+                await self._connection.send(content)
+            except BaseException:
+                self._remove_sent_request(request)
+                raise
         elif isinstance(content, ImageInput):
             await self._send_image(BinaryContent(data=content.data, media_type=content.media_type))
         elif isinstance(content, (CommitAudio, ClearAudio, CreateResponse, CancelResponse, TruncateOutput)):
@@ -648,14 +654,29 @@ class RealtimeSession:
         else:
             self._history.append(request)
 
+    def _remove_sent_request(self, request: ModelRequest) -> None:
+        """Remove a reserved request when its network send fails."""
+        for messages in (self._pending_sent_requests, self._history):
+            for index, message in enumerate(messages):
+                if message is request:
+                    messages.pop(index)
+                    return
+
     async def send_audio(self, data: bytes) -> None:
         """Stream a chunk of audio to the model."""
-        await self._connection.send(AudioInput(data=data))
+        previous_length: int | None = None
         if self._retain_input:
             # Buffer the raw input so the finalized user turn can retain it. A per-item speech-stopped
             # boundary later cuts this into that turn's own segment (see `_segment_input_audio`); only the
             # exact split at the boundary is approximate (see `audio_retention`).
+            previous_length = len(self._input_audio)
             self._input_audio.extend(data)
+        try:
+            await self._connection.send(AudioInput(data=data))
+        except BaseException:
+            if previous_length is not None and len(self._input_audio) == previous_length + len(data):
+                del self._input_audio[previous_length:]
+            raise
 
     async def commit_audio(self) -> None:
         """Commit buffered input audio as a user turn (manual turn-taking / push-to-talk)."""
@@ -663,6 +684,8 @@ class RealtimeSession:
             self._profile.get('supports_manual_turn_control', False), 'commit_audio', 'manual turn-taking'
         )
         await self._connection.send(CommitAudio())
+        for event in self._finalize_audio_only_user():
+            await self._queue.put(event)
 
     async def clear_audio(self) -> None:
         """Discard buffered, uncommitted input audio."""
@@ -1236,6 +1259,38 @@ class RealtimeSession:
         """Return `False` for an xAI item that belongs to the resumption replay burst."""
         return not self._is_replayed_item(item_id, tool_call_id)
 
+    def _handle_reconnected(self, event: ReconnectedEvent) -> list[RealtimeEvent]:
+        """Close state the provider lost before starting the reconnected turn."""
+        if event.state_restored:
+            return [event]
+
+        events = self._finalize_user()
+        for item_id in list(self._user_item_order):
+            if item_id in self._active_users_by_id:
+                events.extend(self._finalize_user(item_id=item_id))
+        self._flush_pending_users()
+        events.extend(self._finalize_audio_only_user())
+        self._input_audio.clear()
+
+        response_in_flight = bool(
+            self._active_assistant is not None
+            or self._response_parts
+            or self._native_tool_parts
+            or self._pending_provider_response_id is not None
+            or self._pending_finish_reason is not None
+            or self._pending_response_usage != RequestUsage()
+            or self._chat_span is not None
+        )
+        if response_in_flight:
+            events.extend(self._finalize_assistant_part())
+            self._finalize_response(interrupted=True)
+        return [*events, event]
+
+    def _handle_control_event(self, event: InputSpeechStartEvent | ReconnectedEvent) -> list[RealtimeEvent]:
+        if isinstance(event, ReconnectedEvent):
+            return self._handle_reconnected(event)
+        return [event]
+
     def _handle_conversation_item(self, event: ConversationItemCreated) -> None:
         """Remember IDs assigned to xAI's replay burst so related events are suppressed."""
         if event.replayed:
@@ -1293,12 +1348,9 @@ class RealtimeSession:
         # any new non-pump `RealtimeEvent` variant that isn't handled here.
         if isinstance(
             event,
-            (
-                InputSpeechStartEvent,
-                ReconnectedEvent,
-            ),
+            (InputSpeechStartEvent, ReconnectedEvent),
         ):
-            return [event]
+            return self._handle_control_event(event)
         if isinstance(event, SessionErrorEvent):
             if event.recoverable:
                 # A recoverable error is mid-stream: the session keeps running, so surface the event to

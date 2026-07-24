@@ -68,6 +68,7 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession as _RealtimeSession,
+    ReconnectedEvent,
     SessionUsageEvent,
     TurnCompleteEvent,
 )
@@ -1535,6 +1536,65 @@ async def test_manual_turn_control_helpers_forward_to_connection() -> None:
     assert conn.sent == [CommitAudio(), CreateResponse(), ClearAudio()]
 
 
+async def test_text_request_reserved_before_response_finishes_during_send() -> None:
+    class _FinishingSend(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            self.sent.append(content)
+            session._translate_event(Transcript(text='done', is_final=True))  # pyright: ignore[reportPrivateUsage]
+            session._translate_event(TurnCompleteEvent())  # pyright: ignore[reportPrivateUsage]
+
+    conn = _FinishingSend([])
+    session = RealtimeSession(conn)
+    await session.send('question')
+    assert session.new_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='question', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='done')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_send_audio_reserved_before_speech_boundary_during_send() -> None:
+    class _BoundarySend(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            self.sent.append(content)
+            session._translate_event(InputSpeechEndEvent())  # pyright: ignore[reportPrivateUsage]
+
+    conn = _BoundarySend([], input_transcription_enabled=False)
+    session = RealtimeSession(conn, audio_retention='input_audio')
+    await session.send_audio(b'\xaa\xbb')
+    assert session.new_messages() == snapshot(
+        [ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))])]
+    )
+
+
+async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
+    class _FailingSend(FakeRealtimeConnection):
+        fail = True
+
+        async def send(self, content: RealtimeInput) -> None:
+            if self.fail:
+                raise RuntimeError('send failed')
+            self.sent.append(content)
+
+    conn = _FailingSend([])
+    session = RealtimeSession(conn, audio_retention='input_audio')
+    with pytest.raises(RuntimeError, match='send failed'):
+        await session.send('question')
+    with pytest.raises(RuntimeError, match='send failed'):
+        await session.send_audio(b'\xaa\xbb')
+    conn.fail = False
+    await session.send_audio(b'\xcc')
+    session._translate_event(InputTranscript(text='successful', is_final=True))  # pyright: ignore[reportPrivateUsage]
+    assert session.new_messages() == snapshot(
+        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='successful', audio=_wav_content(b'\xcc'))])]
+    )
+
+
 async def test_session_accumulates_usage_and_requests() -> None:
     conn = FakeRealtimeConnection(
         [
@@ -1866,6 +1926,98 @@ async def test_audio_only_user_turn_finalized_on_turn_complete() -> None:
             ),
         ]
     )
+
+
+async def test_audio_only_user_turn_finalized_on_each_manual_commit() -> None:
+    conn = FakeRealtimeConnection([], input_transcription_enabled=False)
+    session = RealtimeSession(conn, model_name='m', audio_retention='input_audio')
+
+    await session.send_audio(b'\xaa')
+    await session.commit_audio()
+    session._translate_event(Transcript(text='first', is_final=True))  # pyright: ignore[reportPrivateUsage]
+    session._translate_event(TurnCompleteEvent())  # pyright: ignore[reportPrivateUsage]
+    await session.send_audio(b'\xbb')
+    await session.commit_audio()
+    session._translate_event(Transcript(text='second', is_final=True))  # pyright: ignore[reportPrivateUsage]
+    session._translate_event(TurnCompleteEvent())  # pyright: ignore[reportPrivateUsage]
+    events = await collect_events(session)
+
+    first_user = SpeechPart(speaker='user', audio=_wav_content(b'\xaa'))
+    second_user = SpeechPart(speaker='user', audio=_wav_content(b'\xbb'))
+    assert events == [
+        PartStartEvent(index=0, part=first_user),
+        PartEndEvent(index=0, part=first_user),
+        PartStartEvent(index=0, part=second_user),
+        PartEndEvent(index=0, part=second_user),
+    ]
+    assert session.new_messages() == snapshot(
+        [
+            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa'))]),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='first')],
+                model_name='m',
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xbb'))]),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='second')],
+                model_name='m',
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ('state_restored', 'expected'),
+    [
+        pytest.param(
+            False,
+            snapshot(
+                [
+                    ModelResponse(
+                        parts=[SpeechPart(speaker='assistant', transcript='before')],
+                        timestamp=IsDatetime(),
+                        state='interrupted',
+                    ),
+                    ModelResponse(
+                        parts=[SpeechPart(speaker='assistant', transcript='after')],
+                        timestamp=IsDatetime(),
+                        finish_reason='stop',
+                    ),
+                ]
+            ),
+            id='state-lost',
+        ),
+        pytest.param(
+            True,
+            snapshot(
+                [
+                    ModelResponse(
+                        parts=[SpeechPart(speaker='assistant', transcript='beforeafter')],
+                        timestamp=IsDatetime(),
+                        finish_reason='stop',
+                    )
+                ]
+            ),
+            id='state-restored',
+        ),
+    ],
+)
+async def test_reconnect_response_state(state_restored: bool, expected: list[ModelMessage]) -> None:
+    conn = FakeRealtimeConnection(
+        [
+            Transcript(text='before', is_final=False),
+            ReconnectedEvent(state_restored=state_restored),
+            Transcript(text='after', is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn)
+    await collect_events(session)
+    assert session.new_messages() == expected
 
 
 async def test_audio_retained_with_transcription_enabled_waits_for_transcript() -> None:
