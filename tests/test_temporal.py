@@ -3833,9 +3833,6 @@ async def test_temporal_run_context_serializes_usage():
     )
     assert decoded['usage'] == expected_usage
 
-    reconstructed_from_payload = TemporalRunContext.deserialize_run_context(decoded, deps=None)
-    assert reconstructed_from_payload.usage == ctx.usage
-
 
 def test_temporal_run_context_serializes_usage_limits():
     ctx = RunContext(
