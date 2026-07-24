@@ -1993,6 +1993,11 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'title': 'Max Content Tokens',
                         },
+                        'use_cache': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Use Cache'},
+                        'response_inclusion': {
+                            'anyOf': [{'enum': ['full', 'excluded'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Response Inclusion',
+                        },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
@@ -2028,6 +2033,10 @@ def test_model_json_schema_with_capabilities():
                         'external_web_access': {
                             'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
                             'title': 'External Web Access',
+                        },
+                        'response_inclusion': {
+                            'anyOf': [{'enum': ['full', 'excluded'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Response Inclusion',
                         },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
