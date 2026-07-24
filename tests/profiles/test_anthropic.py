@@ -26,6 +26,8 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.native_tools import AdvisorTool
+    from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
 
@@ -406,3 +408,38 @@ def test_model_profile_sonnet_5():
     # Sonnet-5-specific: forcing is allowed (unlike Fable/Mythos), fast speed is not (Opus-only)
     assert profile.get('anthropic_supports_forced_tool_choice') is True
     assert profile.get('anthropic_supports_fast_speed') is False
+
+
+def test_model_profile_opus_5():
+    """Claude Opus 5 inherits the full Opus 4.8 capability surface.
+
+    Every flag below was verified live against the Anthropic API by probing `claude-opus-5`
+    side by side with `claude-opus-4-8`: it accepts adaptive thinking, `low`/`medium`/`high`/
+    `xhigh` effort, task budgets, json-schema output, forced `tool_choice`, tool search, the
+    advisor tool, code execution `20260120`, and web search/fetch `20260209`; it rejects
+    budget-based thinking and sampling settings. Unlike Sonnet 5 it also supports
+    `anthropic_speed='fast'` (the API returns a fast-mode quota error rather than the
+    `does not support the 'speed' parameter` 400 that unsupported models return).
+    """
+    profile = anthropic_model_profile('claude-opus-5')
+    assert profile is not None
+
+    assert profile.get('supports_json_schema_output') is True
+    assert profile.get('anthropic_supports_adaptive_thinking') is True
+    assert profile.get('anthropic_supports_effort') is True
+    assert profile.get('anthropic_supports_xhigh_effort') is True
+    assert profile.get('anthropic_disallows_budget_thinking') is True
+    assert profile.get('anthropic_disallows_sampling_settings') is True
+    assert profile.get('anthropic_supports_task_budgets') is True
+    assert profile.get('anthropic_supports_dynamic_filtering') is True
+    assert profile.get('anthropic_supports_forced_tool_choice') is True
+    assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
+    assert profile.get('anthropic_supported_code_execution_tool_versions') == ('20250825', '20260120')
+
+    # Opus-only among the 5 family: fast mode
+    assert profile.get('anthropic_supports_fast_speed') is True
+
+    # Tool search and the advisor tool are both gated per-model in the profile
+    supported_native_tools = profile.get('supported_native_tools') or frozenset()
+    assert ToolSearchTool in supported_native_tools
+    assert AdvisorTool in supported_native_tools
