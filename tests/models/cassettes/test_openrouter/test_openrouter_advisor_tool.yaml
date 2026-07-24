@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '380'
+      - '381'
       content-type:
       - application/json
       host:
@@ -23,7 +23,7 @@ interactions:
       stream: false
       tools:
       - parameters:
-          forward_transcript: true
+          forward_transcript: false
           max_completion_tokens: 1024
           model: ~anthropic/claude-opus-latest
         type: openrouter:advisor
@@ -37,7 +37,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1024'
+      - '1093'
       content-type:
       - application/json
       permissions-policy:
@@ -53,30 +53,31 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: You could name your Python retry library **Tenacious** or **Retryable** for a catchy and descriptive option.
+          content: Consider naming your Python retry library **"boomerang"**, as it serves as a memorable metaphor for retries,
+            emphasizing the idea of returning after a failure.
           reasoning: null
           refusal: null
           role: assistant
         native_finish_reason: stop
-      created: 1784733335
-      id: gen-1784733335-lLtKiLlEyVlwLDL3VWpa
+      created: 1784878106
+      id: gen-1784878106-cv1uPhnXxL6Fwc7jmglL
       model: openai/gpt-4o-mini
       object: chat.completion
       provider: OpenAI
       service_tier: null
       system_fingerprint: null
       usage:
-        completion_tokens: 61
+        completion_tokens: 69
         completion_tokens_details:
           audio_tokens: 0
           image_tokens: 0
           reasoning_tokens: 0
-        cost: 0.004628
+        cost: 0.0160614
         cost_details:
-          upstream_inference_completions_cost: 3.66e-05
-          upstream_inference_cost: 0.000123
-          upstream_inference_prompt_cost: 8.64e-05
-        prompt_tokens: 576
+          upstream_inference_completions_cost: 4.1400000000000003e-05
+          upstream_inference_cost: 0.0001764
+          upstream_inference_prompt_cost: 0.000135
+        prompt_tokens: 900
         prompt_tokens_details:
           audio_tokens: 0
           cache_write_tokens: 0
@@ -85,7 +86,7 @@ interactions:
         server_tool_use_details:
           tool_calls_executed: 1
           tool_calls_requested: 1
-        total_tokens: 637
+        total_tokens: 969
     status:
       code: 200
       message: OK
