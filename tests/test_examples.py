@@ -203,6 +203,7 @@ def test_docs_examples(
     env.set('TOGETHER_API_KEY', 'testing')
     env.set('OLLAMA_API_KEY', 'testing')
     env.set('OLLAMA_BASE_URL', 'http://localhost:11434/v1')
+    env.set('VLLM_BASE_URL', 'http://localhost:8000/v1')
     env.set('AZURE_OPENAI_API_KEY', 'testing')
     env.set('AZURE_OPENAI_ENDPOINT', 'https://your-azure-endpoint.openai.azure.com')
     env.set('OPENAI_API_VERSION', '2024-05-01')

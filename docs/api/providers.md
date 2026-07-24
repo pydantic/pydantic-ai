@@ -50,6 +50,8 @@
 
 ::: pydantic_ai.providers.litellm.LiteLLMProvider
 
+::: pydantic_ai.providers.vllm.VLLMProvider
+
 ::: pydantic_ai.providers.nebius.NebiusProvider
 
 ::: pydantic_ai.providers.ovhcloud.OVHcloudProvider

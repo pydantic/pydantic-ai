@@ -885,6 +885,44 @@ print(result.output)
     [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message)
     for details.
 
+### vLLM
+
+[vLLM](https://docs.vllm.ai/) is a high-throughput inference server with an OpenAI-compatible API. Connect with [`VLLMProvider`][pydantic_ai.providers.vllm.VLLMProvider], setting `base_url` directly or through `VLLM_BASE_URL`. For authenticated servers, set `api_key` or `VLLM_API_KEY`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.vllm import VLLMProvider
+
+model = OpenAIChatModel(
+    'Qwen/Qwen3-32B',
+    provider=VLLMProvider(base_url='http://localhost:8000/v1'),
+)
+agent = Agent(model)
+
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+With those environment variables set, you can instead reference the provider by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('vllm:Qwen/Qwen3-32B')
+
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+!!! note "Tool calling requires server configuration"
+    For agents that let the model decide whether to call a tool, start vLLM with `--enable-auto-tool-choice` and select the model-specific parser with `--tool-call-parser`. See the [vLLM tool calling guide](https://docs.vllm.ai/en/stable/features/tool_calling/) for supported models and parser values.
+
+!!! note "Multiple system messages are merged by default"
+    Some vLLM chat templates reject multiple leading system messages, so `VLLMProvider` merges them by default. To opt out, pass an [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] with `openai_chat_supports_multiple_system_messages=True`. Templates that reject the `system` role entirely require a compatible custom `--chat-template` or no system prompts. See [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message) and the [vLLM server guide](https://docs.vllm.ai/en/stable/serving/openai_compatible_server/#chat-template).
+
 ### Nebius AI Studio
 
 Go to [Nebius AI Studio](https://studio.nebius.com/) and create an API key.
