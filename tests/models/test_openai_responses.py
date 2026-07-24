@@ -4451,6 +4451,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
     )
 
 
+@pytest.mark.moves_cache_prefix(reason='test deliberately modifies history')
 async def test_openai_responses_thinking_with_modified_history(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='low', openai_reasoning_summary='detailed')
