@@ -785,7 +785,7 @@ See Anthropic's [Advisor tool](https://platform.claude.com/docs/en/agents-and-to
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | Anthropic | ✅ | Available on the direct Claude API and Claude Platform on AWS. Not available on Bedrock (InvokeModel), Vertex, or Foundry. |
-| OpenRouter | ✅ | A gateway server tool that works with any executor model, not just Anthropic ones. The advisor runs entirely server-side, so the consultation is not surfaced as message parts; the counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']` are the only trace it ran. OpenRouter uses its default advisor context rather than forwarding the full conversation transcript. `max_uses` and `caching` are ignored. |
+| OpenRouter | ✅ | A gateway server tool that works with any executor model, not just Anthropic ones. The advisor runs entirely server-side, so the consultation is not surfaced as message parts; the counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']` are the only trace it ran. Pydantic AI sends `forward_transcript=false`, matching OpenRouter's default advisor context rather than forwarding the full conversation transcript. `max_uses` and `caching` are ignored. |
 | OpenAI | ❌ | |
 | Google | ❌ | |
 | xAI | ❌ | |
