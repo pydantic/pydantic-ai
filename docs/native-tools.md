@@ -776,16 +776,14 @@ _(This example is complete, it can be run "as is")_
 
 ## Advisor Tool
 
-The [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] lets a faster "executor" model consult a stronger "advisor" model mid-generation, without switching the agent's model. The executor decides when to ask for advice; the provider runs the advisor sub-inference server-side and feeds the result back into the executor's context.
-
-See Anthropic's [Advisor tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool) and OpenRouter's [Advisor server tool](https://openrouter.ai/docs/guides/features/server-tools/advisor) documentation for the executor/advisor compatibility, which is validated by each provider's API.
+The [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] lets an executor model consult another model mid-generation. See the [Anthropic](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool) and [OpenRouter](https://openrouter.ai/docs/guides/features/server-tools/advisor) documentation for current model compatibility.
 
 ### Provider Support
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| Anthropic | ✅ | Available on the direct Claude API and Claude Platform on AWS. Not available on Bedrock (InvokeModel), Vertex, or Foundry. |
-| OpenRouter | ✅ | A gateway server tool that works with any executor model, not just Anthropic ones. The advisor runs entirely server-side, so the consultation is not surfaced as message parts; the counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']` are the only trace it ran. Pydantic AI sends `forward_transcript=false`, matching OpenRouter's default advisor context rather than forwarding the full conversation transcript. `max_uses` and `caching` are ignored. |
+| Anthropic | ✅ | Available on the Claude API and Claude Platform on AWS. |
+| OpenRouter | ✅ | Works with any executor model. |
 | OpenAI | ❌ | |
 | Google | ❌ | |
 | xAI | ❌ | |
@@ -810,31 +808,9 @@ result = agent.run_sync('Design a caching strategy for our API. Consult your adv
 print(result.output)
 ```
 
-The same tool works on OpenRouter with any executor model — pass the advisor as an OpenRouter catalog slug:
+For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. Pydantic AI sends `forward_transcript=false`; `max_uses` and `caching` are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
 
-```py {title="advisor_openrouter.py" test="skip"}
-from pydantic_ai import AdvisorTool, Agent
-from pydantic_ai.capabilities import NativeTool
-
-agent = Agent(
-    'openrouter:openai/gpt-4o-mini',
-    capabilities=[NativeTool(AdvisorTool(model='anthropic/claude-opus-4.8'))],
-)
-
-result = agent.run_sync('Design a caching strategy for our API. Consult your advisor first.')
-print(result.output)
-```
-
-On OpenRouter the advisor runs entirely inside the gateway, so unlike Anthropic it is not surfaced as message parts — read [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']` (e.g. `{'tool_calls_requested': 1, 'tool_calls_executed': 1}`) to confirm a consultation happened.
-
-#### Anthropic
-
-Advisor blocks round-trip through message history automatically. Advisors newer than Opus 4.8 (Claude Fable 5 and Claude Mythos 5) return encrypted advice the client cannot read — it is stored verbatim and decrypted server-side on the next turn — while Opus 4.8 and older advisors return plaintext. If you continue a conversation without the advisor tool, the advisor blocks are stripped from the replayed history, since the API rejects advisor blocks that aren't accompanied by the advisor tool definition.
-
-!!! note "Streaming"
-    When streaming, expect a quiet pause while the advisor runs: the advisor sub-inference does not stream, so its result arrives all at once as a single block rather than incrementally.
-
-Advisor tokens are reported separately under `advisor_*` keys on [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] (e.g. `advisor_input_tokens`, `advisor_output_tokens`, `advisor_iterations`) and are excluded from the request's top-level token totals, because they are billed at the advisor model's rates rather than the executor's.
+With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in message history, and strips advisor blocks when the tool is no longer enabled. Streaming pauses while the advisor runs. Advisor usage is reported under `advisor_*` keys in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and excluded from the executor's top-level token totals.
 
 ### Configuration Options
 
