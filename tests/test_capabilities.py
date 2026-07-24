@@ -1517,6 +1517,11 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                             'title': 'Max Uses',
                         },
+                        'external_web_access': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'External Web Access',
+                        },
                     },
                     'title': 'WebSearchTool',
                     'type': 'object',
