@@ -77,6 +77,10 @@ well before now, or that was built against unreleased Pydantic AI changes.
 - Tests cover the public `Agent(..., capabilities=[...])` path where possible.
 - Lower-level tests cover lifecycle, schemas, retries, and metadata when needed.
 - Error paths and important option combinations are covered.
+- For a stateful capability, or one that overrides `for_run`, require a public
+  `Agent` durability-composition test for every supported wrapper or an
+  explicit, tested incompatibility. Mocked lifecycle tests alone do not
+  establish state continuity across activity, process, or replay boundaries.
 - Relevant protocol-shaped output is snapshotted.
 - `make lint`, `make typecheck`, and `make test` pass before handoff.
 

@@ -96,8 +96,11 @@ Before treating a capability as done, check how it composes with:
 - deferred tools and approval flows
 - provider-native versus local fallback tools
 - streaming/event behavior when the capability emits or wraps events
-- durable execution when the capability affects tool calls, context,
-  serialization, retries, or lifecycle ordering
+- A stateful capability, or one that overrides `for_run`, must exercise its
+  public `Agent` path with every supported durability capability. Verify that
+  durable wrappers resolve the run-local toolset and state. If state cannot
+  survive activity, process, or replay boundaries, fail before the first tool
+  call and document the incompatibility.
 
 `CodeMode` is a useful reference for wrapper-toolset composition, tool
 selection, `ToolSearch` interaction, public docs, and test depth.
