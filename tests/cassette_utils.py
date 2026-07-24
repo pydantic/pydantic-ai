@@ -30,6 +30,10 @@ if TYPE_CHECKING:
 
 PrefixBlock = tuple[str, str]
 
+# Cache-write order of the request sections; a lower value is matched earlier in the provider's prompt
+# cache, so when two requests diverge on different sections the earlier one is where the prefix breaks.
+_CACHE_ORDER = {'tools': 0, 'system': 1, 'messages': 2}
+
 
 def _is_list(value: Any) -> TypeGuard[list[Any]]:
     return isinstance(value, list)
@@ -163,9 +167,17 @@ def classify_prefix_pair(a: list[PrefixBlock], b: list[PrefixBlock]) -> tuple[st
     if divergent_index == len(b) and len(a) > len(b):
         return 'shrunk', divergent_index
 
-    level = a[divergent_index][0] if divergent_index < len(a) else b[divergent_index][0]
+    # Both blocks exist here: a run of equal blocks that exhausts the shorter request is an `extension`
+    # or `shrunk` above, so a divergence within the shared range is the only way to reach this point.
+    a_level, b_level = a[divergent_index][0], b[divergent_index][0]
+    # The prefix breaks at the earliest-ordered section that changed. When the requests diverge on
+    # different sections -- e.g. one inserts a tools block where the other already had messages -- the
+    # inserted tools block (earlier in cache order) is the real change, not the messages it shifted back.
+    level = a_level if _CACHE_ORDER[a_level] <= _CACHE_ORDER[b_level] else b_level
     first_message_index = next((i for i, (block_level, _) in enumerate(a) if block_level == 'messages'), None)
-    if level == 'messages' and divergent_index == first_message_index:
+    # A genuinely new conversation diverges within the message history itself (a different first user
+    # message), not because a tools or system block was inserted ahead of an otherwise-unchanged history.
+    if a_level == 'messages' and b_level == 'messages' and divergent_index == first_message_index:
         return 'new-conversation', divergent_index
 
     def conversation_identity(blocks: list[PrefixBlock]) -> str | None:

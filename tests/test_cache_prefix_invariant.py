@@ -178,6 +178,18 @@ def _openai_chat_blocks(*, tools: bool, messages: list[dict[str, Any]]) -> list[
     return blocks
 
 
+def test_classify_prefix_pair_inserted_tool_is_flagged() -> None:
+    """A tools block inserted ahead of an unchanged history is a moved prefix, not a new conversation.
+
+    The divergence lands on the message block the new tool shifted back, so the classifier must derive
+    the level from the inserted tools block (earlier in cache order) and report `tools-divergent`
+    rather than silently skipping it as `new-conversation`.
+    """
+    a = [('tools', '"t1"'), ('messages', '"m"')]
+    b = [('tools', '"t1"'), ('tools', '"t2"'), ('messages', '"m"')]
+    assert classify_prefix_pair(a, b) == ('tools-divergent', 1)
+
+
 def test_classify_prefix_pair_toolset_dropped_at_new_turn_is_boundary() -> None:
     """A tool-using run followed by a tool-free run that appends a new user turn is a run boundary.
 
