@@ -75,7 +75,7 @@ class _SignalingModel(RealtimeModel):
 
     @property
     def system(self) -> str:
-        return 'test'
+        return 'test'  # pragma: no cover - never opens a session, so provider identity is unused
 
     def connect(
         self,
@@ -120,13 +120,13 @@ async def test_agent_realtime_signaling_resolves_bound_configuration() -> None:
 
     @agent.tool_plain
     def agent_tool(value: str) -> str:
-        return value
+        return value  # pragma: no cover - registered so its definition resolves; never executed by signaling
 
     toolset = FunctionToolset(instructions='Toolset instructions.')
 
     @toolset.tool_plain
     def accessor_tool(value: int) -> int:
-        return value
+        return value  # pragma: no cover - registered so its definition resolves; never executed by signaling
 
     realtime = agent.realtime(
         model,
@@ -239,7 +239,7 @@ async def test_agent_create_client_secret(openai_api_key: str, request: pytest.F
 
     @agent.tool_plain
     def get_temperature(city: str) -> str:
-        return f'20 C in {city}'
+        return f'20 C in {city}'  # pragma: no cover - resolved into the request, never called
 
     secret = await agent.realtime(
         model, model_settings=OpenAIRealtimeModelSettings(voice='marin')
@@ -327,7 +327,7 @@ async def test_agent_answer_webrtc_offer(openai_api_key: str) -> None:
 
     @agent.tool_plain
     def get_temperature(city: str) -> str:
-        return f'20 C in {city}'
+        return f'20 C in {city}'  # pragma: no cover - resolved into the request, never called
 
     answer = await agent.realtime(model, model_settings=OpenAIRealtimeModelSettings(voice='cedar')).answer_webrtc_offer(
         REAL_SDP_OFFER
