@@ -24,9 +24,13 @@ OpenAI-compatible endpoints exposing a realtime API work too.
 [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] extends
 shared settings with noise reduction, output speed, precise turn detection, and truncation:
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai.realtime import TurnDetection
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings, SemanticVAD
+from pydantic_ai.realtime.openai import (
+    OpenAIRealtimeModel,
+    OpenAIRealtimeModelSettings,
+    SemanticVAD,
+)
 
 settings = OpenAIRealtimeModelSettings(
     max_tokens=2_000,
@@ -90,11 +94,18 @@ Gemini's native-audio Live models. The GA `gpt-realtime` is a standard speech-to
 reasoning, so a `thinking` setting is ignored with a warning rather than sent (the API would otherwise
 reject it).
 
-```python {test="skip" lint="skip"}
-async with agent.realtime(
-    OpenAIRealtimeModel('gpt-realtime-2.1', settings=OpenAIRealtimeModelSettings(thinking='low')),
-).session() as session:
-    ...
+```python
+from pydantic_ai import Agent
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
+
+agent = Agent()
+
+
+async def main():
+    async with agent.realtime(
+        OpenAIRealtimeModel('gpt-realtime-2.1', settings=OpenAIRealtimeModelSettings(thinking='low')),
+    ).session() as session:
+        await session.send('Think briefly, then say hello.')
 ```
 
 On OpenAI the effort maps to `reasoning.effort`. OpenAI realtime does not accept a disabled effort,

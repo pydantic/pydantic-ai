@@ -1588,7 +1588,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         `on_error` for `tool_validate` and `tool_execute`) run for each tool call. Run-, graph-,
         model-request-, event-stream-, and output-stage hooks do not run.
 
-        ```python {test="skip"}
+        ```python
         from pydantic_ai import Agent
         from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
@@ -1602,8 +1602,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model = OpenAIRealtimeModel('gpt-realtime')
             async with agent.realtime(model).session() as session:
                 await session.send_audio(b'...')
-                async for event in session:
-                    print(event)
+                async for _event in session:
+                    pass
         ```
 
         Args:

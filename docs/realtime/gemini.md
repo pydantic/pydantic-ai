@@ -21,13 +21,12 @@ as optional fields, grouped by concern. Google-only generation parameters use
 the shared settings with `temperature`, `top_p`, `top_k`, `seed`, `google_thinking_config`, and
 `google_video_resolution`.
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai.realtime.google import (
     AutomaticVAD,
     ContextCompression,
     GoogleRealtimeModel,
     GoogleRealtimeModelSettings,
-    MultiSpeaker,
 )
 
 settings = GoogleRealtimeModelSettings(
@@ -76,7 +75,7 @@ model. See [Transcribing user input](index.md#transcribing-user-input).
 Route a session through the [Pydantic AI Gateway](../gateway.md) by naming the upstream provider. The
 gateway credentials come from [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider]:
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai.realtime.google import GoogleRealtimeModel
 
 model = GoogleRealtimeModel('gemini-live-2.5-flash', provider='gateway/google')
@@ -84,7 +83,7 @@ model = GoogleRealtimeModel('gemini-live-2.5-flash', provider='gateway/google')
 
 Or infer it from a gateway-prefixed identifier:
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai.realtime import infer_realtime_model
 
 model = infer_realtime_model('gateway/google:gemini-live-2.5-flash')
