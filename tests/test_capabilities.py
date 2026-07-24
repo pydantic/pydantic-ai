@@ -9989,6 +9989,8 @@ def test_web_fetch_with_constraints():
         max_uses=5,
         enable_citations=True,
         max_content_tokens=1000,
+        use_cache=False,
+        response_inclusion='excluded',
     )
     builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
@@ -9999,6 +10001,8 @@ def test_web_fetch_with_constraints():
     assert tool.max_uses == 5
     assert tool.enable_citations is True
     assert tool.max_content_tokens == 1000
+    assert tool.use_cache is False
+    assert tool.response_inclusion == 'excluded'
     # `max_uses` requires native support; domains are handled locally.
     assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
@@ -10026,6 +10030,7 @@ def test_web_search_with_constraints():
         blocked_domains=['bad.com'],
         allowed_domains=['good.com'],
         max_uses=3,
+        response_inclusion='excluded',
     )
     builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
@@ -10036,6 +10041,7 @@ def test_web_search_with_constraints():
     assert tool.blocked_domains == ['bad.com']
     assert tool.allowed_domains == ['good.com']
     assert tool.max_uses == 3
+    assert tool.response_inclusion == 'excluded'
     assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 
