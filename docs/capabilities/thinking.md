@@ -131,6 +131,9 @@ agent = Agent(model, model_settings=settings)
 
 Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking), where the model dynamically decides when and how much to think based on the complexity of each request. This replaces extended thinking (`type: 'enabled'` with `budget_tokens`) which is deprecated on Opus 4.6 and removed on Opus 4.7, 4.8, 5, and Sonnet 5. Claude Opus 4.7, 4.8, 5, and Sonnet 5 also add the `xhigh` effort level. Adaptive thinking also automatically enables interleaved thinking.
 
+!!! note "Claude Opus 5 caps effort when thinking is disabled"
+    Claude Opus 5 rejects `xhigh` and `max` effort while thinking is explicitly disabled with `anthropic_thinking={'type': 'disabled'}`; use an effort of `high` or below, or leave thinking enabled. Claude Opus 4.8 accepts that combination, so audit requests that disable thinking when migrating. Pydantic AI raises a `UserError` before sending the request rather than surfacing Anthropic's 400.
+
 ```python {title="anthropic_adaptive_thinking.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings

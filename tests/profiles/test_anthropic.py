@@ -411,7 +411,7 @@ def test_model_profile_sonnet_5():
 
 
 def test_model_profile_opus_5():
-    """Claude Opus 5 inherits the full Opus 4.8 capability surface.
+    """Claude Opus 5 carries Opus 4.8's capability surface, with one deliberate divergence.
 
     Every flag below was verified live against the Anthropic API by probing `claude-opus-5`
     side by side with `claude-opus-4-8`: it accepts adaptive thinking, `low`/`medium`/`high`/
@@ -420,6 +420,9 @@ def test_model_profile_opus_5():
     budget-based thinking and sampling settings. Unlike Sonnet 5 it also supports
     `anthropic_speed='fast'` (the API returns a fast-mode quota error rather than the
     `does not support the 'speed' parameter` 400 that unsupported models return).
+
+    The divergence from 4.8 is `anthropic_disallows_top_effort_when_thinking_disabled`: Opus 5
+    returns a 400 for `xhigh`/`max` effort while thinking is disabled, where 4.8 accepts it.
     """
     profile = anthropic_model_profile('claude-opus-5')
     assert profile is not None
@@ -443,3 +446,9 @@ def test_model_profile_opus_5():
     supported_native_tools = profile.get('supported_native_tools') or frozenset()
     assert ToolSearchTool in supported_native_tools
     assert AdvisorTool in supported_native_tools
+
+    # The one divergence from Opus 4.8, which accepts `xhigh`/`max` with thinking disabled
+    assert profile.get('anthropic_disallows_top_effort_when_thinking_disabled') is True
+    opus_4_8 = anthropic_model_profile('claude-opus-4-8')
+    assert opus_4_8 is not None
+    assert opus_4_8.get('anthropic_disallows_top_effort_when_thinking_disabled') is not True

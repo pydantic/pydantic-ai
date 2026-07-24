@@ -88,6 +88,13 @@ class AnthropicModelProfile(ModelProfile, total=False):
     Claude Opus 4.7, 4.8, and 5 require these settings to be omitted from request payloads.
     """
 
+    anthropic_disallows_top_effort_when_thinking_disabled: bool
+    """Whether the model rejects `xhigh`/`max` effort while thinking is explicitly disabled. Default: `False`.
+
+    Claude Opus 5 caps effort at `high` when `anthropic_thinking={'type': 'disabled'}` and returns a
+    400 for `xhigh` or `max`; Claude Opus 4.8 accepts the same combination.
+    """
+
     anthropic_default_code_execution_tool_version: AnthropicCodeExecutionToolVersion
     """The Anthropic code execution tool version used when `anthropic_code_execution_tool_version='auto'`. Default: `'20250825'`."""
 
@@ -216,6 +223,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     disallows_sampling_settings = model_name.startswith(
         ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
     )
+    # Opus 5 caps effort at `high` while thinking is disabled; Opus 4.8 and earlier accept every level.
+    disallows_top_effort_when_thinking_disabled = model_name.startswith('claude-opus-5')
     default_code_execution_tool_version, supported_code_execution_tool_versions = _code_execution_tool_versions(
         model_name
     )
@@ -295,6 +304,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
+        anthropic_disallows_top_effort_when_thinking_disabled=disallows_top_effort_when_thinking_disabled,
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
