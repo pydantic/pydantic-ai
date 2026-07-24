@@ -527,8 +527,8 @@ class _OpenRouterCostDetails:
 class _OpenRouterServerToolUseDetails:
     """Counts of OpenRouter server-side tool calls (e.g. the advisor tool).
 
-    Server tools run entirely inside the gateway, so the consultation does not appear as
-    message parts on the Chat Completions API — these counts are the only trace of it.
+    OpenRouter reports these aggregate counts in usage, including when individual server-tool
+    calls are not exposed as message parts in the Chat Completions response.
     """
 
     tool_calls_requested: int | None = None

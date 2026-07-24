@@ -1112,11 +1112,9 @@ async def test_openrouter_advisor_tool_unsupported_fields(
 async def test_openrouter_advisor_tool(allow_model_requests: None, openrouter_api_key: str) -> None:
     """End-to-end advisor consult through OpenRouter, recorded live.
 
-    On the Chat Completions API the advisor runs entirely server-side: the consultation does not
-    surface as message parts (no `tool_calls` / `role:tool` blocks), only the final answer does.
-    The one observable trace that the advisor was actually invoked is the server-tool-use counts
-    in `usage`, which we surface via `provider_details['server_tool_use']` — asserted here so a
-    regression that stops sending the advisor tool (final answer still produced) fails loudly.
+    In this recorded Chat Completions response, the server-side consultation is not exposed as
+    message parts. The server-tool-use counts in `usage`, surfaced via
+    `provider_details['server_tool_use']`, verify that the advisor was invoked.
 
     The prompt explicitly asks the executor to consult so the recording reliably contains an
     advisor exchange.
