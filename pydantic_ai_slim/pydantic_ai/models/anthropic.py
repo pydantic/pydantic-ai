@@ -53,6 +53,7 @@ from ..messages import (
 from ..native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
+    AdvisorTool,
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
@@ -113,6 +114,9 @@ try:
     )
     from anthropic.types.anthropic_beta_param import AnthropicBetaParam
     from anthropic.types.beta import (
+        BetaAdvisorTool20260301Param,
+        BetaAdvisorToolResultBlock,
+        BetaAdvisorToolResultBlockParam,
         BetaBase64PDFSourceParam,
         BetaBashCodeExecutionToolResultBlock,
         BetaBashCodeExecutionToolResultBlockParam,
@@ -203,6 +207,12 @@ try:
         BetaWebSearchToolResultBlockParamContentParam,
         beta_tool_result_block_param,
     )
+    from anthropic.types.beta.beta_advisor_tool_result_block import (
+        Content as AdvisorToolResultBlockContent,
+    )
+    from anthropic.types.beta.beta_advisor_tool_result_block_param import (
+        Content as AdvisorToolResultBlockParamContent,
+    )
     from anthropic.types.beta.beta_bash_code_execution_tool_result_block import (
         Content as BashCodeExecutionToolResultBlockContent,
     )
@@ -252,6 +262,11 @@ _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 _WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 _WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
 _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+# The advisor tool is available on the direct Anthropic API and Claude Platform on AWS
+# (`AsyncAnthropicBedrockMantle`) only — not on the legacy Bedrock InvokeModel client, Vertex, or
+# Foundry. `AsyncAnthropicBedrockMantle` isn't a subclass of `AsyncAnthropicBedrock`, so the plain
+# isinstance tuple keeps it supported.
+_ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, AsyncAnthropicFoundry)
 
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
@@ -562,6 +577,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {WebSearchTool}
         if isinstance(client, _WEB_FETCH_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {WebFetchTool}
+        if isinstance(client, _ADVISOR_UNSUPPORTED_CLIENTS):
+            supported_native_tools = supported_native_tools - {AdvisorTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
@@ -577,7 +594,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """The set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ToolSearchTool})
+        return frozenset(
+            {WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ToolSearchTool, AdvisorTool}
+        )
 
     async def request(
         self,
@@ -984,10 +1003,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
-        # Map messages with the UNMODIFIED params so `tool_search_active` stays True and tool-search
-        # replay history renders the same `tool_reference` wire shape as `/v1/messages`; those
-        # references point at `function_tools`, which aren't stripped here, so they stay valid.
-        system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
+        # Map with params that keep `ToolSearchTool` but drop `AdvisorTool`. Keeping tool search
+        # leaves `tool_search_active` True so tool-search replay renders the same `tool_reference`
+        # wire shape as `/v1/messages` (those references point at `function_tools`, which aren't
+        # stripped here, so they stay valid). Dropping advisor makes `advisor_active` False so its
+        # call/result history blocks are stripped during replay — the advisor tool is a server tool
+        # that `count_tokens` rejects (and is absent from the wire `tools` above), and replaying
+        # advisor blocks without the tool definition would 400.
+        map_parameters = replace(
+            model_request_parameters,
+            native_tools=[tool for tool in model_request_parameters.native_tools if not isinstance(tool, AdvisorTool)],
+        )
+        system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
         self._limit_cache_points(
@@ -1062,7 +1089,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 | BetaCodeExecutionToolResultBlock
                 | BetaBashCodeExecutionToolResultBlock
                 | BetaTextEditorCodeExecutionToolResultBlock
-                | BetaToolSearchToolResultBlock,
+                | BetaToolSearchToolResultBlock
+                | BetaAdvisorToolResultBlock,
             )
         }
         for item in response.content:
@@ -1086,6 +1114,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 items.append(_map_text_editor_code_execution_tool_result_block(item, self.system))
             elif isinstance(item, BetaWebFetchToolResultBlock):
                 items.append(_map_web_fetch_tool_result_block(item, self.system))
+            elif isinstance(item, BetaAdvisorToolResultBlock):
+                items.append(_map_advisor_tool_result_block(item, self.system))
             elif isinstance(item, BetaRedactedThinkingBlock):
                 items.append(
                     ThinkingPart(id='redacted_thinking', content='', signature=item.data, provider_name=self.system)
@@ -1282,7 +1312,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             'web-fetch-2025-09-10',
         )
 
-    def _add_native_tools(
+    def _add_native_tools(  # noqa: C901
         self,
         tools: list[BetaToolUnionParam],
         model_request_parameters: ModelRequestParameters,
@@ -1334,6 +1364,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         )
                 # No `beta_features.add(...)`: tool search is GA on Sonnet/Opus/Haiku 4.5+ and the
                 # provisional `tool-search-tool-2025-11-19` beta header is rejected by the API.
+            elif isinstance(tool, AdvisorTool):  # pragma: no branch
+                tools.append(_map_advisor_tool(tool))
+                beta_features.add('advisor-tool-2026-03-01')
             elif isinstance(tool, MCPServerTool) and tool.url:
                 mcp_server_url_definition_param = BetaRequestMCPServerURLDefinitionParam(
                     type='url',
@@ -1458,6 +1491,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # also covers the no-history single-turn custom callable case (where the local
         # `search_tools` exchange is created on this turn).
         tool_search_active = any(isinstance(t, ToolSearchTool) for t in model_request_parameters.native_tools)
+        # The API 400s if advisor blocks appear in history without the advisor tool in the current
+        # request, so when it's absent we strip advisor call/result blocks during replay (per
+        # Anthropic's docs). When present, blocks — including a dangling pause_turn call — round-trip
+        # verbatim (no pairing logic needed).
+        advisor_active = any(isinstance(t, AdvisorTool) for t in model_request_parameters.native_tools)
         # Filter `tool_reference` entries during replay against the tools the current turn
         # will actually send: Anthropic rejects references to tools not in the wire `tools`
         # list (e.g. an MCP that failed to register this turn). The previously-discovered
@@ -1565,6 +1603,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     | BetaTextEditorCodeExecutionToolResultBlockParam
                     | BetaWebFetchToolResultBlockParam
                     | BetaToolSearchToolResultBlockParam
+                    | BetaAdvisorToolResultBlockParam
                     | BetaThinkingBlockParam
                     | BetaRedactedThinkingBlockParam
                     | BetaMCPToolUseBlockParam
@@ -1640,6 +1679,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     id=tool_use_id,
                                     type='server_tool_use',
                                     name='web_fetch',
+                                    input=response_part.args_as_dict(),
+                                )
+                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
+                                assistant_content_params.append(server_tool_use_block_param)
+                            elif response_part.tool_name == AdvisorTool.kind:
+                                if not advisor_active:
+                                    continue
+                                server_tool_use_block_param = BetaServerToolUseBlockParam(
+                                    id=tool_use_id,
+                                    type='server_tool_use',
+                                    name='advisor',
                                     input=response_part.args_as_dict(),
                                 )
                                 _add_anthropic_caller_param(server_tool_use_block_param, response_part)
@@ -1780,6 +1830,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 )
                                 _add_anthropic_caller_param(block, response_part)
                                 assistant_content_params.append(block)
+                            elif response_part.tool_name == AdvisorTool.kind:
+                                # Drop advisor result blocks when continuing without the advisor tool: the
+                                # API 400s if they appear in history without the tool in the request, and
+                                # Anthropic's docs prescribe stripping them (mirrors the orphan tool-search
+                                # drop above). When kept, the discriminated content dict round-trips verbatim
+                                # so the server can decrypt a redacted advisor result on the next turn.
+                                if advisor_active and isinstance(response_part.content, dict):
+                                    assistant_content_params.append(
+                                        BetaAdvisorToolResultBlockParam(
+                                            tool_use_id=tool_use_id,
+                                            type='advisor_tool_result',
+                                            content=cast(
+                                                AdvisorToolResultBlockParamContent,
+                                                response_part.content,  # pyright: ignore[reportUnknownMemberType]
+                                            ),
+                                        )
+                                    )
                             elif isinstance(response_part, NativeToolSearchReturnPart):
                                 assistant_content_params.append(
                                     _build_tool_search_replay_block(response_part, tool_use_id, available_tool_names)
@@ -2358,14 +2425,16 @@ _COMPACTION_TOKEN_KEYS = ('input_tokens', 'output_tokens', 'cache_creation_input
 
 
 def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) -> dict[str, int]:
-    """Extract Anthropic usage into a flat dict, preserving compaction iteration totals.
+    """Extract Anthropic usage into a flat dict, preserving compaction and advisor iteration totals.
 
-    Anthropic's top-level `input_tokens`/`output_tokens` exclude compaction iteration usage
-    (see <https://docs.anthropic.com/en/docs/build-with-claude/compaction#understanding-usage>),
-    so they're kept as-is here and the compaction iteration totals are recorded under
-    `compaction_*` keys. `_map_usage` sums them back into the request totals at extraction time,
-    which also keeps streaming correct: the fixed compaction totals set by the start event
-    survive the merge with delta events that only carry the top-level values.
+    Anthropic's top-level `input_tokens`/`output_tokens` exclude both compaction and advisor iteration
+    usage (see <https://docs.anthropic.com/en/docs/build-with-claude/compaction#understanding-usage>),
+    so they're kept as-is here and the iteration totals are recorded under `compaction_*` / `advisor_*`
+    keys. `_map_usage` sums the compaction totals back into the request totals at extraction time (which
+    also keeps streaming correct: the fixed totals set by the start event survive the merge with delta
+    events that only carry the top-level values). Advisor totals are deliberately NOT summed back, since
+    advisor tokens are billed at the advisor model's rates, not the executor's, and folding them into the
+    request totals would misprice the request via genai-prices.
     """
     details: dict[str, int] = {}
     for key in _COMPACTION_TOKEN_KEYS:
@@ -2377,14 +2446,28 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
         return details
 
     compaction_iterations = [it for it in iterations if it.type == 'compaction']
-    if not compaction_iterations:
+    advisor_iterations = [it for it in iterations if it.type == 'advisor_message']
+    if not compaction_iterations and not advisor_iterations:
         return details
 
-    details['compaction_iterations'] = len(compaction_iterations)
-    details['message_iterations'] = len(iterations) - len(compaction_iterations)
-    for key in _COMPACTION_TOKEN_KEYS:
-        if compaction_total := sum(getattr(it, key) for it in compaction_iterations):
-            details[f'compaction_{key}'] = compaction_total
+    # Both compaction and advisor iterations are separate from executor turns, so exclude them from
+    # the `message_iterations` count.
+    details['message_iterations'] = len(iterations) - len(compaction_iterations) - len(advisor_iterations)
+
+    if compaction_iterations:
+        details['compaction_iterations'] = len(compaction_iterations)
+        for key in _COMPACTION_TOKEN_KEYS:
+            if compaction_total := sum(getattr(it, key) for it in compaction_iterations):
+                details[f'compaction_{key}'] = compaction_total
+
+    if advisor_iterations:
+        details['advisor_iterations'] = len(advisor_iterations)
+        # The advisor iteration token fields share the names in `_COMPACTION_TOKEN_KEYS`. These are
+        # recorded for observability only; `_map_usage` must not fold them into the request totals.
+        for key in _COMPACTION_TOKEN_KEYS:
+            if advisor_total := sum(getattr(it, key) for it in advisor_iterations):
+                details[f'advisor_{key}'] = advisor_total
+
     return details
 
 
@@ -2545,6 +2628,13 @@ class AnthropicStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
                             part=_map_web_fetch_tool_result_block(current_block, self.provider_name),
+                        )
+                    elif isinstance(current_block, BetaAdvisorToolResultBlock):
+                        # The advisor result block arrives fully formed in a single `content_block_start`
+                        # (no deltas), same as web search results.
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=event.index,
+                            part=_map_advisor_tool_result_block(current_block, self.provider_name),
                         )
                     elif isinstance(current_block, BetaMCPToolUseBlock):
                         call_part = _map_mcp_server_use_block(current_block, self.provider_name)
@@ -2842,6 +2932,17 @@ def _map_code_execution_tool(version: AnthropicCodeExecutionToolVersion) -> Beta
             assert_never(version)
 
 
+def _map_advisor_tool(tool: AdvisorTool) -> BetaAdvisorTool20260301Param:
+    param = BetaAdvisorTool20260301Param(type='advisor_20260301', name='advisor', model=tool.model)
+    if tool.max_uses is not None:
+        param['max_uses'] = tool.max_uses
+    if tool.max_tokens is not None:
+        param['max_tokens'] = tool.max_tokens
+    if tool.caching is not None:
+        param['caching'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=tool.caching)
+    return param
+
+
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> NativeToolCallPart:
     tool_args = cast(dict[str, Any], item.input) or None
     if item.name in ('web_search', 'code_execution', 'web_fetch'):
@@ -2894,8 +2995,16 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
                 **_anthropic_caller_provider_details(item.caller),
             },
         )
-    if item.name == 'advisor':  # pragma: no cover
-        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
+    if item.name == 'advisor':
+        # The advisor `server_tool_use` block always carries an empty `input` ({}), so `tool_args`
+        # is None and `args` stays None on the round-tripped call part.
+        return NativeToolCallPart(
+            provider_name=provider_name,
+            tool_name=AdvisorTool.kind,
+            args=tool_args,
+            tool_call_id=item.id,
+            provider_details=_anthropic_caller_provider_details(item.caller) or None,
+        )
     assert_never(item.name)
 
 
@@ -3061,6 +3170,21 @@ def _map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider
         content=item.content.model_dump(mode='json'),
         tool_call_id=item.tool_use_id,
         provider_details=_anthropic_caller_provider_details(item.caller) or None,
+    )
+
+
+advisor_tool_result_content_ta: TypeAdapter[AdvisorToolResultBlockContent] = TypeAdapter(AdvisorToolResultBlockContent)
+
+
+def _map_advisor_tool_result_block(item: BetaAdvisorToolResultBlock, provider_name: str) -> NativeToolReturnPart:
+    # Store the discriminated content dict verbatim (plaintext, redacted, or error). Round-tripping it
+    # unchanged is what lets the server decrypt a redacted advisor result on the next turn — the client
+    # can't read it, and no variant needs special-casing.
+    return NativeToolReturnPart(
+        provider_name=provider_name,
+        tool_name=AdvisorTool.kind,
+        content=advisor_tool_result_content_ta.dump_python(item.content, mode='json'),
+        tool_call_id=item.tool_use_id,
     )
 
 

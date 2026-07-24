@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from httpx import AsyncClient as HttpxAsyncClient, Timeout
+from httpx import AsyncClient as HttpxAsyncClient, MockTransport, Request, Response, Timeout
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
@@ -5281,6 +5281,31 @@ async def test_google_stream_api_non_http_error_is_wrapped(
                 pass
 
     assert exc_info.value.model_name == model_name
+
+
+async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model_requests: None):
+    model_name = 'definitely-missing'
+    error_response = {'error': {'code': 404, 'message': 'Model not found', 'status': 'NOT_FOUND'}}
+    requests: list[Request] = []
+
+    async def handler(request: Request) -> Response:
+        requests.append(request)
+        return Response(404, json=error_response)
+
+    async with HttpxAsyncClient(transport=MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            model_name,
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await Agent(model).run_stream('test').__aenter__()
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.model_name == model_name
+    assert exc_info.value.body == error_response
+    assert isinstance(exc_info.value.__cause__, errors.ClientError)
+    assert len(requests) == 1
 
 
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):

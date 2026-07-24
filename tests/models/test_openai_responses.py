@@ -1982,6 +1982,20 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
     assert result.output == snapshot('14195730')
 
 
+async def test_openai_responses_model_web_search_tool_without_external_access(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+) -> None:
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool(external_web_access=False))])
+
+    result = await agent.run('Search the web for the year the Eiffel Tower opened to the public. Reply with the year.')
+
+    assert '1889' in result.output
+    assert single_request_body(vcr)['tools'] == [
+        {'type': 'web_search', 'search_context_size': 'medium', 'external_web_access': False}
+    ]
+
+
 async def test_openai_responses_model_web_search_tool_with_invalid_region(
     allow_model_requests: None, openai_api_key: str
 ):
@@ -4451,6 +4465,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
     )
 
 
+@pytest.mark.moves_cache_prefix(reason='test deliberately modifies history')
 async def test_openai_responses_thinking_with_modified_history(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='low', openai_reasoning_summary='detailed')
@@ -14251,3 +14266,30 @@ async def test_cursorless_background_resume_stream_cancel_is_noop(allow_model_re
         assert request_stream.cancelled
 
     assert request_stream.cancelled
+
+
+async def test_openai_responses_web_search_tool_external_web_access_default_omitted(allow_model_requests: None) -> None:
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model,
+        capabilities=[NativeTool(WebSearchTool())],
+    )
+
+    result = await agent.run('Search the web.')
+
+    assert result.output == 'done'
+    response_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert len(response_kwargs['tools']) == 1
+    assert response_kwargs['tools'] == snapshot([{'type': 'web_search', 'search_context_size': 'medium'}])

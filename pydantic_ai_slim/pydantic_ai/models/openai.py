@@ -2746,6 +2746,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     web_search_tool['filters'] = responses.web_search_tool_param.Filters(
                         allowed_domains=tool.allowed_domains
                     )
+                if tool.external_web_access is not None:
+                    # The OpenAI API supports this field, but the SDK's `WebSearchToolParam` does not include it yet.
+                    cast(dict[str, object], web_search_tool)['external_web_access'] = tool.external_web_access
                 tools.append(web_search_tool)
             elif isinstance(tool, FileSearchTool):
                 file_search_tool = cast(
