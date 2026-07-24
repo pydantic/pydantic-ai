@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import typing
 from enum import Enum
 from typing import Optional, Union
@@ -572,6 +573,66 @@ def search(*, query: str, limit: int | None = None) -> Any:
     """Search documents"""
     ...\
 ''')
+
+
+def test_tool_signature_renders_parameter_descriptions():
+    def multiply(left: float, right: float) -> float:
+        """Multiply two numbers.
+
+        Args:
+            left: The left operand.
+            right: The right operand.
+
+        Returns:
+            The product of `left` and `right`.
+        """
+        return left * right  # pragma: no cover
+
+    assert Tool(multiply).tool_def.render_signature('...', is_async=True) == snapshot('''\
+async def multiply(*, left: float, right: float) -> float:
+    """
+    <summary>Multiply two numbers.</summary>
+    <returns>
+    <description>The product of `left` and `right`.</description>
+    </returns>
+
+    Args:
+        left: The left operand.
+        right: The right operand.
+    """
+    ...\
+''')
+
+    schema_tool = ToolDefinition(
+        name='search',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'query': {
+                    'type': 'string',
+                    'description': 'Terms to search for.\r\nUse `"""exact"""` text or C:\\queries.\0\ud800',
+                },
+                'ignored': {'type': 'string', 'description': '   '},
+            },
+            'required': ['query'],
+        },
+    )
+    rendered = schema_tool.render_signature('...')
+    assert rendered == snapshot('''\
+def search(*, query: str, ignored: str | None = None) -> Any:
+    """
+    Args:
+        query: Terms to search for.
+            Use `\\\"\\\"\\\"exact\\\"\\\"\\\"` text or C:\\\\queries.\\x00\\\\ud800
+    """
+    ...\
+''')
+    function = ast.parse(rendered).body[0]
+    assert isinstance(function, ast.FunctionDef)
+    assert ast.get_docstring(function) == (
+        'Args:\n    query: Terms to search for.\n        Use `"""exact"""` text or C:\\queries.\0\\ud800'
+    )
+    compile(rendered, '<rendered>', 'exec')
 
 
 # =============================================================================
