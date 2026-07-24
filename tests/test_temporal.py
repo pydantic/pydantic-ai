@@ -3808,6 +3808,10 @@ async def test_temporal_run_context_serializes_usage():
     )
 
     serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert serialized['usage'] is ctx.usage
+
+    payloads = await pydantic_data_converter.encode([serialized])
+    [decoded] = await pydantic_data_converter.decode(payloads, [dict[str, Any]])
     expected_usage = snapshot(
         {
             'input_tokens': 123,
@@ -3825,13 +3829,9 @@ async def test_temporal_run_context_serializes_usage():
             'zero_tokens': 0,
         }
     )
-    assert serialized['usage'] == expected_usage
+    assert decoded['usage'] == expected_usage
 
-    payloads = await pydantic_data_converter.encode([serialized])
-    [serialized] = await pydantic_data_converter.decode(payloads, [dict[str, Any]])
-    assert serialized['usage'] == expected_usage
-
-    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    reconstructed = TemporalRunContext.deserialize_run_context(decoded, deps=None)
     assert reconstructed.usage == ctx.usage
 
 
