@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.realtime import RealtimeModelProfile, TurnCompleteEvent
 from pydantic_ai.realtime._base import SessionErrorEvent
+from pydantic_ai.usage import RunUsage
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
@@ -193,7 +194,21 @@ async def test_audio_in_server_vad_turn(
     reply = messages[1]
     assert isinstance(reply, ModelResponse)
     assert isinstance(reply.parts[0], SpeechPart)
-    assert session.usage.details['input_transcription_seconds'] == 3
+    assert session.usage == snapshot(
+        RunUsage(
+            input_tokens=41,
+            output_tokens=105,
+            input_audio_tokens=27,
+            output_audio_tokens=76,
+            details={
+                'input_transcription_seconds': 3,
+                'input_text_tokens': 14,
+                'input_image_tokens': 0,
+                'output_text_tokens': 29,
+            },
+            requests=1,
+        )
+    )
     assert reply.usage.details.get('input_transcription_seconds') is None
 
 

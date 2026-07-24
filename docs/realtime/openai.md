@@ -54,23 +54,24 @@ your backend attaches a control-plane **sideband** to run the agent. See
 [Browser / WebRTC](index.md#browser-webrtc) in the overview for the topology and the secure flow, and
 the [realtime WebRTC example](../examples/realtime-webrtc.md) for a runnable app.
 
-[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel] implements two signaling
-helpers, both binding the session configuration (instructions, tools, voice, VAD) server-side:
+[`AgentRealtime`][pydantic_ai.agent.AgentRealtime] exposes two signaling helpers, both resolving and
+binding the agent's session configuration (instructions, tools, voice, VAD) server-side:
 
-- [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer] — the **secure** path:
+- [`answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer] — the **secure** path:
   relay the browser's SDP offer to `POST /v1/realtime/calls`, returning the SDP answer and a
   [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession] to attach a sideband to with
   [`agent.realtime(model).session(provider_session=…)`][pydantic_ai.agent.AgentRealtime.session]. The browser
   never sees a token.
-- [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret] — mint a short-lived
+- [`create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] — mint a short-lived
   [`RealtimeClientSecret`][pydantic_ai.realtime.RealtimeClientSecret] (ephemeral token) for a browser
   that negotiates the WebRTC call itself, when you don't relay the SDP through your backend.
 
 ```python {test="skip" lint="skip"}
 # In your `POST /offer` handler, `sdp_offer` is the browser's SDP offer (the request body):
-answer = await model.answer_webrtc_offer(sdp_offer, instructions='You are a helpful assistant.')
+realtime = agent.realtime(model)
+answer = await realtime.answer_webrtc_offer(sdp_offer)
 # Return `answer.sdp` to the browser, then run the agent over the sideband:
-async with agent.realtime(model).session(provider_session=answer.session) as session:
+async with realtime.session(provider_session=answer.session) as session:
     async for event in session:
         ...
 ```

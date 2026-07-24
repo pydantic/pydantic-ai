@@ -289,6 +289,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._response_active = False
         self._active_response_id: str | None = None
         self._pending_response = False
+        self._cancel_sent = False
         # Id of a response we cancelled (barge-in): the server keeps streaming a few straggler deltas
         # before its `response.done`, and mapping them would surface speech the user already interrupted.
         # Drop frames carrying this id until its `response.done` closes it. `None` when nothing is being
@@ -378,8 +379,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         elif isinstance(content, CancelResponse):
             # Only cancel when a response is actually active: with server VAD the provider may have
             # already cancelled on the user's barge-in, and a redundant cancel raises a session error.
-            if self._response_active:
+            if self._response_active and not self._cancel_sent:
                 await self._send_event({'type': 'response.cancel'})
+                self._cancel_sent = True
                 # Suppress the cancelled response's trailing deltas until its `response.done` arrives.
                 self._cancelled_response_id = self._active_response_id
                 # The cancelled response's output item is gone; forget it so a following
@@ -387,9 +389,6 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # item (server-initiated cancels clear it via `response.done`, but a client cancel doesn't).
                 self._current_item_id = None
                 self._generated_audio_bytes = 0
-            self._response_active = False
-            self._active_response_id = None
-            self._pending_response = False
         elif isinstance(content, TruncateOutput):
             # No current output item (e.g. the model wasn't speaking) → nothing to truncate.
             if self._current_item_id is not None:
@@ -559,9 +558,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             and self._active_response_id is not None
             and response_id != self._active_response_id
         )
+        was_client_cancel = matches_active_response and self._cancel_sent
         if matches_active_response:
             self._response_active = False
             self._active_response_id = None
+            self._cancel_sent = False
             self._current_item_id = None
             self._generated_audio_bytes = 0
         # Emit usage for every response (including intermediate function-call-only ones) so the session
@@ -592,9 +593,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             )
         if matches_active_response and self._pending_response:
             self._pending_response = False
-            # A cancelled response means the user barged in: a new turn is starting, so don't replay the
-            # deferred response over it.
-            if response.status != 'cancelled':
+            # A *server*-cancelled response means the user barged in: a new turn is starting, so don't
+            # replay the deferred response over it. After a *client* cancel (`interrupt()`), the caller
+            # explicitly queued the next response behind the cancel, so send it now that the cancelled
+            # response has closed.
+            if response.status != 'cancelled' or was_client_cancel:
                 self._response_active = True
                 self._active_response_id = None
                 await self._send_event({'type': 'response.create'})
@@ -617,6 +620,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._response_active = False
         self._active_response_id = None
         self._pending_response = False
+        self._cancel_sent = False
         self._current_item_id = None
         self._generated_audio_bytes = 0
         self._cancelled_response_id = None
