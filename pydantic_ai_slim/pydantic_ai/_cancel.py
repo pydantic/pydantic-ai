@@ -25,9 +25,17 @@ The controller is runtime-only state: it holds a live task reference and is neve
 from __future__ import annotations as _annotations
 
 import asyncio
+import dataclasses
 import sys
+from collections.abc import Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, Any
 
-__all__ = ('RunCancellation',)
+if TYPE_CHECKING:
+    from .run import AgentRun
+
+__all__ = ('RunBinding', 'RunCancellation', 'provide_run_binding', 'take_run_binding')
 
 
 class RunCancellation:
@@ -112,3 +120,39 @@ class RunCancellation:
             self._issued -= 1
         # Anything left on the counter was issued externally and takes precedence.
         return task.cancelling() == 0
+
+
+@dataclasses.dataclass
+class RunBinding:
+    """Bridge an `AgentRunEvents` handle to the run it starts.
+
+    The handle exists before its lazy background run, so it owns the cancellation controller.
+    `Agent.iter()` later attaches the live run state while retaining that same controller.
+    """
+
+    cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation)
+    agent_run: AgentRun[Any, Any] | None = None
+
+
+_current_run_binding: ContextVar[RunBinding | None] = ContextVar('pydantic_ai.run_binding', default=None)
+
+
+@contextmanager
+def provide_run_binding(binding: RunBinding) -> Generator[None]:
+    """Set the binding for runs started in this context, resetting it on exit."""
+    token = _current_run_binding.set(binding)
+    try:
+        yield
+    finally:
+        _current_run_binding.reset(token)
+
+
+def take_run_binding() -> RunBinding | None:
+    """Consume and return the pending binding at most once.
+
+    Consuming prevents nested agent runs from inheriting the outer handle's binding.
+    """
+    binding = _current_run_binding.get()
+    if binding is not None:
+        _current_run_binding.set(None)
+    return binding

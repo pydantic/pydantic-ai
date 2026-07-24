@@ -4,6 +4,7 @@ from .agent import (
     Agent,
     AgentModelSettings,
     AgentRetries,
+    AgentRunEvents,
     CallToolsNode,
     EndStrategy,
     InstrumentationSettings,
@@ -346,6 +347,7 @@ __all__ = (
     'UsageLimits',
     # run
     'AgentRun',
+    'AgentRunEvents',
     'AgentRunResult',
     'AgentRunResultEvent',
 )
