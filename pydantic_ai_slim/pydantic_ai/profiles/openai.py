@@ -245,7 +245,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """Whether Responses API tool call IDs are only unique within one response. Default: `False`.
 
     When enabled, response IDs are incorporated into tool call IDs as responses are ingested so
-    normalized message history keeps the history-wide uniqueness required by Pydantic AI.
+    normalized message history keeps the history-wide uniqueness required by Pydantic AI. The qualified
+    `response_id:tool_call_id` form is replayed unchanged, so the Responses endpoint must accept
+    colon-containing tool call IDs in follow-up requests.
     """
 
     openai_supports_phase: bool
