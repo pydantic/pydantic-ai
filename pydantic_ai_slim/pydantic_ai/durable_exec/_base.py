@@ -474,12 +474,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 return None
             return self._build_function_toolset(ts)
         if isinstance(ts, DynamicToolset):
+            if 'dynamic' not in self._wrapped_toolset_kinds:
+                return None
             return self._build_dynamic_toolset(ts)
         try:
             from pydantic_ai.mcp import MCPToolset
         except ImportError:  # pragma: no cover
             return None
         if isinstance(ts, MCPToolset):
+            if 'mcp' not in self._wrapped_toolset_kinds:
+                return None
             return self._build_mcp_toolset(ts)
         return None
 

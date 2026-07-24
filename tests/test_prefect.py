@@ -134,11 +134,23 @@ def test_durability_codecs() -> None:
 async def test_durability_base_default_hooks() -> None:
     events: list[AgentStreamEvent] = []
 
+    class FunctionOnlyDurability(PrefectDurability):
+        _wrapped_toolset_kinds = frozenset({'function'})
+
     async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
         events.extend([event async for event in stream])
 
     durability = PrefectDurability(event_stream_handler=handler, name='base-defaults')
     base = cast(BaseDurabilityCapability[Any], durability)
+    function_only = FunctionOnlyDurability()
+    assert function_only._wrap_leaf_toolset(FunctionToolset()) is not None  # pyright: ignore[reportPrivateUsage]
+    assert function_only._wrap_leaf_toolset(DynamicToolset(lambda _: FunctionToolset())) is None  # pyright: ignore[reportPrivateUsage]
+    assert (
+        function_only._wrap_leaf_toolset(  # pyright: ignore[reportPrivateUsage]
+            MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+        )
+        is None
+    )
     assert BaseDurabilityCapability._unit_name(base, 'kind') == 'base-defaults__kind'  # pyright: ignore[reportPrivateUsage]
     assert BaseDurabilityCapability._unit_name(base, 'kind', suffix='.suffix') == 'base-defaults__kind.suffix'  # pyright: ignore[reportPrivateUsage]
     assert BaseDurabilityCapability._unit_name(base, 'kind', tool_name='tool') == 'base-defaults__kind.call_tool:tool'  # pyright: ignore[reportPrivateUsage]
