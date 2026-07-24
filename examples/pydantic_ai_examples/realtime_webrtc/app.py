@@ -114,7 +114,10 @@ class Call:
     answer_sdp: str
     provider_session: WebRTCSession
     task: asyncio.Task[None] | None = None
+    # Set once the sideband has either attached or failed to; `attach_error` distinguishes the two so
+    # `/offer` doesn't return a successful answer for a session that never came up.
     attached: asyncio.Event = field(default_factory=asyncio.Event)
+    attach_error: BaseException | None = None
 
 
 CALLS: dict[str, Call] = {}
@@ -143,9 +146,10 @@ async def run_sideband(call: Call) -> None:
                     logfire.info('turn complete', messages=len(session.all_messages()))
     except asyncio.CancelledError:
         raise
-    except Exception:
+    except Exception as exc:
         logfire.exception('sideband session for {call_id} failed', call_id=call_id)
-        call.attached.set()  # unblock `/offer` so it can surface the failure
+        call.attach_error = exc  # so `/offer` can surface the failure instead of returning a dead call
+        call.attached.set()
     finally:
         CALLS.pop(call_id, None)
 
@@ -188,8 +192,14 @@ async def offer(request: Request) -> JSONResponse:
     # Attach the sideband before returning the answer, so the tools are live before the browser (which
     # only starts sending audio once it has the answer) can speak.
     call.task = asyncio.create_task(run_sideband(call))
-    with suppress(asyncio.TimeoutError):
+    try:
         await asyncio.wait_for(call.attached.wait(), timeout=10)
+    except asyncio.TimeoutError:
+        call.task.cancel()
+        CALLS.pop(answer.session.call_id, None)
+        raise HTTPException(status_code=504, detail='Timed out attaching the server-side session.')
+    if call.attach_error is not None:
+        raise HTTPException(status_code=502, detail='The server-side session failed to attach.')
 
     return JSONResponse({'sdp': call.answer_sdp, 'call_id': answer.session.call_id})
 
