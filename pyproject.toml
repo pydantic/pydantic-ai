@@ -228,6 +228,7 @@ extend-select = [
     "D",
     "TID251",
     "PLW1514", # https://docs.astral.sh/ruff/rules/unspecified-encoding/
+    "PGH003", # https://docs.astral.sh/ruff/rules/blanket-type-ignore/
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 mccabe = { max-complexity = 15 }
