@@ -30,17 +30,20 @@ Your investment in tools, evals, and observability carries straight over to voic
 
 ## How it works
 
-Your Python backend opens the provider WebSocket and runs the
-[`RealtimeSession`][pydantic_ai.realtime.RealtimeSession]. Your application owns audio capture and
-playback: it streams microphone bytes into the session and plays audio events as they arrive. Unlike
-batch STT → text generation → TTS, the model hears and speaks directly in one live session.
-Browser/WebRTC and telephony stacks remain transport concerns that connect users to the backend.
+Your Python backend runs the [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession], which holds the
+provider connection and the agent loop. The media reaches it one of two ways: it flows **through** the
+backend (your app streams microphone bytes into the session and plays audio events back — the default
+server-side path), or it flows **around** it, browser ↔ provider directly over WebRTC, while the backend
+attaches a control-plane [sideband](#browser-webrtc) to the same call. Either way the model hears and
+speaks directly in one live session — unlike batch STT → text generation → TTS — and the tools, history,
+and secrets stay server-side. Telephony stacks connect users to the backend the same way.
 
 ## Choose your path
 
 | Path | Best for | Agent loop runs | Where Pydantic AI fits |
 | --- | --- | --- | --- |
 | **Native speech-to-speech with Pydantic AI** | Low-latency voice agents with server-side tools and shared history | On your backend | Runs the complete provider-agnostic realtime agent described here |
+| **Browser WebRTC + server sideband** | Browser voice agents that want browser-direct media *and* server-side tools/history | On your backend (over the call's control plane) | Negotiates the call and runs the agent while the browser owns the audio; see [Browser / WebRTC](#browser-webrtc) |
 | **Browser talks directly to the provider** | Provider-native, UI-only experiences using an ephemeral token | In the browser/provider SDK | Can power separate backend workflows; use the provider SDK for the direct media session |
 | **Batch STT → text agent → TTS** | Text-model choice, structured output, or independent speech components | In a normal Pydantic AI run | Compose a standard [agent](../agent.md) with chosen STT and TTS services |
 
@@ -62,7 +65,7 @@ def get_weather(city: str) -> str:
 
 async def main():
     model = OpenAIRealtimeModel('gpt-realtime')
-    async with agent.realtime_session(model=model) as session:
+    async with agent.realtime(model).session() as session:
         await session.send_audio(microphone_chunk)  # PCM16 audio bytes
         async for event in session:
             match event:
@@ -157,10 +160,10 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModel
 defaults = OpenAIRealtimeModelSettings(voice='alloy', max_tokens=2_000)
 model = OpenAIRealtimeModel('gpt-realtime', settings=defaults)
 
-async with agent.realtime_session(
-    model=model,
+async with agent.realtime(
+    model,
     model_settings=OpenAIRealtimeModelSettings(max_tokens=4_000),
-) as session:
+).session() as session:
     ...
 ```
 
@@ -219,7 +222,7 @@ Azure OpenAI, and xAI — see [`supports_manual_turn_control`](#model-profile-re
 model = OpenAIRealtimeModel(
     'gpt-realtime', settings=OpenAIRealtimeModelSettings(turn_detection=False)
 )
-async with agent.realtime_session(model=model) as session:
+async with agent.realtime(model).session() as session:
     await session.send_audio(chunk)
     await session.commit_audio()
     await session.create_response()
@@ -274,10 +277,10 @@ from pydantic_ai.realtime.google import GoogleRealtimeModel
 
 agent = Agent(instructions='Answer questions, searching the web when useful.')
 
-async with agent.realtime_session(
-    model=GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest'),
+async with agent.realtime(
+    GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest'),
     capabilities=[WebSearch()],
-) as session:
+).session() as session:
     async for event in session:
         if isinstance(event, PartEndEvent) and isinstance(event.part, NativeToolReturnPart):
             # Cite what the model grounded its answer on.
@@ -353,10 +356,10 @@ notetaker = Agent('openai:gpt-5', instructions='Summarize the conversation as bu
 
 
 async def main(prior_history):
-    async with voice.realtime_session(
-        model=OpenAIRealtimeModel('gpt-realtime'),
+    async with voice.realtime(
+        OpenAIRealtimeModel('gpt-realtime'),
         message_history=prior_history,  # resume an earlier conversation
-    ) as session:
+    ).session() as session:
         async for event in session:
             ...  # stream audio, run tools
 
@@ -386,7 +389,7 @@ support.
 #### Retaining audio
 
 By default only transcripts are kept on the history parts. Pass
-`audio_retention=` to [`realtime_session`][pydantic_ai.agent.Agent.realtime_session] to also retain
+`audio_retention=` to [`session()`][pydantic_ai.agent.AgentRealtime.session] to also retain
 the spoken audio as WAV [`BinaryContent`][pydantic_ai.messages.BinaryContent] on the `SpeechPart`s,
 at the cost of memory. Streaming input and `SpeechPartDelta.audio_chunk` output remain raw PCM16;
 only finalized history audio is wrapped in a WAV container.
@@ -467,7 +470,7 @@ not included in the response token totals or attributed to any [`ModelResponse`]
 because transcription of the user's input audio uses a separate model and billing meter.
 
 ```python {test="skip" lint="skip"}
-async with agent.realtime_session(model=model) as session:
+async with agent.realtime(model).session() as session:
     async for event in session:
         ...
     print(session.usage)  # cumulative tokens + tool calls for the session
@@ -483,9 +486,9 @@ matching how `run` / `iter` surface a usage limit.
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 shared = RunUsage()
-async with agent.realtime_session(
-    model=model, usage=shared, usage_limits=UsageLimits(total_tokens_limit=100_000)
-) as session:
+async with agent.realtime(
+    model, usage=shared, usage_limits=UsageLimits(total_tokens_limit=100_000)
+).session() as session:
     ...
 ```
 
@@ -517,8 +520,13 @@ logfire.instrument_pydantic_ai()
 ## Connecting a frontend
 
 Pydantic AI is the *agent* — it runs server-side so your keys, tools, and business logic stay on your
-backend. You connect a media transport to it. There are three common shapes:
+backend. You connect a media transport to it. There are four common shapes:
 
+- **Browser ↔ provider directly over WebRTC, with a server sideband (recommended for browsers).** The
+  browser exchanges audio with the provider directly — lowest latency, browser-grade media handling —
+  while your backend attaches a control-plane connection to the *same* call and runs the full agent loop
+  (tools, history, secrets). See [Browser / WebRTC](#browser-webrtc) below and the
+  [realtime WebRTC example](../examples/realtime-webrtc.md).
 - **Browser → your backend → provider (a WebSocket relay).** Your server runs the `RealtimeSession` and
   relays audio to and from the browser. Keys and tools stay server-side and you keep the full agent
   loop. This is what the [realtime camera example](../examples/realtime-camera.md) does.
@@ -529,19 +537,83 @@ backend. You connect a media transport to it. There are three common shapes:
 - **The phone (SIP/telephony).** A provider like Twilio or LiveKit terminates the call and bridges its
   audio to your backend session.
 
-What you don't do is wire the browser *straight* to the model provider: that moves the agent loop into
-the browser and gives up server-side tools, history, and secrets. Pydantic AI is the brain; bring the
-transport that reaches your users.
+The one thing to avoid is wiring the browser to the provider *without* a server sideband: that moves the
+agent loop into the browser and gives up server-side tools, history, and secrets. Pydantic AI is the
+brain — keep it on your backend, whether the media flows through it (a relay) or around it (the WebRTC
+sideband).
+
+Keep provider keys on the server. Give browsers only short-lived tokens scoped to their connection, or —
+better — negotiate on their behalf so a token never reaches the client at all (see below); never ship
+backend credentials to a client.
+
+### Browser / WebRTC
+
+For browser voice agents, OpenAI and Azure OpenAI both recommend WebRTC: the audio flows **browser ↔
+provider directly**, so latency is low and the browser's media stack (echo cancellation, jitter
+buffering, device handling) does the hard part. Pydantic AI stays the control plane by attaching a
+**sideband** — a normal realtime control connection to the *same* call, identified by a `call_id`, over
+which it runs instructions, tools, and history while the browser owns the audio.
 
 ```text
-device ↔ media bridge ↔ RealtimeSession ↔ provider
-                         ├── typed tools
-                         └── message history
-                         (your backend)
+   browser ──mic/speaker audio (WebRTC media)──▶  provider
+          ◀─────────────────────────────────────
+      │  SDP offer                                  ▲ control connection (call_id)
+      ▼                                             │
+   your backend ──answer_webrtc_offer()──▶ provider ──realtime_session(provider_session=…)──┘
+                (relays the SDP, gets a call_id)     (runs tools, builds history)
 ```
 
-Keep provider keys on the server. Give browsers and rooms only short-lived tokens scoped to their
-connection; never ship backend credentials to a client.
+The secure flow keeps the API key server-side — the browser never holds a token:
+
+1. The browser creates an `RTCPeerConnection`, captures the microphone, and sends its SDP **offer** to
+   your backend.
+2. Your backend relays it with
+   [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer], which returns the
+   provider's SDP **answer** and a [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession] carrying the `call_id`.
+3. Your backend returns the answer to the browser (media now flows browser ↔ provider) and attaches the
+   sideband with
+   [`agent.realtime(model).session(provider_session=call)`][pydantic_ai.agent.AgentRealtime.session].
+
+```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+INSTRUCTIONS = 'You are a helpful voice assistant.'
+agent = Agent(instructions=INSTRUCTIONS)
+model = OpenAIRealtimeModel('gpt-realtime')
+
+
+@agent.tool_plain
+def get_weather(city: str) -> str:
+    return f'Sunny in {city}'
+
+
+# In your `POST /offer` handler, `sdp_offer` is the browser's offer (the request body):
+async def handle_offer(sdp_offer: str) -> str:
+    answer = await model.answer_webrtc_offer(sdp_offer, instructions=INSTRUCTIONS)
+
+    async def run_sideband() -> None:
+        async with agent.realtime(model).session(provider_session=answer.session) as session:
+            async for event in session:  # the agent runs tools and builds history here
+                print(event)
+
+    asyncio.create_task(run_sideband())  # attach the sideband, then return the answer to the browser
+    return answer.sdp
+```
+
+Because a sideband session doesn't own the audio transport, its audio methods
+(`send_audio` / `commit_audio` / `clear_audio`) raise, and `audio_retention` must stay
+`'transcript_only'` (the browser has the audio; the session still records transcripts). Everything else
+is the same session you already know — the [event loop](#the-event-loop), [tools](#tool-calling), and
+[message history](#message-history) all work unchanged, so you can still hand a call off to a text agent.
+
+WebRTC is available for **OpenAI and Azure OpenAI** (see the [OpenAI](openai.md#browser-webrtc) and
+[Azure](azure.md#browser-webrtc-and-microsoft-entra-id) provider pages, including Azure's Microsoft
+Entra ID support and the alternative ephemeral-token flow via
+[`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret]). Gemini Live and xAI
+Grok Voice are WebSocket-only and don't offer a WebRTC sideband; use a relay or media room for those.
+
+The runnable [realtime WebRTC example](../examples/realtime-webrtc.md) shows the whole flow end to end.
 
 ## Reconnecting
 
@@ -590,12 +662,12 @@ model = GoogleRealtimeModel(
 
 ### Relationship to `run` / `iter`
 
-[`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] is the realtime sibling of
+[`Agent.realtime()`][pydantic_ai.agent.Agent.realtime] is the realtime sibling of
 [`run`][pydantic_ai.agent.AbstractAgent.run] / [`iter`][pydantic_ai.agent.AbstractAgent.iter]. It
 accepts the parameters that map to a long-lived, bidirectional session and intentionally omits the
 ones that are specific to the request-response graph (faking them would be misleading).
 
-| `run` / `iter` parameter | In `realtime_session`? |
+| `run` / `iter` parameter | In `realtime()`? |
 | --- | --- |
 | `deps`, `model_settings` | ✅ realtime-specific settings; regular agent/capability settings do not apply |
 | `instructions` | ✅ additive (combined with the agent's); dynamic `@agent.instructions` evaluated once at connect |
@@ -633,17 +705,17 @@ because the realtime live-input channel cannot preserve their full classic-run s
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 from pydantic_ai.usage import UsageLimits
 
-async with agent.realtime_session(
-    model=OpenAIRealtimeModel('gpt-realtime'),
+async with agent.realtime(
+    OpenAIRealtimeModel('gpt-realtime'),
     toolsets=[extra_toolset],            # extra tools for this session
     capabilities=[my_capability],        # tool-lifecycle hooks run
     usage_limits=UsageLimits(total_tokens_limit=100_000),
     metadata={'tenant': 'acme'},
-) as session:
+).session() as session:
     ...
 ```
 
-`realtime_session` lives on [`AbstractAgent`][pydantic_ai.agent.AbstractAgent], so it's available on
+`realtime()` lives on [`AbstractAgent`][pydantic_ai.agent.AbstractAgent], so it's available on
 [`WrapperAgent`][pydantic_ai.agent.WrapperAgent] and wrapped agents (durable, instrumented, …) just
 like `run`/`iter`. [`agent.override(...)`][pydantic_ai.agent.AbstractAgent.override] of `name`, `deps`,
 `tools`, `toolsets`, `instructions`, `metadata`, and `native_tools` is honored. Regular model and model
@@ -653,7 +725,7 @@ through `override(spec=...)` is not applied to realtime sessions.
 #### Capabilities
 
 A [capability][pydantic_ai.capabilities.AbstractCapability] passed to the agent or to
-`realtime_session(capabilities=...)` participates in a session through the parts of its lifecycle that
+`realtime(capabilities=...)` participates in a session through the parts of its lifecycle that
 map onto a live, bidirectional connection. A session sets the connection up once and then executes
 tools as the model calls them — it has no request → graph → response run — so the hooks tied to those
 stages have nothing to fire on and are **silently skipped**.
@@ -719,7 +791,7 @@ async def consult(question: str) -> str:
 
 
 async def main():
-    async with voice.realtime_session(model=OpenAIRealtimeModel('gpt-realtime')) as session:
+    async with voice.realtime(OpenAIRealtimeModel('gpt-realtime')).session() as session:
         ...
 ```
 
@@ -802,6 +874,10 @@ Azure OpenAI, and xAI use 24 kHz in both directions; Gemini uses 16 kHz input an
 | [`supports_seeding_audio`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_audio] | Transcript-less retained user audio in `message_history` | ✅ | ✅ | ❌ | ❌ |
 | [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] | [`thinking`](openai.md#reasoning) | `gpt-realtime-2*` | `gpt-realtime-2*` | Native-audio models | ❌ |
 
+Whether a session owns the audio transport is not a static per-model capability: an ordinary session
+does, while a [WebRTC sideband](#browser-webrtc) one doesn't — there the browser owns the audio and the
+session's audio methods are unavailable.
+
 Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
 exposes neither the manual turn verbs nor an explicit `interrupt()`. xAI Grok Voice supports
 cancelling a response (`interrupt()`) but not truncating its audio to the point the user actually
@@ -852,7 +928,7 @@ span to ensure gateway handshake spans join the trace:
 
 ```python {test="skip" lint="skip"}
 with logfire.span('voice call'):
-    async with agent.realtime_session(model=model) as session:
+    async with agent.realtime(model).session() as session:
         ...
 ```
 

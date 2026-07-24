@@ -421,10 +421,7 @@ async def ws(socket: WebSocket) -> None:
     deps = CameraDeps(capture_frame=lambda: frames.capture(emit), emit=emit)
 
     model = _build_model(socket.query_params)
-    async with agent.realtime_session(
-        model=model,
-        deps=deps,
-    ) as session:
+    async with agent.realtime(model, deps=deps).session() as session:
         async with anyio.create_task_group() as tg:
 
             async def pump_events() -> None:

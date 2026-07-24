@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import json
 import os
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
@@ -27,6 +28,49 @@ if TYPE_CHECKING:
     from pydantic_ai.providers import Provider
 
 CASSETTES_DIR = Path(__file__).parent / 'cassettes'
+
+
+def _scrub_ephemeral_secret(response: dict[str, Any]) -> dict[str, Any]:
+    """Redact the short-lived WebRTC client secret from recorded `/realtime/client_secrets` responses.
+
+    The mint response body carries `{"value": "ek_..."}` — the ephemeral browser token. It expires in
+    seconds and is useless offline, but replacing it keeps recorded cassettes free of anything
+    secret-shaped. (The api-key / Entra bearer used to mint it are filtered out via `filter_headers`.)
+    """
+    try:
+        raw = response['body']['string']
+    except (KeyError, TypeError):  # pragma: no cover - non-body responses
+        return response
+    if not raw:  # pragma: no cover - empty body
+        return response
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):  # pragma: no cover - non-JSON body
+        return response
+    if not isinstance(data, dict):  # pragma: no cover - non-object JSON body
+        return response
+    body_data = cast('dict[str, Any]', data)
+    value = body_data.get('value')
+    if isinstance(value, str) and value.startswith('ek_'):
+        body_data['value'] = 'ek_scrubbed'
+        body = json.dumps(body_data)
+        response['body']['string'] = body.encode() if isinstance(raw, bytes) else body
+    return response
+
+
+@pytest.fixture(scope='module')
+def vcr_config() -> dict[str, Any]:
+    """VCR config for realtime HTTP (WebRTC signaling) cassettes.
+
+    Extends the repo default with Azure's `api-key` header (the WebSocket cassettes never record HTTP,
+    so the default set omits it) and scrubs the minted ephemeral client secret from response bodies.
+    """
+    return {
+        'ignore_localhost': True,
+        'filter_headers': ['authorization', 'x-api-key', 'api-key', 'cookie'],
+        'decode_compressed_response': True,
+        'before_record_response': _scrub_ephemeral_secret,
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -57,16 +101,18 @@ def _record_mode(request: pytest.FixtureRequest) -> str | None:
 
 @contextmanager
 def _ws_cassette(
-    request: pytest.FixtureRequest, provider: ProviderName, *, skip_if_missing: bool = False
+    request: pytest.FixtureRequest, provider: ProviderName, *, skip_if_missing: bool = False, subdir: str | None = None
 ) -> Generator[RealtimeCassette]:
     """Patch the provider's WebSocket transport to replay from / record into this test's cassette.
 
     `skip_if_missing` skips (rather than errors) when no cassette exists offline, for providers whose
     cassettes may not have been recorded yet (e.g. xAI, gated on realtime API access for our account).
+    `subdir` overrides the cassette subdirectory (default: the test module), so a test that also records
+    an HTTP VCR cassette (which uses the module-named subdirectory) doesn't collide with the WS cassette.
     """
     module = cast('str', request.node.fspath.basename).replace('.py', '')  # pyright: ignore[reportUnknownMemberType]
     name = sanitize_filename(cast('str', request.node.name), 240)  # pyright: ignore[reportUnknownMemberType]
-    path = CASSETTES_DIR / module / f'{name}.yaml'
+    path = CASSETTES_DIR / (subdir or module) / f'{name}.yaml'
     plan = realtime_cassette_plan(cassette_exists=path.exists(), record_mode=_record_mode(request))
     if plan == 'error_missing':  # pragma: no cover - only when a cassette is missing offline
         if skip_if_missing:
@@ -94,6 +140,21 @@ def openai_ws_cassette(
     if not imports_successful():
         pytest.skip('openai / websockets not installed')
     with _ws_cassette(request, 'openai') as cassette:
+        yield OpenAIProvider(api_key=openai_api_key), cassette
+
+
+@pytest.fixture
+def openai_ws_sideband_cassette(
+    request: pytest.FixtureRequest, openai_api_key: str
+) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
+    """An `OpenAIProvider` whose realtime sideband control WebSocket is cassette-backed.
+
+    Stored under a dedicated subdirectory so the WebSocket cassette doesn't collide with the HTTP VCR
+    cassette (SDP offer relay) a WebRTC sideband test records under the module-named subdirectory.
+    """
+    if not imports_successful():
+        pytest.skip('openai / websockets not installed')
+    with _ws_cassette(request, 'openai', subdir='test_openai_ws_sideband') as cassette:
         yield OpenAIProvider(api_key=openai_api_key), cassette
 
 

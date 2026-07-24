@@ -58,6 +58,7 @@ from pydantic_ai.realtime import (
     SessionUsageEvent,
     TurnCompleteEvent,
     TurnDetection,
+    WebRTCSession,
 )
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput, merge_realtime_profile
 from pydantic_ai.realtime._openai_protocol import map_conversation_event, realtime_websocket_url
@@ -190,6 +191,8 @@ def _connect(
 
 
 def test_realtime_url_for_gateway_provider(monkeypatch: pytest.MonkeyPatch):
+    # The gateway accepts the `/v1`-less realtime path (like the OpenAI SDK's own `<base>/realtime`), so
+    # the realtime URL is derived straight from the provider base URL, without inserting a `/v1` segment.
     monkeypatch.setenv('PYDANTIC_AI_GATEWAY_API_KEY', 'gw-key')
     monkeypatch.setenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
     string_model = OpenAIRealtimeModel('gpt-realtime', provider='gateway/openai')
@@ -199,9 +202,11 @@ def test_realtime_url_for_gateway_provider(monkeypatch: pytest.MonkeyPatch):
     )
     plain_model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
 
-    assert '/v1/realtime' in string_model._realtime_url()  # pyright: ignore[reportPrivateUsage]
-    assert '/v1/realtime' in instance_model._realtime_url()  # pyright: ignore[reportPrivateUsage]
-    assert plain_model._realtime_url().count('/v1') == 1  # pyright: ignore[reportPrivateUsage]
+    gateway_url = 'wss://gateway.pydantic.dev/proxy/openai/realtime?model=gpt-realtime'
+    assert string_model._realtime_url() == gateway_url  # pyright: ignore[reportPrivateUsage]
+    assert instance_model._realtime_url() == gateway_url  # pyright: ignore[reportPrivateUsage]
+    # The plain OpenAI base URL already carries its own `/v1`.
+    assert plain_model._realtime_url() == 'wss://api.openai.com/v1/realtime?model=gpt-realtime'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_audio_delta() -> None:
@@ -630,6 +635,77 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
     assert session['audio']['output']['voice'] == 'alloy'
     assert session['tools'][0]['name'] == 'get_weather'
     assert session['tools'][0]['type'] == 'function'
+
+
+@pytest.mark.anyio
+async def test_connect_webrtc_sideband_handshake(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The sideband attaches by `call_id` and applies its session config without a `session.created` wait.
+
+    A control connection joins an *existing* WebRTC call, so (unlike the WebSocket path) the server does
+    not emit `session.created` first: the connection sends `session.update` immediately and waits for
+    `session.updated`, which also reports the served model. A unit test because a cassette's request
+    matcher ignores the handshake ordering this pins.
+    """
+    updated = json.dumps({'type': 'session.updated', 'session': {'model': 'gpt-realtime-2.1'}})
+    transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'hi'})
+    ws = FakeWebSocket([updated, transcript])
+    fake_connect = FakeConnect(ws)
+    monkeypatch.setattr(rt_openai.websockets, 'connect', fake_connect)
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
+    call = WebRTCSession(provider_name='openai', session_id='rtc_test1')
+    async with model.connect_webrtc(
+        call,
+        messages=[ModelRequest(parts=[], instructions='Be nice')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as conn:
+        events = [e async for e in conn]
+
+    # Attaches to the call by id (no `?model=`), with the same bearer auth as the WebSocket path.
+    assert fake_connect.url == 'wss://api.openai.com/v1/realtime?call_id=rtc_test1'
+    assert fake_connect.headers == {'Authorization': 'Bearer k'}
+    # The very first frame is `session.update` — the call already exists, so there is no handshake wait.
+    first = json.loads(ws.sent[0])
+    assert first['type'] == 'session.update'
+    assert first['session']['instructions'] == 'Be nice'
+    # The served model is captured from `session.updated` (not `session.created`).
+    assert conn.model_name == 'gpt-realtime-2.1'
+    assert events == [Transcript(text='hi', is_final=True)]
+
+
+@pytest.mark.anyio
+async def test_connect_webrtc_sideband_seeds_history_without_served_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sideband whose `session.updated` omits the model seeds prior turns and reports no served model.
+
+    When the control frame doesn't echo a `model`, the served model stays unknown (the FALSE side of the
+    model capture), while the prior conversation is still seeded on the wire after the handshake.
+    """
+    updated = json.dumps({'type': 'session.updated', 'session': {}})
+    ws = FakeWebSocket([updated])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
+    call = WebRTCSession(provider_name='openai', session_id='rtc_seed')
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='My favorite color is teal.')]),
+        ModelResponse(parts=[TextPart(content='Got it, teal.')]),
+    ]
+    async with model.connect_webrtc(
+        call,
+        messages=history,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as conn:
+        _ = [e async for e in conn]
+
+    # No `model` in `session.updated` → the served model is unknown.
+    assert conn.model_name is None
+    # The prior turns are seeded as `conversation.item.create` frames after the initial `session.update`.
+    seeded = [json.loads(frame) for frame in ws.sent[1:]]
+    assert [item['item']['role'] for item in seeded] == ['user', 'assistant']
+    assert seeded[0]['item']['content'] == [{'type': 'input_text', 'text': 'My favorite color is teal.'}]
+    assert seeded[1]['item']['content'] == [{'type': 'output_text', 'text': 'Got it, teal.'}]
 
 
 @pytest.mark.anyio
@@ -2069,6 +2145,29 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
 
 
 @pytest.mark.anyio
+async def test_connect_webrtc_sideband_reconnect_closes_previous_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A sideband reconnect through `connect_webrtc()`'s own dial must close the dropped control socket
+    # before opening the next, so sockets don't accumulate across drops. The sideband handshake waits
+    # only for `session.updated` (no `session.created`), so each socket serves just that frame.
+    updated = json.dumps({'type': 'session.updated', 'session': {'model': 'gpt-realtime'}})
+    transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'hi'})
+    dropped = _DropAfterHandshake([updated])
+    good = FakeWebSocket([updated, transcript])
+    connect = _RecordingConnect([dropped, good])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+
+    model = OpenAIRealtimeModel('gpt-realtime', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0))
+    call = WebRTCSession(provider_name='openai', session_id='rtc_reconnect')
+    async with model.connect_webrtc(
+        call, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    ) as conn:
+        events = [e async for e in conn]
+
+    assert events == [ReconnectedEvent(state_restored=False), Transcript(text='hi', is_final=True)]
+    assert connect.closed == [dropped, good]
+
+
+@pytest.mark.anyio
 async def test_reconnect_gives_up_after_max_attempts() -> None:
     async def dial() -> Any:
         raise OSError('still down')  # an expected dial failure (network unreachable)
@@ -2103,11 +2202,11 @@ async def test_reconnect_propagates_unexpected_dial_error() -> None:
         _ = [e async for e in conn]
 
 
-def _audio_delta(item_id: str, content_index: int | None = None) -> str:
+def _audio_delta(item_id: str, content_index: int | None = None, *, audio_bytes: int = 1) -> str:
     data: dict[str, Any] = {
         'type': 'response.output_audio.delta',
         'item_id': item_id,
-        'delta': base64.b64encode(b'\x01').decode('ascii'),
+        'delta': base64.b64encode(b'\x01' * audio_bytes).decode('ascii'),
     }
     if content_index is not None:
         data['content_index'] = content_index
@@ -2116,7 +2215,7 @@ def _audio_delta(item_id: str, content_index: int | None = None) -> str:
 
 @pytest.mark.anyio
 async def test_truncate_uses_item_tracked_from_audio_delta() -> None:
-    ws = FakeWebSocket([_audio_delta('item_7', content_index=2)])
+    ws = FakeWebSocket([_audio_delta('item_7', content_index=2, audio_bytes=480)])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     _ = [e async for e in conn]  # consume the delta → captures the current output item
     await conn.send(TruncateOutput(audio_end_ms=1200))
@@ -2124,8 +2223,59 @@ async def test_truncate_uses_item_tracked_from_audio_delta() -> None:
         'type': 'conversation.item.truncate',
         'item_id': 'item_7',
         'content_index': 2,
-        'audio_end_ms': 1200,
+        'audio_end_ms': 10,
     }
+
+
+@pytest.mark.anyio
+async def test_truncate_in_bounds_audio_end_passes_through() -> None:
+    ws = FakeWebSocket([_audio_delta('item_7', audio_bytes=960)])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=10))
+    assert json.loads(ws.sent[0])['audio_end_ms'] == 10
+
+
+@pytest.mark.anyio
+async def test_truncate_accumulates_generated_audio_deltas() -> None:
+    ws = FakeWebSocket([_audio_delta('item_7', audio_bytes=240), _audio_delta('item_7', audio_bytes=240)])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=20))
+    assert json.loads(ws.sent[0])['audio_end_ms'] == 10
+
+
+@pytest.mark.anyio
+async def test_truncate_resets_generated_audio_between_items() -> None:
+    ws = FakeWebSocket([_audio_delta('item_1', audio_bytes=480), _audio_delta('item_2', audio_bytes=240)])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=20))
+    assert json.loads(ws.sent[0]) == {
+        'type': 'conversation.item.truncate',
+        'item_id': 'item_2',
+        'content_index': 0,
+        'audio_end_ms': 5,
+    }
+
+
+@pytest.mark.anyio
+async def test_truncate_resets_generated_audio_between_responses() -> None:
+    done = json.dumps({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
+    ws = FakeWebSocket([_audio_delta('item_7', audio_bytes=480), done, _audio_delta('item_7', audio_bytes=240)])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=20))
+    assert json.loads(ws.sent[0])['audio_end_ms'] == 5
+
+
+@pytest.mark.anyio
+async def test_truncate_sideband_connection_does_not_clamp() -> None:
+    ws = FakeWebSocket([_audio_delta('item_7')])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=1200))
+    assert json.loads(ws.sent[0])['audio_end_ms'] == 1200
 
 
 @pytest.mark.anyio
@@ -2362,9 +2512,9 @@ async def test_agent_realtime_session_rejects_native_tools() -> None:
         UserError,
         match=r'does not support the WebSearchTool native tool\(s\)\. Supported native tools: none\.',
     ):
-        async with agent.realtime_session(
-            model=OpenAIRealtimeModel('gpt-realtime'), capabilities=[NativeTool(WebSearchTool())]
-        ):
+        async with agent.realtime(
+            OpenAIRealtimeModel('gpt-realtime'), capabilities=[NativeTool(WebSearchTool())]
+        ).session():
             pass  # pragma: no cover - validation raises before yielding
 
 

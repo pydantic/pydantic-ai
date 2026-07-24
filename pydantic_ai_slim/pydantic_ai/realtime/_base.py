@@ -19,7 +19,8 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from typing_extensions import TypeAliasType, TypedDict, assert_never
 
@@ -53,6 +54,7 @@ from ..usage import RequestUsage
 
 if TYPE_CHECKING:
     from ..providers import Provider
+    from ..tools import ToolDefinition
 
 AudioRetention = TypeAliasType('AudioRetention', Literal['transcript_only', 'input_audio', 'output_audio', 'all'])
 """How much audio a [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] retains in its history.
@@ -671,7 +673,7 @@ class RealtimeModelProfile(TypedDict, total=False):
     """The [native tools][pydantic_ai.native_tools.AbstractNativeTool] the model runs server-side, e.g.
     [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].
 
-    [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] validates the session's native
+    [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] validates the session's native
     tools against this set before connecting, raising a [`UserError`][pydantic_ai.exceptions.UserError]
     that names any the model doesn't support — mirroring the classic
     [`Model.supported_native_tools`][pydantic_ai.models.Model.supported_native_tools] check."""
@@ -707,6 +709,88 @@ def merge_realtime_profile(
         if override:
             resolved.update(override)
     return resolved
+
+
+# WebRTC / browser-media artifacts.
+#
+# For browser voice agents, the recommended topology is WebRTC: audio flows browser <-> provider
+# directly (lowest latency), while the server attaches a control-plane connection to the same call to
+# run the agent loop (instructions, tools, history). These small, provider-neutral dataclasses are the
+# handoff artifacts between the server's signaling endpoint and the sideband session.
+
+
+@dataclass(frozen=True)
+class RealtimeClientSecret:
+    """An ephemeral client secret (short-lived token) that a browser can use to talk to a provider directly.
+
+    Minted server-side by [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret]
+    so a long-lived API key never reaches the browser. The token is bound to a session configuration
+    (instructions, tools, voice, VAD) and expires quickly (OpenAI: about a minute).
+    """
+
+    value: str
+    """The ephemeral secret to hand to the browser client."""
+    expires_at: datetime
+    """When the secret expires (timezone-aware UTC)."""
+    provider_details: dict[str, Any] | None = None
+    """Raw provider fields returned alongside the secret (e.g. the resolved `session` object)."""
+
+
+class RealtimeProviderSession(Protocol):
+    """A handle to a provider-side realtime session that a server sideband connection can attach to.
+
+    The transport-neutral contract that [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] accepts as
+    `provider_session`: it needs only the owning provider (to check the attaching model matches) and an
+    opaque session identifier (to address the control-plane connection). Different transports satisfy it
+    with their own handle types — a WebRTC HTTP relay yields a [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession];
+    a provider that negotiates over a WebSocket can supply its own.
+    """
+
+    @property
+    def provider_name(self) -> str:
+        """The provider that owns the session (e.g. `'openai'` or `'azure'`); must match the model attaching to it."""
+        ...
+
+    @property
+    def session_id(self) -> str:
+        """The provider-assigned identifier used to address the session's control-plane connection."""
+        ...
+
+
+@dataclass(frozen=True)
+class WebRTCSession:
+    """A [`RealtimeProviderSession`][pydantic_ai.realtime.RealtimeProviderSession] for a WebRTC call.
+
+    Produced by [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer] and
+    passed as `provider_session` to [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] to run the
+    agent loop over the call's control plane while the browser owns the audio.
+    """
+
+    provider_name: str
+    """The provider that owns the call (e.g. `'openai'` or `'azure'`); must match the model attaching to it."""
+    session_id: str
+    """The provider-assigned call identifier (OpenAI/Azure return it as the `call_id` in the `Location` header)."""
+    provider_details: dict[str, Any] | None = None
+    """Raw provider details about the call (e.g. the original `Location` header)."""
+
+    @property
+    def call_id(self) -> str:
+        """Alias for [`session_id`][pydantic_ai.realtime.WebRTCSession.session_id] under the OpenAI/Azure wire name."""
+        return self.session_id
+
+
+@dataclass(frozen=True)
+class WebRTCAnswer:
+    """The provider's WebRTC SDP answer plus the [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession] to attach to.
+
+    Return `sdp` to the browser to complete the WebRTC handshake, then pass `session` as `provider_session`
+    to [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] to run the sideband session.
+    """
+
+    sdp: str
+    """The provider's SDP answer, to send back to the browser as the remote description."""
+    session: WebRTCSession
+    """The call handle the server sideband session attaches to."""
 
 
 class RealtimeConnection(ABC):
@@ -815,6 +899,67 @@ class RealtimeModel(AbstractModel):
             An async context manager yielding a [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection].
         """
         raise NotImplementedError
+
+    def connect_webrtc(
+        self,
+        session: RealtimeProviderSession,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AbstractAsyncContextManager[RealtimeConnection]:
+        """Attach a control-plane (sideband) connection to an existing provider-side `session`.
+
+        The returned connection runs the agent loop over the session's control channel while the browser
+        exchanges audio with the provider directly, so the sideband doesn't own the audio transport. Only
+        realtime models whose provider supports WebRTC server-side controls (OpenAI and Azure OpenAI)
+        implement this; the default raises `NotImplementedError`.
+        """
+        raise NotImplementedError(
+            f'The {self.model_name!r} realtime model does not support WebRTC sideband sessions. '
+            'WebRTC is available for the OpenAI and Azure OpenAI realtime models.'
+        )
+
+    async def create_client_secret(
+        self,
+        *,
+        instructions: str | None = None,
+        tools: Sequence[ToolDefinition] | None = None,
+        model_settings: RealtimeModelSettings | None = None,
+        expires_after_seconds: int | None = None,
+    ) -> RealtimeClientSecret:
+        """Mint an ephemeral [`RealtimeClientSecret`][pydantic_ai.realtime.RealtimeClientSecret] for a browser client.
+
+        Binds the token to the given session configuration so a browser can open a realtime connection
+        directly without ever holding a long-lived API key. Only implemented by providers that support
+        ephemeral tokens (OpenAI and Azure OpenAI); the default raises `NotImplementedError`.
+        """
+        raise NotImplementedError(
+            f'The {self.model_name!r} realtime model does not support minting client secrets. '
+            'Client secrets are available for the OpenAI and Azure OpenAI realtime models.'
+        )
+
+    async def answer_webrtc_offer(
+        self,
+        sdp_offer: str,
+        *,
+        instructions: str | None = None,
+        tools: Sequence[ToolDefinition] | None = None,
+        model_settings: RealtimeModelSettings | None = None,
+    ) -> WebRTCAnswer:
+        """Relay a browser's WebRTC SDP offer to the provider and return the SDP answer plus a [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession].
+
+        This is the secure signaling path: the server (holding the API key) negotiates the WebRTC call
+        on the browser's behalf, so the browser never sees a token. Return
+        [`WebRTCAnswer.sdp`][pydantic_ai.realtime.WebRTCAnswer.sdp] to the browser, then pass
+        [`WebRTCAnswer.session`][pydantic_ai.realtime.WebRTCAnswer.session] as `provider_session` to
+        [`Agent.realtime`][pydantic_ai.agent.Agent.realtime]. Only implemented by
+        providers that support WebRTC (OpenAI and Azure OpenAI); the default raises `NotImplementedError`.
+        """
+        raise NotImplementedError(
+            f'The {self.model_name!r} realtime model does not support WebRTC. '
+            'WebRTC is available for the OpenAI and Azure OpenAI realtime models.'
+        )
 
     @property
     @abstractmethod

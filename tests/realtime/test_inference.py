@@ -58,7 +58,7 @@ def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
     # The provider carries the gateway base URL, so the realtime WebSocket handshake connects through
     # the gateway rather than directly to OpenAI.
     assert getattr(model, '_provider').base_url == 'https://gateway.pydantic.dev/proxy/openai/'
-    assert '/proxy/openai/v1/realtime' in model._realtime_url()  # pyright: ignore[reportPrivateUsage]
+    assert '/proxy/openai/realtime' in model._realtime_url()  # pyright: ignore[reportPrivateUsage]
 
     direct_model = OpenAIRealtimeModel('gpt-realtime')
     assert direct_model._realtime_url().split('?', 1)[0] == 'wss://api.openai.com/v1/realtime'  # pyright: ignore[reportPrivateUsage]
@@ -103,7 +103,7 @@ def test_infer_realtime_model_unknown_provider() -> None:
 async def test_agent_realtime_session_infers_string_model() -> None:
     agent: Agent[None, str] = Agent()
     with pytest.raises(UserError, match='Unknown realtime model'):
-        async with agent.realtime_session(model='unknown:voice'):
+        async with agent.realtime('unknown:voice').session():
             pass  # pragma: no cover
 
     # A gateway route with no realtime support is rejected before any provider is built: Groq is a

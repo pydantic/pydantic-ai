@@ -4,11 +4,11 @@ interactions:
   direction: received
   data:
     type: session.created
-    event_id: event_E4GEZUXbZh0dvbymudD3g
+    event_id: event_E4yUHpOD0PEoXCUPa7VFC
     session:
       type: realtime
       object: realtime.session
-      id: sess_E4GEZFOTr02ONaCWy6h99
+      id: sess_E4yUH4QWvnb079r27scIS
       model: gpt-realtime
       output_modalities:
       - audio
@@ -25,7 +25,7 @@ interactions:
       tracing: null
       truncation: auto
       prompt: null
-      expires_at: 1784688023
+      expires_at: 1784858133
       audio:
         input:
           format:
@@ -67,7 +67,7 @@ interactions:
             create_response: true
             interrupt_response: true
           transcription:
-            model: gpt-realtime-whisper
+            model: gpt-4o-transcribe-not-deployed
         output:
           format:
             type: audio/pcm
@@ -76,11 +76,11 @@ interactions:
   direction: received
   data:
     type: session.updated
-    event_id: event_E4GEZgtReLzCQGAzR8Ftr
+    event_id: event_E4yUHQXA6DFIC1fwkKmXh
     session:
       type: realtime
       object: realtime.session
-      id: sess_E4GEZFOTr02ONaCWy6h99
+      id: sess_E4yUH4QWvnb079r27scIS
       model: gpt-realtime
       output_modalities:
       - audio
@@ -91,14 +91,14 @@ interactions:
       tracing: null
       truncation: auto
       prompt: null
-      expires_at: 1784688023
+      expires_at: 1784858133
       audio:
         input:
           format:
             type: audio/pcm
             rate: 24000
           transcription:
-            model: gpt-realtime-whisper
+            model: gpt-4o-transcribe-not-deployed
             language: null
             prompt: null
           noise_reduction: null
@@ -396,31 +396,31 @@ interactions:
   direction: received
   data:
     type: input_audio_buffer.speech_started
-    event_id: event_E4GEZDQ4e4NwACaJ3fmLl
+    event_id: event_E4yUIjsu4HwHvWbaxbZ4B
     audio_start_ms: 1556
-    item_id: item_E4GEZV6Pux1f4VnDEzVPh
+    item_id: item_E4yUIi25srn89hscBNHbk
 - kind: message
   direction: received
   data:
     type: input_audio_buffer.speech_stopped
-    event_id: event_E4GEaEAxovrTNKflgwB6y
+    event_id: event_E4yUIDWsBmTEztEWJPKWO
     audio_end_ms: 4224
-    item_id: item_E4GEZV6Pux1f4VnDEzVPh
+    item_id: item_E4yUIi25srn89hscBNHbk
 - kind: message
   direction: received
   data:
     type: input_audio_buffer.committed
-    event_id: event_E4GEaiIQ1U30OFVgdRfre
+    event_id: event_E4yUIwlo1d8RUNGcvH8h2
     previous_item_id: null
-    item_id: item_E4GEZV6Pux1f4VnDEzVPh
+    item_id: item_E4yUIi25srn89hscBNHbk
 - kind: message
   direction: received
   data:
     type: conversation.item.added
-    event_id: event_E4GEa0LjkCVEk36k2oxhF
+    event_id: event_E4yUI6yV0D78hPKhBlHeu
     previous_item_id: null
     item:
-      id: item_E4GEZV6Pux1f4VnDEzVPh
+      id: item_E4yUIi25srn89hscBNHbk
       type: message
       status: completed
       role: user
@@ -431,10 +431,10 @@ interactions:
   direction: received
   data:
     type: conversation.item.done
-    event_id: event_E4GEarB6mQuQ4TDBIa5Gy
+    event_id: event_E4yUI0vuxwJ3vW2gUi1Ls
     previous_item_id: null
     item:
-      id: item_E4GEZV6Pux1f4VnDEzVPh
+      id: item_E4yUIi25srn89hscBNHbk
       type: message
       status: completed
       role: user
@@ -445,14 +445,14 @@ interactions:
   direction: received
   data:
     type: response.created
-    event_id: event_E4GEaAOi0XU4PVcIsW9aw
+    event_id: event_E4yUIyqIqoINZ0YmMkOzT
     response:
       object: realtime.response
-      id: resp_E4GEaCSNBl3Ut5vvq9siZ
+      id: resp_E4yUI5ffkWdqLV3PvXXGC
       status: in_progress
       status_details: null
       output: []
-      conversation_id: conv_E4GEZPcb4jneAuCua6H28
+      conversation_id: conv_E4yUHRBjLEClFOLx7K17J
       output_modalities:
       - audio
       max_output_tokens: inf
@@ -468,495 +468,11 @@ interactions:
   direction: received
   data:
     type: conversation.item.input_audio_transcription.failed
-    event_id: event_E4GEaakvnIgBXTUnIvbJk
-    item_id: item_E4GEZV6Pux1f4VnDEzVPh
+    event_id: event_E4yUIHQL2DUrj2VEFhzGl
+    item_id: item_E4yUIi25srn89hscBNHbk
     content_index: 0
     error:
       type: server_error
       code: DeploymentNotFound
-      message: Input transcription failed for item 'item_E4GEZV6Pux1f4VnDEzVPh'.
+      message: Input transcription failed for item 'item_E4yUIi25srn89hscBNHbk'.
       param: null
-- kind: message
-  direction: received
-  data:
-    type: response.output_item.added
-    event_id: event_E4GEa9jNNA33XJDIGlNV7
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    output_index: 0
-    item:
-      id: item_E4GEaSI2NbsAJb6RMLIBr
-      type: message
-      status: in_progress
-      role: assistant
-      content: []
-- kind: message
-  direction: received
-  data:
-    type: conversation.item.added
-    event_id: event_E4GEaJawm1xzcXhBSi072
-    previous_item_id: item_E4GEZV6Pux1f4VnDEzVPh
-    item:
-      id: item_E4GEaSI2NbsAJb6RMLIBr
-      type: message
-      status: in_progress
-      role: assistant
-      content: []
-- kind: message
-  direction: received
-  data:
-    type: response.content_part.added
-    event_id: event_E4GEaOktlhlJM5eMh8uNB
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    part:
-      type: audio
-      transcript: ''
-    content:
-      type: audio
-      transcript: ''
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEaEfaSnG3LS140iU2S
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: Hi
-    obfuscation: X2VXQNDYZ5imtX
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEawXbssnmC49a1tZqa
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: ' Marcelo'
-    obfuscation: 4CMp8Yga
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEaTWQIimd5JyWcZv3Q
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: ','
-    obfuscation: Iz95pGzuD7ZIqQP
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEa1SN6cN6K9IiRtm3B
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: AgD6/wIA/v/6/wEA//8CAP3/AAD9/wMA/f8BAAAAAAD9
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEaqHZzJhEoGbAWPSf6
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: 0Pns+9H+RwCjAXYEMwcWCJsIfQbRAQn9DfqS+wv+wf4a
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEaHJpgr3ZvTCEocrWY
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: xR/yGuQVlhNpFNsXDR3jHw0gsRzfFmERZgyDCVgHAgaU
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEaAWMTlDcrLk9a3mJH
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: ' it''s'
-    obfuscation: ir9EnJUbwvT
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEaqF8M6t2qnMp0UNZG
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: ' great'
-    obfuscation: bKhP9ZJCk5
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEaKNOGWtqtnyxYOf44
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: pf3n//QCFgBW/lICAgJdABgC4v2tA2YFOfuq/O/+4QG6
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEaAsZMEAlE1zJy1rwz
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: /f8vAC0AMAAEAOL/wP+p/4X/gv9j/yr/Lv8F/xn/AP/8
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEaXAXl0ZcbIvLAXfQm
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: ' to'
-    obfuscation: mnWZyf9VracPR
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEaWKHHCYRkR5rQj5jq
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: ' meet'
-    obfuscation: mLOakx9re6R
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEaPyxtnecyWYh59gsv
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: ' you'
-    obfuscation: TIqBXhyQ934p
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEaG10aeL73LEbKvniT
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: .
-    obfuscation: XjhhCfJbUI4m5Cf
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEadCOJfKImeJI4yxHo
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: HAAqAB0AKgAXAC4AHwArACoAJAArACsAKQAlADEAIAAv
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEar4dgr8two2J5XSYX
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: CQAJAAQACwAEAAoABwAHAAYABwAEAAUAAgAEAPz/BAD8
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEaDhZ6rFvAGrfxY9Lb
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: EQAGABAABQAEACUADwD8/wkAHgAKABAAAwAFABwACwAI
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEazqlUCqWuPey2XvGX
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: ' How'
-    obfuscation: mL5JZxOSPMIk
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEaq1yGgrXjOeGg59mq
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: ' can'
-    obfuscation: pqXDpNrSHwLh
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEaiqk4fytKMziAt0P5
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: ' I'
-    obfuscation: s0JrXst2VkfhTR
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEaXClE6K1H6LHwDTts
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: ' help'
-    obfuscation: AyYuyfRvQTE
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEaoJoh6PTpriIWf4aT
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: ' you'
-    obfuscation: X5KV7mUsaGDD
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEaZ5kB7JYiauGwnxQv
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: ' today'
-    obfuscation: Y34FOv6gE4
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.delta
-    event_id: event_E4GEaoXVpwGCd7eYF0gCm
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: '?'
-    obfuscation: d6fzg51bANRVzFx
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEaDOfJQpYoDmNnFuc5
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: FAAMABcAFwATABsAGgAbABsAHAAlABkAHwAaACUAGwAg
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEaGqfaXR3kVue28Mqc
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: gf5z/j7+Gf7//Rj+Pv6C/q3+z/7b/uP+5P4E/yD/Zv+L
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEawwemiQ7uctURIxC2
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: 4v7w/vf+Bf8R/zP/OP9Z/2j/b/+S/5j/r//E/9D/0//e
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEaMAlJF0wazKEYgwYN
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: ///9//z//f/6//3/+v/7//n/+P/3//r/9//8//P//v/0
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEao3KoNGJJDpefKwun
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: MAMUBvYIFQviCwwLQQlMB3cFigOEAaD/mP5X/rf+Mv9A
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEbBToolPenJgNBUdV8
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: khdCGoQafhliF8sX4RmwGykdQh3RHZYecB8DH0gfMx4R
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEb2HRCN0wVIZuQiGz4
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: AvuW+mv6mPp/+l767PmI+WL5JvkK+TL5dPlR+tn6Ufsp
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.delta
-    event_id: event_E4GEb1bRb2wv4yGAHzcDf
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    delta: b/Vg99/5vfz0/jEAOgDW/7v/PQADAbcBlAEtAVUADQD9
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio.done
-    event_id: event_E4GEbH1m3VNewrPsh8VF9
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-- kind: message
-  direction: received
-  data:
-    type: response.output_audio_transcript.done
-    event_id: event_E4GEblJ1izWYw1PpOV1t0
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    transcript: Hi Marcelo, it's great to meet you. How can I help you today?
-- kind: message
-  direction: received
-  data:
-    type: response.content_part.done
-    event_id: event_E4GEbm6TiV0jGQndOXnhR
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    item_id: item_E4GEaSI2NbsAJb6RMLIBr
-    output_index: 0
-    content_index: 0
-    part:
-      type: audio
-      transcript: Hi Marcelo, it's great to meet you. How can I help you today?
-    content:
-      type: audio
-      transcript: Hi Marcelo, it's great to meet you. How can I help you today?
-- kind: message
-  direction: received
-  data:
-    type: conversation.item.done
-    event_id: event_E4GEbovfGycaYp2z082pt
-    previous_item_id: null
-    item:
-      id: item_E4GEaSI2NbsAJb6RMLIBr
-      type: message
-      status: completed
-      role: assistant
-      content:
-      - type: output_audio
-        transcript: Hi Marcelo, it's great to meet you. How can I help you today?
-- kind: message
-  direction: received
-  data:
-    type: response.output_item.done
-    event_id: event_E4GEbfsSFJRltqABBQDCk
-    response_id: resp_E4GEaCSNBl3Ut5vvq9siZ
-    output_index: 0
-    item:
-      id: item_E4GEaSI2NbsAJb6RMLIBr
-      type: message
-      status: completed
-      role: assistant
-      content:
-      - type: output_audio
-        transcript: Hi Marcelo, it's great to meet you. How can I help you today?
-- kind: message
-  direction: received
-  data:
-    type: response.done
-    event_id: event_E4GEbwUYgXsjsSfRnq6q6
-    response:
-      object: realtime.response
-      id: resp_E4GEaCSNBl3Ut5vvq9siZ
-      status: completed
-      status_details: null
-      output:
-      - id: item_E4GEaSI2NbsAJb6RMLIBr
-        type: message
-        status: completed
-        role: assistant
-        content:
-        - type: output_audio
-          transcript: Hi Marcelo, it's great to meet you. How can I help you today?
-      conversation_id: conv_E4GEZPcb4jneAuCua6H28
-      output_modalities:
-      - audio
-      max_output_tokens: inf
-      audio:
-        output:
-          format:
-            type: audio/pcm
-            rate: 24000
-          voice: alloy
-      usage:
-        total_tokens: 148
-        input_tokens: 40
-        output_tokens: 108
-        input_token_details:
-          text_tokens: 14
-          audio_tokens: 26
-          image_tokens: 0
-          cached_tokens: 0
-          cached_tokens_details:
-            text_tokens: 0
-            audio_tokens: 0
-            image_tokens: 0
-        output_token_details:
-          text_tokens: 28
-          audio_tokens: 80
-      metadata: null

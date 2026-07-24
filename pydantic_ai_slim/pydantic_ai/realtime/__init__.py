@@ -6,7 +6,8 @@ request-response pattern of the standard [`Model`][pydantic_ai.models.Model] int
 
 The provider-agnostic ABCs and event types live here; concrete providers live in submodules
 (e.g. `pydantic_ai.realtime.openai`). The high-level entry point is
-[`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session].
+[`Agent.realtime`][pydantic_ai.agent.Agent.realtime], followed by
+[`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
 
 A session translates the low-level codec events (the connection-facing `RealtimeCodecEvent` vocabulary)
 into the shared message/part event vocabulary from [`pydantic_ai.messages`][pydantic_ai.messages]
@@ -36,11 +37,13 @@ from ._base import (
     InputSpeechStartEvent,
     InputTranscriptionFailedEvent,
     KnownRealtimeTranscriptionModelName,
+    RealtimeClientSecret,
     RealtimeError,
     RealtimeEvent,
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
+    RealtimeProviderSession,
     RealtimeSessionInput,
     ReconnectedEvent,
     ReconnectPolicy,
@@ -49,6 +52,8 @@ from ._base import (
     TextInput,
     TurnCompleteEvent,
     TurnDetection,
+    WebRTCAnswer,
+    WebRTCSession,
 )
 from ._session import RealtimeSession
 
@@ -141,6 +146,7 @@ __all__ = (
     'InputTranscriptionFailedEvent',
     'KnownRealtimeTranscriptionModelName',
     'KnownRealtimeModelName',
+    'RealtimeClientSecret',
     'RealtimeEvent',
     'RealtimeError',
     'RealtimeModel',
@@ -149,11 +155,14 @@ __all__ = (
     'RealtimeSession',
     'RealtimeSessionInput',
     'ReconnectPolicy',
+    'RealtimeProviderSession',
     'ReconnectedEvent',
     'SessionErrorEvent',
     'SessionUsageEvent',
     'TextInput',
     'TurnDetection',
     'TurnCompleteEvent',
+    'WebRTCAnswer',
+    'WebRTCSession',
     'infer_realtime_model',
 )

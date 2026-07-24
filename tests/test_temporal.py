@@ -2550,7 +2550,7 @@ async def test_temporal_agent_realtime_session_in_workflow():
     # workflow; the guard trips before the model is ever connected.
     with patch.object(workflow, 'in_workflow', return_value=True):
         with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
-            async with simple_temporal_agent.realtime_session(model=cast('Any', object())):
+            async with simple_temporal_agent.realtime(cast('Any', object())).session():
                 pass  # pragma: no cover
 
 
@@ -2595,7 +2595,7 @@ class _FakeRealtimeModel(RealtimeModel):
 
 async def test_temporal_agent_realtime_session_outside_workflow():
     # Outside a workflow, the session is delegated to the wrapped agent.
-    async with simple_temporal_agent.realtime_session(model=_FakeRealtimeModel()) as session:
+    async with simple_temporal_agent.realtime(_FakeRealtimeModel()).session() as session:
         assert isinstance(session, RealtimeSession)
         assert [event async for event in session] == []
 
@@ -6284,7 +6284,7 @@ def test_durability_unwrapped_toolset_without_id_is_allowed():
     assert TemporalDurability.from_agent(agent) is not None
 
 
-# --- temporalize returning non-TemporalWrapperToolset (line 294->297 branch) ---
+# --- temporalize returning non-TemporalWrapperToolset (passthrough / unwrapped leaf) ---
 
 
 def test_durability_non_temporal_wrapper_toolset_not_in_registry():

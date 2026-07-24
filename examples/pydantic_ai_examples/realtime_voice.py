@@ -154,9 +154,9 @@ async def main():
     )
 
     with mic, speaker:
-        async with agent.realtime_session(
-            model=OpenAIRealtimeModel('gpt-realtime')
-        ) as session:
+        async with agent.realtime(
+            OpenAIRealtimeModel('gpt-realtime')
+        ).session() as session:
             pump = asyncio.create_task(stream_mic(session, mic_queue))
             print('Listening — start talking (Ctrl-C to quit).')
             try:

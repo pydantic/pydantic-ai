@@ -18,6 +18,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, 
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
+from urllib.parse import quote
 
 try:
     import websockets
@@ -48,6 +49,7 @@ except ImportError as _import_error:  # pragma: no cover
 if TYPE_CHECKING:
     # Only needed for typing: the provider supplies the concrete client at runtime, so importing the
     # protocol helpers below (e.g. from the xAI realtime provider) doesn't require the `openai` package.
+    import httpx
     from openai import AsyncOpenAI
     from openai.types.realtime.realtime_truncation_param import RealtimeTruncationParam
 
@@ -58,10 +60,10 @@ from ..messages import ModelMessage
 from ..models import ModelRequestParameters
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
-from ..providers.gateway import is_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._base import (
+    AudioDelta,
     AudioInput,
     CancelResponse,
     ClearAudio,
@@ -69,11 +71,13 @@ from ._base import (
     CreateResponse,
     ImageInput,
     InputTranscript,
+    RealtimeClientSecret,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
     RealtimeModel,
     RealtimeModelSettings,
+    RealtimeProviderSession,
     ReconnectedEvent,
     ReconnectPolicy,
     SessionErrorEvent,
@@ -81,6 +85,7 @@ from ._base import (
     TextInput,
     ToolResult,
     TruncateOutput,
+    WebRTCAnswer,
     inject_trace_context,
     reconnect_with_backoff,
 )
@@ -103,6 +108,7 @@ from ._openai_protocol import (
     user_message_item,
     validate_response_data,
 )
+from ._openai_webrtc import answer_webrtc_offer as _answer_webrtc_offer, mint_client_secret as _mint_client_secret
 
 # `input_transcription_model='auto'` resolves to this — OpenAI's recommended realtime transcription model
 # ("For the lowest-latency streaming transcription path, use gpt-realtime-whisper"; it's natively streaming
@@ -266,6 +272,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
         model_name: str | None = None,
+        observes_output_audio: bool = True,
     ) -> None:
         self._ws = ws
         self._model_name = model_name
@@ -275,6 +282,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._reconnect = reconnect
         self._restores_state_on_reconnect = False
         self._input_transcription_enabled = input_transcription_enabled
+        self._observes_output_audio = observes_output_audio
         # The Realtime API rejects `response.create` while a response is already being generated.
         # We track that window and defer requests (e.g. a background tool result that lands while the
         # model is mid-answer) until the active response finishes, so the model still announces it.
@@ -291,6 +299,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # single cooperative event loop the plain reads/writes are safe and eventually consistent.
         self._current_item_id: str | None = None
         self._current_content_index = 0
+        self._generated_audio_bytes = 0
 
     @property
     def model_name(self) -> str | None:
@@ -377,18 +386,26 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # `interrupt(audio_end_ms=...)` before the next turn's first audio doesn't truncate a stale
                 # item (server-initiated cancels clear it via `response.done`, but a client cancel doesn't).
                 self._current_item_id = None
+                self._generated_audio_bytes = 0
             self._response_active = False
             self._active_response_id = None
             self._pending_response = False
         elif isinstance(content, TruncateOutput):
             # No current output item (e.g. the model wasn't speaking) → nothing to truncate.
             if self._current_item_id is not None:
+                audio_end_ms = content.audio_end_ms
+                # A WebRTC sideband connection does not receive output-audio deltas because media flows
+                # directly between the browser and provider. Only clamp connections that observe those
+                # deltas; otherwise the byte counter stays zero and every barge-in would truncate to zero.
+                if self._observes_output_audio:
+                    max_audio_end_ms = self._generated_audio_bytes * 1000 // 48_000
+                    audio_end_ms = min(audio_end_ms, max_audio_end_ms)
                 await self._send_event(
                     {
                         'type': 'conversation.item.truncate',
                         'item_id': self._current_item_id,
                         'content_index': self._current_content_index,
-                        'audio_end_ms': content.audio_end_ms,
+                        'audio_end_ms': audio_end_ms,
                     }
                 )
         else:
@@ -475,6 +492,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             return []
         events: list[RealtimeCodecEvent] = []
         superseded = False
+        event = self._map_event(data)
         if event_type == 'response.created':
             response_data = data.get('response')
             if response_data is not None and not is_str_dict(response_data):
@@ -485,13 +503,21 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         elif event_type in AUDIO_DELTA_TYPES:
             audio = ResponseAudioDeltaEvent.construct(**data)
             # Track the speaking item so a later `TruncateOutput` can name it.
-            if audio.item_id:
+            if audio.item_id and isinstance(event, AudioDelta):
+                item_changed = (audio.item_id, audio.content_index or 0) != (
+                    self._current_item_id,
+                    self._current_content_index,
+                )
                 self._current_item_id = audio.item_id
                 self._current_content_index = audio.content_index or 0
+                if item_changed:
+                    self._generated_audio_bytes = len(event.data)
+                else:
+                    self._generated_audio_bytes += len(event.data)
         elif event_type == 'response.done':
             done_events, superseded = await self._handle_response_done(data)
             events.extend(done_events)
-        if (event := self._map_event(data)) is not None and not (event_type == 'response.done' and superseded):
+        if event is not None and not (event_type == 'response.done' and superseded):
             events.append(event)
             if isinstance(event, InputTranscript) and event.is_final and event_type in INPUT_TRANSCRIPT_DONE_TYPES:
                 _validate_usage_shape(data.get('usage'), transcription=True)
@@ -537,6 +563,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             self._response_active = False
             self._active_response_id = None
             self._current_item_id = None
+            self._generated_audio_bytes = 0
         # Emit usage for every response (including intermediate function-call-only ones) so the session
         # accounts for all tokens. Only the active response may replay a pending request; a late completion
         # for a superseded response must not change current state. OpenAI nests usage under
@@ -591,6 +618,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._active_response_id = None
         self._pending_response = False
         self._current_item_id = None
+        self._generated_audio_bytes = 0
         self._cancelled_response_id = None
         return True
 
@@ -624,7 +652,6 @@ class OpenAIRealtimeModel(RealtimeModel):
     settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
-    _gateway: bool = field(init=False, default=False, repr=False)
 
     def __post_init__(self, provider: Provider[AsyncOpenAI] | str) -> None:
         if isinstance(provider, str):
@@ -636,7 +663,6 @@ class OpenAIRealtimeModel(RealtimeModel):
                 '`azure:` prefix) for Azure OpenAI realtime.'
             )
         self._provider = provider
-        self._gateway = is_gateway_provider(provider)
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -713,12 +739,163 @@ class OpenAIRealtimeModel(RealtimeModel):
                 )
         return config
 
+    def _realtime_ws_base(self) -> str:
+        """The realtime WebSocket URL without a query string, e.g. `wss://api.openai.com/v1/realtime`."""
+        return realtime_websocket_url(self._provider.base_url)
+
     def _realtime_url(self, model_settings: OpenAIRealtimeModelSettings | None = None) -> str:
-        del model_settings
+        del model_settings  # only the Azure Voice Live override varies the URL on settings
+        return f'{self._realtime_ws_base()}?model={self.model}'
+
+    def _sideband_url(self, call_id: str) -> str:
+        """The control-plane WebSocket URL that attaches to an existing WebRTC call by `call_id`."""
+        return f'{self._realtime_ws_base()}?call_id={quote(call_id, safe="")}'
+
+    def _webrtc_http_base(self) -> str:
+        """The HTTP base URL for realtime signaling, always ending in `/` (e.g. `https://api.openai.com/v1/`)."""
         base_url = self._provider.base_url
-        if self._gateway:
-            base_url = f'{base_url.rstrip("/")}/v1'
-        return f'{realtime_websocket_url(base_url)}?model={self.model}'
+        return base_url if base_url.endswith('/') else f'{base_url}/'
+
+    def _webrtc_calls_url(self) -> str:
+        """The `/realtime/calls` signaling endpoint the browser's SDP offer is relayed to."""
+        return f'{self._webrtc_http_base()}realtime/calls'
+
+    def _webrtc_client_secrets_url(self) -> str:
+        """The `/realtime/client_secrets` endpoint that mints ephemeral browser tokens."""
+        return f'{self._webrtc_http_base()}realtime/client_secrets'
+
+    @property
+    def _http_client(self) -> httpx.AsyncClient:
+        """The provider's configured `httpx` client, reused for realtime WebRTC signaling."""
+        return self._provider.client._client  # pyright: ignore[reportPrivateUsage]
+
+    async def _webrtc_headers(self) -> dict[str, str]:
+        """Non-auth default headers from the provider client, plus this model's realtime auth header.
+
+        Auth (`Authorization: Bearer` for OpenAI, `api-key` or Entra `Bearer` for Azure) comes from
+        `_auth_headers`, replacing whatever the SDK client carries by default, so a single code path
+        signs both the OpenAI and Azure requests.
+        """
+        headers = {
+            key: value
+            for key, value in self._provider.client.default_headers.items()
+            if isinstance(value, str) and key.lower() not in ('accept', 'content-type', 'authorization', 'api-key')
+        }
+        headers.update(await self._auth_headers())
+        return headers
+
+    def _webrtc_session_config(
+        self,
+        instructions: str | None,
+        tools: Sequence[ToolDefinition] | None,
+        model_settings: RealtimeModelSettings | None,
+    ) -> dict[str, Any]:
+        """The `session` object sent to `/realtime/calls` and `/realtime/client_secrets`.
+
+        Unlike the WebSocket handshake, which carries the model in the `?model=` query, the WebRTC
+        signaling endpoints read the model from the session body, so it is injected here.
+        """
+        settings = cast('OpenAIRealtimeModelSettings | None', model_settings)
+        return {
+            'model': self.model,
+            **self._session_config(instructions or '', list(tools) if tools else None, settings),
+        }
+
+    async def create_client_secret(
+        self,
+        *,
+        instructions: str | None = None,
+        tools: Sequence[ToolDefinition] | None = None,
+        model_settings: RealtimeModelSettings | None = None,
+        expires_after_seconds: int | None = None,
+    ) -> RealtimeClientSecret:
+        return await _mint_client_secret(
+            http_client=self._http_client,
+            client_secrets_url=self._webrtc_client_secrets_url(),
+            headers=await self._webrtc_headers(),
+            session_config=self._webrtc_session_config(instructions, tools, model_settings),
+            expires_after_seconds=expires_after_seconds,
+        )
+
+    async def answer_webrtc_offer(
+        self,
+        sdp_offer: str,
+        *,
+        instructions: str | None = None,
+        tools: Sequence[ToolDefinition] | None = None,
+        model_settings: RealtimeModelSettings | None = None,
+    ) -> WebRTCAnswer:
+        return await _answer_webrtc_offer(
+            http_client=self._http_client,
+            calls_url=self._webrtc_calls_url(),
+            headers=await self._webrtc_headers(),
+            provider_name=self.system,
+            sdp_offer=sdp_offer,
+            session_config=self._webrtc_session_config(instructions, tools, model_settings),
+        )
+
+    @asynccontextmanager
+    async def connect_webrtc(
+        self,
+        session: RealtimeProviderSession,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[OpenAIRealtimeConnection]:
+        if session.provider_name != self.system:
+            raise UserError(
+                f'This WebRTC call was negotiated by provider {session.provider_name!r}, but this realtime '
+                f'model connects through {self.system!r}. Answer the offer and attach the sideband with the '
+                'same model/provider.'
+            )
+        url = self._sideband_url(session.session_id)
+        headers = await self._auth_headers()
+        # Propagate trace context over the handshake (see `connect` for the rationale).
+        inject_trace_context(headers)
+        settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        handshake_timeout = settings.get('handshake_timeout', 30.0)
+        instructions = get_instructions(messages) or ''
+        session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
+        transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
+
+        cm: AbstractAsyncContextManager[ClientConnection] | None = None
+        server_model: str | None = None
+
+        async def dial() -> ClientConnection:
+            nonlocal cm, server_model
+            if cm is not None:
+                previous, cm = cm, None
+                await previous.__aexit__(None, None, None)
+            opening = websockets.connect(url, additional_headers=headers)
+            ws = await opening.__aenter__()
+            cm = opening
+            # The call already exists (created when the SDP offer was relayed), so the control WebSocket
+            # doesn't emit `session.created`: apply the session config immediately and wait for
+            # `session.updated`, which also reports the served model.
+            await ws.send(json.dumps({'type': 'session.update', 'session': session_config}))
+            updated = await expect_event(ws, 'session.updated', timeout=handshake_timeout)
+            session = updated.get('session')
+            model = session.get('model') if is_str_dict(session) else None
+            if isinstance(model, str) and model:
+                server_model = model
+            return ws
+
+        try:
+            ws = await dial()
+            # Seed prior conversation once, after the handshake (as the WebSocket path does).
+            for item in await seed_items(messages, profile=self.profile, provider_name=self.system):
+                await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
+            yield OpenAIRealtimeConnection(
+                ws,
+                dial=dial,
+                reconnect=self.reconnect,
+                input_transcription_enabled=transcription_enabled,
+                model_name=server_model,
+            )
+        finally:
+            if cm is not None:  # pragma: no branch
+                await cm.__aexit__(None, None, None)
 
     async def _auth_headers(self) -> dict[str, str]:
         # `AsyncOpenAI` accepts an async `api_key` provider, in which case `client.api_key` is empty
