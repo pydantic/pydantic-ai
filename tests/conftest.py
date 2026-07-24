@@ -48,6 +48,7 @@ from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import Builder, Custom, customize
+from .cassette_utils import check_cache_prefix_stability
 
 T = TypeVar('T')
 
@@ -78,6 +79,14 @@ logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        'markers',
+        'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
+    )
+
 
 if TYPE_CHECKING:
     from pluggy import Result
@@ -454,9 +463,12 @@ def pytest_recording_configure(config: Any, vcr: VCR):
         """Match URL paths after scrubbing AWS account IDs from ARNs."""
         path1 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r1.path)
         path2 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r2.path)
-        # Normalize Vertex AI paths by replacing region
+        # Normalize Vertex AI paths by replacing region and project (cassettes may be recorded
+        # against a different GCP project than the fixture default)
         path1 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path1)
         path2 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path2)
+        path1 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path1)
+        path2 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path2)
         if path1 != path2:
             raise AssertionError(f'{path1} != {path2}')
 
@@ -532,7 +544,7 @@ def mock_vcr_aiohttp_content(mocker: MockerFixture):
     # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
     # So we turn `content` into a cached property to return the same one each time.
     # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
-    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # type: ignore
+    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # pyright: ignore[reportArgumentType, reportUnknownVariableType]
     cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
     mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
     mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
@@ -574,6 +586,25 @@ def fail_partially_used_vcr_cassettes(request: pytest.FixtureRequest, vcr: Casse
 
     strict_usage = bool(request.config.getoption('--strict-vcr-cassette-usage'))
     check_vcr_cassette_usage(vcr, strict_usage)
+
+
+@pytest.fixture(autouse=True)
+def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette | None) -> Iterator[None]:
+    """Check final recorded conversations during playback; recording leaves the on-disk cassette unfinished."""
+    yield
+    setup_report = getattr(request.node, 'rep_setup', None)
+    call_report = getattr(request.node, 'rep_call', None)
+    if any(
+        getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
+    ):
+        return
+    if vcr is None or vcr.record_mode != RecordMode.NONE:
+        return
+
+    cassette_path_value = getattr(vcr, '_path', None)
+    if cassette_path_value is None or not (cassette_path := Path(cassette_path_value)).is_file():
+        return
+    check_cache_prefix_stability(request.node, cassette_path)
 
 
 _HttpClientCache: TypeAlias = 'dict[tuple[int, int], httpx.AsyncClient]'

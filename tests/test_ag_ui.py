@@ -4917,7 +4917,7 @@ async def test_thinking_end_v010_with_content() -> None:
     )
 
     # Case 2: start with empty content → _reasoning_started=False
-    # end with content → hits ThinkingStartEvent at line 246
+    # end with content → emits ThinkingStartEvent on end (late start)
     event_stream2 = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.10')
     empty_part = ThinkingPart(content='')
     events2 = [e async for e in event_stream2.handle_thinking_start(empty_part)]
