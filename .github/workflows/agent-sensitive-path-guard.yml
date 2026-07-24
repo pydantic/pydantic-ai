@@ -128,7 +128,11 @@ jobs:
           # whole subject, so testing a joined blob would make the ^name$ alternatives
           # dead. `gh api --jq` can't take --arg, so pipe to real jq; the --paginate
           # stream of arrays is fine for a leading `.[]`.
-          agent_id='pydanty@pydantic\.dev|pydanty\[bot\]@users\.noreply|noreply@anthropic\.com|claude\[bot\]@users\.noreply|^pydanty$|^claude(\[bot\])?$'
+          # Only bot identities. A bare `Claude` display name is deliberately NOT
+          # matched: a human contributor of that name would be blocked from touching
+          # a dependency manifest, and it adds no coverage — @claude's commits are
+          # already caught by the anthropic/claude[bot] email alternatives.
+          agent_id='pydanty@pydantic\.dev|pydanty\[bot\]@users\.noreply|noreply@anthropic\.com|claude\[bot\]@users\.noreply|^pydanty$|^claude\[bot\]$'
           # The commits endpoint returns at most 250 commits even with --paginate, so
           # on a longer PR an agent commit could sit past the cap and never be
           # examined. Fail closed rather than silently checking a prefix.
