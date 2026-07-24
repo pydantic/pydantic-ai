@@ -10079,16 +10079,20 @@ def test_web_search_with_constraints():
 
 def test_web_search_external_access_constraint():
     """Disabling live access suppresses local fallback; allowing it does not."""
-    without_access = WebSearch(local=lambda query: query, external_web_access=False)
+
+    def local_search(query: str) -> str:
+        return query
+
+    without_access = WebSearch(local=local_search, external_web_access=False)
     assert without_access._requires_native() is True  # pyright: ignore[reportPrivateUsage]
     assert without_access.get_toolset() is None
 
-    with_access = WebSearch(local=lambda query: query, external_web_access=True)
+    with_access = WebSearch(local=local_search, external_web_access=True)
     assert with_access._requires_native() is False  # pyright: ignore[reportPrivateUsage]
     assert with_access.get_toolset() is not None
 
     with pytest.raises(UserError, match='constraint fields require the native tool'):
-        WebSearch(native=False, local=lambda query: query, external_web_access=False)
+        WebSearch(native=False, local=local_search, external_web_access=False)
 
 
 def test_web_search_duckduckgo_raises_without_extra(monkeypatch: pytest.MonkeyPatch):
