@@ -115,10 +115,10 @@ When a capability needs machinery of that weight:
 - Keep its runtime dependency behind the capability's own extra, so importing the
   root package never pulls it in (see "Capability Submodules And Exports").
 - Scope its expensive CI job to the capability. A `changes` job
-  (`dorny/paths-filter`) reports whether the PR touched the capability's paths,
-  and the heavy job runs only when it did. Run it unconditionally on `push`/tag
-  so releases still exercise the live path:
-  `if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.<name> == 'true')`.
+  compares the event's base and head commits against the capability's paths,
+  and the heavy job runs only when a PR or branch push touched them. Run the
+  heavy job unconditionally on tags so releases still exercise the live path:
+  `if: always() && (github.ref_type == 'tag' || needs.changes.outputs.<name> == 'true')`.
 - Keep the aggregate `check` job green when the heavy job is skipped but red when
   it runs and fails. `re-actors/alls-green` with
   `allowed-skips: changes, <heavy-job>` does both: a skip does not block, a real

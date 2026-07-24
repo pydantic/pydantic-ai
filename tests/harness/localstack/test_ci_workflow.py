@@ -45,26 +45,37 @@ def test_localstack_ci_gates_the_aggregate_check() -> None:
 def test_localstack_integration_is_scoped_to_localstack_changes() -> None:
     lines = _workflow_lines()
 
-    # On a pull request the live job runs only when LocalStack paths change, so
-    # unrelated PRs don't pull the image, install the AWS CLI, or spend the token.
-    assert any('needs.changes.outputs.localstack' in line for line in lines)
-    assert any("- 'pydantic_ai_harness/localstack/**'" in line for line in lines)
+    # Pull requests and branch pushes run the live job only when LocalStack paths
+    # change; tags run it unconditionally so releases exercise the live path.
+    assert "    if: github.event_name == 'pull_request' || github.ref_type == 'branch'" in lines
+    assert (
+        "    if: ${{ always() && (github.ref_type == 'tag' || needs.changes.outputs.localstack == 'true') }}" in lines
+    )
 
     # A skipped live job must not fail the required aggregate check; a job that
     # actually runs and fails still votes (see allowed-skips semantics).
     assert any('allowed-skips: changes, localstack-integration' in line for line in lines)
 
 
-def test_changes_job_can_read_pull_request_files() -> None:
+def test_changes_job_uses_owned_git_diff_with_read_only_checkout() -> None:
     lines = _workflow_lines()
 
-    # paths-filter runs without a checkout, so it lists PR files via the GitHub
-    # API, which needs `pull-requests: read`. Without it the job fails on private
-    # repos (or under tightened default token scopes) and the live job is skipped.
     changes_index = lines.index('  changes:')
     lint_index = lines.index('  lint:')
     changes_block = lines[changes_index:lint_index]
-    assert '      pull-requests: read' in changes_block
+
+    assert not any('dorny/paths-filter' in line for line in changes_block)
+    assert '      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2' in changes_block
+    assert '          fetch-depth: 0' in changes_block
+    assert '          persist-credentials: false' in changes_block
+    assert '          if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- \\' in changes_block
+    assert '            pydantic_ai_harness/localstack \\' in changes_block
+    assert '            tests/localstack \\' in changes_block
+    assert '            integration_tests/localstack \\' in changes_block
+    assert '            Makefile \\' in changes_block
+    assert '            pyproject.toml \\' in changes_block
+    assert '            uv.lock \\' in changes_block
+    assert '            .github/workflows/main.yml' in changes_block
 
 
 def test_localstack_ci_scopes_the_auth_token_to_the_test_step() -> None:
