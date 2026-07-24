@@ -1057,7 +1057,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 yield run
 
     @asynccontextmanager
-    async def realtime_session(
+    async def _open_realtime_session(
         self,
         model: RealtimeModel | KnownRealtimeModelName | str,
         *,
@@ -1075,7 +1075,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         retain_images_every_n: int = 1,
         provider_session: WebRTCCall | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
-        """Open a realtime speech-to-speech session; see [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] for the parameters.
+        """Open a realtime speech-to-speech session; see [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] for the parameters.
 
         A realtime session runs a long-lived, non-deterministic connection, so it cannot be opened
         inside a Prefect flow; calling it there raises a `UserError`. Outside a flow it delegates to
@@ -1083,10 +1083,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         """
         if FlowRunContext.get() is not None:
             raise UserError(
-                '`agent.realtime_session()` cannot be used inside a Prefect flow, as it runs a '
+                '`agent.realtime(...).session()` cannot be used inside a Prefect flow, as it runs a '
                 'long-lived, non-deterministic connection. Use it outside a flow instead.'
             )
-        async with super().realtime_session(
+        async with super()._open_realtime_session(
             model,
             deps=deps,
             model_settings=model_settings,

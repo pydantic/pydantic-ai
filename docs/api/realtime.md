@@ -7,7 +7,8 @@ persistent connection).
 Unlike [`Model`][pydantic_ai.models.Model], which is request-response, a realtime model opens a
 long-lived connection: you stream audio (or text/images) in, and consume audio, transcripts, and
 tool calls as they arrive. The high-level entry point is
-[`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session], which wires the agent's tools and
+[`Agent.realtime()`][pydantic_ai.agent.Agent.realtime], followed by
+[`AgentRealtime.session()`][pydantic_ai.agent.AgentRealtime.session], which wires the agent's tools and
 instructions into a session and runs the tool loop for you. See the [Realtime guide](../realtime/index.md)
 for a walkthrough.
 
@@ -54,7 +55,7 @@ backend runs a control-plane sideband (OpenAI and Azure OpenAI; see [Browser / W
 | --- | --- |
 | [`RealtimeModel.answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer] | Relay the browser's SDP offer; return the SDP answer and a [`WebRTCAnswer`][pydantic_ai.realtime.WebRTCAnswer] / [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall]. |
 | [`RealtimeModel.create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret] | Mint an ephemeral [`RealtimeClientSecret`][pydantic_ai.realtime.RealtimeClientSecret] for a browser client. |
-| [`Agent.realtime_session(provider_session=…)`][pydantic_ai.agent.Agent.realtime_session] | Attach the sideband session to a [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall] and run the agent. |
+| [`AgentRealtime.session(provider_session=…)`][pydantic_ai.agent.AgentRealtime.session] | Attach the sideband session to a [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall] and run the agent. |
 | [`RealtimeModelProfile.owns_media`][pydantic_ai.realtime.RealtimeModelProfile.owns_media] | `False` on a sideband session: the browser owns the audio, so the audio methods are unavailable. |
 
 **Inputs** — [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send] accepts session content

@@ -63,6 +63,7 @@ from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._base import (
+    AudioDelta,
     AudioInput,
     CancelResponse,
     ClearAudio,
@@ -271,6 +272,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
         model_name: str | None = None,
+        observes_output_audio: bool = True,
     ) -> None:
         self._ws = ws
         self._model_name = model_name
@@ -280,6 +282,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._reconnect = reconnect
         self._restores_state_on_reconnect = False
         self._input_transcription_enabled = input_transcription_enabled
+        self._observes_output_audio = observes_output_audio
         # The Realtime API rejects `response.create` while a response is already being generated.
         # We track that window and defer requests (e.g. a background tool result that lands while the
         # model is mid-answer) until the active response finishes, so the model still announces it.
@@ -296,6 +299,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # single cooperative event loop the plain reads/writes are safe and eventually consistent.
         self._current_item_id: str | None = None
         self._current_content_index = 0
+        self._generated_audio_bytes = 0
 
     @property
     def model_name(self) -> str | None:
@@ -382,18 +386,26 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # `interrupt(audio_end_ms=...)` before the next turn's first audio doesn't truncate a stale
                 # item (server-initiated cancels clear it via `response.done`, but a client cancel doesn't).
                 self._current_item_id = None
+                self._generated_audio_bytes = 0
             self._response_active = False
             self._active_response_id = None
             self._pending_response = False
         elif isinstance(content, TruncateOutput):
             # No current output item (e.g. the model wasn't speaking) → nothing to truncate.
             if self._current_item_id is not None:
+                audio_end_ms = content.audio_end_ms
+                # A WebRTC sideband connection does not receive output-audio deltas because media flows
+                # directly between the browser and provider. Only clamp connections that observe those
+                # deltas; otherwise the byte counter stays zero and every barge-in would truncate to zero.
+                if self._observes_output_audio:
+                    max_audio_end_ms = self._generated_audio_bytes * 1000 // 48_000
+                    audio_end_ms = min(audio_end_ms, max_audio_end_ms)
                 await self._send_event(
                     {
                         'type': 'conversation.item.truncate',
                         'item_id': self._current_item_id,
                         'content_index': self._current_content_index,
-                        'audio_end_ms': content.audio_end_ms,
+                        'audio_end_ms': audio_end_ms,
                     }
                 )
         else:
@@ -480,6 +492,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             return []
         events: list[RealtimeCodecEvent] = []
         superseded = False
+        event = self._map_event(data)
         if event_type == 'response.created':
             response_data = data.get('response')
             if response_data is not None and not is_str_dict(response_data):
@@ -490,13 +503,21 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         elif event_type in AUDIO_DELTA_TYPES:
             audio = ResponseAudioDeltaEvent.construct(**data)
             # Track the speaking item so a later `TruncateOutput` can name it.
-            if audio.item_id:
+            if audio.item_id and isinstance(event, AudioDelta):
+                item_changed = (audio.item_id, audio.content_index or 0) != (
+                    self._current_item_id,
+                    self._current_content_index,
+                )
                 self._current_item_id = audio.item_id
                 self._current_content_index = audio.content_index or 0
+                if item_changed:
+                    self._generated_audio_bytes = len(event.data)
+                else:
+                    self._generated_audio_bytes += len(event.data)
         elif event_type == 'response.done':
             done_events, superseded = await self._handle_response_done(data)
             events.extend(done_events)
-        if (event := self._map_event(data)) is not None and not (event_type == 'response.done' and superseded):
+        if event is not None and not (event_type == 'response.done' and superseded):
             events.append(event)
             if isinstance(event, InputTranscript) and event.is_final and event_type in INPUT_TRANSCRIPT_DONE_TYPES:
                 _validate_usage_shape(data.get('usage'), transcription=True)
@@ -542,6 +563,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             self._response_active = False
             self._active_response_id = None
             self._current_item_id = None
+            self._generated_audio_bytes = 0
         # Emit usage for every response (including intermediate function-call-only ones) so the session
         # accounts for all tokens. Only the active response may replay a pending request; a late completion
         # for a superseded response must not change current state. OpenAI nests usage under
@@ -596,6 +618,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._active_response_id = None
         self._pending_response = False
         self._current_item_id = None
+        self._generated_audio_bytes = 0
         self._cancelled_response_id = None
         return True
 

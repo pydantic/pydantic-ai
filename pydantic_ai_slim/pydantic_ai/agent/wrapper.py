@@ -301,7 +301,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             yield run
 
     @asynccontextmanager
-    async def realtime_session(
+    async def _open_realtime_session(
         self,
         model: RealtimeModel | KnownRealtimeModelName | str,
         *,
@@ -319,8 +319,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         retain_images_every_n: int = 1,
         provider_session: WebRTCCall | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
-        """Open a realtime session on the wrapped agent. See [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session]."""
-        async with self.wrapped.realtime_session(
+        """Open a realtime session on the wrapped agent. See [`Agent.realtime`][pydantic_ai.agent.Agent.realtime]."""
+        async with self.wrapped._open_realtime_session(
             model,
             deps=deps,
             model_settings=model_settings,

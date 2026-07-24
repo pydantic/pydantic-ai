@@ -38,7 +38,7 @@ model = XaiRealtimeModel('grok-voice-latest', settings=settings)
 For an exact server-VAD threshold or automatic-response behavior, use the
 `xai_turn_detection=` escape hatch with [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]; it
 fully overrides `turn_detection`. The shared
-realtime settings can be configured on the model or passed to `realtime_session`. Grok
+realtime settings can be configured on the model or passed to `realtime()`. Grok
 Voice reports the input transcript as cumulative snapshots that can
 retroactively correct earlier text, so live partials are not streamed — the transcript is surfaced at
 the end of each user turn.

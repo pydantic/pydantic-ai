@@ -300,7 +300,7 @@ async def test_realtime_session_sideband_rejects_audio_retention() -> None:
     agent = Agent()
     call = WebRTCCall(provider_name='openai', call_id='rtc_x')
     with pytest.raises(UserError, match="can't retain audio"):
-        async with agent.realtime_session(model, provider_session=call, audio_retention='input_audio'):
+        async with agent.realtime(model).session(provider_session=call, audio_retention='input_audio'):
             pass  # pragma: no cover - raises before connecting
 
 

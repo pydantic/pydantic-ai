@@ -182,9 +182,7 @@ async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
         match=r'does not support the ImageGenerationTool native tool\(s\)\. '
         r'Supported native tools: CodeExecutionTool, WebFetchTool, WebSearchTool\.',
     ):
-        async with agent.realtime_session(
-            model=GoogleRealtimeModel(), capabilities=[NativeTool(ImageGenerationTool())]
-        ):
+        async with agent.realtime(GoogleRealtimeModel(), capabilities=[NativeTool(ImageGenerationTool())]).session():
             pass  # pragma: no cover - validation raises before yielding
 
 

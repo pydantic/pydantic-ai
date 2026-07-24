@@ -124,8 +124,8 @@ async def run_sideband(call: Call) -> None:
     """Attach the sideband session to the WebRTC call and run the agent's tool loop over its events."""
     call_id = call.provider_session.call_id
     try:
-        async with agent.realtime_session(
-            model=build_model(), provider_session=call.provider_session
+        async with agent.realtime(build_model()).session(
+            provider_session=call.provider_session
         ) as session:
             call.attached.set()
             async for event in session:

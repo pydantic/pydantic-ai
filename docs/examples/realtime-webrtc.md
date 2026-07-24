@@ -20,7 +20,7 @@ Demonstrates:
   [OpenAI provider][pydantic_ai.realtime.openai.OpenAIRealtimeModel]
 - [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer] — relaying the
   browser's SDP offer server-side so the API key never reaches the client
-- [`agent.realtime_session(provider_session=…)`][pydantic_ai.agent.Agent.realtime_session] — running the
+- [`agent.realtime(model).session(provider_session=…)`][pydantic_ai.agent.AgentRealtime.session] — running the
   agent's [tools](../realtime/index.md#tool-calling) over the call's control plane while the browser owns
   the audio
 

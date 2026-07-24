@@ -21,7 +21,7 @@ agent = Agent(instructions='You are a helpful voice assistant.')
 
 
 async def main():
-    async with agent.realtime_session(model='azure:gpt-realtime') as session:
+    async with agent.realtime('azure:gpt-realtime').session() as session:
         await session.send('Say hello.')
         async for event in session:
             ...

@@ -102,7 +102,7 @@ class _RecordingModel(RealtimeModel):
 
 
 async def _drain(agent: Agent[None, str], model: _RecordingModel, **kwargs: object) -> None:
-    async with agent.realtime_session(model=model, **kwargs) as session:  # type: ignore[arg-type]
+    async with agent.realtime(model, **kwargs).session() as session:  # type: ignore[arg-type]
         async for _ in session:  # pragma: no branch - the single event ends the stream
             pass
 

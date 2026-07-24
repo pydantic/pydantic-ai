@@ -673,7 +673,7 @@ class RealtimeModelProfile(TypedDict, total=False):
     """The [native tools][pydantic_ai.native_tools.AbstractNativeTool] the model runs server-side, e.g.
     [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].
 
-    [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] validates the session's native
+    [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] validates the session's native
     tools against this set before connecting, raising a [`UserError`][pydantic_ai.exceptions.UserError]
     that names any the model doesn't support — mirroring the classic
     [`Model.supported_native_tools`][pydantic_ai.models.Model.supported_native_tools] check."""
@@ -757,7 +757,7 @@ class WebRTCCall:
 
     Produced by [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer] and
     passed as `provider_session` to
-    [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] to run the agent loop over the
+    [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] to run the agent loop over the
     call's control plane while the browser owns the audio.
     """
 
@@ -774,7 +774,7 @@ class WebRTCAnswer:
     """The provider's WebRTC SDP answer plus the [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall] to attach to.
 
     Return `sdp` to the browser to complete the WebRTC handshake, then pass `call` as `provider_session`
-    to [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] to run the sideband session.
+    to [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] to run the sideband session.
     """
 
     sdp: str
@@ -944,7 +944,7 @@ class RealtimeModel(AbstractModel):
         on the browser's behalf, so the browser never sees a token. Return
         [`WebRTCAnswer.sdp`][pydantic_ai.realtime.WebRTCAnswer.sdp] to the browser, then pass
         [`WebRTCAnswer.call`][pydantic_ai.realtime.WebRTCAnswer.call] as `provider_session` to
-        [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session]. Only implemented by
+        [`Agent.realtime`][pydantic_ai.agent.Agent.realtime]. Only implemented by
         providers that support WebRTC (OpenAI and Azure OpenAI); the default raises
         [`UserError`][pydantic_ai.exceptions.UserError].
         """
