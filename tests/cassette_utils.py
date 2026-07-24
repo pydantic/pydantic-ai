@@ -54,10 +54,11 @@ class CassettePrefixViolation:
 def check_cache_prefix_stability(node: pytest.Item, cassette_path: Path) -> None:
     """Fail when a cassette moves its provider-cache wire prefix without an exemption."""
     if (marker := node.get_closest_marker('moves_cache_prefix')) is not None:
-        if not marker.kwargs.get('reason'):
+        reason = marker.kwargs.get('reason')
+        if not (isinstance(reason, str) and reason.strip()):
             pytest.fail(
-                '@pytest.mark.moves_cache_prefix requires reason=... explaining why this test '
-                'deliberately moves the cache prefix'
+                '@pytest.mark.moves_cache_prefix requires reason=... (a non-empty string) explaining why '
+                'this test deliberately moves the cache prefix'
             )
         return
 
@@ -227,7 +228,11 @@ def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePre
     cassette = yaml.load(cassette_path.read_text(encoding='utf-8'), Loader=SafeLoader)
     if not is_str_dict(cassette):
         return
-    requests_by_endpoint: dict[tuple[str, str], list[list[PrefixBlock]]] = defaultdict(list)
+    # Group by (host, path, shape): only requests to the same endpoint share a provider cache, so the
+    # path must be part of the key. Otherwise a token-count or compaction sub-endpoint, a different
+    # model or deployment carried in the path, or any other sibling endpoint on the same host would be
+    # pooled with generation requests and compared as if consecutive -- a spurious divergence.
+    requests_by_endpoint: dict[tuple[str, str, str], list[list[PrefixBlock]]] = defaultdict(list)
 
     raw_interactions = cassette.get('interactions')
     if not _is_list(raw_interactions):
@@ -249,9 +254,10 @@ def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePre
         if canonical is None:
             continue
         shape, blocks = canonical
-        requests_by_endpoint[(urlparse(uri).hostname or '', shape)].append(blocks)
+        parsed_uri = urlparse(uri)
+        requests_by_endpoint[(parsed_uri.hostname or '', parsed_uri.path, shape)].append(blocks)
 
-    for (_, shape), requests in requests_by_endpoint.items():
+    for (_, _, shape), requests in requests_by_endpoint.items():
         for pair_index, (earlier, later) in enumerate(zip(requests, requests[1:])):
             classification, block_index = classify_prefix_pair(earlier, later)
             if classification != 'shrunk' and not classification.endswith('-divergent'):

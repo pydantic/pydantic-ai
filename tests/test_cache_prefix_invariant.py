@@ -139,6 +139,16 @@ def test_check_cache_prefix_stability_requires_reason(
         check_cache_prefix_stability(node, prefix_moving_cassette)
 
 
+@pytest.mark.moves_cache_prefix(reason=True)
+def test_check_cache_prefix_stability_rejects_non_string_reason(
+    request: pytest.FixtureRequest, prefix_moving_cassette: Path
+) -> None:
+    """`reason=` must be an explanatory string, not any truthy value."""
+    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    with pytest.raises(pytest.fail.Exception, match='requires reason'):
+        check_cache_prefix_stability(node, prefix_moving_cassette)
+
+
 def test_canonical_prefix_blocks_bedrock() -> None:
     """The corpus has no Converse cassettes with parsed bodies, so exercise the shape directly."""
     shape_and_blocks = canonical_prefix_blocks(
