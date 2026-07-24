@@ -32,7 +32,7 @@ agent = Agent(
 On the first turn, the refund workflow is collapsed to a catalog entry. The model sees its base instructions, the framework-managed `load_capability` tool, and the catalog appended to the instructions:
 
 ```text
-The following capabilities are deferred and can be loaded using the `load_capability` tool:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. To access a listed capability or its tools, call `load_capability` first; do not search for its tools with `search_tools`:
 - refunds: Use for refund eligibility, refund status, or processing a refund.
 ```
 
@@ -43,6 +43,8 @@ The model does not receive the refund instructions or the `refund_status` tool d
 3. **Request 2.** The model now sees those instructions in history and `refund_status` in its tool list. It calls `refund_status(order_id='ABC-123')` and answers the user from the result.
 
 Already-loaded capabilities stay loaded for the rest of the run — the model never needs to re-open one.
+
+If the model searches for a capability-owned tool before loading its capability, the tool remains hidden. When the built-in keyword search can associate an otherwise-empty search with an unloaded capability, Pydantic AI appends a system-level routing hint naming the capability IDs the model should consider loading. This recovery hint does not reveal the tools or load the capability automatically.
 
 Loading activates the whole bundle, not just instructions: the capability's function tools, model settings, and lifecycle hooks come live together (see [What you can defer](#what-you-can-defer)). It's a one-line change to a capability you already register, it works on [every provider](#cross-provider-behavior), and it [survives history replay](#resumable-across-runs).
 

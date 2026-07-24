@@ -51,6 +51,7 @@ from pydantic_ai.messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     PartStartEvent,
+    SystemPromptPart,
     TextPart,
     ToolPartKind,
     ToolReturnPart,
@@ -591,7 +592,7 @@ async def test_search_tool_def_description_and_schema():
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
     assert search_tool.tool_def.description == snapshot(
-        'There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist — do not retry.'
+        'Search for deferred tools that are not owned by a capability. To access tools owned by a capability, call `load_capability` with its ID; do not search for them here. Provide one or more queries to discover and activate relevant tools. Each query is tokenized into words; tool names and descriptions are scored by token overlap. If no directly searchable tools are found, do not retry the same search.'
     )
     assert search_tool.tool_def.parameters_json_schema == snapshot(
         {
@@ -1033,6 +1034,86 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
             ['load_capability', 'search_tools'],
             ['load_capability', 'inherited_tool', 'also_deferred_tool', 'search_tools'],
             ['load_capability', 'inherited_tool', 'also_deferred_tool', 'search_tools'],
+        ]
+    )
+
+
+@pytest.mark.parametrize('strategy', [None, 'keywords'])
+async def test_empty_tool_search_routes_model_to_matching_unloaded_capability(
+    strategy: Literal['keywords'] | None,
+):
+    """An empty built-in search gets append-only guidance when hidden capability tools match.
+
+    This is exercised through `Agent` rather than the toolset directly because the behavior
+    relies on the run's pending-message queue to put the guidance after the tool-search result.
+    """
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        """Look up refund eligibility for an order."""
+        return f'{order_id}: refundable'
+
+    refunds = Capability[object](
+        id='refunds',
+        description='Refund policy tools.',
+        toolsets=[toolset],
+        defer_loading=True,
+    )
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not any(part.tool_name == _SEARCH_TOOLS_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=_SEARCH_TOOLS_NAME,
+                        args={'queries': ['lookup refund policy']},
+                        tool_call_id='search-refunds',
+                    )
+                ]
+            )
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'refunds'},
+                        tool_call_id='load-refunds',
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    capabilities: list[AbstractCapability[object]] = [refunds]
+    if strategy is not None:
+        capabilities.insert(0, ToolSearch(strategy=strategy))
+    agent = Agent(NoNativeToolSearchModel(model_fn), capabilities=capabilities)
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == 'done'
+    search_returns = [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolSearchReturnPart) and part.tool_call_id == 'search-refunds'
+    ]
+    assert [part.content for part in search_returns] == snapshot(
+        [
+            {
+                'discovered_tools': [],
+                'message': 'No matching tools found. The tools you need may not be available.',
+            }
+        ]
+    )
+    guidance = list(iter_message_parts(result.all_messages(), ModelRequest, SystemPromptPart))
+    assert [part.content for part in guidance] == snapshot(
+        [
+            """\
+<tool-search-guidance>
+This search matched tools owned by unloaded capabilities: `refunds`.
+Call `load_capability` with the relevant capability ID before using those tools. Do not retry `search_tools` for them.
+</tool-search-guidance>"""
         ]
     )
 
@@ -2196,6 +2277,84 @@ async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(al
     replay_outputs = [item for item in second_input if item.get('type') == 'tool_search_output']
     assert replay_calls and all(item.get('execution') == 'client' for item in replay_calls)
     assert replay_outputs and all(item.get('execution') == 'client' for item in replay_outputs)
+
+
+async def test_openai_empty_capability_tool_search_appends_routing_guidance(allow_model_requests: None):
+    """OpenAI receives the routing hint as an append-only message after `tool_search_output`.
+
+    The client-executed native result accepts tool definitions only, so this direct payload
+    assertion protects the separate system-message transport that a VCR matcher would miss.
+    """
+    pytest.importorskip('openai')
+
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        """Look up refund eligibility for an order."""
+        return f'{order_id}: refundable'
+
+    capability = Capability(
+        id='refunds',
+        description='Refund policy tools.',
+        defer_loading=True,
+        toolsets=[refunds_toolset],
+    )
+    responses = [
+        response_message(
+            [
+                ResponseToolSearchCall(
+                    id='ts_search',
+                    arguments={'queries': ['lookup refund policy']},
+                    call_id='call_search',
+                    execution='client',
+                    status='completed',
+                    type='tool_search_call',
+                )
+            ]
+        ),
+        response_message(
+            [
+                ResponseFunctionToolCall(
+                    id='fc_load',
+                    arguments='{"id":"refunds"}',
+                    call_id='call_load',
+                    name=LOAD_CAPABILITY_TOOL_NAME,
+                    status='completed',
+                    type='function_call',
+                )
+            ]
+        ),
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg_done',
+                    content=[ResponseOutputText(text='Loaded.', type='output_text', annotations=[])],
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock(responses)
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
+
+    result = await agent.run('Can I get a refund on order-123?')
+
+    assert result.output == 'Loaded.'
+    _, second_request, _ = get_mock_responses_kwargs(mock_client)
+    second_input = cast(list[dict[str, Any]], second_request['input'])
+    output_index = next(i for i, item in enumerate(second_input) if item.get('type') == 'tool_search_output')
+    guidance_index = next(
+        i
+        for i, item in enumerate(second_input)
+        if item.get('role') in ('system', 'developer') and '<tool-search-guidance>' in str(item.get('content'))
+    )
+    assert output_index < guidance_index
+    assert second_input[output_index]['tools'] == []
+    assert '`refunds`' in str(second_input[guidance_index]['content'])
 
 
 async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loading(

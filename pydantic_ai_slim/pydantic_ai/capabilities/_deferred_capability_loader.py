@@ -17,7 +17,9 @@ from .abstract import (
 from .instrumentation import Instrumentation
 
 DEFERRED_CAPABILITY_CATALOG_PREFIX = (
-    'The following capabilities are deferred and can be loaded using the `load_capability` tool:'
+    'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
+    'To access a listed capability or its tools, call `load_capability` first; '
+    'do not search for its tools with `search_tools`:'
 )
 
 

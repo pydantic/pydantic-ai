@@ -45,6 +45,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     NativeToolSearchReturnPart,
+    SystemPromptPart,
     ToolReturnPart,
     ToolSearchReturnPart,
 )
@@ -82,7 +83,14 @@ _LEGACY_METADATA_TA = TypeAdapter(_LegacyDiscoveryMetadata)
 
 
 _MAX_SEARCH_RESULTS = 10
+_MAX_CAPABILITY_SUGGESTIONS = 3
 _SEARCH_TOKEN_RE = re.compile(r'[a-z0-9]+')
+_CAPABILITY_SEARCH_GUIDANCE_TEMPLATE = """\
+<tool-search-guidance>
+This search matched tools owned by unloaded capabilities: {capability_ids}.
+Call `load_capability` with the relevant capability ID before using those tools. \
+Do not retry `search_tools` for them.
+</tool-search-guidance>"""
 
 
 def _tokenize(text: str) -> set[str]:
@@ -119,11 +127,11 @@ def keywords_search_fn(_ctx: RunContext[Any], queries: Sequence[str], tools: Seq
 
 
 _DEFAULT_TOOL_DESCRIPTION = (
-    'There are additional tools not yet visible to you.'
-    ' When you need a capability not provided by your current tools,'
-    ' search here by providing one or more queries to discover and activate relevant tools.'
+    'Search for deferred tools that are not owned by a capability.'
+    ' To access tools owned by a capability, call `load_capability` with its ID; do not search for them here.'
+    ' Provide one or more queries to discover and activate relevant tools.'
     ' Each query is tokenized into words; tool names and descriptions are scored by token overlap.'
-    ' If no tools are found, they do not exist — do not retry.'
+    ' If no directly searchable tools are found, do not retry the same search.'
 )
 
 
@@ -413,8 +421,40 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         fn = self.search_fn
         if fn is not None:
-            return await self._run_search_fn(fn, queries, ctx, search_tool)
-        return self._run_keywords_search(queries, search_tool)
+            result = await self._run_search_fn(fn, queries, ctx, search_tool)
+        else:
+            result = self._run_keywords_search(queries, search_tool)
+
+        if not result['discovered_tools'] and (fn is None or fn is keywords_search_fn):
+            self._enqueue_capability_search_guidance(queries, ctx)
+        return result
+
+    @staticmethod
+    def _enqueue_capability_search_guidance(queries: Sequence[str], ctx: RunContext[AgentDepsT]) -> None:
+        """Route an empty keyword search toward capabilities whose hidden tools matched."""
+        terms = _tokenize(' '.join(queries))
+        scores: dict[str, int] = {}
+        for tool_def in ctx.tools.values():
+            capability_id = tool_def.capability_id
+            if capability_id is None or capability_id in ctx.available_capability_ids:
+                continue
+            capability = ctx.capabilities.get(capability_id)
+            if capability is None or capability.defer_loading is not True:
+                continue
+            score = len(terms & _tokenize(f'{capability_id} {tool_def.name} {tool_def.description or ""}'))
+            if score > scores.get(capability_id, 0):
+                scores[capability_id] = score
+
+        ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+        capability_ids = [capability_id for capability_id, _ in ranked[:_MAX_CAPABILITY_SUGGESTIONS]]
+        if not capability_ids:
+            return
+
+        listing = ', '.join(f'`{capability_id}`' for capability_id in capability_ids)
+        ctx.enqueue(
+            SystemPromptPart(content=_CAPABILITY_SEARCH_GUIDANCE_TEMPLATE.format(capability_ids=listing)),
+            priority='asap',
+        )
 
     def _run_keywords_search(
         self, queries: Sequence[str], search_tool: _SearchTool[AgentDepsT]
