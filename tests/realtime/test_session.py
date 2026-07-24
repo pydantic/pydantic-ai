@@ -1586,6 +1586,8 @@ async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
     with pytest.raises(RuntimeError, match='send failed'):
         await session.send('question')
     with pytest.raises(RuntimeError, match='send failed'):
+        await session.send(TextInput(text='typed question'))
+    with pytest.raises(RuntimeError, match='send failed'):
         await session.send_audio(b'\xaa\xbb')
     conn.fail = False
     await session.send_audio(b'\xcc')
@@ -1593,6 +1595,22 @@ async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
     assert session.new_messages() == snapshot(
         [ModelRequest(parts=[SpeechPart(speaker='user', transcript='successful', audio=_wav_content(b'\xcc'))])]
     )
+
+    # Without input-audio retention there is no buffered audio to roll back; the failure still
+    # propagates and leaves no history.
+    unretained = RealtimeSession(_FailingSend([]))
+    with pytest.raises(RuntimeError, match='send failed'):
+        await unretained.send_audio(b'\xaa')
+    assert unretained.new_messages() == []
+
+
+def test_remove_sent_request_ignores_unknown_request() -> None:
+    # Unit test: the rollback helper is only ever called with the request the failing send just
+    # reserved, so the not-found fall-through can't be reached through the public API — pin directly
+    # that it stays tolerant of a request that is in neither pending nor history.
+    session = RealtimeSession(FakeRealtimeConnection([]))
+    session._remove_sent_request(ModelRequest(parts=[]))  # pyright: ignore[reportPrivateUsage]
+    assert session.new_messages() == []
 
 
 async def test_session_accumulates_usage_and_requests() -> None:
@@ -2045,6 +2063,61 @@ async def test_reconnect_response_state(state_restored: bool, expected: list[Mod
     session = RealtimeSession(conn)
     await collect_events(session)
     assert session.new_messages() == expected
+
+
+async def test_reconnect_while_idle_passes_through() -> None:
+    # A lost-state reconnect with nothing in flight has no pre-drop response to finalize: the event
+    # passes through and the next turn is recorded normally.
+    conn = FakeRealtimeConnection(
+        [
+            ReconnectedEvent(state_restored=False),
+            Transcript(text='after', is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn)
+    events = await collect_events(session)
+    assert any(isinstance(e, ReconnectedEvent) for e in events)
+    assert session.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='after')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            )
+        ]
+    )
+
+
+async def test_reconnect_finalizes_multiple_in_flight_user_items() -> None:
+    # Two overlapping user turns (partial transcripts routed by item id), with the second finalizing
+    # out of order: `u2` leaves `_active_users_by_id` but stays queued in `_user_item_order` behind the
+    # still-open `u1`. A lost-state reconnect must finalize the still-active `u1` and skip the
+    # already-finalized `u2` (which the pending-flush emits in order), so neither turn is dropped or
+    # double-recorded.
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='first turn', is_final=False, item_id='u1'),
+            InputTranscript(text='second turn', is_final=False, item_id='u2'),
+            InputTranscript(text='second turn', is_final=True, item_id='u2'),
+            ReconnectedEvent(state_restored=False),
+            Transcript(text='after', is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn)
+    await collect_events(session)
+    assert session.new_messages() == snapshot(
+        [
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='first turn', id='u1')]),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='second turn', id='u2')]),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='after')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+        ]
+    )
 
 
 async def test_audio_retained_with_transcription_enabled_waits_for_transcript() -> None:
@@ -2937,6 +3010,15 @@ async def test_replayed_item_tracking_accepts_each_identifier_independently() ->
 
     assert not session._accept_item('item-only')  # pyright: ignore[reportPrivateUsage]
     assert not session._accept_item(None, 'call-only')  # pyright: ignore[reportPrivateUsage]
+
+    # A normal (non-replayed) conversation item is not resumption traffic, so it records nothing and
+    # every later event for it is accepted. Pinned directly rather than relying on incidental coverage
+    # from a provider WS test.
+    session._handle_conversation_item(  # pyright: ignore[reportPrivateUsage]
+        ConversationItemCreated(item_id='live-item', tool_call_id='live-call', replayed=False)
+    )
+    assert session._accept_item('live-item')  # pyright: ignore[reportPrivateUsage]
+    assert session._accept_item(None, 'live-call')  # pyright: ignore[reportPrivateUsage]
 
 
 def test_asap_notifications_without_live_loop_and_after_close_are_ignored() -> None:
