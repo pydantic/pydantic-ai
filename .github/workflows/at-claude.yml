@@ -83,10 +83,20 @@ jobs:
       - uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Commit via the GitHub API (App-signed) instead of local git, so every
+          # commit is authored as claude[bot] and the agent CANNOT forge the author:
+          # in signing mode the action drops the Bash git write tools and the
+          # commit_files MCP tool exposes no author field. This makes the
+          # agent-sensitive-path-guard's per-commit identity match unforgeable —
+          # a prompt-injected @claude can't rewrite its committer to slip a
+          # protected-path change past the guard. github_token is intentionally
+          # left unset so the OIDC→App-token exchange keeps the identity claude[bot]
+          # (setting it to github.token would flip commits to github-actions[bot]).
+          use_commit_signing: true
           additional_permissions: |
             actions: read
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh pr create:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(git add:*),Bash(git checkout:*),Bash(git commit:*),Bash(git push:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),Bash(uv run:*),Bash(make:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__github_file_ops__commit_files,mcp__github_file_ops__delete_files,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh pr create:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),Bash(uv run:*),Bash(make:*)"
 
   at-claude-fork:
     needs: get-pr-info
