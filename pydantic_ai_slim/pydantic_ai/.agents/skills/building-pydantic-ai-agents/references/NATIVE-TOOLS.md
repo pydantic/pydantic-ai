@@ -31,6 +31,7 @@ Reach for these when the provider supports them:
 - `MemoryTool`
 - `MCPServerTool`
 - `FileSearchTool`
+- `AdvisorTool` (Anthropic, OpenRouter; lets a faster executor model consult a stronger advisor model mid-generation)
 
 ## Dynamic Native Tool Configuration
 

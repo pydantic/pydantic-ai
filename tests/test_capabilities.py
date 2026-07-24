@@ -544,6 +544,47 @@ def test_model_json_schema_with_capabilities():
     assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
+                'AdvisorTool': {
+                    'properties': {
+                        'kind': {'default': 'advisor', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'model': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'claude-fable-5',
+                                        'claude-mythos-5',
+                                        'claude-opus-4-8',
+                                        'claude-opus-4-7',
+                                        'claude-opus-4-6',
+                                        'claude-sonnet-4-6',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
+                            'title': 'Model',
+                        },
+                        'max_uses': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Uses',
+                        },
+                        'max_tokens': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Tokens',
+                        },
+                        'caching': {
+                            'anyOf': [{'enum': ['5m', '1h'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Caching',
+                        },
+                    },
+                    'required': ['model'],
+                    'title': 'AdvisorTool',
+                    'type': 'object',
+                },
                 'AgentRetries': {
                     'additionalProperties': False,
                     'properties': {
@@ -1549,6 +1590,7 @@ def test_model_json_schema_with_capabilities():
                                         {'$ref': '#/$defs/MemoryTool'},
                                         {'$ref': '#/$defs/MCPServerTool'},
                                         {'$ref': '#/$defs/FileSearchTool'},
+                                        {'$ref': '#/$defs/AdvisorTool'},
                                         {'$ref': '#/$defs/ToolSearchTool'},
                                     ]
                                 },
