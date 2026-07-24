@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -14,15 +15,23 @@ from pydantic_core import to_json
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     InstrumentationNames,
+    MessageJsonCache,
     get_agent_run_baggage_attributes,
     get_instructions,
+    has_stale_message_json,
     open_model_request_span,
     safe_to_json,
     serialize_any,
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._utils import UNSET, Unset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    MessageHistoryMutatedWarning,
+    ToolFailedError,
+    ToolRetryError,
+)
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
@@ -86,6 +95,10 @@ class Instrumentation(AbstractCapability[Any]):
     """Last formatted instructions sent to the model, or `UNSET` before the first request."""
     _variable_instructions: bool = field(default=False, repr=False, init=False)
     """Whether agent-level instructions varied across requests in this run."""
+    _message_json_cache: MessageJsonCache = field(default_factory=MessageJsonCache, repr=False, init=False)
+    """Per-run cache of input messages' serialized OTel JSON fragments (see `MessageJsonCache`).
+    `for_run`'s `replace(self)` re-runs the factory, so each run starts with an empty cache
+    that's discarded when the run ends."""
     # Resolved once from `self.settings.version` in `__post_init__` and preserved across
     # `dataclasses.replace` calls in `for_run` (which only touches init=True fields).
     _instrumentation_names: InstrumentationNames = field(
@@ -194,6 +207,22 @@ class Instrumentation(AbstractCapability[Any]):
                         message_history = self._last_messages or ctx.messages
                         metadata = ctx.metadata
                     span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata))
+                    if result is not None:
+                        # One O(history) pass per run: turn any silent staleness the per-request
+                        # fragment cache may have recorded into a loud signal. Skipped when the run
+                        # errored: with warnings configured as errors, warning here in the `finally`
+                        # would displace the propagating run exception.
+                        if self._message_json_cache and has_stale_message_json(
+                            settings, message_history, self._message_json_cache
+                        ):
+                            warnings.warn(
+                                'In-place mutation of messages already in the history was detected during this run: '
+                                "the `gen_ai.input.messages` attribute recorded on the run's model request spans may "
+                                'not match the messages actually sent to the model. Mutating history messages in '
+                                'place is not supported; build new message or part objects instead, e.g. via a '
+                                'history processor.',
+                                MessageHistoryMutatedWarning,
+                            )
 
     def _run_span_end_attributes(
         self,
@@ -260,7 +289,10 @@ class Instrumentation(AbstractCapability[Any]):
         # (ctx.messages may be stale because UserPromptNode replaces the list reference).
         self._last_messages = request_context.messages
 
-        with open_model_request_span(self.settings, request_context) as (finish, prepared_request_context):
+        with open_model_request_span(self.settings, request_context, message_json_cache=self._message_json_cache) as (
+            finish,
+            prepared_request_context,
+        ):
             # Stash for `_run_span_end_attributes`: feeding the parameters into
             # `get_instructions` lets it use the canonical `instruction_parts` source
             # (which includes prompted-output template instructions and is properly sorted)

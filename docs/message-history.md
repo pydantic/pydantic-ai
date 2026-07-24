@@ -343,6 +343,18 @@ result2 = agent.run_sync(  # (3)!
 
 _(This example is complete, it can be run "as is")_
 
+!!! note "What survives a round-trip"
+    `ModelMessagesTypeAdapter` preserves every field, including application-only annotations such
+    as [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] that are *not sent to
+    the model*. Because `metadata` is typed `Any`, a JSON round-trip normalizes values with no
+    JSON-native form — a `tuple` reloads as a `list`, a `datetime` as its ISO string — while a
+    `dump_python` → `validate_python` round-trip preserves them exactly. This is the boundary you
+    use to persist and reload history.
+
+    The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
+    protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
+    those fields are dropped entirely. That loss is by design, not a state-loss bug.
+
 ### Loading untrusted history
 
 The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.
@@ -503,6 +515,13 @@ _(This example is complete, it can be run "as is")_
 
 For more complex multi-agent patterns, see the [multi-agent applications](multi-agent-applications.md) documentation.
 
+## Editing existing messages
+
+To change the conversation mid-run, build *new* message objects rather than modifying existing ones: [inject new messages](#injecting-messages-mid-run) with `enqueue`, or prune, summarize, or otherwise rewrite the history the model receives with a [history processor](#processing-message-history). When you need to edit an earlier message — say, compacting a large tool output — copy it with [`dataclasses.replace`][dataclasses.replace], passing a new `parts` list of new (or reused) part objects; edited parts are likewise built with `replace` rather than modified. Replacing a message in the history and reassigning its `parts` list are both safe.
+
+!!! warning "Don't mutate existing messages in place"
+    Mutating a message that's already part of the history in place — assigning to a part's fields (e.g. `ctx.messages[0].parts[0].content = '...'` from a tool) or modifying its existing `parts` list (e.g. `append` or item assignment) — is not supported. To keep long runs fast, [instrumentation](logfire.md) serializes each message only once and reuses the result when later model request spans record their `gen_ai.input.messages` attribute: a run makes two serialization passes over its history in total — one as messages are first recorded, one at the end of the run — instead of re-serializing the full history on every request (O(N) messages serialized twice, rather than O(N²) with N requests over N messages). Replaced messages and reassigned `parts` lists are picked up and serialized fresh, but a field mutated in place is not, so later request spans may not reflect it. When this is detected at the end of a run, a [`MessageHistoryMutatedWarning`][pydantic_ai.exceptions.MessageHistoryMutatedWarning] is emitted; the run-level `pydantic_ai.all_messages` attribute always reflects the final history.
+
 ## Injecting messages mid-run
 
 Tools, capability hooks, and external code driving an agent run can inject extra content
@@ -526,7 +545,7 @@ A `priority` controls when the enqueued content is delivered:
 
 Adjacent part-style items (user content and [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s) are coalesced into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete messages stay separate. This lets a single call inject an interleaved exchange — for example a synthetic tool call (a [`ModelResponse`][pydantic_ai.messages.ModelResponse]) followed by its result (a [`ModelRequest`][pydantic_ai.messages.ModelRequest]). The content must end in a request, so the agent has something to respond to.
 
-Both `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered messages (exactly as they landed in history), so a client can observe when its steering message took effect. The event carries the delivered message objects themselves — the same objects held in the run's message history. A history processor that replaces history with new message objects does not affect the event, but in-place mutation of a delivered message will be visible through it.
+Both `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered messages (exactly as they landed in history), so a client can observe when its steering message took effect. The event carries the delivered message objects themselves — the same objects held in the run's message history. A history processor that replaces history with new message objects does not affect the event, but [in-place mutation](#editing-existing-messages) of a delivered message will be visible through it.
 
 ### From inside a tool or hook
 

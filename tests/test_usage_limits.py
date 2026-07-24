@@ -435,9 +435,11 @@ def test_request_usage_basics():
 def test_usage_arbitrary_fields():
     usage = RequestUsage(future_tokens=1, label='original')
 
+    assert usage == snapshot(RequestUsage(future_tokens=1, label='original'))
     assert usage == RequestUsage(future_tokens=1, label='original')
     assert usage != RequestUsage(future_tokens=2, label='original')
     assert usage != object()
+    assert RunUsage(requests=0, future_tokens=1) == snapshot(RunUsage(future_tokens=1))
     assert RunUsage(requests=0) == RunUsage()
 
     result = usage + RequestUsage(future_tokens=2, label='increment')

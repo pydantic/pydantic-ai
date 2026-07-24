@@ -161,7 +161,7 @@ def test_get_unwrapped_function_name_error():
         pass
 
     with pytest.raises(AttributeError) as exc_info:
-        get_unwrapped_function_name(InvalidCallable())  # type: ignore
+        get_unwrapped_function_name(InvalidCallable())  # pyright: ignore[reportArgumentType]
 
     assert str(exc_info.value) == "'InvalidCallable' object has no attribute '__name__'"
 

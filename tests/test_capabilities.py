@@ -544,6 +544,47 @@ def test_model_json_schema_with_capabilities():
     assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
+                'AdvisorTool': {
+                    'properties': {
+                        'kind': {'default': 'advisor', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'model': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'claude-fable-5',
+                                        'claude-mythos-5',
+                                        'claude-opus-4-8',
+                                        'claude-opus-4-7',
+                                        'claude-opus-4-6',
+                                        'claude-sonnet-4-6',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
+                            'title': 'Model',
+                        },
+                        'max_uses': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Uses',
+                        },
+                        'max_tokens': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Tokens',
+                        },
+                        'caching': {
+                            'anyOf': [{'enum': ['5m', '1h'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Caching',
+                        },
+                    },
+                    'required': ['model'],
+                    'title': 'AdvisorTool',
+                    'type': 'object',
+                },
                 'AgentRetries': {
                     'additionalProperties': False,
                     'properties': {
@@ -1476,6 +1517,11 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                             'title': 'Max Uses',
                         },
+                        'external_web_access': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'External Web Access',
+                        },
                     },
                     'title': 'WebSearchTool',
                     'type': 'object',
@@ -1549,6 +1595,7 @@ def test_model_json_schema_with_capabilities():
                                         {'$ref': '#/$defs/MemoryTool'},
                                         {'$ref': '#/$defs/MCPServerTool'},
                                         {'$ref': '#/$defs/FileSearchTool'},
+                                        {'$ref': '#/$defs/AdvisorTool'},
                                         {'$ref': '#/$defs/ToolSearchTool'},
                                     ]
                                 },
@@ -1950,6 +1997,10 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Allowed Domains',
                         },
                         'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
+                        'external_web_access': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'External Web Access',
+                        },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
@@ -6988,7 +7039,7 @@ class TestWebSearchCapability:
 
     def test_websearch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
         """WebSearch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch()])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -7029,7 +7080,7 @@ class TestWebSearchCapability:
 
     def test_websearch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -7049,7 +7100,7 @@ class TestWebSearchCapability:
 
     def test_websearch_requires_native_with_constraints(self, allow_model_requests: None):
         """WebSearch(allowed_domains=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch(allowed_domains=['example.com'], local='duckduckgo')])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -7323,7 +7374,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
         """WebFetch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch()])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -7375,7 +7426,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebFetch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -7394,7 +7445,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_max_uses_requires_native(self, allow_model_requests: None):
         """WebFetch(max_uses=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch(max_uses=5, local=True)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -10011,6 +10062,7 @@ def test_web_search_with_constraints():
         blocked_domains=['bad.com'],
         allowed_domains=['good.com'],
         max_uses=3,
+        external_web_access=False,
     )
     builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
@@ -10021,7 +10073,22 @@ def test_web_search_with_constraints():
     assert tool.blocked_domains == ['bad.com']
     assert tool.allowed_domains == ['good.com']
     assert tool.max_uses == 3
+    assert tool.external_web_access is False
     assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
+
+
+def test_web_search_external_access_constraint():
+    """Disabling live access suppresses local fallback; allowing it does not."""
+    without_access = WebSearch(local=_noop_greet, external_web_access=False)
+    assert without_access._requires_native() is True  # pyright: ignore[reportPrivateUsage]
+    assert without_access.get_toolset() is None
+
+    with_access = WebSearch(local=_noop_greet, external_web_access=True)
+    assert with_access._requires_native() is False  # pyright: ignore[reportPrivateUsage]
+    assert with_access.get_toolset() is not None
+
+    with pytest.raises(UserError, match='constraint fields require the native tool'):
+        WebSearch(native=False, local=_noop_greet, external_web_access=False)
 
 
 def test_web_search_duckduckgo_raises_without_extra(monkeypatch: pytest.MonkeyPatch):
@@ -19858,8 +19925,8 @@ class TestOutputHookEdgeCases:
 
         ctx = RunContext(
             deps=None,
-            model=None,  # type: ignore
-            usage=None,  # type: ignore
+            model=None,  # pyright: ignore[reportArgumentType]
+            usage=None,  # pyright: ignore[reportArgumentType]
             prompt='test',
             run_step=0,
             retry=0,
@@ -19879,8 +19946,8 @@ class TestOutputHookEdgeCases:
 
         ctx = RunContext(
             deps=None,
-            model=None,  # type: ignore
-            usage=None,  # type: ignore
+            model=None,  # pyright: ignore[reportArgumentType]
+            usage=None,  # pyright: ignore[reportArgumentType]
             prompt='test',
             run_step=0,
             retry=0,
@@ -19908,8 +19975,8 @@ class TestOutputHookEdgeCases:
         async def run():
             ctx = RunContext(
                 deps=None,
-                model=None,  # type: ignore
-                usage=None,  # type: ignore
+                model=None,  # pyright: ignore[reportArgumentType]
+                usage=None,  # pyright: ignore[reportArgumentType]
                 prompt='test',
                 run_step=0,
                 retry=0,

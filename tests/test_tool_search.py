@@ -464,6 +464,7 @@ _CASES = [
 
 @pytest.mark.skipif(not evals_available(), reason='pydantic-evals not installed')
 @pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after ToolSearch discovery')
 @pytest.mark.parametrize(
     'case',
     [pytest.param(c, id=c.model_name.split(':')[0], marks=c.marks) for c in _CASES],
@@ -2261,6 +2262,7 @@ async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loa
 
 
 @pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after ToolSearch discovery')
 async def test_openai_deferred_capability_runs_on_model_without_native_tool_search(
     allow_model_requests: None, openai_api_key: str
 ) -> None:
@@ -2658,6 +2660,7 @@ _RESUME_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
 # matrix. Recording: `pytest --record-mode=once --inline-snapshot=create`.
 @pytest.mark.parametrize('first_model_name,resume_model_name', list(_FIRST_TURN_EXPECTED.keys()))
 @pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after ToolSearch discovery')
 @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
 @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
 async def test_cross_provider_capability_replay(

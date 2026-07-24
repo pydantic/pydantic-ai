@@ -142,7 +142,7 @@ Calling the `load_capability` tool reveals capability behavior between requests.
 | Function tools on other models (local `search_tools` fallback) | **May break between turns** — function-tool visibility changes as capabilities load. |
 | Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |
 
-When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model with native tool search. The provider-specific mechanics that keep the prefix stable live in [tools-advanced.md](../tools-advanced.md#tool-search).
+When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model with native tool search. The provider-specific mechanics that keep the prefix stable live in [Tool search and prompt caching](../tools-advanced.md#tool-search-caching).
 
 ## The `Capability` convenience class
 
