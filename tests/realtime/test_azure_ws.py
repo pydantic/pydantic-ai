@@ -279,10 +279,16 @@ async def test_audio_in_server_vad_transcription_requires_deployment(
     `DeploymentNotFound` on every turn unless a transcription model is deployed and configured. That's a
     misconfiguration, not a transient per-utterance failure, so the shared codec raises it as a
     non-recoverable error with a fix-it message (rather than silently dropping user turns via a recoverable
-    event). This cassette was recorded against a resource without a transcription deployment.
+    event). Pins a transcription model that is deliberately not deployed on the resource, so the failure
+    reproduces on re-record even though real transcription models (e.g. `gpt-realtime-whisper`) are now
+    deployed there — see `test_audio_in_server_vad_transcribes` for the deployed-and-working companion.
     """
     provider, _ = azure_ws_cassette
-    model = AzureRealtimeModel('gpt-realtime', provider=provider)
+    model = AzureRealtimeModel(
+        'gpt-realtime',
+        provider=provider,
+        settings=OpenAIRealtimeModelSettings(input_transcription_model='gpt-4o-transcribe-not-deployed'),
+    )
     agent = Agent(instructions='Reply in a few words.')
     pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
 
@@ -298,3 +304,39 @@ async def test_audio_in_server_vad_transcription_requires_deployment(
 
     # Server VAD brackets the user's speech; the deployment error then ends the session before any reply.
     assert collapse_event_types(events) == snapshot(['InputSpeechStartEvent', 'InputSpeechEndEvent'])
+
+
+async def test_audio_in_server_vad_transcribes(
+    azure_ws_cassette: tuple[AzureProvider, RealtimeCassette], assets_path: Path
+) -> None:
+    """Audio-in server-VAD on Azure GA with a *deployed* transcription model transcribes the user turn.
+
+    The companion to `test_audio_in_server_vad_transcription_requires_deployment`: once a transcription
+    model (here `gpt-realtime-whisper`, which `input_transcription_model='auto'` resolves to) is deployed
+    on the resource, the spoken turn lands in history as a transcribed user `SpeechPart`, exactly like
+    OpenAI's hosted default.
+    """
+    provider, _ = azure_ws_cassette
+    model = AzureRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
+
+    events: list[Any] = []
+    async with agent.realtime_session(
+        model=model, model_settings=OpenAIRealtimeModelSettings(input_transcription_model='gpt-realtime-whisper')
+    ) as session:
+        for start in range(0, len(pcm), 4800):
+            await session.send_audio(pcm[start : start + 4800])
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+                events.append(event)
+                if isinstance(event, TurnCompleteEvent):
+                    break
+
+    messages = session.all_messages()
+    user_turn = messages[0]
+    assert isinstance(user_turn, ModelRequest)
+    user_part = user_turn.parts[0]
+    assert isinstance(user_part, SpeechPart)
+    assert user_part.speaker == 'user'
+    assert user_part.transcript == snapshot('Hello, my name is Marcelo.')
