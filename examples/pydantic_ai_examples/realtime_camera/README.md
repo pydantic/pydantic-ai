@@ -1,18 +1,20 @@
 # Realtime camera + voice assistant
 
-A minimal "talk and show" assistant: speak to a **Gemini Live** model and point your camera at
-things to ask about them. The browser streams microphone audio (PCM16, 16 kHz) and ~1 fps JPEG
-camera frames into a realtime session and plays the model's audio back — no tools, no supervisor,
-just conversation with live vision.
+A minimal "talk and show" assistant: speak to a **Gemini, OpenAI, or Azure OpenAI realtime** model
+and point your camera at things to ask about them. The browser streams microphone audio (PCM16,
+16 kHz) and ~1 fps JPEG camera frames into a realtime session and plays the model's audio back — no
+tools, no supervisor, just conversation with live vision.
 
-It showcases the Gemini provider's native **live video** support: each camera frame is an
+It showcases provider-agnostic **image input**: each camera frame is an
 [`ImageInput`][pydantic_ai.realtime.ImageInput] sent with
 [`send`][pydantic_ai.realtime.RealtimeSession.send]; the audio is the usual
-speech-to-speech path. (See the [realtime guide](https://ai.pydantic.dev/realtime/).)
+speech-to-speech path. Gemini retains its richer native-video controls. xAI realtime is unsupported
+in this example because it has no image input. (See the [realtime guide](https://ai.pydantic.dev/realtime/).)
 
 ## Run
 
-Set `GOOGLE_API_KEY` (Gemini Live access) in a `.env` at the repo root, then:
+Set credentials for your provider (`GOOGLE_API_KEY`, `OPENAI_API_KEY`, or `AZURE_OPENAI_*`) in a
+`.env` at the repo root, then:
 
 ```bash
 uv run --all-packages uvicorn pydantic_ai_examples.realtime_camera.app:app
@@ -21,8 +23,14 @@ uv run --all-packages uvicorn pydantic_ai_examples.realtime_camera.app:app
 Open <http://localhost:8000> and tap **Start** — `localhost` is a secure context, so the browser
 allows camera + microphone. Talk, and hold something up to the camera.
 
-Overrides: `CAMERA_REALTIME_MODEL` (default `gemini-2.5-flash-native-audio-latest`; try
-`gemini-3.1-flash-live-preview`), `CAMERA_REALTIME_VOICE` (default `Puck`).
+Overrides: `CAMERA_REALTIME_MODEL` (default `google:gemini-live-2.5-flash`) and
+`CAMERA_REALTIME_VOICE` (default `Puck`). Model IDs must be provider-prefixed, for example
+`google:gemini-live-2.5-flash`, `openai:gpt-realtime`, or `azure:<deployment>`.
+
+The model, voice, and output modality settings apply across providers. Language, turn coverage,
+proactive audio, affective dialog, and Gemini's separate start/end VAD sensitivities are Gemini-only;
+OpenAI and Azure map either sensitivity control to their shared turn-detection sensitivity. The voice
+field is free text: the suggestions are Gemini names, while OpenAI voices include `marin` and `alloy`.
 
 The app is instrumented with [Logfire](https://ai.pydantic.dev/logfire/): if a `LOGFIRE_TOKEN` is
 set (e.g. in the same `.env`), the realtime session, model turns, and tool calls show up as traces;
@@ -35,8 +43,8 @@ won't say "I see two fingers" until you ask. The assistant always receives **eve
 (`turn_coverage='all_input'`), and the **Watch** toggle makes it proactive: while on, the browser
 nudges the model every couple of seconds to report what changed.
 
-The default model is a **native-audio** one, so for the best experience set `CAMERA_PROACTIVE=true` —
-the model then stays silent when nothing changed instead of replying to every nudge:
+For a Gemini native-audio model, set `CAMERA_PROACTIVE=true` to let the model decide when to speak
+and stay silent when nothing changed. `CAMERA_AFFECTIVE=true` enables emotion-aware delivery:
 
 ```bash
 export CAMERA_PROACTIVE=true     # model decides when to speak (native-audio only)
@@ -47,6 +55,8 @@ Other overrides: `CAMERA_TURN_COVERAGE` (`activity_only` | `all_input` | `all_vi
 `all_input`, which works everywhere — the newer `all_video` isn't accepted on Vertex yet),
 `CAMERA_WATCH_PROMPT` (what the model is asked on each nudge). Watch mode costs extra tokens, since
 it prompts the model on a timer.
+
+Both settings are Gemini native-audio only.
 
 ### Web search
 
@@ -120,12 +130,12 @@ straight through. (`ngrok http 8000` works the same way.)
 
 ```
 browser ──mic PCM16@16k (binary WS)──┐
-        ──camera JPEG frames (JSON WS)─┤→  FastAPI /ws  →  Agent.realtime(GoogleRealtimeModel).session()
+        ──camera JPEG frames (JSON WS)─┤→  FastAPI /ws  →  Agent.realtime(inferred model).session()
         ◀──model audio (binary WS)─────┘                    └ send_audio / send / receive
         ◀──transcripts (JSON WS)───────┘
 ```
 
-`app.py` bridges the WebSocket to a single Gemini Live session: inbound binary frames are forwarded
+`app.py` bridges the WebSocket to one inferred realtime session: inbound binary frames are forwarded
 as audio, `{"type":"image"}` messages as video frames, and `{"type":"text"}` as typed turns; outbound
 audio is streamed back as binary and transcripts as JSON. The session closes (and its telemetry span
 flushes) when the socket drops.
