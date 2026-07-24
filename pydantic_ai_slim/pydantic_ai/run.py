@@ -210,14 +210,15 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         if self._result_override is not None:
             raise StopAsyncIteration
+        self.ctx.deps.cancellation.bind()
         try:
             task = await anext(self._graph_run)
+            # The completed step's messages are already recorded on `state.message_history`,
+            # so if it absorbed an external cancellation, re-assert it before advancing.
+            _utils.raise_if_cancelling()
         except BaseException as exc:
             self._node_error = exc
             raise
-        # The completed step's messages are already recorded on `state.message_history`,
-        # so if it absorbed an external cancellation, re-assert it before advancing.
-        _utils.raise_if_cancelling()
         node = self._task_to_node(task)
         if isinstance(node, End) and self._graph_run.state.pending_messages:
             # `asap` messages drain in `before_model_request` (which fires either way), but
@@ -292,6 +293,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Used by both `_run_node_with_hooks` and directly by `run_stream()` which calls
         `before_node_run` separately (before streaming).
         """
+        self.ctx.deps.cancellation.bind()
         cap = self.ctx.deps.root_capability
         try:
             result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
@@ -479,6 +481,30 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             return None
         self._graph_run.state.pending_messages.append(pending)
         return pending.enqueue_id
+
+    def cancel(self) -> None:
+        """Cancel the whole agent run.
+
+        The run stops what it is doing — the in-flight model request is torn down, in-flight tool
+        tasks are cancelled and drained, a suspended server-side job is best-effort cancelled — and
+        the code driving the run sees `asyncio.CancelledError`. When the `agent.iter()` context
+        exits, this becomes [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] (including for
+        `agent.run()`, which wraps `iter()`). Everything that completed before the cancellation took
+        effect is preserved in message history. [`RunCancelled.messages`][pydantic_ai.exceptions.RunCancelled.messages]
+        contains a complete snapshot that can be passed to a new run as `message_history` to resume
+        the conversation.
+
+        Unlike [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel], which
+        only stops the current model response and lets the run continue, this ends the run itself.
+
+        Safe to call from another task (e.g. a TUI's key handler while the run is awaited
+        elsewhere), but not from another thread — marshal onto the run's event loop first
+        (e.g. `loop.call_soon_threadsafe(agent_run.cancel)`). Idempotent; a no-op once the run
+        has finished. Externally cancelling the task running the agent (`asyncio.Task.cancel()`)
+        remains supported and keeps raising `asyncio.CancelledError` instead; when both happen,
+        the external cancellation wins.
+        """
+        self.ctx.deps.cancellation.cancel()
 
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output

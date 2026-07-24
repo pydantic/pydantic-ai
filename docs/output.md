@@ -938,7 +938,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
-`run_stream_events()` does not expose a `cancel()` method. If you need an explicit model-response cancellation handle, use [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] or [`agent.iter()`][pydantic_ai.agent.Agent.iter].
+`run_stream_events()` does not expose a `cancel()` method. If you need an explicit model-response cancellation handle, use [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] or [`agent.iter()`][pydantic_ai.agent.Agent.iter]; to abort the whole run from an `event_stream_handler` or tool, use [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run] (see [Cancelling the Whole Run](#cancelling-the-whole-run)).
 
 #### Cancelling `run_stream`
 
@@ -974,7 +974,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 If you `break` out of `stream_text()` and then leave the surrounding `async with` block, the stream is cleaned up as the context exits. Use `cancel()` when you want to stop generation immediately instead of only stopping local consumption.
 
 !!! warning "Interrupted tool calls"
-    Cancelling or breaking out of a model response stream can leave the final [`ModelResponse`][pydantic_ai.messages.ModelResponse] with incomplete tool-call arguments. Pydantic AI records the response with `state='interrupted'`, and when the history is reused in another run the partial tool calls are [repaired automatically](message-history.md#making-histories-provider-valid). If you are controlling the graph with [`agent.iter()`][pydantic_ai.agent.Agent.iter], stop the outer run loop as well, or check `response.state == 'interrupted'` before allowing the run to continue into tool execution.
+    Cancelling or breaking out of a model response stream can leave the final [`ModelResponse`][pydantic_ai.messages.ModelResponse] with incomplete tool-call arguments. Pydantic AI records the response with `state='interrupted'`, and when the history is reused in another run the partial tool calls are [repaired automatically](message-history.md#making-histories-provider-valid). If you are controlling the graph with [`agent.iter()`][pydantic_ai.agent.Agent.iter], call [`agent_run.cancel()`][pydantic_ai.run.AgentRun.cancel] to stop the whole run as well, or check `response.state == 'interrupted'` before allowing the run to continue into tool execution.
 
 #### Cancelling with `iter`
 
@@ -1000,6 +1000,36 @@ async def main():
 1. `AgentStream.cancel()` cancels the stream at the model request level.
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+#### Cancelling the Whole Run
+
+The methods above stop the current model response but let the run continue (e.g. into tool execution). To abort the run itself, call [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] on the handle returned by [`agent.iter()`][pydantic_ai.agent.Agent.iter], or [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run] from inside a tool, an `event_stream_handler`, or a capability hook. The run tears down whatever is in flight and raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled]:
+
+```python {title="run_cancel.py"}
+from pydantic_ai import Agent, RunCancelled
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    try:
+        async with agent.iter('Write a long essay about Python') as agent_run:
+            async for node in agent_run:
+                if Agent.is_call_tools_node(node):
+                    agent_run.cancel()  # (1)!
+    except RunCancelled as exc:
+        print(f'Cancelled after {len(exc.messages)} messages')  # (2)!
+        #> Cancelled after 2 messages
+```
+
+1. Typically wired to a "stop" gesture — `cancel()` is safe to call from another task (e.g. a key handler while the run is awaited elsewhere), and is a no-op once the run has finished.
+2. [`RunCancelled.messages`][pydantic_ai.exceptions.RunCancelled.messages] holds the run's complete message history: everything that finished before the cancellation took effect, including the partial response of an interrupted stream and the results of tool calls that completed. Pass it to a new run as `message_history` to resume the conversation — any tool call that never produced a result is [repaired automatically](message-history.md#making-histories-provider-valid) before the history is sent to a model.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+Inside an `agent.iter()` block, both first-party and external cancellation surface as `asyncio.CancelledError`. When the context exits, a first-party cancellation is raised as `RunCancelled` with a complete snapshot of the run's message history. Cancellation is terminal: capability hooks may observe it and clean up, but cannot recover the run to success.
+
+`RunCancelled` is an application-level outcome: your own code asked the run to stop. Externally cancelling the task running the agent — `asyncio.Task.cancel()`, a timeout scope, workflow cancellation under [durable execution](durable_execution/overview.md) — is not translated: it keeps raising `asyncio.CancelledError`, and when both happen at once the external cancellation wins. Either way, completed work is preserved in message history (accessible via [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] in the external case).
 
 #### Message History After Cancellation
 

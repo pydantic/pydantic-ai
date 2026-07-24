@@ -1634,7 +1634,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         agent_name = self.name or 'agent'
 
+        @asynccontextmanager
+        async def _translate_cancellation() -> AsyncGenerator[None]:
+            try:
+                yield
+            except asyncio.CancelledError as exc:
+                if graph_deps.cancellation.resolve():
+                    raise exceptions.RunCancelled(
+                        'The agent run was cancelled.', messages=list(state.message_history)
+                    ) from exc
+                raise
+
         async with AsyncExitStack() as stack:
+            # Enter first so cancellation is classified only after every other context has torn down.
+            await stack.enter_async_context(_translate_cancellation())
             model_stack = stack
             await stack.enter_async_context(
                 _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
@@ -1651,6 +1664,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             )
             agent_run = AgentRun(graph_run)
+            # Bind the run's cancellation controller to this task, and neutralize `cancel()`
+            # once the run is over so it can never cancel unrelated later work on this task.
+            graph_deps.cancellation.bind()
+            stack.callback(graph_deps.cancellation.finish)
             self._resolve_and_store_metadata(agent_run.ctx, metadata)
 
             # Build RunContext for run lifecycle hooks
@@ -1745,8 +1762,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # Every completion path funnels through here — including `wrap_run`/`on_run_error`
                 # recovering from the very `CancelledError` an external cancel delivered. If that
                 # cancellation is still pending on this task, re-assert it rather than let the run
-                # finalize as a success.
+                # finalize as a success. A first-party request remains terminal even if a hook
+                # consumed the task's cancellation counter.
                 _utils.raise_if_cancelling()
+                if graph_deps.cancellation.cancel_requested:
+                    raise asyncio.CancelledError
                 agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
                 _run_error = None
 

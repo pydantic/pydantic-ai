@@ -488,7 +488,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Note: if the caller cancels the run (e.g. by breaking out of an
         `iter()` loop), this method receives an `asyncio.CancelledError`.
-        Implementations that hold resources should handle cleanup accordingly.
+        Implementations that hold resources should handle cleanup accordingly. Cancellation is
+        terminal: the hook may observe it and clean up, but cannot recover the run to success.
         """
         return await handler()
 
@@ -509,6 +510,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** an [`AgentRunResult`][pydantic_ai.run.AgentRunResult] to suppress
         the error and recover the run.
+
+        Cancellation is terminal: the hook may observe it and clean up, but cannot recover the
+        run to success.
 
         Not called for `GeneratorExit` or `KeyboardInterrupt`.
         """

@@ -39,6 +39,7 @@ from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from ._cancel import RunCancellation
 from ._deferred_capabilities import parse_loaded_capabilities
 from ._instructions import normalize_toolset_instructions
 from ._run_context import set_current_run_context
@@ -417,6 +418,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     instrumentation_settings: InstrumentationSettings | None
 
     agent: Agent[DepsT, Any] | None = None
+
+    cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
+    """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
 
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
@@ -2148,6 +2152,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
+        _cancellation=ctx.deps.cancellation,
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
     )
