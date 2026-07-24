@@ -65,7 +65,7 @@ async def test_audio_in_server_vad_turn(
     pcm = assets_path.joinpath('marcelo_16khz.pcm').read_bytes()  # Gemini wants 16 kHz input
 
     events: list[Any] = []
-    async with agent.realtime_session(model=model) as session:
+    async with agent.realtime(model).session() as session:
         for start in range(0, len(pcm), 3200):  # ~100 ms chunks at 16 kHz
             await session.send_audio(pcm[start : start + 3200])
         with anyio.fail_after(45):
@@ -96,7 +96,7 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
     agent = Agent(instructions='Answer in two or three words.')
 
     events: list[Any] = []
-    async with agent.realtime_session(model=model, audio_retention='output_audio') as session:
+    async with agent.realtime(model).session(audio_retention='output_audio') as session:
         await session.send('Say a short greeting.')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
@@ -152,7 +152,7 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
         return f'It is foggy and 12 degrees in {city}.'
 
     events: list[Any] = []
-    async with agent.realtime_session(model=model) as session:
+    async with agent.realtime(model).session() as session:
         await session.send('What is the weather in London?')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
@@ -263,7 +263,7 @@ async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], 
     ]
 
     events: list[Any] = []
-    async with agent.realtime_session(model=model, message_history=history) as session:
+    async with agent.realtime(model, message_history=history).session() as session:
         await session.send('What is my name and favorite color?')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent

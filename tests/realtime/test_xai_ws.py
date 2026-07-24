@@ -63,7 +63,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
     agent = Agent(instructions='Answer in two or three words.')
 
     events: list[Any] = []
-    async with agent.realtime_session(model=model, audio_retention='output_audio') as session:
+    async with agent.realtime(model).session(audio_retention='output_audio') as session:
         await session.send('Say a short greeting.')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
@@ -135,7 +135,7 @@ async def test_audio_in_server_vad_turn(
     pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
 
     events: list[Any] = []
-    async with agent.realtime_session(model=model) as session:
+    async with agent.realtime(model).session() as session:
         # Stream the clip in ~100 ms chunks like a live mic; the trailing silence lets server VAD end it.
         for start in range(0, len(pcm), 4800):
             await session.send_audio(pcm[start : start + 4800])
@@ -193,7 +193,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
 
     events: list[Any] = []
     seen_result = spoke_after_result = False
-    async with agent.realtime_session(model=model) as session:
+    async with agent.realtime(model).session() as session:
         await session.send('What is the weather in London?')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
@@ -299,7 +299,7 @@ async def test_message_history_seeding(xai_ws_cassette: tuple[XaiProvider, Realt
     ]
 
     events: list[Any] = []
-    async with agent.realtime_session(model=model, message_history=history) as session:
+    async with agent.realtime(model, message_history=history).session() as session:
         await session.send('What is my name and favorite color?')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
@@ -360,7 +360,7 @@ async def test_session_resumption_after_drop(xai_ws_cassette: tuple[XaiProvider,
     events: list[Any] = []
     disconnected = False
     sent_followup = False
-    async with agent.realtime_session(model=model) as session:
+    async with agent.realtime(model).session() as session:
         await session.send('Remember exactly: the code word is cobalt. Briefly acknowledge it.')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent

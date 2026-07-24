@@ -110,6 +110,7 @@ from .abstract import (
     AbstractAgent,
     AgentMetadata,
     AgentModelSettings,
+    AgentRealtime,
     AgentRetries,
     EventStreamHandler,
     EventStreamProcessor,
@@ -130,6 +131,7 @@ __all__ = (
     'AbstractAgent',
     'Agent',
     'AgentModelSettings',
+    'AgentRealtime',
     'AgentRetries',
     'AgentRun',
     'AgentRunResult',
@@ -3014,7 +3016,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return schema
 
     @asynccontextmanager
-    async def realtime_session(
+    async def _open_realtime_session(
         self,
         model: RealtimeModel | KnownRealtimeModelName | str,
         *,
@@ -3031,75 +3033,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
     ) -> AsyncGenerator[RealtimeSession]:
-        """Open a realtime speech-to-speech session backed by the agent's tools.
+        """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
 
-        The session connects to a realtime `model` and automatically executes tool calls using the
-        agent's registered tools, sending the results back to the model.
-
-        This mirrors [`run`][pydantic_ai.agent.AbstractAgent.run] / [`iter`][pydantic_ai.agent.AbstractAgent.iter]
-        for the parameters that map to a long-lived, bidirectional session. Parameters that are
-        specific to the request-response graph — `output_type`, `retries`, `event_stream_handler`,
-        `deferred_tool_results` — do not apply; structured output should be delegated to a normal
-        [`Agent`][pydantic_ai.Agent] (see the realtime docs). Capabilities run `for_run` once when the
-        session connects; their instructions, toolsets, and native tools are applied. Tool hooks
-        (`prepare_tools` and `before`/`after`/`wrap`/`on_error` for `tool_validate` and `tool_execute`)
-        run for each tool call. Run-, graph-, model-request-, event-stream-, and output-stage hooks do
-        not run.
-
-        Example:
-        ```python {test="skip"}
-        from pydantic_ai import Agent
-        from pydantic_ai.realtime.openai import OpenAIRealtimeModel
-
-        agent = Agent(instructions='You are a helpful voice assistant.')
-
-        @agent.tool_plain
-        def get_weather(city: str) -> str:
-            return f'Sunny in {city}'
-
-        async def main():
-            rt = OpenAIRealtimeModel('gpt-realtime')
-            async with agent.realtime_session(model=rt) as session:
-                await session.send_audio(b'...')
-                async for event in session:
-                    print(event)
-        ```
-
-        Args:
-            model: The realtime model to connect to.
-            deps: Dependencies passed to tool functions.
-            model_settings: Optional realtime settings overriding the model's defaults for this session.
-            instructions: Additional instructions for this session, combined with the agent's
-                instructions. Dynamic instruction functions (`@agent.instructions`) are evaluated
-                once at connect time (there is no per-request rebuild in a realtime session).
-            toolsets: Optional additional toolsets for this session, on top of the agent's.
-            capabilities: Optional additional capabilities for this session. Their `for_run`, setup
-                contributions, and tool-lifecycle hooks apply; run, model-request, graph, event-stream,
-                and output hooks are not invoked.
-            usage: Optional [`RunUsage`][pydantic_ai.usage.RunUsage] to accumulate token usage into;
-                exposed as `session.usage`. A fresh one is used when omitted.
-            usage_limits: Optional [`UsageLimits`][pydantic_ai.usage.UsageLimits]. Request, token, and
-                tool-call limits are enforced as usage accrues; a breach raises
-                [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from the session's
-                event iterator, matching how `run` / `iter` surface a usage limit.
-            metadata: Optional metadata set on the [`RunContext`][pydantic_ai.tools.RunContext]
-                available to tools and capabilities, and on the realtime session telemetry span.
-            conversation_id: Optional conversation id, set on the run context and the telemetry span
-                so a realtime session can be correlated with other runs. Session-built messages are
-                stamped with it as well, allowing a later standard run to resume the same conversation;
-                seeded messages are left unchanged.
-            message_history: Prior conversation to seed the session with. Replayable text, transcripts,
-                thinking, tool rounds, images, and supported retained user audio are projected to the
-                provider's initial conversation items; unrepresentable content raises `UserError`. The
-                history is included in [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages]
-                (but not `new_messages()`). Hand off from a prior session or a standard
-                [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] by passing its messages here.
-            audio_retention: How much spoken audio the session retains in its history, on top of
-                transcripts. Defaults to `'transcript_only'` (drop audio bytes); see
-                [`AudioRetention`][pydantic_ai.realtime.AudioRetention].
-            retain_images_every_n: Keep one of every `N` images sent during the session in message
-                history. Defaults to `1`, which keeps every image. Increase this for high-rate camera
-                or screen streams to trade complete visual history for lower memory use.
+        Opens the realtime session and drives the agent's tools. Users go through
+        [`agent.realtime(model).session()`][pydantic_ai.agent.AbstractAgent.realtime]; see
+        [`realtime`][pydantic_ai.agent.AbstractAgent.realtime] for the parameter reference.
         """
         from ..realtime import RealtimeModel, RealtimeSession, infer_realtime_model
 

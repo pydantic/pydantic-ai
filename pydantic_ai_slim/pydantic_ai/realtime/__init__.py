@@ -6,7 +6,8 @@ request-response pattern of the standard [`Model`][pydantic_ai.models.Model] int
 
 The provider-agnostic ABCs and event types live here; concrete providers live in submodules
 (e.g. `pydantic_ai.realtime.openai`). The high-level entry point is
-[`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session].
+[`Agent.realtime`][pydantic_ai.agent.Agent.realtime], followed by
+[`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
 
 A session translates the low-level codec events (the connection-facing `RealtimeCodecEvent` vocabulary)
 into the shared message/part event vocabulary from [`pydantic_ai.messages`][pydantic_ai.messages]

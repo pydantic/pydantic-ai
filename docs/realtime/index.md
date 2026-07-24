@@ -62,7 +62,7 @@ def get_weather(city: str) -> str:
 
 async def main():
     model = OpenAIRealtimeModel('gpt-realtime')
-    async with agent.realtime_session(model=model) as session:
+    async with agent.realtime(model).session() as session:
         await session.send_audio(microphone_chunk)  # PCM16 audio bytes
         async for event in session:
             match event:
@@ -157,10 +157,10 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModel
 defaults = OpenAIRealtimeModelSettings(voice='alloy', max_tokens=2_000)
 model = OpenAIRealtimeModel('gpt-realtime', settings=defaults)
 
-async with agent.realtime_session(
-    model=model,
+async with agent.realtime(
+    model,
     model_settings=OpenAIRealtimeModelSettings(max_tokens=4_000),
-) as session:
+).session() as session:
     ...
 ```
 
@@ -219,7 +219,7 @@ Azure OpenAI, and xAI — see [`supports_manual_turn_control`](#model-profile-re
 model = OpenAIRealtimeModel(
     'gpt-realtime', settings=OpenAIRealtimeModelSettings(turn_detection=False)
 )
-async with agent.realtime_session(model=model) as session:
+async with agent.realtime(model).session() as session:
     await session.send_audio(chunk)
     await session.commit_audio()
     await session.create_response()
@@ -274,10 +274,10 @@ from pydantic_ai.realtime.google import GoogleRealtimeModel
 
 agent = Agent(instructions='Answer questions, searching the web when useful.')
 
-async with agent.realtime_session(
-    model=GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest'),
+async with agent.realtime(
+    GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest'),
     capabilities=[WebSearch()],
-) as session:
+).session() as session:
     async for event in session:
         if isinstance(event, PartEndEvent) and isinstance(event.part, NativeToolReturnPart):
             # Cite what the model grounded its answer on.
@@ -353,10 +353,10 @@ notetaker = Agent('openai:gpt-5', instructions='Summarize the conversation as bu
 
 
 async def main(prior_history):
-    async with voice.realtime_session(
-        model=OpenAIRealtimeModel('gpt-realtime'),
+    async with voice.realtime(
+        OpenAIRealtimeModel('gpt-realtime'),
         message_history=prior_history,  # resume an earlier conversation
-    ) as session:
+    ).session() as session:
         async for event in session:
             ...  # stream audio, run tools
 
@@ -386,7 +386,7 @@ support.
 #### Retaining audio
 
 By default only transcripts are kept on the history parts. Pass
-`audio_retention=` to [`realtime_session`][pydantic_ai.agent.Agent.realtime_session] to also retain
+`audio_retention=` to [`session()`][pydantic_ai.agent.AgentRealtime.session] to also retain
 the spoken audio as WAV [`BinaryContent`][pydantic_ai.messages.BinaryContent] on the `SpeechPart`s,
 at the cost of memory. Streaming input and `SpeechPartDelta.audio_chunk` output remain raw PCM16;
 only finalized history audio is wrapped in a WAV container.
@@ -467,7 +467,7 @@ not included in the response token totals or attributed to any [`ModelResponse`]
 because transcription of the user's input audio uses a separate model and billing meter.
 
 ```python {test="skip" lint="skip"}
-async with agent.realtime_session(model=model) as session:
+async with agent.realtime(model).session() as session:
     async for event in session:
         ...
     print(session.usage)  # cumulative tokens + tool calls for the session
@@ -483,9 +483,9 @@ matching how `run` / `iter` surface a usage limit.
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 shared = RunUsage()
-async with agent.realtime_session(
-    model=model, usage=shared, usage_limits=UsageLimits(total_tokens_limit=100_000)
-) as session:
+async with agent.realtime(
+    model, usage=shared, usage_limits=UsageLimits(total_tokens_limit=100_000)
+).session() as session:
     ...
 ```
 
@@ -590,12 +590,12 @@ model = GoogleRealtimeModel(
 
 ### Relationship to `run` / `iter`
 
-[`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] is the realtime sibling of
+[`Agent.realtime()`][pydantic_ai.agent.Agent.realtime] is the realtime sibling of
 [`run`][pydantic_ai.agent.AbstractAgent.run] / [`iter`][pydantic_ai.agent.AbstractAgent.iter]. It
 accepts the parameters that map to a long-lived, bidirectional session and intentionally omits the
 ones that are specific to the request-response graph (faking them would be misleading).
 
-| `run` / `iter` parameter | In `realtime_session`? |
+| `run` / `iter` parameter | In `realtime()`? |
 | --- | --- |
 | `deps`, `model_settings` | ✅ realtime-specific settings; regular agent/capability settings do not apply |
 | `instructions` | ✅ additive (combined with the agent's); dynamic `@agent.instructions` evaluated once at connect |
@@ -633,17 +633,17 @@ because the realtime live-input channel cannot preserve their full classic-run s
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 from pydantic_ai.usage import UsageLimits
 
-async with agent.realtime_session(
-    model=OpenAIRealtimeModel('gpt-realtime'),
+async with agent.realtime(
+    OpenAIRealtimeModel('gpt-realtime'),
     toolsets=[extra_toolset],            # extra tools for this session
     capabilities=[my_capability],        # tool-lifecycle hooks run
     usage_limits=UsageLimits(total_tokens_limit=100_000),
     metadata={'tenant': 'acme'},
-) as session:
+).session() as session:
     ...
 ```
 
-`realtime_session` lives on [`AbstractAgent`][pydantic_ai.agent.AbstractAgent], so it's available on
+`realtime()` lives on [`AbstractAgent`][pydantic_ai.agent.AbstractAgent], so it's available on
 [`WrapperAgent`][pydantic_ai.agent.WrapperAgent] and wrapped agents (durable, instrumented, …) just
 like `run`/`iter`. [`agent.override(...)`][pydantic_ai.agent.AbstractAgent.override] of `name`, `deps`,
 `tools`, `toolsets`, `instructions`, `metadata`, and `native_tools` is honored. Regular model and model
@@ -653,7 +653,7 @@ through `override(spec=...)` is not applied to realtime sessions.
 #### Capabilities
 
 A [capability][pydantic_ai.capabilities.AbstractCapability] passed to the agent or to
-`realtime_session(capabilities=...)` participates in a session through the parts of its lifecycle that
+`realtime(capabilities=...)` participates in a session through the parts of its lifecycle that
 map onto a live, bidirectional connection. A session sets the connection up once and then executes
 tools as the model calls them — it has no request → graph → response run — so the hooks tied to those
 stages have nothing to fire on and are **silently skipped**.
@@ -719,7 +719,7 @@ async def consult(question: str) -> str:
 
 
 async def main():
-    async with voice.realtime_session(model=OpenAIRealtimeModel('gpt-realtime')) as session:
+    async with voice.realtime(OpenAIRealtimeModel('gpt-realtime')).session() as session:
         ...
 ```
 
@@ -852,7 +852,7 @@ span to ensure gateway handshake spans join the trace:
 
 ```python {test="skip" lint="skip"}
 with logfire.span('voice call'):
-    async with agent.realtime_session(model=model) as session:
+    async with agent.realtime(model).session() as session:
         ...
 ```
 

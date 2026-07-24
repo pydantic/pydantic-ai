@@ -66,13 +66,13 @@ model/region doesn't support grounding.
 Hold a **hand-drawn diagram** up to the camera — a system design, flow chart, wireframe — and ask
 the assistant to *"clean this up"* or *"redraw it properly"*. It calls the `redraw_diagram` tool,
 which is a regular [`@agent.tool`][pydantic_ai.Agent.tool] that the
-[`realtime_session`][pydantic_ai.Agent.realtime_session] executes automatically. The tool hands the
+[`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session] executes automatically. The tool hands the
 current camera frame to a **separate vision agent** — a plain [`Agent`][pydantic_ai.Agent] running
 Gemini, using the same `GOOGLE_API_KEY` as the live session — that returns a clean, self-contained
 HTML version of the drawing. The browser renders it in an overlay and can export it to PNG
 client-side.
 
-Tools [run concurrently by design][pydantic_ai.Agent.realtime_session], so the voice conversation
+Tools [run concurrently by design][pydantic_ai.agent.AgentRealtime.session], so the voice conversation
 keeps flowing while the diagram is drawn, then the model announces it when it appears.
 
 The frames streamed to Gemini are small and low-detail to keep the live session cheap, so for the
@@ -120,7 +120,7 @@ straight through. (`ngrok http 8000` works the same way.)
 
 ```
 browser ──mic PCM16@16k (binary WS)──┐
-        ──camera JPEG frames (JSON WS)─┤→  FastAPI /ws  →  Agent.realtime_session(GoogleRealtimeModel)
+        ──camera JPEG frames (JSON WS)─┤→  FastAPI /ws  →  Agent.realtime(GoogleRealtimeModel).session()
         ◀──model audio (binary WS)─────┘                    └ send_audio / send / receive
         ◀──transcripts (JSON WS)───────┘
 ```

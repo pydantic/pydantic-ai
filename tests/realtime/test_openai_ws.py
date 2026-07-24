@@ -53,7 +53,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     agent = Agent(instructions='Answer in two or three words.')
 
     events: list[Any] = []
-    async with agent.realtime_session(model=model, audio_retention='output_audio') as session:
+    async with agent.realtime(model).session(audio_retention='output_audio') as session:
         await session.send('Say a short greeting.')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
@@ -121,7 +121,7 @@ async def test_audio_in_server_vad_turn(
     pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
 
     events: list[Any] = []
-    async with agent.realtime_session(model=model) as session:
+    async with agent.realtime(model).session() as session:
         # Stream the clip in ~100 ms chunks like a live mic; the trailing silence lets server VAD end
         # the turn without any manual `commit_audio()`.
         for start in range(0, len(pcm), 4800):
@@ -178,7 +178,7 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
         return f'It is foggy and 12 degrees in {city}.'
 
     events: list[Any] = []
-    async with agent.realtime_session(model=model) as session:
+    async with agent.realtime(model).session() as session:
         await session.send('What is the weather in London?')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
@@ -284,7 +284,7 @@ async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], 
     ]
 
     events: list[Any] = []
-    async with agent.realtime_session(model=model, message_history=history) as session:
+    async with agent.realtime(model, message_history=history).session() as session:
         await session.send('What is my name and favorite color?')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent

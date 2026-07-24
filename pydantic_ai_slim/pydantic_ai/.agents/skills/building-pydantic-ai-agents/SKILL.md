@@ -216,7 +216,7 @@ agent = Agent.from_file('agent.yaml')
 
 For voice models that stream audio over a persistent connection (OpenAI Realtime, Azure AI Voice
 Live, Gemini Live, or xAI Grok Voice), use
-`agent.realtime_session()` instead of `run()`. It reuses the agent's tools and instructions and runs
+`agent.realtime().session()` instead of `run()`. It reuses the agent's tools and instructions and runs
 the tool loop for you. Stream input with `send_audio`/`send`/`send`, and iterate the
 session to consume the **same part/event vocabulary as a streamed run** — `PartStartEvent` /
 `PartDeltaEvent` / `PartEndEvent` carrying `SpeechPart`s and `ToolCallPart`s, plus
@@ -236,9 +236,9 @@ async def main(microphone_chunk: bytes):
     settings = OpenAIRealtimeModelSettings(
         voice='alloy', turn_detection=TurnDetection(sensitivity='high')
     )
-    async with agent.realtime_session(
-        model='openai:gpt-realtime', model_settings=settings
-    ) as session:
+    async with agent.realtime(
+        'openai:gpt-realtime', model_settings=settings
+    ).session() as session:
         await session.send_audio(microphone_chunk)  # PCM16 bytes
         async for event in session:
             match event:
@@ -255,7 +255,7 @@ async def main(microphone_chunk: bytes):
 Key facts for building realtime agents:
 
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
-  return real `ModelMessage`s; seed with `realtime_session(message_history=...)` (text/transcript
+  return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()` (text/transcript
   projection — audio isn't replayed).
 - **No `output_type`**: realtime models don't do structured output. Delegate hard work to a text
   agent behind a tool, or hand off history afterwards.

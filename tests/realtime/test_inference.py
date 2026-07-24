@@ -103,7 +103,7 @@ def test_infer_realtime_model_unknown_provider() -> None:
 async def test_agent_realtime_session_infers_string_model() -> None:
     agent: Agent[None, str] = Agent()
     with pytest.raises(UserError, match='Unknown realtime model'):
-        async with agent.realtime_session(model='unknown:voice'):
+        async with agent.realtime('unknown:voice').session():
             pass  # pragma: no cover
 
     # A gateway route with no realtime support is rejected before any provider is built: Groq is a

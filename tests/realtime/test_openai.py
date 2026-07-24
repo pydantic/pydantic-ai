@@ -2107,11 +2107,11 @@ async def test_reconnect_propagates_unexpected_dial_error() -> None:
         _ = [e async for e in conn]
 
 
-def _audio_delta(item_id: str, content_index: int | None = None) -> str:
+def _audio_delta(item_id: str, content_index: int | None = None, *, audio_bytes: int = 1) -> str:
     data: dict[str, Any] = {
         'type': 'response.output_audio.delta',
         'item_id': item_id,
-        'delta': base64.b64encode(b'\x01').decode('ascii'),
+        'delta': base64.b64encode(b'\x01' * audio_bytes).decode('ascii'),
     }
     if content_index is not None:
         data['content_index'] = content_index
@@ -2120,7 +2120,7 @@ def _audio_delta(item_id: str, content_index: int | None = None) -> str:
 
 @pytest.mark.anyio
 async def test_truncate_uses_item_tracked_from_audio_delta() -> None:
-    ws = FakeWebSocket([_audio_delta('item_7', content_index=2)])
+    ws = FakeWebSocket([_audio_delta('item_7', content_index=2, audio_bytes=480)])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     _ = [e async for e in conn]  # consume the delta → captures the current output item
     await conn.send(TruncateOutput(audio_end_ms=1200))
@@ -2128,8 +2128,59 @@ async def test_truncate_uses_item_tracked_from_audio_delta() -> None:
         'type': 'conversation.item.truncate',
         'item_id': 'item_7',
         'content_index': 2,
-        'audio_end_ms': 1200,
+        'audio_end_ms': 10,
     }
+
+
+@pytest.mark.anyio
+async def test_truncate_in_bounds_audio_end_passes_through() -> None:
+    ws = FakeWebSocket([_audio_delta('item_7', audio_bytes=960)])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=10))
+    assert json.loads(ws.sent[0])['audio_end_ms'] == 10
+
+
+@pytest.mark.anyio
+async def test_truncate_accumulates_generated_audio_deltas() -> None:
+    ws = FakeWebSocket([_audio_delta('item_7', audio_bytes=240), _audio_delta('item_7', audio_bytes=240)])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=20))
+    assert json.loads(ws.sent[0])['audio_end_ms'] == 10
+
+
+@pytest.mark.anyio
+async def test_truncate_resets_generated_audio_between_items() -> None:
+    ws = FakeWebSocket([_audio_delta('item_1', audio_bytes=480), _audio_delta('item_2', audio_bytes=240)])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=20))
+    assert json.loads(ws.sent[0]) == {
+        'type': 'conversation.item.truncate',
+        'item_id': 'item_2',
+        'content_index': 0,
+        'audio_end_ms': 5,
+    }
+
+
+@pytest.mark.anyio
+async def test_truncate_resets_generated_audio_between_responses() -> None:
+    done = json.dumps({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
+    ws = FakeWebSocket([_audio_delta('item_7', audio_bytes=480), done, _audio_delta('item_7', audio_bytes=240)])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=20))
+    assert json.loads(ws.sent[0])['audio_end_ms'] == 5
+
+
+@pytest.mark.anyio
+async def test_truncate_sideband_connection_does_not_clamp() -> None:
+    ws = FakeWebSocket([_audio_delta('item_7')])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=1200))
+    assert json.loads(ws.sent[0])['audio_end_ms'] == 1200
 
 
 @pytest.mark.anyio
@@ -2366,9 +2417,9 @@ async def test_agent_realtime_session_rejects_native_tools() -> None:
         UserError,
         match=r'does not support the WebSearchTool native tool\(s\)\. Supported native tools: none\.',
     ):
-        async with agent.realtime_session(
-            model=OpenAIRealtimeModel('gpt-realtime'), capabilities=[NativeTool(WebSearchTool())]
-        ):
+        async with agent.realtime(
+            OpenAIRealtimeModel('gpt-realtime'), capabilities=[NativeTool(WebSearchTool())]
+        ).session():
             pass  # pragma: no cover - validation raises before yielding
 
 

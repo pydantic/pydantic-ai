@@ -70,9 +70,9 @@ CALLER_TURNS = [
 
 
 async def main() -> None:
-    async with voice_agent.realtime_session(
-        model=OpenAIRealtimeModel('gpt-realtime')
-    ) as session:
+    async with voice_agent.realtime(
+        OpenAIRealtimeModel('gpt-realtime')
+    ).session() as session:
         # A session is consumed with a single event loop. We drive the caller's turns from inside it:
         # send the first line, then send the next one each time the model finishes a turn.
         remaining_turns = iter(CALLER_TURNS)

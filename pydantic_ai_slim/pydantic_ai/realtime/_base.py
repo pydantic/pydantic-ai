@@ -671,7 +671,7 @@ class RealtimeModelProfile(TypedDict, total=False):
     """The [native tools][pydantic_ai.native_tools.AbstractNativeTool] the model runs server-side, e.g.
     [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].
 
-    [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] validates the session's native
+    [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] validates the session's native
     tools against this set before connecting, raising a [`UserError`][pydantic_ai.exceptions.UserError]
     that names any the model doesn't support — mirroring the classic
     [`Model.supported_native_tools`][pydantic_ai.models.Model.supported_native_tools] check."""

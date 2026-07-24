@@ -226,7 +226,7 @@ async def test_nested_agent_run_nests_under_session_span() -> None:
 
     agent.instrument = settings
     conn = _Connection([ToolCall(tool_call_id='c', tool_name='analyze', args='{}'), TurnCompleteEvent()])
-    async with agent.realtime_session(model=_Model(conn)) as session:
+    async with agent.realtime(_Model(conn)).session() as session:
         _ = [e async for e in session]
 
     by_id = {s.context.span_id: s for s in exporter.get_finished_spans() if s.context is not None}
@@ -253,7 +253,7 @@ async def test_session_and_tool_spans_with_usage() -> None:
             TurnCompleteEvent(),
         ]
     )
-    async with agent.realtime_session(model=_Model(conn)) as session:
+    async with agent.realtime(_Model(conn)).session() as session:
         _ = [e async for e in session]
 
     spans = {s.name: s for s in exporter.get_finished_spans()}
@@ -302,9 +302,9 @@ async def test_output_type_reflects_text_modality() -> None:
     agent = _weather_agent(name='assistant')
     agent.instrument = settings
     conn = _Connection([Transcript(text='hi', is_final=True), TurnCompleteEvent()])
-    async with agent.realtime_session(
-        model=_Model(conn), model_settings=RealtimeModelSettings(output_modality='text')
-    ) as session:
+    async with agent.realtime(
+        _Model(conn), model_settings=RealtimeModelSettings(output_modality='text')
+    ).session() as session:
         _ = [e async for e in session]
     spans = {s.name: s for s in exporter.get_finished_spans()}
     for name in ('realtime gpt-realtime', 'chat gpt-realtime'):
@@ -320,7 +320,7 @@ async def test_include_content_false_omits_args_and_result() -> None:
     conn = _Connection(
         [ToolCall(tool_call_id='c', tool_name='get_weather', args='{"city": "Paris"}'), TurnCompleteEvent()]
     )
-    async with agent.realtime_session(model=_Model(conn)) as session:
+    async with agent.realtime(_Model(conn)).session() as session:
         _ = [e async for e in session]
     tool = next(s for s in exporter.get_finished_spans() if s.name == 'execute_tool get_weather')
     assert tool.attributes is not None
@@ -348,7 +348,7 @@ async def test_chat_spans_split_on_tool_call_are_session_children() -> None:
             TurnCompleteEvent(),
         ]
     )
-    async with agent.realtime_session(model=_Model(conn)) as session:
+    async with agent.realtime(_Model(conn)).session() as session:
         _ = [e async for e in session]
 
     finished = exporter.get_finished_spans()
@@ -411,7 +411,7 @@ async def test_conversation_span_tree() -> None:
             TurnCompleteEvent(),
         ]
     )
-    async with agent.realtime_session(model=_Model(conn)) as session:
+    async with agent.realtime(_Model(conn)).session() as session:
         _ = [e async for e in session]
 
     # Two turns → three `chat` spans (the first turn splits around the tool call) plus one
@@ -447,7 +447,7 @@ async def test_instrument_and_explicit_capability_no_double_tool_spans() -> None
     conn = _Connection(
         [ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'), TurnCompleteEvent()]
     )
-    async with agent.realtime_session(model=_Model(conn)) as session:
+    async with agent.realtime(_Model(conn)).session() as session:
         _ = [e async for e in session]
     tool_spans = [s for s in exporter.get_finished_spans() if s.name == 'execute_tool get_weather']
     assert len(tool_spans) == 1
@@ -469,7 +469,7 @@ async def test_explicit_capability_produces_session_chat_and_tool_spans() -> Non
             TurnCompleteEvent(),
         ]
     )
-    async with agent.realtime_session(model=_Model(conn)) as session:
+    async with agent.realtime(_Model(conn)).session() as session:
         _ = [e async for e in session]
     spans = {s.name for s in exporter.get_finished_spans()}
     assert spans == {'realtime gpt-realtime', 'chat gpt-realtime', 'execute_tool get_weather'}
@@ -493,7 +493,7 @@ async def test_explicit_capability_settings_win_over_instrument() -> None:
             TurnCompleteEvent(),
         ]
     )
-    async with agent.realtime_session(model=_Model(conn)) as session:
+    async with agent.realtime(_Model(conn)).session() as session:
         _ = [e async for e in session]
     assert {s.name for s in cap_exporter.get_finished_spans()} == {
         'realtime gpt-realtime',
@@ -548,7 +548,7 @@ async def test_session_span_includes_resolved_run_attributes() -> None:
     agent.instrument = settings
     conn = _Connection([Transcript(text='hello', is_final=True), TurnCompleteEvent()])
 
-    async with agent.realtime_session(model=_Model(conn), metadata={'tier': 'gold'}) as session:
+    async with agent.realtime(_Model(conn), metadata={'tier': 'gold'}).session() as session:
         _ = [event async for event in session]
 
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
@@ -619,7 +619,7 @@ async def test_session_span_sets_conversation_id() -> None:
     agent = _weather_agent()
     agent.instrument = settings
     conn = _Connection([TurnCompleteEvent()])
-    async with agent.realtime_session(model=_Model(conn), conversation_id='conv-123') as session:
+    async with agent.realtime(_Model(conn), conversation_id='conv-123').session() as session:
         _ = [event async for event in session]
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
     assert sess.attributes is not None
@@ -960,7 +960,7 @@ async def test_early_break_finishes_chat_span(caplog: pytest.LogCaptureFixture) 
     )  # no TurnCompleteEvent
 
     with caplog.at_level(logging.ERROR, logger='opentelemetry'):
-        async with agent.realtime_session(model=_Model(conn)) as session:
+        async with agent.realtime(_Model(conn)).session() as session:
             async for _ in session:
                 break
 
@@ -1009,7 +1009,7 @@ async def test_early_break_finishes_running_tool_span(caplog: pytest.LogCaptureF
         return f'sunny in {city}'  # pragma: no cover
 
     with caplog.at_level(logging.ERROR, logger='opentelemetry'):
-        async with agent.realtime_session(model=_Model(_IdleAfterTool())) as session:
+        async with agent.realtime(_Model(_IdleAfterTool())).session() as session:
             async for _ in session:
                 await started.wait()
                 break

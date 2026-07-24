@@ -108,7 +108,7 @@ _CANCELLED_TOOL_RESULT = 'Tool call cancelled before it completed.'
 
 # Fallback for a session created without a model's profile (e.g. directly, in tests): assume
 # everything is supported so no guard fires. Real sessions receive `model.profile`. Native tools are
-# validated up front by `Agent.realtime_session`, not the session, so this field is inert here.
+# validated up front by `Agent.realtime`, not the session, so this field is inert here.
 _FULL_PROFILE = RealtimeModelProfile(
     supports_image_input=True,
     supports_manual_turn_control=True,
@@ -297,7 +297,7 @@ class RealtimeSession:
 
     When constructing a session directly, use it as an async context manager. The context owns the
     receive pump, background tool tasks, and instrumentation spans; iteration only reads its event
-    queue. [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] enters the session
+    queue. [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session] enters the session
     before yielding it, so the usual agent API remains a single `async with` block.
     """
 
@@ -365,7 +365,7 @@ class RealtimeSession:
         self.usage = usage if usage is not None else RunUsage()
         """Cumulative token usage and tool-call counts for the session, updated as events stream in.
 
-        Pass `usage` to [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] to accumulate
+        Pass `usage` to [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] to accumulate
         into a shared [`RunUsage`][pydantic_ai.usage.RunUsage]; otherwise a fresh one is used.
         """
 
@@ -1350,7 +1350,7 @@ class RealtimeSession:
         validation_done: asyncio.Event,
     ) -> _SettledToolResult:
         # No `execute_tool` span is created here: the `execute_tool` span is owned by the
-        # `Instrumentation` capability's `wrap_tool_execute` hook, which `Agent.realtime_session`
+        # `Instrumentation` capability's `wrap_tool_execute` hook, which `Agent.realtime`
         # injects into the tool runner's `ToolManager` (mirroring a classic run). That capability
         # span is the single, canonical source of tool spans; the pump task runs inside the session
         # span's OTel context, so the capability's tool span nests under the session span as a sibling

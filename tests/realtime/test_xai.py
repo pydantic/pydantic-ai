@@ -479,7 +479,7 @@ async def test_agent_realtime_session_rejects_native_tools() -> None:
         UserError,
         match=r'does not support the WebSearchTool native tool\(s\)\. Supported native tools: none\.',
     ):
-        async with agent.realtime_session(model=_model(), capabilities=[NativeTool(WebSearchTool())]):
+        async with agent.realtime(_model(), capabilities=[NativeTool(WebSearchTool())]).session():
             pass  # pragma: no cover - validation raises before yielding
 
 
@@ -628,7 +628,7 @@ async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
     monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([dropped, resumed]))
 
     agent = Agent()
-    async with agent.realtime_session(model=_model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0))) as session:
+    async with agent.realtime(_model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0))).session() as session:
         await session.send('Hello.')
         events = [event async for event in session]
 

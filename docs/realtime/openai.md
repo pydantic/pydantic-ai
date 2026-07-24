@@ -62,9 +62,9 @@ reasoning, so a `thinking` setting is ignored with a warning rather than sent (t
 reject it).
 
 ```python {test="skip" lint="skip"}
-async with agent.realtime_session(
-    model=OpenAIRealtimeModel('gpt-realtime-2.1', settings=OpenAIRealtimeModelSettings(thinking='low')),
-) as session:
+async with agent.realtime(
+    OpenAIRealtimeModel('gpt-realtime-2.1', settings=OpenAIRealtimeModelSettings(thinking='low')),
+).session() as session:
     ...
 ```
 

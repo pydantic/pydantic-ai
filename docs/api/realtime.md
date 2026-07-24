@@ -7,7 +7,8 @@ persistent connection).
 Unlike [`Model`][pydantic_ai.models.Model], which is request-response, a realtime model opens a
 long-lived connection: you stream audio (or text/images) in, and consume audio, transcripts, and
 tool calls as they arrive. The high-level entry point is
-[`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session], which wires the agent's tools and
+[`Agent.realtime()`][pydantic_ai.agent.Agent.realtime], followed by
+[`AgentRealtime.session()`][pydantic_ai.agent.AgentRealtime.session], which wires the agent's tools and
 instructions into a session and runs the tool loop for you. See the [Realtime guide](../realtime/index.md)
 for a walkthrough.
 

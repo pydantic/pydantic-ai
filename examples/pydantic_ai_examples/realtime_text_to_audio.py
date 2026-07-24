@@ -57,10 +57,10 @@ def save_wav(path: str, audio: bytes) -> None:
 async def main(prompt: str, output_path: str) -> None:
     audio = bytearray()
 
-    async with agent.realtime_session(
-        model=OpenAIRealtimeModel('gpt-realtime'),
+    async with agent.realtime(
+        OpenAIRealtimeModel('gpt-realtime'),
         model_settings=OpenAIRealtimeModelSettings(voice='marin'),
-    ) as session:
+    ).session() as session:
         # Sending text (rather than audio) into an OpenAI realtime session asks the model to respond
         # right away — with speech, since a session's default output modality is audio.
         await session.send(prompt)

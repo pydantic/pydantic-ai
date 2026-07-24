@@ -1,7 +1,7 @@
 """Low-level *codec* vocabulary for realtime providers.
 
 Most users only need the session-level API in [`pydantic_ai.realtime`][pydantic_ai.realtime]
-([`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session], the events a session yields,
+([`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session], the events a session yields,
 and the content passed to [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send]). This
 submodule holds the lower-level vocabulary used when *implementing* a realtime provider or consuming a
 [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection] directly: the raw codec events a

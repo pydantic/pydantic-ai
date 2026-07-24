@@ -423,7 +423,7 @@ def _native_tool_to_genai(tool: AbstractNativeTool) -> genai_types.Tool:
     [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] maps to Grounding with Google Search,
     [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] to URL context, and
     [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] to Gemini's code execution tool.
-    [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] validates native tools against
+    [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] validates native tools against
     the model's [`supported_native_tools`][pydantic_ai.realtime.RealtimeModelProfile.supported_native_tools]
     profile before connecting, so only these three reach this mapping.
 
