@@ -35,3 +35,44 @@ async def test_url_and_auth_headers() -> None:
         'wss://resource.openai.azure.com/openai/v1/realtime?model=gpt+realtime'
     )
     assert await model._auth_headers() == {'api-key': 'azure-key'}  # pyright: ignore[reportPrivateUsage]
+
+
+def test_infer_provider_from_bare_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The realtime model speaks only the GA `/openai/v1` protocol and never uses the provider's SDK
+    # client, so inferring the provider from a bare resource endpoint must not demand the unrelated
+    # `api_version` the SDK client would need.
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://resource.openai.azure.com')
+    monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'azure-key')
+    monkeypatch.delenv('OPENAI_API_VERSION', raising=False)
+
+    model = AzureRealtimeModel('gpt-realtime')
+
+    assert model._realtime_url() == (  # pyright: ignore[reportPrivateUsage]
+        'wss://resource.openai.azure.com/openai/v1/realtime?model=gpt-realtime'
+    )
+
+
+def test_infer_provider_with_api_version_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # With `OPENAI_API_VERSION` set, the standard provider inference works and the realtime URL is
+    # still derived from the endpoint's host.
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://resource.openai.azure.com')
+    monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'azure-key')
+    monkeypatch.setenv('OPENAI_API_VERSION', '2024-10-01')
+
+    model = AzureRealtimeModel('gpt-realtime')
+
+    assert model._realtime_url() == (  # pyright: ignore[reportPrivateUsage]
+        'wss://resource.openai.azure.com/openai/v1/realtime?model=gpt-realtime'
+    )
+
+
+def test_infer_provider_with_v1_endpoint_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://resource.openai.azure.com/openai/v1')
+    monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'azure-key')
+    monkeypatch.delenv('OPENAI_API_VERSION', raising=False)
+
+    model = AzureRealtimeModel('gpt-realtime')
+
+    assert model._realtime_url() == (  # pyright: ignore[reportPrivateUsage]
+        'wss://resource.openai.azure.com/openai/v1/realtime?model=gpt-realtime'
+    )
