@@ -29,6 +29,53 @@ if TYPE_CHECKING:
 
 CASSETTES_DIR = Path(__file__).parent / 'cassettes'
 
+# Our Azure OpenAI dev resource, hardcoded (not a secret — like `test_azure_provider_call`) so a recorded
+# HTTP host stays stable between recording (real key) and offline replay (placeholder key).
+_AZURE_REALTIME_DEV_ENDPOINT = 'https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1'
+
+# A real WebRTC offer (generated once with `aiortc`, then stripped of host ICE candidates and with all
+# addresses zeroed) that the OpenAI/Azure `/realtime/calls` endpoints accept and answer — so the
+# signaling round-trip can be recorded against the live APIs instead of mocked. The leftover ICE ufrag /
+# password / DTLS fingerprint are random per-session values, meaningless outside a live media session.
+REAL_SDP_OFFER = (
+    '\r\n'.join(
+        """v=0
+o=- 3993840254 3993840254 IN IP4 0.0.0.0
+s=-
+t=0 0
+a=group:BUNDLE 0 1
+a=msid-semantic:WMS *
+m=audio 51603 UDP/TLS/RTP/SAVPF 96 9 0 8
+c=IN IP4 0.0.0.0
+a=sendrecv
+a=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid
+a=extmap:2 urn:ietf:params:rtp-hdrext:ssrc-audio-level
+a=mid:0
+a=msid:993a573d-865c-4f89-b4d6-bf0023b36333 28299f45-cf21-4e7d-8945-3fc2846d1979
+a=rtcp:9 IN IP4 0.0.0.0
+a=rtcp-mux
+a=ssrc:596951577 cname:54390b83-64d1-4178-a0ef-a2cafdb3f3a7
+a=rtpmap:96 opus/48000/2
+a=rtpmap:9 G722/8000
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=ice-ufrag:YnNx
+a=ice-pwd:jIsRuXZmV9Yq00qk4a33Xe
+a=fingerprint:sha-256 97:A7:E2:EF:70:B3:AD:B9:06:C8:DF:11:61:01:E5:6F:8F:46:EB:15:50:F2:54:D0:72:51:5B:37:0F:00:21:CB
+a=setup:actpass
+m=application 34376 UDP/DTLS/SCTP webrtc-datachannel
+c=IN IP4 0.0.0.0
+a=mid:1
+a=sctp-port:5000
+a=max-message-size:65536
+a=ice-ufrag:YnNx
+a=ice-pwd:jIsRuXZmV9Yq00qk4a33Xe
+a=fingerprint:sha-256 97:A7:E2:EF:70:B3:AD:B9:06:C8:DF:11:61:01:E5:6F:8F:46:EB:15:50:F2:54:D0:72:51:5B:37:0F:00:21:CB
+a=setup:actpass""".strip().splitlines()
+    )
+    + '\r\n'
+)
+
 
 def _scrub_ephemeral_secret(response: dict[str, Any]) -> dict[str, Any]:
     """Redact the short-lived WebRTC client secret from recorded `/realtime/client_secrets` responses.
@@ -201,3 +248,23 @@ def azure_ws_cassette(
     endpoint, api_key = azure_config
     with _ws_cassette(request, 'openai') as cassette:
         yield AzureProvider(azure_endpoint=f'{endpoint.rstrip("/")}/openai/v1', api_key=api_key), cassette
+
+
+@pytest.fixture
+def azure_ws_sideband_cassette(
+    request: pytest.FixtureRequest, azure_config: tuple[str, str]
+) -> Iterator[tuple[AzureProvider, RealtimeCassette]]:
+    """An `AzureProvider` whose realtime sideband control WebSocket is cassette-backed.
+
+    Like `openai_ws_sideband_cassette`, the WebSocket cassette lives under a dedicated subdirectory so it
+    doesn't collide with the HTTP VCR cassette (the two-step SDP offer relay) an Azure WebRTC sideband
+    test records under the module-named subdirectory.
+    """
+    if not azure_imports_successful():  # pragma: no cover
+        pytest.skip('openai / websockets not installed')
+    # A sideband test also records an HTTP VCR cassette (the two-step SDP relay), which matches on host,
+    # so pin our dev resource endpoint (not a secret — like `test_azure_provider_call`) rather than the
+    # `azure_config` one, which is a placeholder offline. The api-key is filtered out of the cassette.
+    _, api_key = azure_config
+    with _ws_cassette(request, 'openai', subdir='test_azure_ws_sideband') as cassette:
+        yield AzureProvider(azure_endpoint=_AZURE_REALTIME_DEV_ENDPOINT, api_key=api_key), cassette
