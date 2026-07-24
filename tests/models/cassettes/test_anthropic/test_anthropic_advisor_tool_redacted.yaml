@@ -1,0 +1,121 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '286'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What's 2+2? Consult your advisor first.
+          type: text
+        role: user
+      model: claude-sonnet-5
+      stream: false
+      tools:
+      - max_tokens: 1024
+        model: claude-fable-5
+        name: advisor
+        type: advisor_20260301
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '2874'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-869a2ae596a67417ffbf99375fec1b39-74fc1ea070c0407a-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - signature: ErMDCokBCA8YAipARPs8i+lnY3M3t+QqxJx7yvO0GgbLL+W+ilTZprIlLTvWHKOCttXgksyrsMLG5T4/sqrlp2HuzVlLoWpg/+KiMzIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKVxwhQwuZvhvI6bPhoMPpgLNMPuhjqRI4N2IjC8JLR+WPcgRief5rPoA8ol/VBUlb0MNpXu+Y/VFzkJNKpQxgymOG+fw5tG66EsZ0Mq1gGd9h6GHbkNHS4WAFuWewFG64EDfqlSF3QP4/wOL1q6WXkn620jPquEMg7IGSgHKHTe1sjXx0FawYStIdwNcfmppqce+6NT8Hb/H+V76BsLYUp+gHNc6TkUUfpGuqiCIqVpWmuSxxy6fpr3EeOVQZ8Hn7jr+nypZZ6YE1jzq7lJ8wLksEedNp7LYMBz7Pay36gkHb1n0IDUoM5uq7xU13iw5aJTKn/wZ9bgDM1/i+aOTQTiXnkemWsvKi496YKkXXKK5+42iWUq4TFZ2M/ZoxtDsQQGVY9gGAE=
+        thinking: ''
+        type: thinking
+      - text: The task asks a simple arithmetic question (2+2), and my initial read is that the answer is straightforwardly
+          4; I'll consult the advisor as instructed before finalizing.
+        type: text
+      - id: srvtoolu_01F41jVTJWt437pMYJ8rmuGn
+        input: {}
+        name: advisor
+        type: server_tool_use
+      - content:
+          encrypted_content: EsgCCioIERgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDPb72kBTQUT2SfNdcxoMdM5wE1kl7FnNBSI7IjDdMqHQwchJf/F6afGbEdHQ+Kx/pbUwe+xRBdHhHym4QmwiidEkEKz6MnhI81up2IkqywE9VfB6xb9fO3o9DtC3ZpTvQpeZPJlhKCwzfVhU3YVqD/XfZr8vVUoiMI58K4v0okS4hABGxVTpH9p+HKmVqZrgkzFJn5I6rme4hJxYt6bDFZ7m1eKnvMoxnsINpMBzDQz8HPPe+wSEurPGjk5PbTRX99lauOGVKlQxFJHpVfts3F5JIrwxoPBtITzs3RdNT9mU9iE3RIUlQTdVsgD9uR//bHOVfBQ4Z1djXhlLJrhWCaSTExoJVYnrr6VWmq9a2MPCaLXB8YGELN01SBgJ
+          stop_reason: end_turn
+          type: advisor_redacted_result
+        tool_use_id: srvtoolu_01F41jVTJWt437pMYJ8rmuGn
+        type: advisor_tool_result
+      - text: 2 + 2 = 4
+        type: text
+      id: msg_011CdD8kymr8deshk2jea6kJ
+      model: claude-sonnet-5
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 2482
+        iterations:
+        - cache_creation:
+            ephemeral_1h_input_tokens: 0
+            ephemeral_5m_input_tokens: 0
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          input_tokens: 1128
+          output_tokens: 155
+          type: message
+        - cache_creation:
+            ephemeral_1h_input_tokens: 0
+            ephemeral_5m_input_tokens: 0
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          input_tokens: 2564
+          model: claude-fable-5
+          output_tokens: 99
+          type: advisor_message
+        - cache_creation:
+            ephemeral_1h_input_tokens: 0
+            ephemeral_5m_input_tokens: 0
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          input_tokens: 1354
+          output_tokens: 11
+          type: message
+        output_tokens: 166
+        output_tokens_details:
+          thinking_tokens: 71
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

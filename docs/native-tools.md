@@ -14,6 +14,7 @@ Pydantic AI supports the following native tools:
 - **[`MemoryTool`][pydantic_ai.native_tools.MemoryTool]**: Enables agents to use memory
 - **[`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 - **[`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
+- **[`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]**: Lets a faster executor model consult a stronger advisor model mid-generation (Anthropic, OpenRouter)
 
 These tools are passed to the agent's `capabilities` list, wrapped in [`NativeTool`][pydantic_ai.capabilities.NativeTool], and are executed by the model provider's infrastructure.
 
@@ -772,6 +773,53 @@ print(result.output)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+## Advisor Tool
+
+The [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] lets an executor model consult another model mid-generation. See the [Anthropic](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool) and [OpenRouter](https://openrouter.ai/docs/guides/features/server-tools/advisor) documentation for current model compatibility.
+
+### Provider Support
+
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| Anthropic | ✅ | Available on the Claude API and Claude Platform on AWS. |
+| OpenRouter | ✅ | Works with any executor model. |
+| OpenAI | ❌ | |
+| Google | ❌ | |
+| xAI | ❌ | |
+| Groq | ❌ | |
+| Bedrock | ❌ | |
+| Mistral | ❌ | |
+| Cohere | ❌ | |
+| HuggingFace | ❌ | |
+
+### Usage
+
+```py {title="advisor_anthropic.py" test="skip"}
+from pydantic_ai import AdvisorTool, Agent
+from pydantic_ai.capabilities import NativeTool
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8'))],
+)
+
+result = agent.run_sync('Design a caching strategy for our API. Consult your advisor first.')
+print(result.output)
+```
+
+For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. Pydantic AI sends `forward_transcript=false`; `max_uses` and `caching` are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
+
+With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in message history, and strips advisor blocks when the tool is no longer enabled. Streaming pauses while the advisor runs. Advisor usage is reported under `advisor_*` keys in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and excluded from the executor's top-level token totals.
+
+### Configuration Options
+
+| Parameter | Anthropic | OpenRouter |
+|-----------|-----------|------------|
+| `model` | ✅ (required — the advisor model to consult) | ✅ (required — an OpenRouter catalog slug) |
+| `max_uses` | ✅ (cap on advisor consultations per request) | ❌ (fixed gateway limit; ignored) |
+| `max_tokens` | ✅ (cap on advisor output tokens, minimum 1024; makes the result carry a `stop_reason`) | ✅ (maps to `max_completion_tokens`) |
+| `caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; ignored) |
 
 ## MCP Server Tool
 

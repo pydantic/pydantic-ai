@@ -25,6 +25,8 @@ __all__ = (
     'MemoryTool',
     'MCPServerTool',
     'FileSearchTool',
+    'AdvisorModelName',
+    'AdvisorTool',
     'NATIVE_TOOL_TYPES',
     'SUPPORTED_NATIVE_TOOLS',
     'NATIVE_TOOLS_REQUIRING_CONFIG',
@@ -41,6 +43,25 @@ ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '
 
 ImageGenerationModelName = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'] | str
 """Known OpenAI image generation model names, or another OpenAI image model ID."""
+
+AdvisorModelName = (
+    Literal[
+        'claude-fable-5',
+        'claude-mythos-5',
+        'claude-opus-4-8',
+        'claude-opus-4-7',
+        'claude-opus-4-6',
+        'claude-sonnet-4-6',
+    ]
+    | str
+)
+"""Known Anthropic advisor model names, or any other model ID string.
+
+These are the models Anthropic currently accepts as the *advisor* — the stronger model an
+executor consults mid-generation. The executor/advisor pairing is validated by the API, not here.
+The literals are Anthropic model IDs; on OpenRouter, pass a catalog slug string instead
+(e.g. `anthropic/claude-opus-4.8` or the `~anthropic/claude-opus-latest` alias).
+"""
 
 
 @dataclass(kw_only=True)
@@ -606,6 +627,78 @@ class FileSearchTool(AbstractNativeTool):
     """The kind of tool."""
 
 
+@dataclass(kw_only=True)
+class AdvisorTool(AbstractNativeTool):
+    """A native tool that lets a faster executor model consult a stronger advisor model mid-generation.
+
+    The fields map 1:1 to the parameters of Anthropic's advisor tool definition. OpenRouter exposes
+    the advisor as a gateway server tool that honors a subset (`model`, `max_tokens`) and ignores
+    the unsupported fields; see the per-field docstrings for which provider supports each.
+
+    Supported by:
+
+    * Anthropic
+    * OpenRouter
+    """
+
+    model: AdvisorModelName
+    """The advisor model to consult, i.e. the `model` field of the provider's advisor tool definition.
+
+    The executor/advisor pairing is validated by the provider's API, not here. The accepted namespace
+    depends on the executing provider: Anthropic model IDs (e.g. `claude-opus-4-8`) on Anthropic,
+    OpenRouter catalog slugs (e.g. `anthropic/claude-opus-4.8`) on OpenRouter.
+
+    Supported by:
+
+    * Anthropic
+    * OpenRouter
+    """
+
+    max_uses: int | None = None
+    """If provided, the advisor can be consulted at most this many times per request. Maps to `max_uses`.
+
+    This is a per-request cap, not a per-run budget: a run that spans multiple requests resets the
+    count each request. Enforce a conversation-wide ceiling yourself if you need one.
+
+    Supported by:
+
+    * Anthropic
+
+    OpenRouter caps advisor consultations per request with a fixed gateway limit and ignores
+    `max_uses`.
+    """
+
+    max_tokens: int | None = None
+    """If provided, caps the advisor's output tokens (minimum 1024). Maps to `max_tokens` on Anthropic
+    and `max_completion_tokens` on OpenRouter.
+
+    When set, the Anthropic advisor result carries a `stop_reason`.
+
+    Supported by:
+
+    * Anthropic
+    * OpenRouter
+    """
+
+    caching: Literal['5m', '1h'] | None = None
+    """If provided, caches the advisor context ephemerally with the given TTL. Maps to
+    `caching={'type': 'ephemeral', 'ttl': ...}`.
+
+    Supported by:
+
+    * Anthropic
+
+    OpenRouter's advisor tool has no equivalent knob and ignores `caching`.
+    """
+
+    kind: str = 'advisor'
+    """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        if self.max_tokens is not None and self.max_tokens < 1024:
+            raise ValueError('AdvisorTool.max_tokens must be at least 1024')
+
+
 # Imported after the base class is defined — `_tool_search.py` subclasses
 # `AbstractNativeTool`, so the import has to follow. Loading the submodule registers
 # `ToolSearchTool` in `NATIVE_TOOL_TYPES` via `__init_subclass__`. `ToolSearchTool` is
@@ -626,5 +719,5 @@ SUPPORTED_NATIVE_TOOLS = frozenset(NATIVE_TOOL_TYPES.values())
 """Set of all native tool types."""
 
 NATIVE_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractNativeTool]] = frozenset(
-    {FileSearchTool, MCPServerTool, MemoryTool, _tool_search.ToolSearchTool}
+    {FileSearchTool, MCPServerTool, MemoryTool, AdvisorTool, _tool_search.ToolSearchTool}
 )

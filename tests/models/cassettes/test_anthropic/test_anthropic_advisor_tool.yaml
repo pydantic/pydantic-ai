@@ -1,0 +1,124 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '287'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What's 2+2? Consult your advisor first.
+          type: text
+        role: user
+      model: claude-sonnet-5
+      stream: false
+      tools:
+      - max_tokens: 1024
+        model: claude-opus-4-8
+        name: advisor
+        type: advisor_20260301
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '2295'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-6751c25262c1442d9375122ec57c89fa-6cbddbc1cc2dda56-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - signature: EsECCokBCA8YAipA9szu4fQ5/w/MwNtyTf2VhHWdk4ElPihCE76RRzbmF+ZbuoODsDvxP9dWwCXCnIrbt0X5calyWvQhc4dW46yllTIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDOMDJCeDes7bYa/kNRoMHYrTvYTFFz+vxRX7IjDmJL3HgyqTNUh3ZkEFwj4J9fWJ5xYYozOBik6Z3zKz1j/Ppd91Rwath6ExHghj+qYqZcrR2g/LwufVFpT99e8dJPonOiO/Rz34LLdFmv7ZUP12BKaLq7seP6AUmNUslmpPVKXVB4s7Crozaok1A86BKmwcWxIIU9BxtdUf0LYMAx+o3gZnBwCoQ9Sc8kCRfRnMMsQn4sE7GAE=
+        thinking: ''
+        type: thinking
+      - text: 'Task: answer "What''s 2+2?" and I''m told to consult advisor first. My initial read: this is trivially 4, but
+          instructions require calling advisor before answering.'
+        type: text
+      - id: srvtoolu_01HjzmxWnLPCkNoLmrowWNBc
+        input: {}
+        name: advisor
+        type: server_tool_use
+      - content:
+          stop_reason: end_turn
+          text: |-
+            4.
+
+            (You're right--it's trivial. Ship it.)
+          type: advisor_result
+        tool_use_id: srvtoolu_01HjzmxWnLPCkNoLmrowWNBc
+        type: advisor_tool_result
+      - text: 2 + 2 = 4
+        type: text
+      id: msg_011CdD8kCHePDwkWhKt6aCDv
+      model: claude-sonnet-5
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 2390
+        iterations:
+        - cache_creation:
+            ephemeral_1h_input_tokens: 0
+            ephemeral_5m_input_tokens: 0
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          input_tokens: 1128
+          output_tokens: 110
+          type: message
+        - cache_creation:
+            ephemeral_1h_input_tokens: 0
+            ephemeral_5m_input_tokens: 0
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          input_tokens: 2518
+          model: claude-opus-4-8
+          output_tokens: 22
+          type: advisor_message
+        - cache_creation:
+            ephemeral_1h_input_tokens: 0
+            ephemeral_5m_input_tokens: 0
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          input_tokens: 1262
+          output_tokens: 11
+          type: message
+        output_tokens: 121
+        output_tokens_details:
+          thinking_tokens: 28
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
