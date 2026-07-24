@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import json
 import os
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
@@ -27,6 +28,45 @@ if TYPE_CHECKING:
     from pydantic_ai.providers import Provider
 
 CASSETTES_DIR = Path(__file__).parent / 'cassettes'
+
+
+def _scrub_ephemeral_secret(response: dict[str, Any]) -> dict[str, Any]:
+    """Redact the short-lived WebRTC client secret from recorded `/realtime/client_secrets` responses.
+
+    The mint response body carries `{"value": "ek_..."}` — the ephemeral browser token. It expires in
+    seconds and is useless offline, but replacing it keeps recorded cassettes free of anything
+    secret-shaped. (The api-key / Entra bearer used to mint it are filtered out via `filter_headers`.)
+    """
+    try:
+        raw = response['body']['string']
+    except (KeyError, TypeError):  # pragma: no cover - non-body responses
+        return response
+    if not raw:  # pragma: no cover - empty body
+        return response
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):  # pragma: no cover - non-JSON body
+        return response
+    if isinstance(data, dict) and isinstance(data.get('value'), str) and data['value'].startswith('ek_'):
+        data['value'] = 'ek_scrubbed'
+        body = json.dumps(data)
+        response['body']['string'] = body.encode() if isinstance(raw, bytes) else body
+    return response
+
+
+@pytest.fixture(scope='module')
+def vcr_config() -> dict[str, Any]:
+    """VCR config for realtime HTTP (WebRTC signaling) cassettes.
+
+    Extends the repo default with Azure's `api-key` header (the WebSocket cassettes never record HTTP,
+    so the default set omits it) and scrubs the minted ephemeral client secret from response bodies.
+    """
+    return {
+        'ignore_localhost': True,
+        'filter_headers': ['authorization', 'x-api-key', 'api-key', 'cookie'],
+        'decode_compressed_response': True,
+        'before_record_response': _scrub_ephemeral_secret,
+    }
 
 
 @pytest.fixture(autouse=True)

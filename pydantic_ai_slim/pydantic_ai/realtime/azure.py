@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Sequence
 from dataclasses import InitVar, dataclass, field
 from typing import Any, Protocol
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -12,6 +13,9 @@ from openai import AsyncOpenAI
 from ..exceptions import UserError
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
+from ..tools import ToolDefinition
+from ._base import RealtimeModelSettings, WebRTCAnswer
+from ._openai_webrtc import relay_sdp_offer as _relay_sdp_offer
 from .openai import OpenAIRealtimeModel
 
 __all__ = ('AzureRealtimeModel', 'AzureTokenCredential')
@@ -73,10 +77,40 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
     def _realtime_url(self) -> str:
         return f'{self._realtime_ws_base()}?{urlencode({"model": self.model})}'
 
+    def _webrtc_http_base(self) -> str:
+        # Azure exposes the WebRTC signaling endpoints under the GA `/openai/v1/` path, regardless of the
+        # `api_version`/path the provider's `base_url` carries. Deriving from `azure_endpoint` (rather than
+        # inheriting the OpenAI behavior of appending to `base_url`) forces `/openai/v1/` here just as
+        # `_realtime_ws_base` does for the WebSocket handshake — without it, signaling URLs silently drop
+        # the `/v1` and Azure 404s. Always ends in `/` so callers can append `realtime/...`.
+        parsed = urlparse(self._azure_provider.azure_endpoint)
+        return urlunparse(parsed._replace(scheme='https', path='/openai/v1/', query=''))
+
     def _webrtc_calls_url(self) -> str:
         # `webrtcfilter=on` restricts the events forwarded to the browser data channel to a safe subset,
         # keeping the session instructions and tool traffic on the server's control connection only.
         return f'{self._webrtc_http_base()}realtime/calls?webrtcfilter=on'
+
+    async def answer_webrtc_offer(
+        self,
+        sdp_offer: str,
+        *,
+        instructions: str | None = None,
+        tools: Sequence[ToolDefinition] | None = None,
+        model_settings: RealtimeModelSettings | None = None,
+    ) -> WebRTCAnswer:
+        # Azure's `/realtime/calls` rejects the resource api-key / Entra token with a 401 (`This operation
+        # requires ephemeral tokens`). So — unlike OpenAI's single-step multipart relay — Azure negotiates
+        # in two steps: mint a short-lived client secret server-side (with the api-key or Entra token),
+        # which binds the session config, then relay the raw SDP offer authenticated with that secret.
+        secret = await self.create_client_secret(instructions=instructions, tools=tools, model_settings=model_settings)
+        return await _relay_sdp_offer(
+            http_client=self._http_client,
+            calls_url=self._webrtc_calls_url(),
+            ephemeral_token=secret.value,
+            provider_name=self.system,
+            sdp_offer=sdp_offer,
+        )
 
     async def _auth_headers(self) -> dict[str, str]:
         if (credential := self.credential) is not None:

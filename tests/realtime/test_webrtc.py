@@ -1,15 +1,15 @@
-"""Network-free tests for the realtime WebRTC signaling helpers and OpenAI-family model methods.
+"""Tests for the realtime WebRTC signaling helpers and OpenAI-family model methods.
 
 The browser <-> provider media path is exercised by the runnable example, not here. These tests pin the
 server-side signaling that Pydantic AI owns: minting a client secret, relaying an SDP offer (the secure
 topology), parsing the `call_id`, Azure Microsoft Entra ID token minting, and the capability gating of a
-sideband session. The HTTP is driven through an `httpx.MockTransport` so the exact request shape and
-response parsing are asserted deterministically offline.
+sideband session. Success paths that depend on provider behavior use recorded HTTP cassettes; focused
+unit tests use `httpx.MockTransport` only for our own guards, error formatting, and request shaping.
 """
 
 from __future__ import annotations as _annotations
 
-import json
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -18,13 +18,13 @@ import pytest
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters
 
-from ..conftest import IsDatetime, try_import
+from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
-    from pydantic_ai.realtime import WebRTCAnswer, WebRTCCall
+    from pydantic_ai.realtime import WebRTCCall
     from pydantic_ai.realtime._openai_webrtc import parse_call_id
     from pydantic_ai.realtime.azure import AzureRealtimeModel
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
@@ -36,6 +36,53 @@ pytestmark = [
 
 SAMPLE_SDP_OFFER = 'v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n'
 SAMPLE_SDP_ANSWER = 'v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=recvonly\r\n'
+
+# A real WebRTC offer (generated once with `aiortc`, then stripped of host ICE candidates and with all
+# addresses zeroed) that the OpenAI/Azure `/realtime/calls` endpoints accept and answer — so the
+# signaling round-trip can be recorded against the live APIs instead of mocked. The leftover ICE ufrag /
+# password / DTLS fingerprint are random per-session values, meaningless outside a live media session.
+REAL_SDP_OFFER = (
+    '\r\n'.join(
+        """v=0
+o=- 3993840254 3993840254 IN IP4 0.0.0.0
+s=-
+t=0 0
+a=group:BUNDLE 0 1
+a=msid-semantic:WMS *
+m=audio 51603 UDP/TLS/RTP/SAVPF 96 9 0 8
+c=IN IP4 0.0.0.0
+a=sendrecv
+a=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid
+a=extmap:2 urn:ietf:params:rtp-hdrext:ssrc-audio-level
+a=mid:0
+a=msid:993a573d-865c-4f89-b4d6-bf0023b36333 28299f45-cf21-4e7d-8945-3fc2846d1979
+a=rtcp:9 IN IP4 0.0.0.0
+a=rtcp-mux
+a=ssrc:596951577 cname:54390b83-64d1-4178-a0ef-a2cafdb3f3a7
+a=rtpmap:96 opus/48000/2
+a=rtpmap:9 G722/8000
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=ice-ufrag:YnNx
+a=ice-pwd:jIsRuXZmV9Yq00qk4a33Xe
+a=fingerprint:sha-256 97:A7:E2:EF:70:B3:AD:B9:06:C8:DF:11:61:01:E5:6F:8F:46:EB:15:50:F2:54:D0:72:51:5B:37:0F:00:21:CB
+a=setup:actpass
+m=application 34376 UDP/DTLS/SCTP webrtc-datachannel
+c=IN IP4 0.0.0.0
+a=mid:1
+a=sctp-port:5000
+a=max-message-size:65536
+a=ice-ufrag:YnNx
+a=ice-pwd:jIsRuXZmV9Yq00qk4a33Xe
+a=fingerprint:sha-256 97:A7:E2:EF:70:B3:AD:B9:06:C8:DF:11:61:01:E5:6F:8F:46:EB:15:50:F2:54:D0:72:51:5B:37:0F:00:21:CB
+a=setup:actpass""".strip().splitlines()
+    )
+    + '\r\n'
+)
+
+# Our Azure OpenAI dev resource, hardcoded (not a secret — like `test_azure_provider_call`) so the
+# recorded host is stable between recording (real key) and offline replay (placeholder key).
+_AZURE_REALTIME_ENDPOINT = 'https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1'
 
 
 def _mock_provider(handler: Any, *, api_key: str = 'sk-test') -> Any:
@@ -69,51 +116,20 @@ def test_parse_call_id(location: str | None, expected: str | None) -> None:
 # --- client secret minting --------------------------------------------------------------------------
 
 
-async def test_create_client_secret() -> None:
-    captured: dict[str, Any] = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured['url'] = str(request.url)
-        captured['method'] = request.method
-        captured['auth'] = request.headers.get('authorization')
-        captured['content_type'] = request.headers.get('content-type')
-        captured['body'] = json.loads(request.content)
-        return httpx.Response(
-            200,
-            json={
-                'value': 'ek_secret_123',
-                'expires_at': 1_700_000_060,
-                'session': {'type': 'realtime', 'model': 'gpt-realtime'},
-            },
-        )
-
-    model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
+@pytest.mark.vcr
+async def test_create_client_secret(openai_api_key: str, request: pytest.FixtureRequest) -> None:
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key=openai_api_key))
     secret = await model.create_client_secret(
         instructions='Be brief.',
         model_settings=OpenAIRealtimeModelSettings(voice='marin'),
         expires_after_seconds=60,
     )
 
-    assert captured['method'] == 'POST'
-    assert captured['url'] == 'https://api.openai.com/v1/realtime/client_secrets'
-    assert captured['auth'] == 'Bearer sk-test'
-    assert captured['content_type'] == 'application/json'
-    # The session config is baked into the minted secret, including the resolved instructions and voice.
-    assert captured['body']['expires_after'] == {'anchor': 'created_at', 'seconds': 60}
-    session = captured['body']['session']
-    assert session['instructions'] == 'Be brief.'
-    assert session['audio']['output']['voice'] == 'marin'
-    assert session['type'] == 'realtime'
-    # The WebRTC signaling endpoints read the model from the session body (not a `?model=` query).
-    assert session['model'] == 'gpt-realtime'
-
-    assert secret.value == 'ek_secret_123'
-    assert secret.expires_at == IsDatetime()
+    assert secret.value
     assert secret.expires_at.tzinfo is not None
-    assert secret.provider_details == {
-        'expires_at': 1_700_000_060,
-        'session': {'type': 'realtime', 'model': 'gpt-realtime'},
-    }
+    # The secret expires shortly after recording, so only a live response can remain future-dated.
+    if request.config.getoption('record_mode') == 'rewrite':
+        assert secret.expires_at > datetime.now(timezone.utc)
 
 
 async def test_create_client_secret_missing_value() -> None:
@@ -169,48 +185,18 @@ async def test_create_client_secret_http_error() -> None:
 # --- WebRTC offer relay -----------------------------------------------------------------------------
 
 
-async def test_answer_webrtc_offer() -> None:
-    captured: dict[str, Any] = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured['url'] = str(request.url)
-        captured['method'] = request.method
-        captured['auth'] = request.headers.get('authorization')
-        captured['accept'] = request.headers.get('accept')
-        captured['content_type'] = request.headers.get('content-type')
-        captured['body'] = request.content.decode()
-        return httpx.Response(
-            201,
-            headers={'Location': '/v1/realtime/calls/rtc_call_9'},
-            text=SAMPLE_SDP_ANSWER,
-        )
-
-    model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
+@pytest.mark.vcr
+async def test_answer_webrtc_offer(openai_api_key: str) -> None:
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key=openai_api_key))
     answer = await model.answer_webrtc_offer(
-        SAMPLE_SDP_OFFER,
+        REAL_SDP_OFFER,
         instructions='Answer in two words.',
         model_settings=OpenAIRealtimeModelSettings(voice='cedar'),
     )
 
-    assert captured['method'] == 'POST'
-    assert captured['url'] == 'https://api.openai.com/v1/realtime/calls'
-    assert captured['auth'] == 'Bearer sk-test'
-    assert captured['accept'] == 'application/sdp'
-    # The offer and the session config are sent as a multipart body (httpx sets the boundary).
-    assert captured['content_type'].startswith('multipart/form-data; boundary=')
-    assert SAMPLE_SDP_OFFER in captured['body']
-    assert '"instructions": "Answer in two words."' in captured['body']
-    assert '"voice": "cedar"' in captured['body']
-    assert '"model": "gpt-realtime"' in captured['body']
-
-    assert answer == WebRTCAnswer(
-        sdp=SAMPLE_SDP_ANSWER,
-        call=WebRTCCall(
-            provider_name='openai',
-            call_id='rtc_call_9',
-            provider_details={'location': '/v1/realtime/calls/rtc_call_9'},
-        ),
-    )
+    assert answer.call.provider_name == 'openai'
+    assert answer.call.call_id.startswith('rtc_')
+    assert answer.sdp.startswith('v=0')
 
 
 async def test_answer_webrtc_offer_missing_location() -> None:
@@ -259,27 +245,6 @@ class _FakeCredential:
         return _FakeAccessToken('entra-token-xyz')
 
 
-async def test_azure_answer_webrtc_offer_uses_api_key_and_webrtcfilter() -> None:
-    captured: dict[str, Any] = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured['url'] = str(request.url)
-        captured['api_key'] = request.headers.get('api-key')
-        captured['auth'] = request.headers.get('authorization')
-        return httpx.Response(201, headers={'Location': '/v1/realtime/calls/rtc_az'}, text=SAMPLE_SDP_ANSWER)
-
-    model = AzureRealtimeModel('gpt-realtime', provider=_azure_mock_provider(handler))
-    answer = await model.answer_webrtc_offer(SAMPLE_SDP_OFFER)
-
-    # Azure relays the offer with the `api-key` header (no bearer) and the `webrtcfilter=on` query.
-    assert captured['url'] == 'https://resource.openai.azure.com/openai/v1/realtime/calls?webrtcfilter=on'
-    assert captured['api_key'] == 'azure-key'
-    assert captured['auth'] is None
-    assert answer.call == WebRTCCall(
-        provider_name='azure', call_id='rtc_az', provider_details={'location': '/v1/realtime/calls/rtc_az'}
-    )
-
-
 async def test_azure_entra_credential_mints_client_secret_with_bearer() -> None:
     captured: dict[str, Any] = {}
 
@@ -299,6 +264,29 @@ async def test_azure_entra_credential_mints_client_secret_with_bearer() -> None:
     assert captured['auth'] == 'Bearer entra-token-xyz'
     assert captured['api_key'] is None
     assert secret.value == 'ek_az'
+
+
+# --- recorded signaling round-trips (real APIs) -----------------------------------------------------
+
+
+@pytest.mark.vcr
+async def test_azure_answer_webrtc_offer_records(azure_config: tuple[str, str]) -> None:
+    """Azure's two-step WebRTC negotiation, recorded against the real API.
+
+    Azure's `/realtime/calls` rejects the api-key with a 401, so `answer_webrtc_offer` mints an ephemeral
+    client secret first, then relays the raw SDP offer with it. This exercises that end to end — the path
+    the old `MockTransport` test asserted incorrectly (it mimicked OpenAI's single-step multipart relay,
+    which Azure never accepts).
+    """
+    _, api_key = azure_config
+    provider = AzureProvider(azure_endpoint=_AZURE_REALTIME_ENDPOINT, api_key=api_key)
+    model = AzureRealtimeModel('gpt-realtime', provider=provider)
+
+    answer = await model.answer_webrtc_offer(REAL_SDP_OFFER, instructions='Answer in two or three words.')
+
+    assert answer.call.provider_name == 'azure'
+    assert answer.call.call_id.startswith('rtc_')
+    assert answer.sdp.startswith('v=0')
 
 
 # --- sideband connect guards ------------------------------------------------------------------------

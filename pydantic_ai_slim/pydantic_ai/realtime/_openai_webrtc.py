@@ -89,30 +89,12 @@ async def mint_client_secret(
     )
 
 
-async def answer_webrtc_offer(
-    *,
-    http_client: httpx.AsyncClient,
-    calls_url: str,
-    headers: dict[str, str],
-    provider_name: str,
-    sdp_offer: str,
-    session_config: dict[str, Any],
-) -> WebRTCAnswer:
-    """`POST .../realtime/calls` with the browser's offer + session config, returning the answer and call handle.
+def _webrtc_answer_from_response(response: httpx.Response, provider_name: str) -> WebRTCAnswer:
+    """Build a [`WebRTCAnswer`][pydantic_ai.realtime.WebRTCAnswer] from a `/realtime/calls` response.
 
-    The offer and session config are sent as a `multipart/form-data` body so the server's API key
-    stays server-side. `httpx` generates the multipart boundary; the OpenAI SDK's own
-    `realtime.calls.create` helper forces a boundary-less `Content-Type`, so the raw client is used.
-    The created call's id comes back in the `Location` header, not the SDP body.
+    The created call's id comes back in the `Location` header (e.g. `/v1/realtime/calls/rtc_...`), not
+    the SDP body, so it is parsed out and carried on the returned [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall].
     """
-    response = await http_client.post(
-        calls_url,
-        headers={**headers, 'Accept': 'application/sdp'},
-        files=[
-            ('sdp', (None, sdp_offer, 'application/sdp')),
-            ('session', (None, json.dumps(session_config), 'application/json')),
-        ],
-    )
     _raise_for_status(response, 'negotiating realtime WebRTC call')
     location = response.headers.get('location')
     call_id = parse_call_id(location)
@@ -128,3 +110,55 @@ async def answer_webrtc_offer(
             provider_details={'location': location} if location else None,
         ),
     )
+
+
+async def answer_webrtc_offer(
+    *,
+    http_client: httpx.AsyncClient,
+    calls_url: str,
+    headers: dict[str, str],
+    provider_name: str,
+    sdp_offer: str,
+    session_config: dict[str, Any],
+) -> WebRTCAnswer:
+    """`POST .../realtime/calls` with the browser's offer + session config, returning the answer and call handle.
+
+    This is OpenAI's single-step relay: the offer and session config are sent as a `multipart/form-data`
+    body authenticated with the server's own key, so no ephemeral token is involved. `httpx` generates
+    the multipart boundary; the OpenAI SDK's own `realtime.calls.create` helper forces a boundary-less
+    `Content-Type`, so the raw client is used. (Azure requires a different, two-step flow — see
+    [`relay_sdp_offer`][pydantic_ai.realtime._openai_webrtc.relay_sdp_offer].)
+    """
+    response = await http_client.post(
+        calls_url,
+        headers={**headers, 'Accept': 'application/sdp'},
+        files=[
+            ('sdp', (None, sdp_offer, 'application/sdp')),
+            ('session', (None, json.dumps(session_config), 'application/json')),
+        ],
+    )
+    return _webrtc_answer_from_response(response, provider_name)
+
+
+async def relay_sdp_offer(
+    *,
+    http_client: httpx.AsyncClient,
+    calls_url: str,
+    ephemeral_token: str,
+    provider_name: str,
+    sdp_offer: str,
+) -> WebRTCAnswer:
+    """`POST .../realtime/calls` with the raw SDP offer authenticated by an ephemeral client secret.
+
+    Azure OpenAI's `/realtime/calls` rejects the resource api-key / Entra token with a 401 (`This
+    operation requires ephemeral tokens`), and expects the offer as a raw `application/sdp` body rather
+    than the multipart form OpenAI accepts. So Azure negotiates in two steps — mint a short-lived client
+    secret (which binds the session config), then relay the offer with that secret as a bearer token.
+    See <https://learn.microsoft.com/azure/ai-foundry/openai/how-to/realtime-audio-webrtc>.
+    """
+    response = await http_client.post(
+        calls_url,
+        headers={'Authorization': f'Bearer {ephemeral_token}', 'Content-Type': 'application/sdp'},
+        content=sdp_offer,
+    )
+    return _webrtc_answer_from_response(response, provider_name)
