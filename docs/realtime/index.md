@@ -569,7 +569,7 @@ The secure flow keeps the API key server-side — the browser never holds a toke
    your backend.
 2. Your backend relays it with
    [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer], which returns the
-   provider's SDP **answer** and a [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall] carrying the `call_id`.
+   provider's SDP **answer** and a [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession] carrying the `call_id`.
 3. Your backend returns the answer to the browser (media now flows browser ↔ provider) and attaches the
    sideband with
    [`agent.realtime(model).session(provider_session=call)`][pydantic_ai.agent.AgentRealtime.session].
@@ -593,7 +593,7 @@ async def handle_offer(sdp_offer: str) -> str:
     answer = await model.answer_webrtc_offer(sdp_offer, instructions=INSTRUCTIONS)
 
     async def run_sideband() -> None:
-        async with agent.realtime(model).session(provider_session=answer.call) as session:
+        async with agent.realtime(model).session(provider_session=answer.session) as session:
             async for event in session:  # the agent runs tools and builds history here
                 print(event)
 
@@ -601,8 +601,7 @@ async def handle_offer(sdp_offer: str) -> str:
     return answer.sdp
 ```
 
-Because a sideband session doesn't own the audio transport, its
-[`owns_media`][pydantic_ai.realtime.RealtimeModelProfile.owns_media] is `False`: the audio methods
+Because a sideband session doesn't own the audio transport, its audio methods
 (`send_audio` / `commit_audio` / `clear_audio`) raise, and `audio_retention` must stay
 `'transcript_only'` (the browser has the audio; the session still records transcripts). Everything else
 is the same session you already know — the [event loop](#the-event-loop), [tools](#tool-calling), and
@@ -875,10 +874,9 @@ Azure OpenAI, and xAI use 24 kHz in both directions; Gemini uses 16 kHz input an
 | [`supports_seeding_audio`][pydantic_ai.realtime.RealtimeModelProfile.supports_seeding_audio] | Transcript-less retained user audio in `message_history` | ✅ | ✅ | ❌ | ❌ |
 | [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] | [`thinking`](openai.md#reasoning) | `gpt-realtime-2*` | `gpt-realtime-2*` | Native-audio models | ❌ |
 
-One more flag, [`owns_media`][pydantic_ai.realtime.RealtimeModelProfile.owns_media], is not a static
-per-model capability: it's `True` for an ordinary session and `False` for a
-[WebRTC sideband](#browser-webrtc) one, where the browser owns the audio and the session's audio
-methods are unavailable.
+Whether a session owns the audio transport is not a static per-model capability: an ordinary session
+does, while a [WebRTC sideband](#browser-webrtc) one doesn't — there the browser owns the audio and the
+session's audio methods are unavailable.
 
 Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
 exposes neither the manual turn verbs nor an explicit `interrupt()`. xAI Grok Voice supports

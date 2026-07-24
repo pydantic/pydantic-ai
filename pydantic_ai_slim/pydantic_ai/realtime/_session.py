@@ -317,6 +317,7 @@ class RealtimeSession:
         retain_images_every_n: int = 1,
         message_history: Sequence[ModelMessage] | None = None,
         profile: RealtimeModelProfile | None = None,
+        owns_media: bool = True,
         conversation_id: str | None = None,
         instructions: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -332,8 +333,8 @@ class RealtimeSession:
         # Whether this session owns the audio transport. `False` for a WebRTC sideband session: the
         # browser exchanges audio with the provider directly, and this connection is only the control
         # plane, so the audio methods are unavailable and no audio bytes flow over it (transcripts still
-        # build history). See `RealtimeModelProfile.owns_media`.
-        self._owns_media = self._profile.get('owns_media', True)
+        # build history). Set by the connect path when a `provider_session` is attached.
+        self._owns_media = owns_media
         self._model_name = model_name
         self._provider_name = provider_name
         self._provider_url = provider_url

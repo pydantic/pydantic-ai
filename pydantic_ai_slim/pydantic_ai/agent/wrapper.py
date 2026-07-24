@@ -34,8 +34,8 @@ if TYPE_CHECKING:
         KnownRealtimeModelName,
         RealtimeModel,
         RealtimeModelSettings,
+        RealtimeProviderSession,
         RealtimeSession,
-        WebRTCCall,
     )
     from .spec import AgentSpec
 
@@ -317,7 +317,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
-        provider_session: WebRTCCall | None = None,
+        provider_session: RealtimeProviderSession | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime session on the wrapped agent. See [`Agent.realtime`][pydantic_ai.agent.Agent.realtime]."""
         async with self.wrapped._open_realtime_session(

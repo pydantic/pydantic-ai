@@ -193,7 +193,6 @@ def _profile(
     supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(
         {WebSearchTool, WebFetchTool, CodeExecutionTool}
     ),
-    owns_media: bool = True,
 ) -> RealtimeModelProfile:
     """A full-support profile with per-field overrides, so a guard test can flip one flag off."""
     return RealtimeModelProfile(
@@ -203,7 +202,6 @@ def _profile(
         supports_output_truncation=supports_output_truncation,
         supports_session_seeding=supports_session_seeding,
         supported_native_tools=supported_native_tools,
-        owns_media=owns_media,
     )
 
 
@@ -1636,7 +1634,7 @@ async def test_owns_media_guard() -> None:
     # A WebRTC sideband session (owns_media=False) doesn't own the audio transport, so the audio
     # methods are unavailable up front — the browser streams audio to the provider directly.
     conn = FakeRealtimeConnection([])
-    session = RealtimeSession(conn, _noop_runner, profile=_profile(owns_media=False))
+    session = RealtimeSession(conn, _noop_runner, owns_media=False)
     with pytest.raises(UserError, match='does not own the audio transport'):
         await session.send_audio(b'\x00\x00')
     with pytest.raises(UserError, match='does not own the audio transport'):

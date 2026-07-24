@@ -43,6 +43,7 @@ from ._base import (
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
+    RealtimeProviderSession,
     RealtimeSessionInput,
     ReconnectedEvent,
     ReconnectPolicy,
@@ -52,7 +53,7 @@ from ._base import (
     TurnCompleteEvent,
     TurnDetection,
     WebRTCAnswer,
-    WebRTCCall,
+    WebRTCSession,
 )
 from ._session import RealtimeSession
 
@@ -154,6 +155,7 @@ __all__ = (
     'RealtimeSession',
     'RealtimeSessionInput',
     'ReconnectPolicy',
+    'RealtimeProviderSession',
     'ReconnectedEvent',
     'SessionErrorEvent',
     'SessionUsageEvent',
@@ -161,6 +163,6 @@ __all__ = (
     'TurnDetection',
     'TurnCompleteEvent',
     'WebRTCAnswer',
-    'WebRTCCall',
+    'WebRTCSession',
     'infer_realtime_model',
 )

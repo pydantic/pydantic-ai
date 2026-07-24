@@ -26,7 +26,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
-    from pydantic_ai.realtime import WebRTCCall
+    from pydantic_ai.realtime import WebRTCSession
     from pydantic_ai.realtime._openai_webrtc import parse_call_id
     from pydantic_ai.realtime.azure import AzureRealtimeModel
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
@@ -210,8 +210,8 @@ async def test_answer_webrtc_offer(openai_api_key: str) -> None:
         model_settings=OpenAIRealtimeModelSettings(voice='cedar'),
     )
 
-    assert answer.call.provider_name == 'openai'
-    assert answer.call.call_id.startswith('rtc_')
+    assert answer.session.provider_name == 'openai'
+    assert answer.session.call_id.startswith('rtc_')
     assert answer.sdp.startswith('v=0')
 
 
@@ -300,8 +300,8 @@ async def test_azure_answer_webrtc_offer_records(azure_config: tuple[str, str]) 
 
     answer = await model.answer_webrtc_offer(REAL_SDP_OFFER, instructions='Answer in two or three words.')
 
-    assert answer.call.provider_name == 'azure'
-    assert answer.call.call_id.startswith('rtc_')
+    assert answer.session.provider_name == 'azure'
+    assert answer.session.call_id.startswith('rtc_')
     assert answer.sdp.startswith('v=0')
 
 
@@ -314,7 +314,7 @@ async def test_realtime_session_sideband_rejects_audio_retention() -> None:
 
     model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(_unused_handler))
     agent = Agent()
-    call = WebRTCCall(provider_name='openai', call_id='rtc_x')
+    call = WebRTCSession(provider_name='openai', session_id='rtc_x')
     with pytest.raises(UserError, match="can't retain audio"):
         async with agent.realtime(model).session(provider_session=call, audio_retention='input_audio'):
             pass  # pragma: no cover - raises before connecting
@@ -322,7 +322,7 @@ async def test_realtime_session_sideband_rejects_audio_retention() -> None:
 
 async def test_connect_webrtc_provider_mismatch() -> None:
     model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(_unused_handler))
-    call = WebRTCCall(provider_name='azure', call_id='rtc_x')
+    call = WebRTCSession(provider_name='azure', session_id='rtc_x')
     with pytest.raises(UserError, match='was negotiated by provider'):
         async with model.connect_webrtc(
             call, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
@@ -354,13 +354,13 @@ async def test_base_model_rejects_webrtc() -> None:
     # The base `RealtimeModel` reads these to build its "unsupported" errors, so pin the stand-in's identity.
     assert model.system == 'ws-only'
     assert model.model_name == 'ws-only'
-    with pytest.raises(UserError, match='does not support WebRTC'):
+    with pytest.raises(NotImplementedError, match='does not support WebRTC'):
         await model.answer_webrtc_offer(SAMPLE_SDP_OFFER)
-    with pytest.raises(UserError, match='does not support minting client secrets'):
+    with pytest.raises(NotImplementedError, match='does not support minting client secrets'):
         await model.create_client_secret()
-    with pytest.raises(UserError, match='does not support WebRTC sideband sessions'):
+    with pytest.raises(NotImplementedError, match='does not support WebRTC sideband sessions'):
         async with model.connect_webrtc(
-            WebRTCCall(provider_name='ws-only', call_id='x'),
+            WebRTCSession(provider_name='ws-only', session_id='x'),
             messages=[],
             model_settings=None,
             model_request_parameters=ModelRequestParameters(),

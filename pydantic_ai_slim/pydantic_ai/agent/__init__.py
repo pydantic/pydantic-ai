@@ -129,8 +129,8 @@ if TYPE_CHECKING:
         KnownRealtimeModelName,
         RealtimeModel,
         RealtimeModelSettings,
+        RealtimeProviderSession,
         RealtimeSession,
-        WebRTCCall,
     )
     from ..ui._web import ModelsParam
 
@@ -3039,7 +3039,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
-        provider_session: WebRTCCall | None = None,
+        provider_session: RealtimeProviderSession | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
 
@@ -3048,7 +3048,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         [`realtime`][pydantic_ai.agent.AbstractAgent.realtime] for the parameter reference.
         """
         from ..realtime import RealtimeModel, RealtimeSession, infer_realtime_model
-        from ..realtime.codec import merge_realtime_profile
 
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
@@ -3149,17 +3148,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # connecting, rather than mid-session. This is the signal a caller or capability needs to fall
         # back (e.g. to a local tool); the session itself does not fall back automatically.
         model_profile = model.profile
-        if provider_session is not None:
-            # A WebRTC sideband session doesn't own the audio transport: the browser streams audio to the
-            # provider directly. Mark the profile so the session disables its audio methods, and reject an
-            # audio-retention request that can never be satisfied (no audio bytes flow over this connection).
-            model_profile = merge_realtime_profile(model_profile, {'owns_media': False})
-            if audio_retention != 'transcript_only':
-                raise exceptions.UserError(
-                    "A WebRTC sideband session can't retain audio: the browser exchanges audio with the "
-                    'provider directly, so no audio bytes reach this connection. Leave `audio_retention` at '
-                    "'transcript_only' (transcripts still build the conversation history)."
-                )
+        # A WebRTC sideband session doesn't own the audio transport: the browser streams audio to the
+        # provider directly, so the session disables its audio methods and retains no audio bytes.
+        owns_media = provider_session is None
+        if provider_session is not None and audio_retention != 'transcript_only':
+            # Reject an audio-retention request that can never be satisfied (no audio bytes flow here).
+            raise exceptions.UserError(
+                "A WebRTC sideband session can't retain audio: the browser exchanges audio with the "
+                'provider directly, so no audio bytes reach this connection. Leave `audio_retention` at '
+                "'transcript_only' (transcripts still build the conversation history)."
+            )
         supported_native_tools = model_profile.get('supported_native_tools', frozenset())
         if unsupported_native_tools := [t for t in native_tools if not isinstance(t, tuple(supported_native_tools))]:
             unsupported = ', '.join(sorted(type(t).__name__ for t in unsupported_native_tools))
@@ -3249,6 +3247,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     retain_images_every_n=retain_images_every_n,
                     message_history=message_history,
                     profile=model_profile,
+                    owns_media=owns_media,
                     conversation_id=conversation_id,
                     instructions=resolved_instructions or None,
                     metadata=run_context.metadata,

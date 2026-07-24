@@ -389,7 +389,6 @@ def test_profile_allow_seeding() -> None:
         supported_native_tools=frozenset(),
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
-        owns_media=True,
     )
 
 
@@ -412,11 +411,11 @@ async def test_webrtc_sideband_text_turn(
 
     answer = await model.answer_webrtc_offer(SAMPLE_WEBRTC_SDP_OFFER, instructions='Answer in two words.')
     assert answer.sdp.startswith('v=0')
-    assert answer.call.provider_name == 'openai'
-    assert answer.call.call_id.startswith('rtc_')
+    assert answer.session.provider_name == 'openai'
+    assert answer.session.call_id.startswith('rtc_')
 
     events: list[Any] = []
-    async with agent.realtime(model).session(provider_session=answer.call) as session:
+    async with agent.realtime(model).session(provider_session=answer.session) as session:
         # The sideband doesn't own the audio transport, so the audio methods are unavailable.
         with pytest.raises(UserError, match='does not own the audio transport'):
             await session.send_audio(b'\x00\x00')

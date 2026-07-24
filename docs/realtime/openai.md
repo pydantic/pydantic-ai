@@ -59,7 +59,7 @@ helpers, both binding the session configuration (instructions, tools, voice, VAD
 
 - [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer] — the **secure** path:
   relay the browser's SDP offer to `POST /v1/realtime/calls`, returning the SDP answer and a
-  [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall] to attach a sideband to with
+  [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession] to attach a sideband to with
   [`agent.realtime(model).session(provider_session=…)`][pydantic_ai.agent.AgentRealtime.session]. The browser
   never sees a token.
 - [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret] — mint a short-lived
@@ -70,7 +70,7 @@ helpers, both binding the session configuration (instructions, tools, voice, VAD
 # In your `POST /offer` handler, `sdp_offer` is the browser's SDP offer (the request body):
 answer = await model.answer_webrtc_offer(sdp_offer, instructions='You are a helpful assistant.')
 # Return `answer.sdp` to the browser, then run the agent over the sideband:
-async with agent.realtime(model).session(provider_session=answer.call) as session:
+async with agent.realtime(model).session(provider_session=answer.session) as session:
     async for event in session:
         ...
 ```

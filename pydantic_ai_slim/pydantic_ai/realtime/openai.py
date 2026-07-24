@@ -77,6 +77,7 @@ from ._base import (
     RealtimeInput,
     RealtimeModel,
     RealtimeModelSettings,
+    RealtimeProviderSession,
     ReconnectedEvent,
     ReconnectPolicy,
     SessionErrorEvent,
@@ -85,7 +86,6 @@ from ._base import (
     ToolResult,
     TruncateOutput,
     WebRTCAnswer,
-    WebRTCCall,
     inject_trace_context,
     reconnect_with_backoff,
 )
@@ -836,19 +836,19 @@ class OpenAIRealtimeModel(RealtimeModel):
     @asynccontextmanager
     async def connect_webrtc(
         self,
-        call: WebRTCCall,
+        session: RealtimeProviderSession,
         *,
         messages: Sequence[ModelMessage],
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
-        if call.provider_name != self.system:
+        if session.provider_name != self.system:
             raise UserError(
-                f'This WebRTC call was negotiated by provider {call.provider_name!r}, but this realtime '
+                f'This WebRTC call was negotiated by provider {session.provider_name!r}, but this realtime '
                 f'model connects through {self.system!r}. Answer the offer and attach the sideband with the '
                 'same model/provider.'
             )
-        url = self._sideband_url(call.call_id)
+        url = self._sideband_url(session.session_id)
         headers = await self._auth_headers()
         # Propagate trace context over the handshake (see `connect` for the rationale).
         inject_trace_context(headers)

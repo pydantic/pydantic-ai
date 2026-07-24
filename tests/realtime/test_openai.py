@@ -58,7 +58,7 @@ from pydantic_ai.realtime import (
     SessionUsageEvent,
     TurnCompleteEvent,
     TurnDetection,
-    WebRTCCall,
+    WebRTCSession,
 )
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput, merge_realtime_profile
 from pydantic_ai.realtime._openai_protocol import map_conversation_event, realtime_websocket_url
@@ -653,7 +653,7 @@ async def test_connect_webrtc_sideband_handshake(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(rt_openai.websockets, 'connect', fake_connect)
 
     model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
-    call = WebRTCCall(provider_name='openai', call_id='rtc_test1')
+    call = WebRTCSession(provider_name='openai', session_id='rtc_test1')
     async with model.connect_webrtc(
         call,
         messages=[ModelRequest(parts=[], instructions='Be nice')],
@@ -686,7 +686,7 @@ async def test_connect_webrtc_sideband_seeds_history_without_served_model(monkey
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
 
     model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
-    call = WebRTCCall(provider_name='openai', call_id='rtc_seed')
+    call = WebRTCSession(provider_name='openai', session_id='rtc_seed')
     history = [
         ModelRequest(parts=[UserPromptPart(content='My favorite color is teal.')]),
         ModelResponse(parts=[TextPart(content='Got it, teal.')]),
@@ -2157,7 +2157,7 @@ async def test_connect_webrtc_sideband_reconnect_closes_previous_connection(monk
     monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
 
     model = OpenAIRealtimeModel('gpt-realtime', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0))
-    call = WebRTCCall(provider_name='openai', call_id='rtc_reconnect')
+    call = WebRTCSession(provider_name='openai', session_id='rtc_reconnect')
     async with model.connect_webrtc(
         call, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
     ) as conn:

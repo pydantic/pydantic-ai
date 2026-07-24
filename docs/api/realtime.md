@@ -53,10 +53,9 @@ backend runs a control-plane sideband (OpenAI and Azure OpenAI; see [Browser / W
 
 | Object | Role |
 | --- | --- |
-| [`RealtimeModel.answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer] | Relay the browser's SDP offer; return the SDP answer and a [`WebRTCAnswer`][pydantic_ai.realtime.WebRTCAnswer] / [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall]. |
+| [`RealtimeModel.answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer] | Relay the browser's SDP offer; return the SDP answer and a [`WebRTCAnswer`][pydantic_ai.realtime.WebRTCAnswer] / [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession]. |
 | [`RealtimeModel.create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret] | Mint an ephemeral [`RealtimeClientSecret`][pydantic_ai.realtime.RealtimeClientSecret] for a browser client. |
-| [`AgentRealtime.session(provider_session=…)`][pydantic_ai.agent.AgentRealtime.session] | Attach the sideband session to a [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall] and run the agent. |
-| [`RealtimeModelProfile.owns_media`][pydantic_ai.realtime.RealtimeModelProfile.owns_media] | `False` on a sideband session: the browser owns the audio, so the audio methods are unavailable. |
+| [`AgentRealtime.session(provider_session=…)`][pydantic_ai.agent.AgentRealtime.session] | Attach the sideband session to a [`RealtimeProviderSession`][pydantic_ai.realtime.RealtimeProviderSession] (e.g. a [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession]) and run the agent. |
 
 **Inputs** — [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send] accepts session content
 only: plain `str`, image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], a sequence of

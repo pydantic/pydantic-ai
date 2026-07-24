@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .._utils import is_str_dict
 from ..exceptions import UnexpectedModelBehavior
-from ._base import RealtimeClientSecret, WebRTCAnswer, WebRTCCall
+from ._base import RealtimeClientSecret, WebRTCAnswer, WebRTCSession
 
 if TYPE_CHECKING:
     import httpx
@@ -93,7 +93,7 @@ def _webrtc_answer_from_response(response: httpx.Response, provider_name: str) -
     """Build a [`WebRTCAnswer`][pydantic_ai.realtime.WebRTCAnswer] from a `/realtime/calls` response.
 
     The created call's id comes back in the `Location` header (e.g. `/v1/realtime/calls/rtc_...`), not
-    the SDP body, so it is parsed out and carried on the returned [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall].
+    the SDP body, so it is parsed out and carried on the returned [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession].
     """
     _raise_for_status(response, 'negotiating realtime WebRTC call')
     location = response.headers.get('location')
@@ -104,9 +104,9 @@ def _webrtc_answer_from_response(response: httpx.Response, provider_name: str) -
         )
     return WebRTCAnswer(
         sdp=response.text,
-        call=WebRTCCall(
+        session=WebRTCSession(
             provider_name=provider_name,
-            call_id=call_id,
+            session_id=call_id,
             provider_details={'location': location} if location else None,
         ),
     )

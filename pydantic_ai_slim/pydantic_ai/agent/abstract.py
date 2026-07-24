@@ -62,8 +62,8 @@ if TYPE_CHECKING:
         KnownRealtimeModelName,
         RealtimeModel,
         RealtimeModelSettings,
+        RealtimeProviderSession,
         RealtimeSession,
-        WebRTCCall,
     )
 
 
@@ -1661,7 +1661,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
-        provider_session: WebRTCCall | None = None,
+        provider_session: RealtimeProviderSession | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
 
@@ -1931,7 +1931,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         *,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
-        provider_session: WebRTCCall | None = None,
+        provider_session: RealtimeProviderSession | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session backed by the agent's tools.
 
@@ -1946,7 +1946,7 @@ class AgentRealtime(Generic[AgentDepsT]):
                 [`AudioRetention`][pydantic_ai.realtime.AudioRetention].
             retain_images_every_n: Keep one of every `N` images sent during the session in message
                 history. Defaults to `1` (keep every image); increase for high-rate camera/screen streams.
-            provider_session: A [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall] to attach a **sideband**
+            provider_session: A [`RealtimeProviderSession`][pydantic_ai.realtime.RealtimeProviderSession] to attach a **sideband**
                 control session to, from
                 [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer]. When set,
                 the browser exchanges audio with the provider directly over WebRTC and this session runs

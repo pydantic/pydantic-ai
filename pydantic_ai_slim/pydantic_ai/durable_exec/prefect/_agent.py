@@ -48,7 +48,7 @@ if TYPE_CHECKING:
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeSession,
-        WebRTCCall,
+        RealtimeProviderSession,
     )
 
 from ._types import TaskConfig, default_task_config
@@ -1073,7 +1073,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
-        provider_session: WebRTCCall | None = None,
+        provider_session: RealtimeProviderSession | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session; see [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] for the parameters.
 

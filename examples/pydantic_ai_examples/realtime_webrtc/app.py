@@ -43,7 +43,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import FunctionToolCallEvent, FunctionToolResultEvent
-from pydantic_ai.realtime import TurnCompleteEvent, WebRTCCall
+from pydantic_ai.realtime import TurnCompleteEvent, WebRTCSession
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
 
 load_dotenv()
@@ -112,7 +112,7 @@ class Call:
     """One live WebRTC call and its server-side sideband task."""
 
     answer_sdp: str
-    provider_session: WebRTCCall
+    provider_session: WebRTCSession
     task: asyncio.Task[None] | None = None
     attached: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -182,8 +182,8 @@ async def offer(request: Request) -> JSONResponse:
     answer = await build_model().answer_webrtc_offer(
         sdp_offer, instructions=INSTRUCTIONS
     )
-    call = Call(answer_sdp=answer.sdp, provider_session=answer.call)
-    CALLS[answer.call.call_id] = call
+    call = Call(answer_sdp=answer.sdp, provider_session=answer.session)
+    CALLS[answer.session.call_id] = call
 
     # Attach the sideband before returning the answer, so the tools are live before the browser (which
     # only starts sending audio once it has the answer) can speak.
@@ -191,7 +191,7 @@ async def offer(request: Request) -> JSONResponse:
     with suppress(asyncio.TimeoutError):
         await asyncio.wait_for(call.attached.wait(), timeout=10)
 
-    return JSONResponse({'sdp': call.answer_sdp, 'call_id': answer.call.call_id})
+    return JSONResponse({'sdp': call.answer_sdp, 'call_id': answer.session.call_id})
 
 
 @app.post('/hangup/{call_id}')

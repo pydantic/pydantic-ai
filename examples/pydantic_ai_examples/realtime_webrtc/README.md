@@ -40,7 +40,7 @@ the same `.env`) to see the realtime session, model turns, and tool calls as tra
    to `/offer`.
 2. The backend calls [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer],
    which relays the offer to OpenAI (using the server's key) and returns the SDP **answer** plus a
-   [`WebRTCCall`][pydantic_ai.realtime.WebRTCCall] (`call_id`).
+   [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession] (`call_id`).
 3. The backend attaches a sideband session with
    [`agent.realtime(model).session(provider_session=call)`][pydantic_ai.agent.AgentRealtime.session] and returns the
    answer to the browser. Media now flows browser ↔ OpenAI; the sideband runs the tools and records the
