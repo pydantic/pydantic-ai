@@ -67,8 +67,8 @@ realtime does not expose `temperature`. Input transcription defaults to `'auto'`
 Azure OpenAI supports the same browser WebRTC flow as OpenAI — the audio flows browser ↔ Azure directly
 while your backend runs a control-plane **sideband**. See [Browser / WebRTC](index.md#browser-webrtc)
 for the topology, and use
-[`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer] /
-[`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret] exactly as on OpenAI.
+[`AgentRealtime.answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer] /
+[`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] exactly as on OpenAI.
 Azure relays the offer with `webrtcfilter=on`, which limits the events forwarded to the browser to a
 safe subset so the session instructions stay on the server's control connection.
 

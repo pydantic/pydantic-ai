@@ -10,14 +10,29 @@ unit tests use `httpx.MockTransport` only for our own guards, error formatting, 
 from __future__ import annotations as _annotations
 
 import json
+from collections.abc import Sequence
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 import pytest
 
+from pydantic_ai import Agent
+from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.realtime import (
+    RealtimeClientSecret,
+    RealtimeModel,
+    RealtimeModelSettings,
+    WebRTCAnswer,
+    WebRTCSession,
+)
+from pydantic_ai.realtime.codec import RealtimeConnection
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import FunctionToolset
 
 from ..conftest import try_import
 from .conftest import (
@@ -29,7 +44,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
-    from pydantic_ai.realtime import WebRTCSession
     from pydantic_ai.realtime._openai_webrtc import parse_call_id
     from pydantic_ai.realtime.azure import AzureRealtimeModel
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
@@ -45,6 +59,111 @@ SAMPLE_SDP_ANSWER = 'v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=recvon
 # Our Azure OpenAI dev resource, hardcoded (not a secret — like `test_azure_provider_call`) so the
 # recorded host is stable between recording (real key) and offline replay (placeholder key).
 _AZURE_REALTIME_ENDPOINT = 'https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1'
+
+
+class _SignalingModel(RealtimeModel):
+    """A network-free model that records the resolved agent configuration sent to signaling methods."""
+
+    def __init__(self, *, settings: RealtimeModelSettings | None = None) -> None:
+        self.settings = settings
+        self.calls: list[tuple[str | None, Sequence[ToolDefinition] | None, RealtimeModelSettings | None]] = []
+        self.expires_after_seconds: int | None = None
+
+    @property
+    def model_name(self) -> str:
+        return 'signaling-model'
+
+    @property
+    def system(self) -> str:
+        return 'test'
+
+    def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AbstractAsyncContextManager[RealtimeConnection]:
+        raise NotImplementedError
+
+    async def answer_webrtc_offer(
+        self,
+        sdp_offer: str,
+        *,
+        instructions: str | None = None,
+        tools: Sequence[ToolDefinition] | None = None,
+        model_settings: RealtimeModelSettings | None = None,
+    ) -> WebRTCAnswer:
+        self.calls.append((instructions, tools, model_settings))
+        return WebRTCAnswer(sdp=sdp_offer, session=WebRTCSession(provider_name='test', session_id='rtc_test'))
+
+    async def create_client_secret(
+        self,
+        *,
+        instructions: str | None = None,
+        tools: Sequence[ToolDefinition] | None = None,
+        model_settings: RealtimeModelSettings | None = None,
+        expires_after_seconds: int | None = None,
+    ) -> RealtimeClientSecret:
+        self.calls.append((instructions, tools, model_settings))
+        self.expires_after_seconds = expires_after_seconds
+        return RealtimeClientSecret(value='ek_test', expires_at=datetime.now(timezone.utc))
+
+
+async def test_agent_realtime_signaling_resolves_bound_configuration() -> None:
+    model = _SignalingModel(settings=RealtimeModelSettings(max_tokens=100))
+    agent = Agent(instructions='Literal instructions.')
+
+    @agent.instructions
+    def dynamic_instructions() -> str:
+        return 'Dynamic instructions.'
+
+    @agent.tool_plain
+    def agent_tool(value: str) -> str:
+        return value
+
+    toolset = FunctionToolset(instructions='Toolset instructions.')
+
+    @toolset.tool_plain
+    def accessor_tool(value: int) -> int:
+        return value
+
+    realtime = agent.realtime(
+        model,
+        model_settings=RealtimeModelSettings(output_modality='text'),
+        toolsets=[toolset],
+    )
+    answer = await realtime.answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    secret = await realtime.create_client_secret(expires_after_seconds=45)
+
+    assert answer.sdp == SAMPLE_SDP_OFFER
+    assert secret.value == 'ek_test'
+    assert model.expires_after_seconds == 45
+    assert len(model.calls) == 2
+    for instructions, tools, settings in model.calls:
+        assert instructions == 'Literal instructions.\n\nDynamic instructions.\n\nToolset instructions.'
+        assert tools is not None
+        assert [tool.name for tool in tools] == ['agent_tool', 'accessor_tool']
+        assert settings == RealtimeModelSettings(max_tokens=100, output_modality='text')
+
+
+async def test_agent_realtime_signaling_unsupported_model() -> None:
+    class _UnsupportedModel(_SignalingModel):
+        answer_webrtc_offer = RealtimeModel.answer_webrtc_offer
+        create_client_secret = RealtimeModel.create_client_secret
+
+    realtime = Agent().realtime(_UnsupportedModel())
+    with pytest.raises(NotImplementedError, match='does not support WebRTC'):
+        await realtime.answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    with pytest.raises(NotImplementedError, match='does not support minting client secrets'):
+        await realtime.create_client_secret()
+
+
+async def test_wrapper_agent_realtime_signaling_delegates() -> None:
+    model = _SignalingModel()
+    realtime = WrapperAgent(Agent(instructions='Wrapped instructions.')).realtime(model)
+    await realtime.answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    assert model.calls[0][0] == 'Wrapped instructions.'
 
 
 def _mock_provider(handler: Any, *, api_key: str = 'sk-test') -> Any:
@@ -113,6 +232,25 @@ async def test_create_client_secret(openai_api_key: str, request: pytest.Fixture
     assert not recording or secret.expires_at > datetime.now(timezone.utc)
 
 
+@pytest.mark.vcr
+async def test_agent_create_client_secret(openai_api_key: str, request: pytest.FixtureRequest) -> None:
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(instructions='Answer in two words.')
+
+    @agent.tool_plain
+    def get_temperature(city: str) -> str:
+        return f'20 C in {city}'
+
+    secret = await agent.realtime(
+        model, model_settings=OpenAIRealtimeModelSettings(voice='marin')
+    ).create_client_secret(expires_after_seconds=60)
+
+    assert secret.value
+    assert secret.expires_at.tzinfo is not None
+    recording = request.config.getoption('record_mode') == 'rewrite'
+    assert not recording or secret.expires_at > datetime.now(timezone.utc)
+
+
 async def test_create_client_secret_missing_value() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={'expires_at': 1_700_000_060})
@@ -175,6 +313,24 @@ async def test_answer_webrtc_offer(openai_api_key: str) -> None:
         REAL_SDP_OFFER,
         instructions='Answer in two words.',
         model_settings=OpenAIRealtimeModelSettings(voice='cedar'),
+    )
+
+    assert answer.session.provider_name == 'openai'
+    assert answer.session.call_id.startswith('rtc_')
+    assert answer.sdp.startswith('v=0')
+
+
+@pytest.mark.vcr
+async def test_agent_answer_webrtc_offer(openai_api_key: str) -> None:
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(instructions='Answer in two words.')
+
+    @agent.tool_plain
+    def get_temperature(city: str) -> str:
+        return f'20 C in {city}'
+
+    answer = await agent.realtime(model, model_settings=OpenAIRealtimeModelSettings(voice='cedar')).answer_webrtc_offer(
+        REAL_SDP_OFFER
     )
 
     assert answer.session.provider_name == 'openai'
@@ -302,11 +458,6 @@ async def test_connect_webrtc_provider_mismatch() -> None:
 async def test_base_model_rejects_webrtc() -> None:
     # WebSocket-only realtime models (Gemini Live, and xAI — which has no `/realtime/calls` sideband)
     # don't override the WebRTC methods, so the base `RealtimeModel` rejects the whole surface.
-    from contextlib import AbstractAsyncContextManager
-
-    from pydantic_ai.realtime import RealtimeModel
-    from pydantic_ai.realtime.codec import RealtimeConnection
-
     class _WebSocketOnlyModel(RealtimeModel):
         @property
         def model_name(self) -> str:

@@ -559,7 +559,7 @@ which it runs instructions, tools, and history while the browser owns the audio.
           ◀─────────────────────────────────────
       │  SDP offer                                  ▲ control connection (call_id)
       ▼                                             │
-   your backend ──answer_webrtc_offer()──▶ provider ──realtime_session(provider_session=…)──┘
+   your backend ──answer_webrtc_offer()──▶ provider ──session(provider_session=…)──┘
                 (relays the SDP, gets a call_id)     (runs tools, builds history)
 ```
 
@@ -568,7 +568,7 @@ The secure flow keeps the API key server-side — the browser never holds a toke
 1. The browser creates an `RTCPeerConnection`, captures the microphone, and sends its SDP **offer** to
    your backend.
 2. Your backend relays it with
-   [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer], which returns the
+   [`AgentRealtime.answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer], which returns the
    provider's SDP **answer** and a [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession] carrying the `call_id`.
 3. Your backend returns the answer to the browser (media now flows browser ↔ provider) and attaches the
    sideband with
@@ -578,9 +578,7 @@ The secure flow keeps the API key server-side — the browser never holds a toke
 from pydantic_ai import Agent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
-INSTRUCTIONS = 'You are a helpful voice assistant.'
-agent = Agent(instructions=INSTRUCTIONS)
-model = OpenAIRealtimeModel('gpt-realtime')
+agent = Agent(instructions='You are a helpful voice assistant.')
 
 
 @agent.tool_plain
@@ -588,12 +586,15 @@ def get_weather(city: str) -> str:
     return f'Sunny in {city}'
 
 
+realtime = agent.realtime(OpenAIRealtimeModel('gpt-realtime'))
+
+
 # In your `POST /offer` handler, `sdp_offer` is the browser's offer (the request body):
 async def handle_offer(sdp_offer: str) -> str:
-    answer = await model.answer_webrtc_offer(sdp_offer, instructions=INSTRUCTIONS)
+    answer = await realtime.answer_webrtc_offer(sdp_offer)
 
     async def run_sideband() -> None:
-        async with agent.realtime(model).session(provider_session=answer.session) as session:
+        async with realtime.session(provider_session=answer.session) as session:
             async for event in session:  # the agent runs tools and builds history here
                 print(event)
 
@@ -610,7 +611,10 @@ is the same session you already know — the [event loop](#the-event-loop), [too
 WebRTC is available for **OpenAI and Azure OpenAI** (see the [OpenAI](openai.md#browser-webrtc) and
 [Azure](azure.md#browser-webrtc-and-microsoft-entra-id) provider pages, including Azure's Microsoft
 Entra ID support and the alternative ephemeral-token flow via
-[`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret]). Gemini Live and xAI
+[`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret]). The agent-level
+methods resolve and bake in the agent's instructions, tools, capabilities, and model settings; the
+corresponding methods on [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] are the lower-level
+signaling mechanism they build on. Gemini Live and xAI
 Grok Voice are WebSocket-only and don't offer a WebRTC sideband; use a relay or media room for those.
 
 The runnable [realtime WebRTC example](../examples/realtime-webrtc.md) shows the whole flow end to end.

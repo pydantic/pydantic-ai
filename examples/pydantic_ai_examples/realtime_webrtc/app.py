@@ -1,20 +1,25 @@
 """Browser voice agent over WebRTC, with a Pydantic AI sideband running the tools.
 
-The browser exchanges audio with OpenAI **directly** over WebRTC (lowest latency), while this backend
-stays the control plane: it relays the browser's SDP offer to OpenAI (so the API key never reaches the
-browser), then attaches a [`realtime_session`][pydantic_ai.Agent.realtime_session] to the same call by
+The browser exchanges audio with OpenAI or Azure OpenAI **directly** over WebRTC (lowest latency), while this backend
+stays the control plane: it relays the browser's SDP offer to the provider (so the API key never reaches the
+browser), then attaches an [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session] to the same call by
 `call_id` and runs the agent's tools server-side. See the [realtime guide](https://ai.pydantic.dev/realtime/#browser--webrtc).
 
 The topology:
 
-    browser ──mic/speaker audio (WebRTC media)──▶  OpenAI Realtime
+    browser ──mic/speaker audio (WebRTC media)──▶  OpenAI / Azure OpenAI Realtime
            ◀─────────────────────────────────────
        │  SDP offer (POST /offer)                    ▲ control WebSocket (call_id)
        ▼                                             │
-    FastAPI backend  ──answer_webrtc_offer()──▶ OpenAI  ──realtime_session(provider_session=…)──┘
+    FastAPI backend  ──AgentRealtime.answer_webrtc_offer()──▶ provider ──session(provider_session=…)──┘
                      (relays SDP, gets call_id)        (runs tools, builds history)
 
-Requires `OPENAI_API_KEY` (put it in a `.env` at the repo root), then:
+For OpenAI, set `OPENAI_API_KEY` and use the default `openai:gpt-realtime`. For Azure OpenAI, set
+`WEBRTC_REALTIME_MODEL=azure:<deployment-name>`, `AZURE_OPENAI_ENDPOINT`, and `AZURE_OPENAI_API_KEY`.
+Azure resolves models against your resource's **deployments**, so the resource needs a realtime
+deployment (the `azure:<deployment-name>` segment) and an input-transcription deployment —
+`gpt-realtime-whisper` by default; set `WEBRTC_TRANSCRIPTION_MODEL` if yours is named differently.
+Put the variables in a `.env` at the repo root, then:
 
     uv run --all-packages uvicorn pydantic_ai_examples.realtime_webrtc.app:app
 
@@ -43,15 +48,14 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import FunctionToolCallEvent, FunctionToolResultEvent
-from pydantic_ai.realtime import TurnCompleteEvent, WebRTCSession
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
+from pydantic_ai.realtime import TurnCompleteEvent, WebRTCSession, infer_realtime_model
+from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings
 
 load_dotenv()
 
 logfire.configure(send_to_logfire='if-token-present', service_name='realtime-webrtc')
 logfire.instrument_pydantic_ai()
 
-MODEL_NAME = os.getenv('WEBRTC_REALTIME_MODEL', 'gpt-realtime')
 VOICE = os.getenv('WEBRTC_REALTIME_VOICE', 'marin')
 INSTRUCTIONS = (
     'You are Roberto, a concise and friendly voice support assistant. '
@@ -97,14 +101,11 @@ def lookup_support_policy(topic: str) -> str:
     )
 
 
-def build_model() -> OpenAIRealtimeModel:
-    if not os.getenv('OPENAI_API_KEY'):
-        raise RuntimeError(
-            'Set `OPENAI_API_KEY` (e.g. in a `.env` at the repo root) to run this example.'
-        )
-    return OpenAIRealtimeModel(
-        MODEL_NAME, settings=OpenAIRealtimeModelSettings(voice=VOICE)
-    )
+model = infer_realtime_model(os.getenv('WEBRTC_REALTIME_MODEL', 'openai:gpt-realtime'))
+settings = OpenAIRealtimeModelSettings(voice=VOICE)
+if transcription_model := os.getenv('WEBRTC_TRANSCRIPTION_MODEL'):
+    settings['input_transcription_model'] = transcription_model
+realtime = agent.realtime(model, model_settings=settings)
 
 
 @dataclass
@@ -127,9 +128,7 @@ async def run_sideband(call: Call) -> None:
     """Attach the sideband session to the WebRTC call and run the agent's tool loop over its events."""
     call_id = call.provider_session.call_id
     try:
-        async with agent.realtime(build_model()).session(
-            provider_session=call.provider_session
-        ) as session:
+        async with realtime.session(provider_session=call.provider_session) as session:
             call.attached.set()
             async for event in session:
                 if isinstance(event, FunctionToolCallEvent):
@@ -177,16 +176,14 @@ async def index() -> HTMLResponse:
 
 @app.post('/offer')
 async def offer(request: Request) -> JSONResponse:
-    """Relay the browser's SDP offer to OpenAI, start the sideband, and return the SDP answer."""
+    """Relay the browser's SDP offer to the provider, start the sideband, and return the SDP answer."""
     sdp_offer = (await request.body()).decode('utf-8')
     if not sdp_offer.strip():
         raise HTTPException(
             status_code=400, detail='Expected an SDP offer in the request body.'
         )
 
-    answer = await build_model().answer_webrtc_offer(
-        sdp_offer, instructions=INSTRUCTIONS
-    )
+    answer = await realtime.answer_webrtc_offer(sdp_offer)
     call = Call(answer_sdp=answer.sdp, provider_session=answer.session)
     CALLS[answer.session.call_id] = call
 
