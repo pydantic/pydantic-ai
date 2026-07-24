@@ -8,7 +8,8 @@ For the local side, pass `local='duckduckgo'` (or `local=True`) for a [DuckDuckG
 
 Native configuration fields: `search_context_size`, `user_location`, `blocked_domains`,
 `allowed_domains`, `max_uses`, and Anthropic's `response_inclusion`. The domain and `max_uses`
-constraints require native support (the shipped DuckDuckGo fallback doesn't enforce them).
+constraints and `response_inclusion` require native support (the shipped DuckDuckGo fallback
+doesn't enforce them).
 
 ```python {title="web_search.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import WebSearch

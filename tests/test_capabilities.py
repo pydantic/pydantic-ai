@@ -10013,6 +10013,18 @@ def test_web_fetch_unique_id():
     assert cap._native_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.parametrize(
+    'capability',
+    [
+        pytest.param(WebSearch(response_inclusion='excluded'), id='search-response-inclusion'),
+        pytest.param(WebFetch(use_cache=False), id='fetch-use-cache'),
+        pytest.param(WebFetch(response_inclusion='excluded'), id='fetch-response-inclusion'),
+    ],
+)
+def test_anthropic_web_options_require_native(capability: WebSearch[Any] | WebFetch[Any]):
+    assert capability._requires_native() is True  # pyright: ignore[reportPrivateUsage]
+
+
 def test_xsearch_unique_id():
     """XSearch returns the correct builtin unique_id."""
     cap = XSearch()

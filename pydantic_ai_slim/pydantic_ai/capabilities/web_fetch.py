@@ -41,10 +41,10 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
     """Maximum content length in tokens. Native-only; ignored by local tools."""
 
     use_cache: bool | None
-    """Whether Anthropic may return cached content. Native-only; ignored by local tools."""
+    """Whether Anthropic may return cached content. Requires native support."""
 
     response_inclusion: Literal['full', 'excluded'] | None
-    """Whether Anthropic includes results consumed by completed code execution calls."""
+    """Whether Anthropic includes results consumed by completed code execution calls. Requires native support."""
 
     def __init__(
         self,
@@ -118,4 +118,4 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         )
 
     def _requires_native(self) -> bool:
-        return self.max_uses is not None
+        return self.max_uses is not None or self.use_cache is not None or self.response_inclusion is not None
