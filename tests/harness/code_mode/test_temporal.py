@@ -1,15 +1,18 @@
 """Temporal integration tests for CodeMode.
 
 Verifies that the snapshot-based execution loop (`feed_start`/`resume`)
-works inside a Temporal workflow sandbox, which forbids threads and
-`call_soon_threadsafe`.
+works with Temporal's workflow sandbox and history replay.
+
+Monty executes snippets in subprocess workers. The first `run_code` call lazily creates
+the run's worker pool and initial checked-out REPL session. That session is reused across
+calls until it is reset or invalidated.
 
 Durability is attached via the `TemporalDurability` capability; pydantic-ai
 2.14 deprecated the `TemporalAgent` wrapper in its favor
 (pydantic/pydantic-ai#4977). The workflow calls the plain `Agent` directly and
 `AgentPlugin` finds the bound capability to register its activities on the
-worker. The durability capability goes last in `capabilities=[...]`, after
-CodeMode, matching the convention in pydantic-ai's Temporal docs.
+worker. Pydantic AI resolves CodeMode outside TemporalDurability through
+CodeMode's capability ordering metadata.
 
 These tests start a local Temporal dev server via
 `WorkflowEnvironment.start_local()` -- the Temporal SDK downloads and
@@ -19,6 +22,8 @@ runs `temporalite` automatically.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any
@@ -35,7 +40,12 @@ try:
     from temporalio.client import Client
     from temporalio.common import RetryPolicy
     from temporalio.testing import WorkflowEnvironment
-    from temporalio.worker import Worker
+    from temporalio.worker import Replayer, Worker
+    from temporalio.worker.workflow_sandbox import (
+        RestrictedWorkflowAccessError,
+        SandboxedWorkflowRunner,
+        SandboxRestrictions,
+    )
     from temporalio.workflow import ActivityConfig
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
@@ -57,9 +67,24 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 )
 
 
+def _workflow_runner() -> SandboxedWorkflowRunner:
+    return SandboxedWorkflowRunner(
+        restrictions=SandboxRestrictions.default.with_passthrough_modules(
+            # Coverage imports parser modules lazily while tracing workflow code.
+            'coverage',
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope='module')
+def anyio_backend() -> str:
+    """Temporal's Python SDK runs on asyncio."""
+    return 'asyncio'
 
 
 @pytest.fixture(scope='module')
@@ -97,16 +122,22 @@ _captured_tool_defs: list[list[ToolDefinition]] = []
 
 # FunctionModel that emits a run_code tool call for the given code snippet.
 def _code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
-    """Model that generates a run_code call on the first request, then returns the result as text."""
+    """Model that uses two REPL feeds, then returns the second result as text."""
     _captured_tool_defs.append(info.function_tools)
 
-    # Check if we already got a tool result back.
-    for msg in messages:
-        if isinstance(msg, ModelResponse):
-            continue
-        for part in msg.parts:
-            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code':
-                return ModelResponse(parts=[TextPart(content=f'done: {part.content}')])
+    returns = [
+        part
+        for msg in messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+    ]
+    if len(returns) == 1:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='run_code', args={'code': 'result * 10'}, tool_call_id='test_tc_2')]
+        )
+    if len(returns) == 2:
+        return ModelResponse(parts=[TextPart(content=f'done: {returns[-1].content}')])
 
     # First call -- emit run_code.
     return ModelResponse(
@@ -139,37 +170,52 @@ class CodeModeWorkflow:
         }
 
 
+@workflow.defn
+class SandboxRestrictionWorkflow:
+    """Probe that passing Monty through does not allow Python subprocess calls."""
+
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            subprocess.run([sys.executable, '-c', 'pass'], check=True)
+        except RestrictedWorkflowAccessError as e:
+            return e.qualified_name
+        return 'subprocess was allowed'  # pragma: no cover
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
 
 async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
-    """CodeMode's snapshot-based execution loop works inside a Temporal workflow.
-
-    This is the core regression test for the `call_soon_threadsafe` issue:
-    the old `feed_run_async` approach hung because Temporal's sandboxed
-    event loop doesn't implement `call_soon_threadsafe`. The snapshot
-    approach (`feed_start`/`resume`) avoids threads entirely.
-    """
+    """CodeMode runs workflow-side, nested tools use activities, and the history replays."""
     _captured_tool_defs.clear()
+    workflow_id = 'test_code_mode_temporal_1'
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[CodeModeWorkflow],
+        workflows=[CodeModeWorkflow, SandboxRestrictionWorkflow],
         plugins=[AgentPlugin(code_mode_agent)],
+        workflow_runner=_workflow_runner(),
     ):
         result = await client.execute_workflow(
             CodeModeWorkflow.run,
             args=['Calculate 3 + 4'],
-            id='test_code_mode_temporal_1',
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        sandbox_result = await client.execute_workflow(
+            SandboxRestrictionWorkflow.run,
+            id='test_code_mode_temporal_sandbox_restrictions',
             task_queue=TASK_QUEUE,
         )
 
-    assert result['output'] == 'done: 7'
+    assert result['output'] == 'done: 70'
+    assert sandbox_result == 'subprocess.run.__call__'
 
     messages = json.loads(result['messages'])
-    assert len(messages) == 4
+    assert len(messages) == 6
 
     # 1. User prompt
     assert messages[0]['kind'] == 'request'
@@ -210,13 +256,23 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
     assert nested_return['content'] == 7
     assert nested_return['tool_call_id'] == nested_call['tool_call_id']
 
-    # 4. Final text response
+    # 4-5. A second feed consumes the variable assigned by the first feed.
     assert messages[3]['kind'] == 'response'
-    assert messages[3]['parts'][0]['part_kind'] == 'text'
-    assert messages[3]['parts'][0]['content'] == 'done: 7'
+    second_call = messages[3]['parts'][0]
+    assert second_call['part_kind'] == 'tool-call'
+    assert second_call['args'] == {'code': 'result * 10'}
+    assert messages[4]['kind'] == 'request'
+    second_return = messages[4]['parts'][0]
+    assert second_return['part_kind'] == 'tool-return'
+    assert second_return['content'] == 70
+
+    # 6. Final text response
+    assert messages[5]['kind'] == 'response'
+    assert messages[5]['parts'][0]['part_kind'] == 'text'
+    assert messages[5]['parts'][0]['content'] == 'done: 70'
 
     # 5. Verify tool definitions sent to the model
-    assert len(_captured_tool_defs) == 2
+    assert len(_captured_tool_defs) == 3
     for tool_defs in _captured_tool_defs:
         tool_names = [td.name for td in tool_defs]
         # CodeMode wraps `add` into `run_code` -- the model should only see `run_code`
@@ -227,3 +283,11 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
         assert run_code_td.description is not None
         assert 'async def add' in run_code_td.description
         assert run_code_td.parameters_json_schema['properties']['code']['type'] == 'string'
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    replay_result = await Replayer(
+        workflows=[CodeModeWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=_workflow_runner(),
+    ).replay_workflow(history)
+    assert replay_result.replay_failure is None

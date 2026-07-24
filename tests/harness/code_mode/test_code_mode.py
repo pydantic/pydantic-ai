@@ -8,8 +8,12 @@ loaded by the project (no extra dev dependency needed).
 
 from __future__ import annotations
 
+import asyncio
+import functools
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, TypeVar
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic_ai import (
@@ -22,16 +26,15 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tool_manager import ParallelExecutionMode
+from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_core import SchemaValidator, core_schema
-from pydantic_monty import NOT_HANDLED, MountDir, OSAccess, OsFunction
-from typing_extensions import TypedDict
+from pydantic_monty import NOT_HANDLED, Monty, MountDir, OSAccess, OsFunction
+from typing_extensions import Never, TypedDict
 
 from pydantic_ai_harness import CodeMode
-from pydantic_ai_harness._monty_exec import PrintCapture
 from pydantic_ai_harness.code_mode import CodeModeToolset
 from pydantic_ai_harness.code_mode._toolset import (  # pyright: ignore[reportPrivateUsage]
     _SEARCH_TOOLS_MODIFIER,
@@ -39,6 +42,18 @@ from pydantic_ai_harness.code_mode._toolset import (  # pyright: ignore[reportPr
     _global_mode_is_sequential,
     _sanitize_tool_name,
 )
+
+_entered_toolsets: list[CodeModeToolset[Never]] = []
+
+
+@pytest.fixture(autouse=True)
+async def _close_direct_toolsets(anyio_backend: str) -> AsyncIterator[None]:
+    """Close toolsets entered by the lower-level `call_tool` tests."""
+    yield
+    while _entered_toolsets:
+        toolset = _entered_toolsets.pop()
+        await toolset.__aexit__(None, None, None)
+
 
 pytestmark = pytest.mark.anyio
 
@@ -70,7 +85,7 @@ def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
 
 async def build_ctx(
     deps: T,
-    toolset: AbstractToolset[T],
+    toolset: CodeModeToolset[T],
     run_step: int = 0,
     *,
     root_capability: Any = None,
@@ -81,6 +96,9 @@ async def build_ctx(
     `ctx.tool_manager` to be set.
     """
     from pydantic_ai.tool_manager import ToolManager
+
+    await toolset.__aenter__()
+    _entered_toolsets.append(toolset)
 
     ctx = build_run_context(deps, run_step=run_step)
     tm = ToolManager(toolset=toolset, root_capability=root_capability)
@@ -256,19 +274,21 @@ class TestCodeMode:
 
     async def test_run_code_function_examples_are_expressions(self) -> None:
         """Async, sync, and mixed function examples do not end on assignments."""
-        cases: list[tuple[FunctionToolset[object], tuple[str, ...]]] = [
-            (_build_function_toolset(add), ('e.g. `await tool_name(arg=value)`.',)),
+        cases: list[tuple[FunctionToolset[object], tuple[str, ...], bool]] = [
+            (_build_function_toolset(add), ('e.g. `await tool_name(arg=value)`.',), True),
             (
                 FunctionToolset[object](tools=[Tool(add, sequential=True)]),
                 ('e.g. `tool_name(arg=value)`.',),
+                False,
             ),
             (
                 FunctionToolset[object](tools=[Tool(add, sequential=True), Tool(greet)]),
                 ('e.g. `await tool_name(arg=value)`.', 'e.g. `tool_name(arg=value)`.'),
+                True,
             ),
         ]
 
-        for toolset, expected_examples in cases:
+        for toolset, expected_examples, has_async in cases:
             wrapper = CodeMode[object]().get_wrapper_toolset(toolset)
             assert isinstance(wrapper, CodeModeToolset)
 
@@ -277,6 +297,10 @@ class TestCodeMode:
             assert description is not None
             assert all(example in description for example in expected_examples)
             assert 'e.g. `result =' not in description
+            if has_async:
+                assert 'use `await asyncio.gather(...)` with positional awaitables' in description
+            else:
+                assert 'asyncio.gather' not in description
 
     async def test_run_code_executes_call_through_monty(self) -> None:
         """End-to-end: `run_code` runs Python in Monty and dispatches to a sync wrapped tool."""
@@ -407,6 +431,21 @@ class TestCodeMode:
         second = await wrapper.call_tool('run_code', {'code': 'print(x * 10)'}, ctx, run_code)
         assert second.return_value == {'output': '30\n'}
 
+    async def test_repl_state_survives_runtime_error(self) -> None:
+        """Assignments made before a failing line survive into the retry (REPL-style)."""
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        run_code = tools['run_code']
+
+        await wrapper.call_tool('run_code', {'code': 'x = await add(a=20, b=21)'}, ctx, run_code)
+        with pytest.raises(ModelRetry, match='Runtime error'):
+            await wrapper.call_tool('run_code', {'code': "y = x + 1\nraise ValueError('boom')"}, ctx, run_code)
+        # `x` from the first call and `y` assigned before the raise both survive.
+        result = await wrapper.call_tool('run_code', {'code': 'y'}, ctx, run_code)
+        assert result.return_value == 42
+
     async def test_run_code_restart_resets_repl_state(self) -> None:
         """Passing `restart=True` clears any previously-set names in the sandbox."""
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
@@ -445,6 +484,22 @@ class TestCodeMode:
         printed = await wrapper.call_tool('run_code', {'code': 'print("done")\nNone'}, ctx, tools['run_code'])
         assert printed.return_value == {'output': 'done\n'}
 
+    async def test_run_code_caps_printed_output(self) -> None:
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+
+        with pytest.raises(ModelRetry, match='memory limit exceeded'):
+            await wrapper.call_tool(
+                'run_code',
+                {'code': "x = 7\nprint('x' * (10 * 1024 * 1024))"},
+                ctx,
+                tools['run_code'],
+            )
+        result = await wrapper.call_tool('run_code', {'code': 'x + 1'}, ctx, tools['run_code'])
+        assert result.return_value == 8
+
     async def test_run_code_syntax_error_becomes_model_retry(self) -> None:
         """A Python syntax error is surfaced as `ModelRetry` so the model can fix it."""
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
@@ -452,11 +507,13 @@ class TestCodeMode:
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
         run_code = tools['run_code']
-        # Fresh REPL: type checker catches the syntax error.
-        with pytest.raises(ModelRetry, match=r'Syntax error in code'):
+        # Fresh REPL: the type checker parses the snippet first, so a syntax
+        # error surfaces through it as a `Type error in code` retry.
+        with pytest.raises(ModelRetry, match=r'Type error in code'):
             await wrapper.call_tool('run_code', {'code': 'def ('}, ctx, run_code)
 
-        # Non-fresh REPL: feed_start catches the syntax error at runtime.
+        # Non-fresh REPL: type checking is skipped, so feed_start raises
+        # MontySyntaxError and the retry is labelled a syntax error.
         await wrapper.call_tool('run_code', {'code': '1 + 1', 'restart': True}, ctx, run_code)
         with pytest.raises(ModelRetry, match=r'Syntax error in code'):
             await wrapper.call_tool('run_code', {'code': 'def ('}, ctx, run_code)
@@ -465,13 +522,30 @@ class TestCodeMode:
         with pytest.raises(ModelRetry, match=r"name 'undefined_var' is not defined"):
             await wrapper.call_tool('run_code', {'code': 'print(undefined_var)'}, ctx, run_code)
 
+        # With no callable stubs there is no typing pass, so a first-feed parse failure
+        # reaches MontySyntaxError and must also discard the fresh session.
+        empty_wrapper = CodeMode[object]().get_wrapper_toolset(FunctionToolset())
+        assert isinstance(empty_wrapper, CodeModeToolset)
+        empty_ctx = await build_ctx(None, empty_wrapper)
+        empty_tools = await empty_wrapper.get_tools(empty_ctx)
+        with pytest.raises(ModelRetry, match=r'Syntax error in code'):
+            await empty_wrapper.call_tool('run_code', {'code': 'def ('}, empty_ctx, empty_tools['run_code'])
+        assert empty_wrapper._run_state is not None  # pyright: ignore[reportPrivateUsage]
+        assert empty_wrapper._run_state.session is None  # pyright: ignore[reportPrivateUsage]
+
     async def test_run_code_typing_error_becomes_model_retry(self) -> None:
         """A `MontyTypingError` from static type checking is translated into `ModelRetry`.
 
         On a fresh REPL (first call or after restart), the code is type-checked
-        before execution using Monty's stateless type checker.
+        at `feed_start` against the tool stubs before execution.
         """
-        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
+
+        def later(x: int) -> str:
+            """A tool added after the failed feed."""
+            return str(x)
+
+        base = _build_function_toolset(add)
+        wrapper = CodeMode[object]().get_wrapper_toolset(base)
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
@@ -484,9 +558,119 @@ class TestCodeMode:
                 tools['run_code'],
             )
 
+        # A failed first feed must not pin its checkout-time stubs. Tool Search and
+        # per-step toolsets can change the catalog before the model retries.
+        base.add_function(later)
+        ctx.tool_manager = await ToolManager(toolset=wrapper).for_run_step(ctx)
+        tools = await wrapper.get_tools(ctx)
+        result = await wrapper.call_tool('run_code', {'code': 'await later(x=1)'}, ctx, tools['run_code'])
+        assert result.return_value == '1'
+
     # ---------------------------------------------------------------------------
     # `for_run` / `for_run_step` lifecycle
     # ---------------------------------------------------------------------------
+
+    async def test_enter_does_not_start_monty_if_wrapped_enter_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A wrapped-toolset failure must not start an unused Monty worker."""
+
+        class FailingToolset(FunctionToolset[object]):
+            async def __aenter__(self) -> FailingToolset:
+                raise RuntimeError('wrapped enter failed')
+
+        monty = MagicMock()
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.Monty', monty)
+        wrapper = CodeMode[object]().get_wrapper_toolset(FailingToolset())
+        assert isinstance(wrapper, CodeModeToolset)
+
+        with pytest.raises(RuntimeError, match='wrapped enter failed'):
+            await wrapper.__aenter__()
+
+        monty.assert_not_called()
+
+    async def test_exit_releases_resources_in_reverse_entry_order(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The wrapped toolset exits before the Monty pool it may depend on."""
+        events: list[str] = []
+
+        class TrackingMonty:
+            def __enter__(self) -> TrackingMonty:
+                events.append('monty enter')
+                return self
+
+            def __exit__(self, *args: Any) -> None:
+                events.append('monty exit')
+
+            def checkout(self, *args: Any, **kwargs: Any) -> Any:
+                class TrackingSession:
+                    def __enter__(self) -> TrackingSession:
+                        events.append('session enter')
+                        return self
+
+                    def __exit__(self, *args: Any) -> None:
+                        events.append('session exit')
+
+                return TrackingSession()
+
+        class TrackingToolset(FunctionToolset[object]):
+            async def __aenter__(self) -> TrackingToolset:
+                events.append('wrapped enter')
+                return self
+
+            async def __aexit__(self, *args: Any) -> bool | None:
+                events.append('wrapped exit')
+                return None
+
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.Monty', TrackingMonty)
+        wrapper = CodeMode[object]().get_wrapper_toolset(TrackingToolset())
+        assert isinstance(wrapper, CodeModeToolset)
+
+        async with wrapper:
+            assert events == ['wrapped enter']
+            assert wrapper._run_state is not None  # pyright: ignore[reportPrivateUsage]
+            wrapper._run_state.get_session(  # pyright: ignore[reportPrivateUsage]
+                type_check=False, type_check_stubs=None
+            )
+            assert events == ['wrapped enter', 'monty enter', 'session enter']
+
+        assert events == [
+            'wrapped enter',
+            'monty enter',
+            'session enter',
+            'wrapped exit',
+            'session exit',
+            'monty exit',
+        ]
+
+    async def test_agent_run_preserves_repl_between_code_calls(self) -> None:
+        """Code Mode keeps one REPL across model steps in an agent run."""
+        from pydantic_ai.messages import (
+            ModelMessage,
+            ModelRequest,
+            ModelResponse,
+            TextPart,
+            ToolCallPart,
+            ToolReturnPart,
+        )
+        from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            response_count = sum(isinstance(message, ModelResponse) for message in messages)
+            if response_count == 0:
+                return ModelResponse(parts=[ToolCallPart('run_code', {'code': 'x = await add(a=1, b=2)'})])
+            if response_count == 1:
+                return ModelResponse(parts=[ToolCallPart('run_code', {'code': 'x * 10'})])
+            last_request = messages[-1]
+            assert isinstance(last_request, ModelRequest)
+            result = next(part for part in last_request.parts if isinstance(part, ToolReturnPart))
+            return ModelResponse(parts=[TextPart(str(result.content))])
+
+        agent: Agent[object, str] = Agent(FunctionModel(model_fn), capabilities=[CodeMode[object]()])
+
+        @agent.tool_plain
+        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+            return a + b
+
+        result = await agent.run('use code mode twice')
+        assert result.output == '30'
 
     async def test_for_run_returns_fresh_instance_with_cleared_repl(self) -> None:
         """`for_run` must hand back a new toolset instance -- concurrent runs cannot share REPL state."""
@@ -497,12 +681,13 @@ class TestCodeMode:
         # Force lazy REPL creation on the *original* instance.
         tools = await wrapper.get_tools(ctx)
         await wrapper.call_tool('run_code', {'code': 'x = 1'}, ctx, tools['run_code'])
-        assert wrapper._repl is not None  # pyright: ignore[reportPrivateUsage]
+        assert wrapper._run_state is not None  # pyright: ignore[reportPrivateUsage]
+        assert wrapper._run_state.session is not None  # pyright: ignore[reportPrivateUsage]
 
         fresh = await wrapper.for_run(ctx)
         assert isinstance(fresh, CodeModeToolset)
         assert fresh is not wrapper
-        assert fresh._repl is None  # pyright: ignore[reportPrivateUsage]
+        assert fresh._run_state is None  # pyright: ignore[reportPrivateUsage]
 
     async def test_for_run_step_short_circuits_when_wrapped_unchanged(self) -> None:
         """If the inner toolset doesn't change between steps, `for_run_step` returns `self` unchanged."""
@@ -553,14 +738,14 @@ class TestCodeMode:
         # Lazily create the REPL on the original instance.
         tools = await wrapper.get_tools(ctx)
         await wrapper.call_tool('run_code', {'code': 'x = 7'}, ctx, tools['run_code'])
-        original_repl = wrapper._repl  # pyright: ignore[reportPrivateUsage]
+        original_repl = wrapper._run_state  # pyright: ignore[reportPrivateUsage]
         assert original_repl is not None
 
         next_step = await wrapper.for_run_step(ctx)
         assert isinstance(next_step, CodeModeToolset)
         assert next_step is not wrapper
         # State carries over so the LLM doesn't lose its variables between steps.
-        assert next_step._repl is original_repl  # pyright: ignore[reportPrivateUsage]
+        assert next_step._run_state is original_repl  # pyright: ignore[reportPrivateUsage]
 
     # ---------------------------------------------------------------------------
     # Filter behaviour
@@ -1361,13 +1546,14 @@ class TestCodeMode:
 
         On a fresh REPL, the static type checker catches this before execution.
         """
+
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
 
         # Pass a string where int is expected -- type checker catches this.
-        with pytest.raises(ModelRetry, match='error in code'):
+        with pytest.raises(ModelRetry, match='Type error in code'):
             await wrapper.call_tool(
                 'run_code',
                 {'code': "await add(a='not_a_number', b=3)"},
@@ -1616,33 +1802,83 @@ class TestCodeMode:
         assert 'debug info' in msg
         assert '[stdout before error]' in msg
 
-    async def test_duplicate_future_in_gather_is_retryable(self) -> None:
-        # Awaiting the same tool call twice in one gather makes the Monty VM panic; that panic
-        # must surface as a retry (with the corrupt REPL dropped), not tear down the agent run.
+    async def test_sandbox_panic_is_retryable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A Rust-side sandbox panic (pyo3 PanicException) must surface as a retry with the
+        # corrupt REPL dropped, not tear down the agent run. It is injected via the execution
+        # loop because Monty no longer panics on the inputs it once did (e.g. awaiting one
+        # tool call twice in a single asyncio.gather).
+        class PanicException(BaseException):
+            """Named to match the pyo3 panic class `is_sandbox_panic` recognizes."""
+
+        async def _panic(self: Any, state: Any) -> Any:
+            raise PanicException('sandbox aborted')
+
         wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
-        code = 'import asyncio\nf = add(a=1, b=2)\nawait asyncio.gather(f, f)'
-        with pytest.raises(ModelRetry, match='aborted inside the sandbox'):
-            await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
-        assert wrapper._repl is None  # pyright: ignore[reportPrivateUsage]
+        run_code = tools['run_code']
 
-    async def test_non_panic_base_exception_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The panic guard catches BaseException but must re-raise anything that is not a VM panic.
-        class _Boom(BaseException):
-            pass
+        await wrapper.call_tool('run_code', {'code': 'x = 1'}, ctx, run_code)
+        with monkeypatch.context() as patcher:
+            patcher.setattr('pydantic_ai_harness._monty_exec.MontyExecutor.run', _panic)
+            with pytest.raises(ModelRetry, match='aborted inside the sandbox'):
+                await wrapper.call_tool('run_code', {'code': 'x'}, ctx, run_code)
+        with pytest.raises(ModelRetry, match='Type error in code'):
+            await wrapper.call_tool('run_code', {'code': 'x'}, ctx, run_code)
 
-        async def _boom(self: Any, state: Any) -> Any:
-            raise _Boom('boom')
+    async def test_cancellation_propagates_and_resets_session(self) -> None:
+        """Cancellation drops the suspended session before propagating to the caller."""
+        started = asyncio.Event()
+        unwound = asyncio.Event()
 
-        monkeypatch.setattr('pydantic_ai_harness._monty_exec.MontyExecutor.run', _boom)
+        async def block() -> str:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                unwound.set()
+                raise
+            return 'unreachable'  # pragma: no cover
+
+        wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(block))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        await wrapper.call_tool('run_code', {'code': 'x = 1'}, ctx, tools['run_code'])
+
+        call = asyncio.ensure_future(wrapper.call_tool('run_code', {'code': 'await block()'}, ctx, tools['run_code']))
+        await started.wait()
+        call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await call
+        assert unwound.is_set()
+        with pytest.raises(ModelRetry, match='Type error in code'):
+            await wrapper.call_tool('run_code', {'code': 'x'}, ctx, tools['run_code'])
+
+    async def test_worker_crash_becomes_model_retry_and_resets_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A `MontyCrashedError` (worker death) becomes a retry with the session reset.
+
+        A tiny `request_timeout` plus an infinite loop kills the worker for real, so the
+        crash surfaces from the live execution path rather than an injected stub.
+        `MontyCrashedError` cannot be constructed or subclassed from Python.
+        """
+        monkeypatch.setattr(
+            'pydantic_ai_harness.code_mode._toolset.Monty', functools.partial(Monty, request_timeout=0.5)
+        )
         wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
-        with pytest.raises(_Boom):
-            await wrapper.call_tool('run_code', {'code': 'await add(a=1, b=2)'}, ctx, tools['run_code'])
+        run_code = tools['run_code']
+
+        await wrapper.call_tool('run_code', {'code': 'x = 1'}, ctx, run_code)
+        with pytest.raises(ModelRetry, match='crashed the sandbox worker'):
+            await wrapper.call_tool('run_code', {'code': 'while True:\n    pass'}, ctx, run_code)
+        # The reset is observable: the next call is a fresh REPL, so the type checker
+        # rejects the name assigned before the crash.
+        with pytest.raises(ModelRetry, match='Type error in code'):
+            await wrapper.call_tool('run_code', {'code': 'x'}, ctx, run_code)
 
     # ---------------------------------------------------------------------------
     # Sequential tool resolution
@@ -1884,24 +2120,6 @@ class TestCodeMode:
         # Retry without restart -- should still be type-checked (REPL was cleared).
         with pytest.raises(ModelRetry, match='Type error'):
             await wrapper.call_tool('run_code', {'code': "await add(a='bad', b=3)"}, ctx, run_code)
-
-    # ---------------------------------------------------------------------------
-    # Internal helpers
-    # ---------------------------------------------------------------------------
-
-    def test_print_capture_concatenates_chunks_in_order(self) -> None:
-        """`PrintCapture` accumulates print-callback chunks and joins them on read.
-
-        Lives in the production module rather than as a closure inside `call_tool` so
-        coverage.py sees it execute even when Monty's Rust-side worker thread bypasses
-        the per-thread tracer hooks. This unit test exercises it directly.
-        """
-        capture = PrintCapture()
-        assert capture.joined == ''
-        capture('stdout', 'hello')
-        capture('stdout', ' ')
-        capture('stdout', 'world\n')
-        assert capture.joined == 'hello world\n'
 
 
 class TestToolSearchIntegration:
@@ -2500,12 +2718,12 @@ class TestCodeModeOSAccess:
         assert isinstance(wrapper, CodeModeToolset)
         description = (await wrapper.get_tools(build_run_context(None)))['run_code'].tool_def.description
         assert description is not None
-        assert 'Host-backed OS access' in description
+        assert 'Configured OS access' in description
 
     async def test_description_mount_only_advertises_filesystem_not_env_or_clock(self, tmp_path: Path) -> None:
         """A `mount` without `os` advertises filesystem access only -- it must not tell the model
         that env/clock are host-backed, since a mount cannot route `os.getenv`/`datetime.now()`."""
-        wrapper = CodeMode[object](mount=MountDir('/work', str(tmp_path))).get_wrapper_toolset(
+        wrapper = CodeMode[object](mount=MountDir(virtual_path='/work', host_path=str(tmp_path))).get_wrapper_toolset(
             _build_function_toolset(add)
         )
         assert isinstance(wrapper, CodeModeToolset)
@@ -2514,6 +2732,7 @@ class TestCodeModeOSAccess:
         # The regression guard: a mount must select the filesystem note, not the OS note that would
         # (wrongly) advertise env/clock as host-routed -- this assert fails if the OS note is picked.
         assert 'Mounted filesystem access' in description
+        assert "writes through a `mode='overlay'` mount last only for the current `run_code` call" in description
 
     async def test_description_host_access_note_shows_with_no_sandboxed_tools(self) -> None:
         """The host-access note appears even when no tools are sandboxed (base description)."""
@@ -2524,11 +2743,11 @@ class TestCodeModeOSAccess:
         assert isinstance(wrapper, CodeModeToolset)
         description = (await wrapper.get_tools(build_run_context(None)))['run_code'].tool_def.description
         assert description is not None
-        assert 'Host-backed OS access' in description
+        assert 'Configured OS access' in description
 
     async def test_os_callback_dispatches_inside_run_code(self) -> None:
-        """An `os` callback is threaded through `feed_start` and every `resume`, so OS calls
-        keep dispatching even after a tool call suspends and resumes the sandbox."""
+        """The `os` captured at `feed_start` answers OS-call snapshots via `resume_auto()`,
+        so OS calls still dispatch after a tool-call suspend/resume round-trip."""
 
         def os_cb(fn: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
             if fn == 'os.getenv':
@@ -2540,7 +2759,7 @@ class TestCodeModeOSAccess:
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
         # The tool call forces a FunctionSnapshot -> FutureSnapshot round-trip; the os.getenv
-        # afterwards only resolves if `os` survived those resumes.
+        # afterwards only resolves if the captured `os` is still consulted after them.
         code = "import os\nx = await add(a=2, b=3)\nhome = os.getenv('THING')\n{'sum': x, 'home': home}"
         result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
         assert result.return_value == {'sum': 5, 'home': 'envval'}
@@ -2630,9 +2849,15 @@ class TestCodeModeOSAccess:
             await wrapper.call_tool('run_code', {'code': "import os\nos.getenv('X')"}, ctx, tools['run_code'])
 
     async def test_mount_exposes_host_directory(self, tmp_path: Path) -> None:
-        """A `mount` exposes a host directory inside the sandbox, threaded through resumes."""
+        """A `mount` exposes a host directory inside the sandbox.
+
+        The mount is fixed at `feed_start` for the whole feed (Monty does not accept `mount=` on
+        `resume`), so the `await add(...)` here forces a FunctionSnapshot -> FutureSnapshot resume
+        round-trip before the read, proving the mount is still in effect after the sandbox suspends
+        and resumes.
+        """
         (tmp_path / 'data.txt').write_text('hello-from-host')
-        wrapper = CodeMode[object](mount=MountDir('/work', str(tmp_path))).get_wrapper_toolset(
+        wrapper = CodeMode[object](mount=MountDir(virtual_path='/work', host_path=str(tmp_path))).get_wrapper_toolset(
             _build_function_toolset(add)
         )
         assert isinstance(wrapper, CodeModeToolset)
@@ -2642,13 +2867,35 @@ class TestCodeModeOSAccess:
         result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
         assert result.return_value == 'hello-from-host'
 
+    async def test_overlay_writes_are_discarded_between_calls(self, tmp_path: Path) -> None:
+        """Monty scopes copy-on-write storage to one feed, even while REPL variables persist."""
+        wrapper = CodeMode[object](mount=MountDir(virtual_path='/work', host_path=str(tmp_path))).get_wrapper_toolset(
+            _build_function_toolset(add)
+        )
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+
+        await wrapper.call_tool(
+            'run_code',
+            {'code': "from pathlib import Path\np = Path('/work/generated.txt')\np.write_text('temporary')"},
+            ctx,
+            tools['run_code'],
+        )
+        assert not (tmp_path / 'generated.txt').exists()
+        with pytest.raises(ModelRetry, match='FileNotFoundError'):
+            await wrapper.call_tool('run_code', {'code': 'p.read_text()'}, ctx, tools['run_code'])
+
     async def test_mount_accepts_list_of_directories(self, tmp_path: Path) -> None:
         """`mount` accepts a `list[MountDir]`; each directory is exposed at its virtual path."""
         (tmp_path / 'a').mkdir()
         (tmp_path / 'b').mkdir()
         (tmp_path / 'a' / 'f.txt').write_text('AA')
         (tmp_path / 'b' / 'f.txt').write_text('BB')
-        mounts = [MountDir('/a', str(tmp_path / 'a')), MountDir('/b', str(tmp_path / 'b'))]
+        mounts = [
+            MountDir(virtual_path='/a', host_path=str(tmp_path / 'a')),
+            MountDir(virtual_path='/b', host_path=str(tmp_path / 'b')),
+        ]
         wrapper = CodeMode[object](mount=mounts).get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
@@ -2659,7 +2906,7 @@ class TestCodeModeOSAccess:
 
     def test_capability_forwards_os_and_mount_to_toolset(self, tmp_path: Path) -> None:
         """`CodeMode` forwards `os_access`/`mount` onto the `CodeModeToolset` it builds."""
-        mount = MountDir('/work', str(tmp_path))
+        mount = MountDir(virtual_path='/work', host_path=str(tmp_path))
         wrapper = CodeMode[object](os_access=_unused_os_callback, mount=mount).get_wrapper_toolset(
             _build_function_toolset(add)
         )

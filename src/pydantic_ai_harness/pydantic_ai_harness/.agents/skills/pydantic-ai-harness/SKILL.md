@@ -122,5 +122,5 @@ converts them -- performing four tool calls across two dependent stages in one `
 ## Common Gotchas
 
 - **`native=True` tools bypass `CodeMode`.** Provider-native MCP servers and web search execute server-side, so `run_code` never sees them. Use `native=False` for client-side dispatch that `CodeMode` can wrap, but do not treat a remote server as trusted or sandboxed; see the [Code Mode trust boundary](./references/CODE-MODE.md#sandbox-restrictions).
-- **The Monty sandbox is a Python subset.** No class definitions, no third-party imports, and only a small stdlib allowlist -- read [Code Mode](./references/CODE-MODE.md#sandbox-restrictions) before debugging generated code that fails to run.
+- **The Monty sandbox is a Python subset.** It has no third-party imports and only a small stdlib allowlist -- read [Code Mode](./references/CODE-MODE.md#sandbox-restrictions) before debugging generated code that fails to run.
 - **`CodeMode` needs its extra.** Install `pydantic-ai-harness[codemode]`, not the bare package.

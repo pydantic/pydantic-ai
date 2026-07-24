@@ -8,10 +8,6 @@ Let one agent coordinate a whole team of sub-agents by writing a small Python sc
 > ```python
 > from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 > ```
->
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
-> The extensions planned in [What is coming](#what-is-coming), structured sub-agent inputs and durable
-> workflows, touch the sub-agent call contract itself.
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/dynamic_workflow/)
 
@@ -35,17 +31,15 @@ completion in one tool call, and only its final value comes back to the model.
 The choreography moves out of the conversation and into code.
 
 Claude Code ships this same idea as a feature, also called dynamic workflows. Jarred Sumner used it
-to port Bun from Zig to Rust: around 750,000 lines of Rust, 99.8% of the existing test suite passing,
-and eleven days from first commit to merge. One workflow mapped the right Rust lifetime for every
-struct field. The next wrote every file as a behavior-identical port, with hundreds of agents in
-parallel and two reviewers on each file. A fix loop then drove the build and tests until both ran
-clean. Claude Code runs that at the scale of a whole session. This capability brings the same idea
-into your own Pydantic AI agents, inside a single `run_workflow` tool call. You can
+to port Bun from Zig to Rust: around 780,000 lines of Rust, 100% of the test suite passing at merge,
+and eleven days from first commit to merge. The work peaked at about 64 concurrent Claude agents.
+Claude Code runs that at the scale of a whole session. This capability brings the same idea into
+your own Pydantic AI agents, inside a single `run_workflow` tool call. You can
 [read the Bun story here](https://bun.com/blog/bun-in-rust).
 
 > **Tip**
 >
-> If you have met [Code Mode](../../code_mode/README.md), this will feel familiar. It is the same
+> If you have met [Code Mode](../code_mode/README.md), this will feel familiar. It is the same
 > sandbox and the same idea: write a script instead of many tool calls. The difference is what the
 > script gets to call. In Code Mode it calls the agent's own tools. Here it calls whole sub-agents.
 
@@ -323,8 +317,7 @@ This is a hard, host-enforced ceiling on the number of sub-agent runs in one par
 budget shared across every `run_workflow` call in that run, not a per-script allowance. It holds
 exactly, even when the script fans out with `asyncio.gather`. When the budget runs out, the workflow
 stops calling sub-agents and returns a terminal result that tells the model to conclude with what it
-has. That result includes the sub-agent results that did complete, so nothing you already paid for
-is wasted.
+has. That result includes bounded previews of up to the 20 most recent completed sub-agent results.
 
 > **Note**
 >
@@ -350,8 +343,9 @@ gives depends on `forward_usage`, which controls whether the whole tree shares o
 
 ### `resource_limits`: guarding the script itself
 
-These limits guard the orchestration script's own memory and allocations, not the sub-agents it
-calls. The default backstop is 256 MB and 50 million allocations, with no time limit.
+These limits guard the orchestration script's own memory, not the sub-agents it calls. The default
+backstop is 256 MB with no time limit. Printed output is collected separately with Monty's 10 MiB
+default cap.
 
 ```python
 DynamicWorkflow(agents=[...], resource_limits={'max_duration_secs': 30})
@@ -374,9 +368,9 @@ There is no default duration cap. To see why, it helps to know what the timer ac
 > (`max_agent_calls`, `sub_agent_usage_limits`) can stop it, because it never calls a sub-agent. If
 > you want that guard, set `max_duration_secs` yourself.
 >
-> Two more knobs. Pass `'unlimited'` to remove every limit. Pass a partial dict like
-> `{'max_memory': ...}` and it merges onto the backstop, so you override only the caps you name and
-> the rest keep their defaults.
+> Two more knobs. Pass `'unlimited'` to remove every sandbox resource limit; the separate 10 MiB
+> print cap remains. Pass a partial dict like `{'max_memory': ...}` and it merges onto the backstop,
+> so you override only the caps you name and the rest keep their defaults.
 
 ### Workflows do not nest
 
@@ -463,25 +457,27 @@ for the full picture.
 The script runs in Monty, a subset of Python. The subset is what makes the sandbox safe, so it is
 worth knowing where the edges are:
 
-- No class definitions, and no third-party libraries.
-- Useful standard-library modules: `asyncio`, `math`, `json`, `re`, `typing`. Import what you use.
-  Other modules are unavailable or stubbed.
-- No wall-clock or timing primitives. There is no `asyncio.sleep`, no `datetime.now()`, and no
-  `time` module.
-- `asyncio.gather(...)` runs sub-agents concurrently, but it does not support
-  `return_exceptions=True`.
+- No third-party libraries.
+- Importable standard-library modules include `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
+  `unicodedata`, `datetime`, `os`, and `pathlib`. Import what you use. Filesystem, environment, and
+  clock operations are not configured for workflow scripts.
+- No wall-clock or timing primitives. There is no `asyncio.sleep`, no
+  `datetime.datetime.now()`, no `datetime.date.today()`, and no `time` module.
+- `asyncio.gather(...)` runs sub-agents concurrently with positional awaitables but no keyword
+  arguments, including `return_exceptions=True`. Other task creation and wait APIs are unavailable.
 
-Before a script runs, it is statically type-checked against the sub-agent signatures. A misspelled
-function, a positional `task`, or a wrong-typed argument costs one retry, but no sub-agent budget and
-no sandbox execution.
+Before a script runs, it is statically type-checked against the sub-agent signatures. An ordinary,
+statically provable mistake such as a misspelled function, a positional `task`, or a wrong-typed
+argument costs one retry but no sub-agent budget or sandbox execution. Values typed as `Any` can
+reach runtime validation; they are still rejected before a sub-agent runs.
 
-> **Warning: errors abort the whole script**
+> **Warning: an uncaught error aborts the whole script**
 >
-> A sub-agent that raises cannot be caught inside the script. One failure aborts the whole script,
-> and the model retries it. So write scripts where sub-agents do not depend on catching each other's
-> errors. If a script does fail after some sub-agents already finished, the retry prompt lists those
-> completed results, so the model can reuse them as plain values instead of paying for the same
-> calls again.
+> A sub-agent failure surfaces as `RuntimeError`. The script can catch it with
+> `try`/`except RuntimeError`; an uncaught failure aborts the whole script and the model retries it.
+> If a script does fail after some sub-agents already finished, the retry prompt lists bounded
+> previews of up to the 20 most recent completed results. The model can reuse an untruncated preview
+> as a plain value instead of paying for the same call again.
 
 ## What is coming
 
@@ -504,8 +500,8 @@ DynamicWorkflow(                  # all parameters are keyword-only
     forward_usage=True,
     inherit_model=False,          # True -> sub-agents run with the parent run's resolved model
     sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> pydantic-ai default
-    resource_limits=None,         # None -> backstop (256 MB, 50M allocs, no time cap);
-                                  # 'unlimited' -> off; a dict is merged onto the backstop
+    resource_limits=None,         # None -> backstop (256 MB, no time cap);
+                                  # 'unlimited' -> sandbox limits off; a dict merges onto the backstop
     id=None,                      # required when defer_loading=True
     description=None,             # one-line catalog entry shown while deferred
     defer_loading=False,
@@ -514,7 +510,7 @@ DynamicWorkflow(                  # all parameters are keyword-only
 workflow.reveal(agent)            # AbstractAgent | WorkflowAgent; validates before appending
 
 WorkflowAgent(
-    agent,                        # Agent, required, positional
+    agent,                        # AbstractAgent, required, positional
     name=None,                    # sandbox function name; falls back to agent.name
     description=None,             # function docstring; falls back to agent.description
 )
@@ -522,7 +518,7 @@ WorkflowAgent(
 
 ## Further reading
 
-- [Code Mode](../../code_mode/README.md), the same sandbox, calling the agent's own tools instead of
+- [Code Mode](../code_mode/README.md), the same sandbox, calling the agent's own tools instead of
   sub-agents.
 - [SubAgents](../subagents/README.md), one-delegation-per-tool-call sub-agents, without the
   scripted choreography.

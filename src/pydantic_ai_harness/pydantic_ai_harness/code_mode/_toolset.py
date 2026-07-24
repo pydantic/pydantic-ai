@@ -7,6 +7,7 @@ import keyword
 import re
 import warnings
 from collections.abc import Callable, Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from typing import Annotated, Any
 
@@ -35,8 +36,9 @@ try:
     from pydantic_monty import (
         AbstractOS,
         Monty,
-        MontyRepl,
+        MontyCrashedError,
         MontyRuntimeError,
+        MontySession,
         MontySyntaxError,
         MontyTypingError,
         MountDir,
@@ -46,7 +48,7 @@ except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'pydantic-monty is required for CodeMode. Install it with: pip install "pydantic-ai-harness[code-mode]"'
     ) from _import_error
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai_harness._monty_exec import MontyExecutor, PrintCapture, is_sandbox_panic
 
@@ -57,6 +59,41 @@ CodeModeOSCallback = Callable[[OsFunction, tuple[object, ...], dict[str, object]
 CodeModeOS = AbstractOS | CodeModeOSCallback
 # Accepted by `CodeMode.mount`: one or more host-directory mounts.
 CodeModeMount = MountDir | list[MountDir]
+
+
+@dataclass
+class _MontyRunState:
+    """Monty resources shared by every toolset view created during one agent run."""
+
+    pool: Monty | None = None
+    session: MontySession | None = None
+    has_executed_feed: bool = False
+    _pool_stack: ExitStack = field(default_factory=ExitStack, repr=False)
+    _session_stack: ExitStack = field(default_factory=ExitStack, repr=False)
+
+    def get_session(self, *, type_check: bool, type_check_stubs: str | None) -> MontySession:
+        """Return the run's live REPL session, creating its pool on first use."""
+        if self.pool is None:
+            self.pool = self._pool_stack.enter_context(Monty())
+        if self.session is None:
+            self.session = self._session_stack.enter_context(
+                self.pool.checkout(type_check=type_check, type_check_stubs=type_check_stubs)
+            )
+        return self.session
+
+    def reset(self) -> None:
+        """Return the current worker and make the next call start a fresh REPL."""
+        self._session_stack.close()
+        self._session_stack = ExitStack()
+        self.session = None
+        self.has_executed_feed = False
+
+    def close(self) -> None:
+        """Return the checked-out worker and close the owning pool."""
+        self.reset()
+        self._pool_stack.close()
+        self._pool_stack = ExitStack()
+        self.pool = None
 
 
 class _RunCodeArguments(TypedDict):
@@ -83,9 +120,8 @@ _RUN_CODE_DESCRIPTION_HEAD = """\
 Write and run Python code in a sandboxed environment.
 
 The sandbox uses Monty, a subset of Python. Key restrictions:
-- **No classes**: class definitions are not supported
 - **No third-party libraries**: only the standard library modules listed below can be used
-- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `datetime`, `os`, `pathlib`. These must be imported before use, just like in regular Python. For example: `import asyncio` then `await asyncio.gather(tool_one(...), tool_two(...))`."""
+- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `os`, `pathlib`. These must be imported before use, just like in regular Python."""
 
 # Timing/OS restriction line, swapped depending on what host access the agent
 # configured. Three states, because `mount` and `os` enable different things:
@@ -104,10 +140,14 @@ _MOUNT_ONLY_NOTE = (
     '`datetime.date.today()`, `asyncio.sleep`, and the `time` module remain unavailable.'
 )
 _OS_ENABLED_NOTE = (
-    '- **Host-backed OS access**: `pathlib.Path` operations, `os.getenv`/`os.environ`, '
+    '- **Configured OS access**: `pathlib.Path` operations, `os.getenv`/`os.environ`, '
     '`datetime.datetime.now()`, and `datetime.date.today()` are routed to the OS handler '
     'configured for this agent (availability depends on that configuration). `asyncio.sleep` and '
     'the `time` module remain unavailable.'
+)
+_MOUNT_LIFETIME_NOTE = (
+    "- **Mount write lifetime**: writes through a `mode='overlay'` mount last only for the current "
+    "`run_code` call. Use `mode='read-write'` when later calls need to read those writes."
 )
 
 _RUN_CODE_DESCRIPTION_TAIL = """\
@@ -149,6 +189,8 @@ def _base_description(*, has_os: bool, has_mount: bool) -> str:
         restriction = _MOUNT_ONLY_NOTE
     else:
         restriction = _NO_OS_RESTRICTION
+    if has_mount:
+        restriction = f'{restriction}\n{_MOUNT_LIFETIME_NOTE}'
     return f'{_RUN_CODE_DESCRIPTION_HEAD}\n{restriction}\n{_RUN_CODE_DESCRIPTION_TAIL}'
 
 
@@ -163,6 +205,9 @@ def _functions_header(*, has_sync: bool, has_async: bool) -> str:
             ' All tool functions are async: invoke them with `await`,'
             ' e.g. `await tool_name(arg=value)`.'
             ' Calling without `await` returns an unresolved future, not the value.'
+            ' For concurrency, use `await asyncio.gather(...)` with positional awaitables.'
+            ' Monty does not support `asyncio.gather` keyword arguments or other task creation'
+            ' and wait APIs.'
         )
     if has_sync and not has_async:
         return base + (' All tool functions are synchronous: call them directly, e.g. `tool_name(arg=value)`.')
@@ -170,6 +215,9 @@ def _functions_header(*, has_sync: bool, has_async: bool) -> str:
         ' Async functions (`async def`) must be invoked with `await`,'
         ' e.g. `await tool_name(arg=value)`.'
         ' Sync functions (`def`) are called directly, e.g. `tool_name(arg=value)`.'
+        ' For concurrent async calls, use `await asyncio.gather(...)` with positional awaitables.'
+        ' Monty does not support `asyncio.gather` keyword arguments or other task creation'
+        ' and wait APIs.'
     )
 
 
@@ -296,9 +344,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     so Tool Search discoveries don't bust the tool-definitions cache prefix.
     """
 
-    # init=False so `replace()` in `for_run` produces a fresh instance with _repl=None,
-    # giving each agent run isolated REPL state. Lazy-initialized on first call_tool.
-    _repl: MontyRepl | None = field(default=None, init=False, repr=False)
+    # Shared by `for_run_step` copies so they use the same REPL session and the original entered
+    # instance can close it. `for_run` leaves this unset, giving concurrent runs isolated state.
+    _run_state: _MontyRunState | None = field(default=None, init=False, repr=False, compare=False)
 
     # Catalog string stashed during `get_tools` (when `dynamic_catalog`) and read back by
     # `get_instructions` in the same step. Empty when there's nothing to surface.
@@ -319,10 +367,27 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         if new_wrapped is self.wrapped:
             return self
         new_self = replace(self, wrapped=new_wrapped)
-        new_self._repl = self._repl
+        new_self._run_state = self._run_state
         new_self._warned_deferred = self._warned_deferred
         new_self._last_catalog = self._last_catalog
         return new_self
+
+    async def __aenter__(self) -> Self:
+        """Enter the wrapped toolset and prepare lazy Monty resources for this run."""
+        run_state = _MontyRunState()
+        await self.wrapped.__aenter__()
+        self._run_state = run_state
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        """Exit the wrapped toolset, then tear down the worker pool."""
+        run_state = self._run_state
+        assert run_state is not None
+        self._run_state = None
+        try:
+            return await self.wrapped.__aexit__(*args)
+        finally:
+            run_state.close()
 
     async def get_instructions(
         self, ctx: RunContext[AgentDepsT]
@@ -440,11 +505,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         code = tool_args['code']
         restart = tool_args.get('restart', False)
 
-        # Clear the REPL on restart so that if type checking fails, the
-        # next retry still gets fresh_repl=True and is type-checked again.
+        run_state = self._run_state
+        assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
+
         if restart:
-            self._repl = None
-        fresh_repl = self._repl is None
+            run_state.reset()
+
+        fresh_repl = not run_state.has_executed_feed
 
         callable_defs = tool.callable_defs
         sanitized_to_original = tool.sanitized_to_original
@@ -464,9 +531,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         )
 
         # Determine execution mode for sandbox tool calls:
-        # - global_sequential: forced by durable execution engines (DBOS/Temporal)
-        #   via the parallel execution mode context var. Checked with empty calls
-        #   to isolate the context var from per-tool flags.
+        # - global_sequential: selected through the parallel execution mode context var.
+        #   Checked with empty calls to isolate the context var from per-tool flags.
         # - sequential_tools: per-tool `sequential` flags on ToolDefinition.
         #   These tools are rendered as `def` (sync) and resolved inline.
         global_sequential = _global_mode_is_sequential(tool_manager.get_parallel_execution_mode)
@@ -538,34 +604,43 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # Serialize to JSON-compatible form so Monty receives only plain data.
             return _TOOL_RETURN_CONTENT_TA.dump_python(result)
 
-        # Static type checking on fresh REPL sessions (first call or after
-        # restart). Skipped on subsequent calls because accumulated REPL state
-        # (variables from prior snippets) is invisible to the stateless checker.
-        # Runs before REPL creation so that if this raises ModelRetry, the REPL
-        # stays None and the next retry still gets type-checked.
-        if fresh_repl and callable_defs:
-            self._type_check(code, callable_defs=callable_defs)
-
-        # Create the REPL after type checking passes.
-        if fresh_repl:
-            self._repl = MontyRepl()
-        assert self._repl is not None
+        # Type-check only the first executed snippet. Monty's checker can reject valid later
+        # snippets that reuse imports or pass a runtime-validated dict to a TypedDict parameter.
+        type_check = fresh_repl and bool(callable_defs)
+        type_check_stubs = self._build_type_check_stubs(callable_defs) if type_check else None
 
         capture = PrintCapture()
 
         try:
-            monty_state = self._repl.feed_start(code, print_callback=capture, os=self.os_access, mount=self.mount)
-            completed = await MontyExecutor(
-                dispatch=dispatch_tool_call,
-                valid_names=callable_defs,
-                sequential_names=sequential_tools,
-                global_sequential=global_sequential,
-                os_access=self.os_access,
-                mount=self.mount,
-            ).run(monty_state)
+            session = run_state.get_session(type_check=type_check, type_check_stubs=type_check_stubs)
+            try:
+                monty_state = session.feed_start(
+                    code,
+                    print_callback=capture.callback,
+                    os=self.os_access,
+                    mount=self.mount,
+                    skip_type_check=not type_check,
+                )
+                completed = await MontyExecutor(
+                    dispatch=dispatch_tool_call,
+                    valid_names=callable_defs,
+                    sequential_names=sequential_tools,
+                    global_sequential=global_sequential,
+                ).run(monty_state)
+            except MontyRuntimeError:
+                # The session is idle again and keeps assignments made before the failing line.
+                run_state.has_executed_feed = True
+                raise
+            run_state.has_executed_feed = True
         except MontySyntaxError as e:
+            if fresh_repl:
+                # No code ran, so discard the checkout-time type stubs. A later step may expose
+                # a different tool catalog (for example after Tool Search discovers a tool).
+                run_state.reset()
             raise ModelRetry(f'Syntax error in code:\n{capture.prepend_to(e.display())}') from e
-        except MontyTypingError as e:  # pragma: no cover -- MontyRepl.feed_start doesn't raise this
+        except MontyTypingError as e:
+            # Typing errors can only come from the fresh-feed check above.
+            run_state.reset()
             raise ModelRetry(f'Type error in code:\n{capture.prepend_to(e.display())}') from e
         except MontyRuntimeError as e:
             # Exceptions raised inside dispatch_tool_call (e.g. UserError from
@@ -578,18 +653,26 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # (ModelRetry → MontyRuntimeError → ModelRetry), but the retry
             # semantics are the same -- the model gets another chance.
             raise ModelRetry(f'Runtime error:\n{capture.prepend_to(e.display())}') from e
+        except MontyCrashedError as e:
+            # The worker died mid-feed (e.g. the code exhausted its memory or hit the
+            # request timeout) and the REPL state died with it; the pool replaces the
+            # worker transparently. Reset so the retry starts from a fresh,
+            # type-checked session.
+            run_state.reset()
+            raise ModelRetry(
+                'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'
+            ) from e
         except BaseException as e:
-            # Convert a model-provokable sandbox panic to a retry (see `is_sandbox_panic`);
-            # anything else (CancelledError, ...) re-raises unchanged.
+            # Convert a sandbox panic to a retry (see `is_sandbox_panic`);
+            # interruptions re-raise unchanged after dropping the suspended session.
             if not is_sandbox_panic(e):
+                run_state.reset()
                 raise
             # The panic aborts the VM mid-execution, so the REPL's accumulated state cannot
             # be trusted; drop it so the retry starts from a fresh, type-checked session.
-            self._repl = None
+            run_state.reset()
             raise ModelRetry(
-                'The code aborted inside the sandbox and the session was reset. This can happen '
-                'when the same tool call is awaited more than once in one asyncio.gather -- give '
-                'each gathered call its own invocation. Revise the code and try again.'
+                'The code aborted inside the sandbox and the session was reset. Revise the code and try again.'
             ) from e
 
         result = completed.output
@@ -721,24 +804,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             for td in callable_defs.values()
         )
         return '\n\n'.join(parts)
-
-    @staticmethod
-    def _type_check(code: str, *, callable_defs: dict[str, ToolDefinition]) -> None:
-        """Type-check a code snippet against tool signatures before execution.
-
-        Uses Monty's stateless type checker with function stubs. Only sound
-        when the REPL has no accumulated state (first call or after restart).
-
-        Raises:
-            ModelRetry: If the code has type errors or syntax errors.
-        """
-        stubs = CodeModeToolset._build_type_check_stubs(callable_defs)
-        try:
-            Monty(code, type_check=True, type_check_stubs=stubs)
-        except MontyTypingError as e:
-            raise ModelRetry(f'Type error in code:\n{e.display()}') from e
-        except MontySyntaxError as e:
-            raise ModelRetry(f'Syntax error in code:\n{e.display()}') from e
 
 
 def _get_sigs_and_conflicting(

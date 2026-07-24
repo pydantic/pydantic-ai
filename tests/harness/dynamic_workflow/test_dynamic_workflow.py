@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Callable, Coroutine
 from typing import Any
 
 import pytest
@@ -358,33 +357,38 @@ fan work out in parallel, chain one agent's output into the next, vote across se
 done -- instead of delegating to one sub-agent at a time.
 
 The sandbox uses Monty, a subset of Python. Key restrictions:
-- **No classes** and **no third-party libraries**.
-- **Useful standard-library modules**: `asyncio`, `math`, `json`, `re`, `typing`. Import what you use
-  at the top of the script. Other modules are unavailable or stubbed -- don't rely on them.
-- **No wall-clock or timing primitives** (`asyncio.sleep`, `datetime.now()`, the `time` module).
+- **No third-party libraries**.
+- **Importable standard-library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
+  `unicodedata`, `datetime`, `os`, and `pathlib`. Import what you use at the top of the script.
+  Filesystem, environment, and clock operations are not configured for workflow scripts.
+- **No wall-clock or timing primitives** (`asyncio.sleep`, `datetime.datetime.now()`,
+  `datetime.date.today()`, the `time` module).
 
-Each sub-agent below is an async function. Call it with the `task` keyword argument -- write
-`reviewer(task="...")`, not `reviewer("...")`; all parameters are keyword-only. A sub-agent returns
-that agent's output: a string by default, or -- if it has a structured `output_type` -- a dict, whose
-fields you read by subscript (`r["field"]`), not attribute (`r.field`). Each sub-agent call is an
-independent run with no memory of earlier calls; include all needed context in `task`. Run several
-at once with `asyncio.gather` rather than awaiting each sequentially:
+Each sub-agent below is an async function. Await it and pass `task` by keyword:
+`result = await reviewer(task="...")`, not `reviewer("...")`; all parameters are keyword-only. A
+sub-agent returns that agent's output: a string by default, or -- if it has a structured
+`output_type` -- a dict, whose fields you read by subscript (`r["field"]`), not attribute
+(`r.field`). Each sub-agent call is an independent run with no memory of earlier calls; include all
+needed context in `task`. Run several at once with `asyncio.gather` rather than awaiting each
+sequentially:
 
 ```python
 import asyncio
 reviews = await asyncio.gather(reviewer(task="check auth"), reviewer(task="check parsing"))
 ```
 
-`asyncio.gather` does **not** support `return_exceptions=True`, and a sub-agent that raises cannot be
-caught inside the script: one failure aborts the whole script and you retry it. Design the script so
-sub-agents don't depend on catching each other's errors.
+`asyncio.gather` accepts positional awaitables but no keyword arguments, including
+`return_exceptions=True`. Other task creation and wait APIs are unavailable. A sub-agent failure
+surfaces as `RuntimeError`: catch it with `try`/`except RuntimeError`, or let it abort the whole
+script and retry.
 
 The last expression's value is captured as the result -- you do **not** need to `print()` it, and
 printing produces a string representation, not structured data. Use `print()` only for debug logging.
 Return shapes: no print returns the last expression value (or `{}` if it is `None`); print plus a
 non-`None` value returns `{"output": "<printed text>", "result": <last expression>}`; print plus
 `None` returns `{"output": "<printed text>"}`. If a script fails after some sub-agent calls complete,
-those completed results are reported back so a retry can reuse them.
+bounded previews of up to the 20 most recent results are reported so a retry can reuse untruncated
+values.
 
 This run can make at most 7 sub-agent calls in total -- one budget shared across every `run_workflow` call in the run, not per script; plan fan-out width accordingly.
 
@@ -885,8 +889,10 @@ async def test_sub_agent_usage_limits_generous_allows_run() -> None:
 
 
 async def test_syntax_error() -> None:
+    # Every script is type-checked before running, and the type checker parses first, so a
+    # syntax error surfaces through it as a `Type error in workflow` retry.
     ts = DynamicWorkflowToolset[object](agents=[_wf_agent()])
-    with pytest.raises(ModelRetry, match='Syntax error'):
+    with pytest.raises(ModelRetry, match='error in workflow'):
         await _run_script(ts, 'x = (')
 
 
@@ -916,7 +922,8 @@ async def test_retry_exhaustion_for_invalid_code_end_to_end() -> None:
     ]
     assert model_calls == 3
     assert len(retry_parts) == 2
-    assert all(isinstance(p.content, str) and p.content.startswith('Syntax error in workflow:') for p in retry_parts)
+    # The type checker parses the script first, so the invalid `x = (` surfaces as a type error.
+    assert all(isinstance(p.content, str) and p.content.startswith('Type error in workflow:') for p in retry_parts)
 
 
 async def test_runtime_error() -> None:
@@ -962,13 +969,69 @@ async def test_completed_sub_agent_results_are_truncated_and_capped() -> None:
     assert ' ... [truncated]' in msg
 
 
-async def test_duplicate_future_in_gather_is_retryable() -> None:
-    # Awaiting the same sub-agent call twice in one gather makes the Monty VM panic; that panic
-    # must surface as a retry, not tear down the whole agent run.
+async def test_worker_crash_becomes_model_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A worker death (`MontyCrashedError`) must surface as a retry carrying the completed
+    # sub-agent results, not tear down the agent run. A tiny `request_timeout` plus an
+    # infinite loop crashes the worker for real; `MontyCrashedError` cannot be constructed
+    # or subclassed from Python, so injection is not an option.
+    import functools
+
+    from pydantic_monty import Monty
+
+    monkeypatch.setattr(
+        'pydantic_ai_harness.dynamic_workflow._toolset.Monty', functools.partial(Monty, request_timeout=0.5)
+    )
     ts = DynamicWorkflowToolset[object](agents=[_wf_agent()])
-    code = 'import asyncio\nf = sub(task="x")\nawait asyncio.gather(f, f)'
+    with pytest.raises(ModelRetry, match='crashed the sandbox worker') as exc_info:
+        await _run_script(ts, "await sub(task='x')\nwhile True:\n    pass")
+    assert 'sub(task="x") -> "ok"' in str(exc_info.value)
+
+
+async def test_worker_crash_after_budget_exhaustion_returns_terminal_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import functools
+
+    from pydantic_monty import Monty
+
+    monkeypatch.setattr(
+        'pydantic_ai_harness.dynamic_workflow._toolset.Monty', functools.partial(Monty, request_timeout=0.5)
+    )
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent('counted-result', 'counted')], max_agent_calls=1)
+    code = (
+        "await counted(task='first')\n"
+        'try:\n'
+        "    await counted(task='second')\n"
+        'except RuntimeError:\n'
+        '    pass\n'
+        'while True:\n'
+        '    pass'
+    )
+    out = await _run_script(ts, code)
+    assert isinstance(out, dict)
+    assert 'budget' in out['error']
+    assert out['last_error'] == (
+        'The workflow script crashed the sandbox worker after exhausting the sub-agent budget.'
+    )
+    assert out['completed'] == ['counted(task="first") -> "counted-result"']
+
+
+async def test_sandbox_panic_is_retryable(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A Rust-side sandbox panic (pyo3 PanicException) must surface as a retry that carries the
+    # already-completed sub-agent results, not tear down the whole agent run. It is injected via
+    # the execution loop because Monty no longer panics on the inputs it once did (e.g. awaiting
+    # one sub-agent call twice in a single asyncio.gather).
+    class PanicException(BaseException):
+        """Named to match the pyo3 panic class `is_sandbox_panic` recognizes."""
+
+    async def panic(self: Any, _state: object) -> object:
+        await self.dispatch('sub', {'task': 'x'})  # completes one sub-agent, then the VM panics
+        raise PanicException('sandbox panic')
+
+    monkeypatch.setattr('pydantic_ai_harness._monty_exec.MontyExecutor.run', panic)
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()])
     with pytest.raises(ModelRetry, match='aborted inside the sandbox') as exc_info:
-        await _run_script(ts, code)
+        await _run_script(ts, "await sub(task='x')")
     msg = str(exc_info.value)
     assert 'Completed sub-agent results from the failed script' in msg
     assert 'sub(task="x") -> "ok"' in msg
@@ -980,22 +1043,13 @@ async def test_sandbox_panic_after_budget_exhaustion_returns_terminal_result(
     class PanicException(BaseException):
         pass
 
-    class FakeExecutor:
-        dispatch: Callable[[str, dict[str, Any]], Coroutine[Any, Any, Any]]
+    async def panic(self: Any, _state: object) -> object:
+        await self.dispatch('counted', {'task': 'first'})
+        with pytest.raises(RuntimeError, match='budget'):
+            await self.dispatch('counted', {'task': 'second'})
+        raise PanicException('sandbox panic')
 
-        def __init__(
-            self, dispatch: Callable[[str, dict[str, Any]], Coroutine[Any, Any, Any]], valid_names: object
-        ) -> None:
-            _ = valid_names
-            self.dispatch = dispatch
-
-        async def run(self, _state: object) -> object:
-            await self.dispatch('counted', {'task': 'first'})
-            with pytest.raises(RuntimeError, match='budget'):
-                await self.dispatch('counted', {'task': 'second'})
-            raise PanicException('sandbox panic')
-
-    monkeypatch.setattr('pydantic_ai_harness.dynamic_workflow._toolset.MontyExecutor', FakeExecutor)
+    monkeypatch.setattr('pydantic_ai_harness._monty_exec.MontyExecutor.run', panic)
     ts = DynamicWorkflowToolset[object](agents=[_wf_agent('counted-result', 'counted')], max_agent_calls=1)
     out = await _run_script(ts, '1 + 1')
     assert isinstance(out, dict)
@@ -1009,20 +1063,6 @@ async def test_sandbox_panic_after_budget_exhaustion_returns_terminal_result(
     assert out['completed'] == ['counted(task="first") -> "counted-result"']
 
 
-async def test_non_panic_base_exception_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The panic guard catches BaseException but must re-raise anything that is not a VM panic.
-    class _Boom(BaseException):
-        pass
-
-    async def _boom(self: Any, state: Any) -> Any:
-        raise _Boom('boom')
-
-    monkeypatch.setattr('pydantic_ai_harness._monty_exec.MontyExecutor.run', _boom)
-    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()])
-    with pytest.raises(_Boom):
-        await _run_script(ts, "await sub(task='x')")
-
-
 async def test_print_only_returns_output_dict() -> None:
     ts = DynamicWorkflowToolset[object](agents=[_wf_agent()])
     out = await _run_script(ts, "print('hello')")
@@ -1033,6 +1073,12 @@ async def test_print_with_result_returns_both() -> None:
     ts = DynamicWorkflowToolset[object](agents=[_wf_agent()])
     out = await _run_script(ts, "print('log')\n42")
     assert out == {'output': 'log\n', 'result': 42}
+
+
+async def test_printed_output_over_limit_becomes_model_retry() -> None:
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()])
+    with pytest.raises(ModelRetry, match='Runtime error in workflow'):
+        await _run_script(ts, "print('x' * (11 * 1024 * 1024))")
 
 
 async def test_no_result_returns_empty_dict() -> None:
@@ -1070,17 +1116,39 @@ async def test_sub_agent_failure_inside_gather_aborts_script() -> None:
     assert 'ValueError' in msg
 
 
-async def test_host_errors_cannot_be_caught_in_sandbox() -> None:
-    # On the deferred-future path this capability uses, host-raised exceptions abort the script
-    # even under a matching `except RuntimeError`. Monty's inline resume path can differ.
+async def test_sub_agent_failure_can_be_caught_in_sandbox() -> None:
+    def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ValueError('kaboom')
+
+    bad: Agent[object, str] = Agent(FunctionModel(boom), name='bad')
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=bad)])
+    code = "try:\n    await bad(task='x')\nexcept RuntimeError:\n    result = 'recovered'\nresult"
+    assert await _run_script(ts, code) == 'recovered'
+
+
+async def test_budget_guard_terminates_even_when_error_caught_in_sandbox() -> None:
+    # The deferred-future path surfaces the host-raised budget error to a matching in-sandbox
+    # `except RuntimeError`, so the script swallows it and runs on to `1 / 0`. The
+    # `budget_exhausted` guard still forces a terminal result rather than a plain retry.
     counted: Agent[object, str] = Agent(TestModel(custom_output_text='ok'), name='counted')
     ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=counted)], max_agent_calls=1)
     code = "await counted(task='a')\ntry:\n    await counted(task='b')\nexcept RuntimeError:\n    pass\n1 / 0"
     out = await _run_script(ts, code)
-    # The script aborted at the second call (`1 / 0` never ran) and the terminal result surfaced.
     assert isinstance(out, dict)
     assert 'budget' in out['error']
-    assert 'sub-agent call budget (1) exhausted' in out['last_error']
+    # The budget error was caught in-sandbox, so `1 / 0` ran and is what actually aborted the script.
+    assert 'ZeroDivisionError' in out['last_error']
+    assert out['completed'] == ['counted(task="a") -> "ok"']
+
+
+async def test_budget_guard_terminates_when_caught_script_completes_normally() -> None:
+    counted: Agent[object, str] = Agent(TestModel(custom_output_text='ok'), name='counted')
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=counted)], max_agent_calls=1)
+    code = "await counted(task='a')\ntry:\n    await counted(task='b')\nexcept RuntimeError:\n    pass\n'done'"
+    out = await _run_script(ts, code)
+    assert isinstance(out, dict)
+    assert 'budget' in out['error']
+    assert 'completed after exhausting' in out['last_error']
     assert out['completed'] == ['counted(task="a") -> "ok"']
 
 
@@ -1174,13 +1242,13 @@ async def test_unlimited_runs_without_a_backstop() -> None:
     assert out == 2
 
 
-def test_unknown_resource_limit_key_raises_at_construction() -> None:
-    # A typo'd key (e.g. plural `max_durations_secs`) must not be silently dropped -- that would
-    # quietly disable the duration cap it was meant to set. Validated eagerly, not at the first call.
+@pytest.mark.parametrize('unknown_key', ['max_durations_secs', 'max_allocations'])
+def test_unknown_resource_limit_key_raises_at_construction(unknown_key: str) -> None:
+    # Unknown keys must not be silently dropped, which would disable the intended cap.
     with pytest.raises(UserError, match='Unknown `resource_limits` key'):
         DynamicWorkflowToolset[object](
             agents=[_wf_agent()],
-            resource_limits={'max_durations_secs': 5},  # pyright: ignore[reportArgumentType]
+            resource_limits={unknown_key: 5},  # pyright: ignore[reportArgumentType]
         )
 
 
@@ -1240,7 +1308,7 @@ async def test_cancellation_closes_unscheduled_coroutines() -> None:
     # In global-sequential mode (durable backends) deferred calls are kept as bare, unscheduled
     # coroutines. On cancellation those must be `close()`d, not cancelled -- covers the
     # coroutine branch of the executor's cleanup, unreachable through DynamicWorkflowToolset.
-    from pydantic_monty import MontyRepl
+    from pydantic_monty import Monty
 
     from pydantic_ai_harness._monty_exec import MontyExecutor
 
@@ -1250,15 +1318,16 @@ async def test_cancellation_closes_unscheduled_coroutines() -> None:
         started.set()
         await asyncio.Event().wait()  # block forever; only cancellation ends this
 
-    repl = MontyRepl()
-    state = repl.feed_start("import asyncio\nawait asyncio.gather(sub(task='a'), sub(task='b'))")
-    executor = MontyExecutor(dispatch=dispatch, valid_names={'sub'}, global_sequential=True)
-    # The first call is awaited inline and blocks; the second is still a bare coroutine.
-    task = asyncio.ensure_future(executor.run(state))
-    await started.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    with Monty() as pool:
+        with pool.checkout() as session:
+            state = session.feed_start("import asyncio\nawait asyncio.gather(sub(task='a'), sub(task='b'))")
+            executor = MontyExecutor(dispatch=dispatch, valid_names={'sub'}, global_sequential=True)
+            # The first call is awaited inline and blocks; the second is still a bare coroutine.
+            task = asyncio.ensure_future(executor.run(state))
+            await started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):  # pragma: no branch
+                await task
 
 
 # --- Runtime reveal --------------------------------------------------------

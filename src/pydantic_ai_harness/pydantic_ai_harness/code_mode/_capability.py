@@ -32,9 +32,11 @@ _DISCOVERY_ANNOUNCEMENT_PREFIX = (
 class CodeMode(AbstractCapability[AgentDepsT]):
     """Capability that exposes selected tools as callables inside a `run_code` sandbox.
 
-    By default (`tools='all'`) every tool the agent has is wrapped behind a single
-    `run_code` tool -- the model writes Python that calls them as functions instead
-    of issuing tool calls directly.
+    By default (`tools='all'`) every eligible regular tool the agent has is wrapped
+    behind a single `run_code` tool -- the model writes Python that calls them as
+    functions instead of issuing tool calls directly. Framework control tools,
+    undiscovered deferred tools, native fallbacks, and other code-execution tools
+    remain native.
 
     Pass a list of tool names or a callable predicate to `tools` to split the
     toolset: matching tools become callables inside the sandbox, and the rest
@@ -60,19 +62,21 @@ class CodeMode(AbstractCapability[AgentDepsT]):
       when the agent needs environment variables, the clock, or filesystem behavior you
       control.
 
-    Both expose the real host to model-written code, so grant only what the task needs.
+    `mount` exposes selected host directories. The built-in `OSAccess` has an
+    isolated filesystem and environment but uses the host clock by default; custom
+    OS handlers can expose other host resources.
 
     ```python
     from pydantic_monty import MountDir
 
-    agent = Agent('openai:gpt-5', capabilities=[CodeMode(mount=MountDir('/work', '/tmp/agent-work'))])
+    agent = Agent('openai:gpt-5', capabilities=[CodeMode(mount=MountDir(virtual_path='/work', host_path='/tmp/agent-work'))])
     ```
     """
 
     tools: ToolSelector[AgentDepsT] = field(default='all')
     """Which wrapped tools should be sandboxed inside `run_code`.
 
-    - `'all'` (default): every tool the agent has is sandboxed.
+    - `'all'` (default): every eligible regular tool the agent has is sandboxed.
     - `Sequence[str]`: only tools whose names are listed are sandboxed.
     - Callable `(ctx, tool_def) -> bool | Awaitable[bool]`: tools where the
       callable returns `True` are sandboxed; the rest stay as native tool calls.

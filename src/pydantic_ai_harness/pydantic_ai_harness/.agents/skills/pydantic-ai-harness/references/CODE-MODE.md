@@ -119,10 +119,10 @@ Code runs inside Monty, an implementation of Python which intentionally supports
 
 Key restrictions:
 
-- No class definitions
 - No third-party imports
 - No `import *`
-- Only a small stdlib subset is allowed: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `datetime`, `os`, `pathlib`
+- Only a small stdlib subset is allowed: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `os`, `pathlib`
+- `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation and wait APIs are unavailable
 - No wall-clock or timing primitives by default: `datetime.datetime.now()` and `datetime.date.today()` require an `os_access` handler; `asyncio.sleep` and the `time` module are unavailable
 - Filesystem I/O requires an `os_access` handler or a `mount`; `os.getenv` and `os.environ` require an `os_access` handler
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
