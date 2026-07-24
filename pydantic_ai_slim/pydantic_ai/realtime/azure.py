@@ -14,7 +14,7 @@ from ..exceptions import UserError
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
 from ..tools import ToolDefinition
-from ._base import RealtimeCodecEvent, RealtimeModelSettings, Transcript, WebRTCAnswer
+from ._base import RealtimeClientSecret, RealtimeCodecEvent, RealtimeModelSettings, Transcript, WebRTCAnswer
 from ._openai_protocol import (
     SemanticVAD,
     ServerVAD,
@@ -173,6 +173,34 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             ephemeral_token=secret.value,
             provider_name=self.system,
             sdp_offer=sdp_offer,
+        )
+
+    async def create_client_secret(
+        self,
+        *,
+        instructions: str | None = None,
+        tools: Sequence[ToolDefinition] | None = None,
+        model_settings: RealtimeModelSettings | None = None,
+        expires_after_seconds: int | None = None,
+    ) -> RealtimeClientSecret:
+        settings = self._merge_model_settings(model_settings)
+        if settings and cast('AzureRealtimeModelSettings', settings).get('azure_voice_live'):
+            # Voice Live negotiates WebRTC over its WebSocket control channel, not the GA
+            # `/realtime/client_secrets` + `/realtime/calls` path this inherits, so the GA signaling would
+            # hit the wrong endpoint. Reject it (browser WebRTC support tracked in the linked issue) rather
+            # than silently minting a GA secret for a Voice Live session. Guarding `create_client_secret`
+            # also covers `answer_webrtc_offer`, which mints through it.
+            raise NotImplementedError(
+                'Browser WebRTC is not yet supported for Azure AI Voice Live (`azure_voice_live=True`): '
+                'Voice Live negotiates WebRTC over its WebSocket control channel, which this model does not '
+                'implement yet. Use a WebSocket session, or the GA Azure OpenAI realtime model for browser '
+                'WebRTC. See https://github.com/pydantic/pydantic-ai/issues/6702.'
+            )
+        return await super().create_client_secret(
+            instructions=instructions,
+            tools=tools,
+            model_settings=model_settings,
+            expires_after_seconds=expires_after_seconds,
         )
 
     def _session_config(

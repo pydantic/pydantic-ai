@@ -314,3 +314,22 @@ async def test_message_history_seeding(
     assert isinstance(reply_part, TextPart)
     content = reply_part.content.lower()
     assert 'alice' in content and 'teal' in content
+
+
+async def test_voice_live_rejects_webrtc_signaling() -> None:
+    """Browser WebRTC signaling is not supported for Voice Live yet, so it raises rather than using the GA path.
+
+    A unit test (no cassette): the guard fires before any network call. Voice Live negotiates WebRTC over
+    its WebSocket control channel, unlike the GA `/realtime/client_secrets` + `/realtime/calls` flow this
+    model inherits, so minting a GA secret for a Voice Live session would hit the wrong endpoint. Tracked
+    in https://github.com/pydantic/pydantic-ai/issues/6702.
+    """
+    provider = AzureProvider(azure_endpoint='https://mock.openai.azure.com/openai/v1', api_key='mock-api-key')
+    model = AzureRealtimeModel(
+        'gpt-realtime', provider=provider, settings=AzureRealtimeModelSettings(azure_voice_live=True)
+    )
+    with pytest.raises(NotImplementedError, match='not yet supported for Azure AI Voice Live'):
+        await model.create_client_secret()
+    # `answer_webrtc_offer` mints through `create_client_secret`, so it is rejected too.
+    with pytest.raises(NotImplementedError, match='not yet supported for Azure AI Voice Live'):
+        await model.answer_webrtc_offer('v=0\r\n')

@@ -126,3 +126,10 @@ async def main():
 
 Voice-Live-only knobs use the `azure_voice_live_*` prefix (e.g.
 [`azure_voice_live_turn_detection`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_turn_detection]).
+
+!!! note "Browser WebRTC is WebSocket-only for Voice Live"
+    The [browser WebRTC](#browser-webrtc-and-microsoft-entra-id) flow above is for the GA Azure OpenAI
+    realtime path. Voice Live negotiates WebRTC over its own WebSocket control channel instead, which
+    isn't implemented yet, so `answer_webrtc_offer` / `create_client_secret` raise with
+    `azure_voice_live=True`. Use a WebSocket session with Voice Live for now
+    ([issue #6702](https://github.com/pydantic/pydantic-ai/issues/6702)).
