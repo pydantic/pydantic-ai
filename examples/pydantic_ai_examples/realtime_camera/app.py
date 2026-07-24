@@ -1,14 +1,16 @@
-"""Realtime camera + voice assistant — talk to a Gemini Live model and show it your camera.
+"""Realtime camera + voice assistant — talk to a realtime model and show it your camera.
 
-The browser streams microphone audio (PCM16, 16kHz) and ~1 fps JPEG camera frames into a Gemini
-Live session and plays the model's audio back: point your camera at something and ask about it.
+The browser streams microphone audio (PCM16, 16kHz) and ~1 fps JPEG camera frames into a Gemini,
+OpenAI, or Azure OpenAI realtime session and plays the model's audio back: point your camera at
+something and ask about it. xAI realtime is not supported because it has no image input.
 The assistant can also ground answers with web search and redraw a hand-drawn sketch into a clean
 diagram (see the tool and capability notes below).
 
-Requires `GOOGLE_API_KEY` (Gemini Live access) — or, where org policy disallows API keys, set
-`GOOGLE_GENAI_USE_VERTEXAI=true` (+ `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` and
-`gcloud auth application-default login`) to use Vertex AI instead. Put the config in a `.env` at the
-repo root, then:
+Set the credentials for the selected provider: `GOOGLE_API_KEY` for Gemini, `OPENAI_API_KEY` for
+OpenAI, or the `AZURE_OPENAI_*` variables for Azure OpenAI. Where org policy disallows Google API
+keys, set `GOOGLE_GENAI_USE_VERTEXAI=true` (+ `GOOGLE_CLOUD_PROJECT` /
+`GOOGLE_CLOUD_LOCATION` and `gcloud auth application-default login`) to use Vertex AI instead. Put
+the config in a `.env` at the repo root, then:
 
     uv run --all-packages uvicorn pydantic_ai_examples.realtime_camera.app:app
 
@@ -20,10 +22,12 @@ To use it from your phone you need HTTPS — expose the local server with a Clou
 
 then open the printed `https://<...>.trycloudflare.com` URL on the phone and allow camera + mic.
 
-`CAMERA_REALTIME_MODEL` (default `gemini-2.5-flash-native-audio-latest`, or
-`gemini-live-2.5-flash-native-audio` on Vertex) and `CAMERA_REALTIME_VOICE` (default `Puck`) set the
-fallback defaults; the UI's settings panel
-(model, voice, language, turn coverage, VAD sensitivity, proactive/affective audio) overrides them.
+`CAMERA_REALTIME_MODEL` (default `google:gemini-live-2.5-flash`) and
+`CAMERA_REALTIME_VOICE` (default `Puck`) set the fallback defaults. Model IDs must include the
+provider prefix, for example `google:gemini-live-2.5-flash`, `openai:gpt-realtime`, or
+`azure:<deployment>`. The UI's model, voice, and output modality settings work across providers.
+Language, turn coverage, start/end VAD sensitivity, proactive audio, and affective dialog are
+Gemini-only; OpenAI/Azure map either sensitivity control to cross-provider turn detection instead.
 
 The camera assistant keeps every video frame in context (`turn_coverage='all_input'`) so it has the
 live scene to reason about. The browser's **Watch** toggle drives proactive narration: while on, it
@@ -48,7 +52,9 @@ camera frame to a separate vision agent (Gemini by default — same `GOOGLE_API_
 sketch as a clean, self-contained HTML diagram. The browser renders it in an overlay and can export it
 to PNG client-side. Set `CAMERA_DRAW=false` to disable, or `CAMERA_DRAW_MODEL` to any `provider:model`
 vision model. Because Gemini Live can't combine function calling with Google Search
-grounding in one session, enabling the drawing tool turns web search off.
+grounding in one session, enabling the drawing tool turns web search off. Proactive audio lets a
+Gemini native-audio model decide when to speak and stay silent; affective dialog enables
+emotion-aware delivery. Both settings are Gemini native-audio only.
 """
 
 from __future__ import annotations
@@ -65,6 +71,7 @@ from typing import Literal, cast
 
 import anyio
 import logfire
+import websockets
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -77,17 +84,26 @@ from pydantic_ai.realtime import (
     InputSpeechStartEvent,
     PartDeltaEvent,
     PartEndEvent,
+    RealtimeError,
     RealtimeEvent,
+    RealtimeModel,
+    RealtimeModelSettings,
     RealtimeSession,
     ReconnectPolicy,
     SpeechPart,
     SpeechPartDelta,
     TurnCompleteEvent,
+    TurnDetection,
+    infer_realtime_model,
 )
 from pydantic_ai.realtime.google import (
     AutomaticVAD,
     GoogleRealtimeModel,
     GoogleRealtimeModelSettings,
+)
+from pydantic_ai.realtime.openai import (
+    OpenAIRealtimeModel,
+    OpenAIRealtimeModelSettings,
 )
 
 load_dotenv()
@@ -104,13 +120,7 @@ USE_VERTEX = os.environ.get('GOOGLE_GENAI_USE_VERTEXAI', '').lower() in (
     'true',
     'yes',
 )
-# The Developer API's current Live models are the native-audio family; the `-latest` alias tracks the
-# newest one. Vertex still uses the older `gemini-live-*` naming. (Override with `CAMERA_REALTIME_MODEL`.)
-MODEL = os.environ.get('CAMERA_REALTIME_MODEL') or (
-    'gemini-live-2.5-flash-native-audio'
-    if USE_VERTEX
-    else 'gemini-2.5-flash-native-audio-latest'
-)
+MODEL = os.environ.get('CAMERA_REALTIME_MODEL', 'google:gemini-live-2.5-flash')
 VOICE = os.environ.get('CAMERA_REALTIME_VOICE', 'Puck')
 GCP_PROJECT = os.environ.get('GOOGLE_CLOUD_PROJECT')
 GCP_LOCATION = os.environ.get('GOOGLE_CLOUD_LOCATION')
@@ -128,7 +138,7 @@ AFFECTIVE = os.environ.get('CAMERA_AFFECTIVE', '').lower() in ('1', 'true', 'yes
 # Gemini (same `GOOGLE_API_KEY` as the live session — no extra key). `CAMERA_DRAW_MODEL` takes any
 # `provider:model` string to use a different vision model.
 DRAW = os.environ.get('CAMERA_DRAW', 'true').lower() in ('1', 'true', 'yes')
-DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'google:gemini-3.5-flash')
+DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'google:gemini-3-flash-preview')
 # Grounding with Google Search (a native tool) — on by default; the native-audio Live models
 # support it. Set `CAMERA_WEB_SEARCH=false` to disable, or if your model/region doesn't support it.
 # (We don't also add `WebFetch` here: Gemini 2.5 / native-audio can't combine Google Search grounding
@@ -275,46 +285,59 @@ async def index() -> HTMLResponse:
     )
 
 
-def _build_model(params: Mapping[str, str]) -> GoogleRealtimeModel:
-    """Build the Gemini model from the UI's settings, falling back to the env-configured defaults."""
-    start, end = params.get('start_sensitivity'), params.get('end_sensitivity')
-    vad = None
-    if start in ('high', 'low') or end in ('high', 'low'):
-        vad = AutomaticVAD(
-            start_sensitivity=start if start in ('high', 'low') else None,
-            end_sensitivity=end if end in ('high', 'low') else None,
+def _build_model(params: Mapping[str, str]) -> RealtimeModel:
+    """Build the selected realtime model with provider-appropriate UI settings."""
+    model_id = params.get('model') or MODEL
+    if USE_VERTEX and model_id.startswith('google:'):
+        model = GoogleRealtimeModel(
+            model_id.removeprefix('google:'),
+            provider=GoogleCloudProvider(project=GCP_PROJECT, location=GCP_LOCATION),
         )
-    coverage = params.get('turn_coverage') or TURN_COVERAGE
-    settings = GoogleRealtimeModelSettings(
+    else:
+        model = infer_realtime_model(model_id)
+
+    start, end = params.get('start_sensitivity'), params.get('end_sensitivity')
+    common_settings = RealtimeModelSettings(
         voice=params.get('voice') or VOICE,
         output_modality=cast(
             "Literal['audio', 'text']", params.get('modality', 'audio')
         ),
-        google_proactive_audio=_truthy(params['proactive'])
-        if 'proactive' in params
-        else PROACTIVE,
-        google_affective_dialog=_truthy(params['affective'])
-        if 'affective' in params
-        else AFFECTIVE,
     )
-    if language_code := params.get('language'):
-        settings['google_language_code'] = language_code
-    if coverage in ('activity_only', 'all_input', 'all_video'):
-        settings['google_turn_coverage'] = coverage
-    if vad is not None:
-        settings['google_vad'] = vad
-    # Gemini's native-audio preview models occasionally drop the connection with a server-side `1011`
-    # ("internal error"). Enable session resumption and a reconnect policy so a transient drop re-dials
-    # from the latest resumption handle and restores the conversation instead of ending the session.
-    settings['google_enable_session_resumption'] = True
-    return GoogleRealtimeModel(
-        params.get('model') or MODEL,
-        settings=settings,
-        reconnect=ReconnectPolicy(max_attempts=5),
-        provider=GoogleCloudProvider(project=GCP_PROJECT, location=GCP_LOCATION)
-        if USE_VERTEX
-        else 'google',
-    )
+    if isinstance(model, GoogleRealtimeModel):
+        settings = GoogleRealtimeModelSettings(
+            **common_settings,
+            google_proactive_audio=_truthy(params['proactive'])
+            if 'proactive' in params
+            else PROACTIVE,
+            google_affective_dialog=_truthy(params['affective'])
+            if 'affective' in params
+            else AFFECTIVE,
+            google_enable_session_resumption=True,
+        )
+        if language_code := params.get('language'):
+            settings['google_language_code'] = language_code
+        coverage = params.get('turn_coverage') or TURN_COVERAGE
+        if coverage in ('activity_only', 'all_input', 'all_video'):
+            settings['google_turn_coverage'] = coverage
+        if start in ('high', 'low') or end in ('high', 'low'):
+            settings['google_vad'] = AutomaticVAD(
+                start_sensitivity=start if start in ('high', 'low') else None,
+                end_sensitivity=end if end in ('high', 'low') else None,
+            )
+        model.settings = settings
+        model.reconnect = ReconnectPolicy(max_attempts=5)
+    elif isinstance(model, OpenAIRealtimeModel):
+        settings = OpenAIRealtimeModelSettings(**common_settings)
+        if sensitivity := start or end:
+            if sensitivity in ('high', 'low'):
+                settings['turn_detection'] = TurnDetection(sensitivity=sensitivity)
+        model.settings = settings
+        model.reconnect = ReconnectPolicy(max_attempts=5)
+    else:
+        raise ValueError(
+            f'Realtime model {model_id!r} does not support camera image input'
+        )
+    return model
 
 
 def _json_message(event: RealtimeEvent) -> dict[str, object] | None:
@@ -463,6 +486,11 @@ async def ws(socket: WebSocket) -> None:
                             )
                     tg.cancel_scope.cancel()
                 except WebSocketDisconnect:
+                    tg.cancel_scope.cancel()
+                except (RealtimeError, websockets.exceptions.ConnectionClosed):
+                    # Send-side recovery is not reconnect-aware yet; a provider drop ends this session
+                    # and lets the browser reconnect. See https://github.com/pydantic/pydantic-ai/issues/6703.
+                    logfire.exception('Realtime inbound pump failed')
                     tg.cancel_scope.cancel()
 
             tg.start_soon(pump_events)
