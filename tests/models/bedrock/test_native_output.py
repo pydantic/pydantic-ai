@@ -96,6 +96,63 @@ def test_bedrock_native_output_unsupported_model_raises(
         agent.run_sync('Tell me about Berlin')
 
 
+def test_bedrock_native_output_profile_default_transforms_schema(bedrock_provider: BedrockProvider):
+    """profile default_structured_output_mode='native' (no explicit `NativeOutput`) → schema is still transformed.
+
+    Regression test for #6523 (the Bedrock counterpart of #6471/#6521 for Anthropic):
+    `BedrockConverseModel.prepare_request` force-set `strict=True` for native structured output based on
+    `model_request_parameters.output_mode == 'native'`, checked *before* the base `Model.prepare_request()`
+    resolved `output_mode='auto'` to the profile's `default_structured_output_mode`. That meant
+    `profile={'default_structured_output_mode': 'native'}` (reaching native mode via the profile default
+    rather than an explicit `NativeOutput(...)`) skipped the strict-forcing, so the transformer ran with
+    `strict=None`/`False` and left Bedrock-incompatible constraints (`minimum`, `maximum`, `minLength`, etc.)
+    untransformed in the outgoing schema.
+
+    A direct `prepare_request` unit test, not a full agent run, because the bug is entirely in parameter
+    resolution ordering and doesn't require a live/VCR request to reproduce or verify.
+    """
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        provider=bedrock_provider,
+        profile={'default_structured_output_mode': 'native'},
+    )
+
+    params = ModelRequestParameters(
+        output_mode='auto',
+        output_object=OutputObjectDefinition(
+            json_schema={
+                'type': 'object',
+                'properties': {
+                    'confidence': {'type': 'number', 'minimum': 0.0, 'maximum': 1.0},
+                    'title': {'type': 'string', 'minLength': 1},
+                },
+                'required': ['confidence', 'title'],
+            },
+            name='Decision',
+        ),
+    )
+
+    _, result_params = model.prepare_request(None, params)
+
+    assert result_params.output_mode == 'native'
+    assert result_params.output_object is not None
+    assert result_params.output_object.strict is True
+
+    output_config = BedrockConverseModel._native_output_format(result_params)  # pyright: ignore[reportPrivateUsage]
+    assert output_config is not None
+    text_format = output_config.get('textFormat')
+    assert text_format is not None
+    structure = text_format.get('structure')
+    assert structure is not None
+    json_schema_field = structure.get('jsonSchema')
+    assert json_schema_field is not None
+    schema = json_schema_field.get('schema')
+    assert schema is not None
+    # The raw numeric-bound keywords must not survive untransformed into the outgoing schema.
+    assert '"minimum"' not in schema
+    assert '"maximum"' not in schema
+
+
 async def test_bedrock_native_output_qwen(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
