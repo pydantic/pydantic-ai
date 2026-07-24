@@ -1023,6 +1023,8 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
+Inside an `agent.iter()` block, both first-party and external cancellation surface as `asyncio.CancelledError`. When the context exits, a first-party cancellation is raised as `RunCancelled` with a complete snapshot of the run's message history. Cancellation is terminal: capability hooks may observe it and clean up, but cannot recover the run to success.
+
 `RunCancelled` is an application-level outcome: your own code asked the run to stop. Externally cancelling the task running the agent — `asyncio.Task.cancel()`, a timeout scope, workflow cancellation under [durable execution](durable_execution/overview.md) — is not translated: it keeps raising `asyncio.CancelledError`, and when both happen at once the external cancellation wins. Either way, completed work is preserved in message history (accessible via [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] in the external case).
 
 #### Message History After Cancellation

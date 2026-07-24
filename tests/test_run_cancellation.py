@@ -173,10 +173,12 @@ async def test_tool_cancels_run_and_history_is_resumable():
     """
     agent, seen_by_model = _parallel_tools_agent()
 
-    with pytest.raises(RunCancelled) as exc_info:
+    with capture_run_messages() as live_messages, pytest.raises(RunCancelled) as exc_info:
         await agent.run('go')
 
     messages = exc_info.value.messages
+    assert messages is not live_messages
+    assert messages == live_messages
     assert [(type(m).__name__, getattr(m, 'state', None)) for m in messages] == [
         ('ModelRequest', 'complete'),
         ('ModelResponse', 'complete'),
@@ -223,6 +225,23 @@ async def test_agent_run_cancel_from_another_task():
 
     with pytest.raises(RunCancelled):
         await asyncio.wait_for(task, timeout=READINESS_WAIT_TIMEOUT)
+
+
+async def test_iter_cancellation_is_typed_only_after_context_exit():
+    """The run sees `CancelledError`; the same cancellation becomes `RunCancelled` after teardown."""
+    agent = Agent(TestModel())
+    seen_inside = False
+
+    with pytest.raises(RunCancelled):
+        async with agent.iter('go') as agent_run:
+            agent_run.cancel()
+            try:
+                await anext(agent_run)
+            except asyncio.CancelledError:
+                seen_inside = True
+                raise
+
+    assert seen_inside
 
 
 async def test_event_stream_handler_cancels_run():
@@ -316,25 +335,75 @@ async def test_cancel_run_under_run_stream_events():
 
 
 @requires_task_cancelling
-async def test_first_party_cancel_swallowed_by_caller_still_cancels():
-    """If the caller's own code inside the `iter()` block catches the `CancelledError` that
-    `cancel()` delivered and keeps driving, the run must still end cancelled — the level-triggered
-    backstop re-asserts it (as `CancelledError`; translation is best-effort on this path)."""
-    agent = Agent(TestModel())
+async def test_first_party_cancel_swallowed_by_after_run_is_typed():
+    """A first-party cancellation absorbed by `after_run` is typed at the outer funnel."""
 
-    with pytest.raises((RunCancelled, asyncio.CancelledError)):
+    class CancelInAfterRun(AbstractCapability):
+        async def after_run(self, ctx: RunContext, *, result: AgentRunResult) -> AgentRunResult:
+            ctx.cancel_run()
+            try:
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                pass
+            return result
+
+    agent = Agent(TestModel(), capabilities=[CancelInAfterRun()])
+
+    with pytest.raises(RunCancelled):
+        await agent.run('go')
+
+
+@pytest.mark.parametrize('first_party', [True, False])
+async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
+    """`wrap_run` and `on_run_error` may observe cancellation but cannot recover it."""
+    started = asyncio.Event()
+    observed: list[str] = []
+
+    class RecoverCancellation(AbstractCapability):
+        async def wrap_run(self, ctx: RunContext, *, handler: Any) -> AgentRunResult:
+            try:
+                return await handler()
+            except asyncio.CancelledError:
+                observed.append('wrap_run')
+                return AgentRunResult(output='recovered')
+
+        async def on_run_error(self, ctx: RunContext, *, error: BaseException) -> AgentRunResult:
+            if isinstance(error, asyncio.CancelledError):
+                observed.append('on_run_error')
+                return AgentRunResult(output='recovered')
+            raise error
+
+    agent = Agent(TestModel(), capabilities=[RecoverCancellation()])
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        started.set()
+        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        return 'slow'  # pragma: no cover
+
+    runs: list[Any] = []
+
+    async def drive() -> AgentRunResult:
         async with agent.iter('go') as agent_run:
-            agent_run.cancel()
-            node = agent_run.next_node
-            while True:
-                try:
-                    node = await agent_run.next(node)  # type: ignore[arg-type]
-                except asyncio.CancelledError:
-                    continue  # a caller stubbornly ignoring the cancellation
-                except RunCancelled:
-                    raise
-                if getattr(node, 'data', None) is not None:
-                    break  # pragma: no cover — reaching End would mean the run completed
+            runs.append(agent_run)
+            async for _node in agent_run:
+                pass
+        assert agent_run.result is not None  # pragma: no cover
+        return agent_run.result
+
+    task = asyncio.create_task(drive())
+    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    if first_party:
+        runs[0].cancel()
+        expected_exception = RunCancelled
+    else:
+        task.cancel()
+        expected_exception = asyncio.CancelledError
+
+    with pytest.raises(expected_exception):
+        await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+
+    assert observed == ['wrap_run', 'on_run_error']
 
 
 async def test_cancel_after_completion_is_a_noop():

@@ -1446,7 +1446,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         agent_name = self.name or 'agent'
 
+        @asynccontextmanager
+        async def _translate_cancellation() -> AsyncGenerator[None]:
+            try:
+                yield
+            except asyncio.CancelledError as exc:
+                if graph_deps.cancellation.resolve():
+                    raise exceptions.RunCancelled(
+                        'The agent run was cancelled.', messages=list(state.message_history)
+                    ) from exc
+                raise
+
         async with AsyncExitStack() as stack:
+            # Enter first so cancellation is classified only after every other context has torn down.
+            await stack.enter_async_context(_translate_cancellation())
             await stack.enter_async_context(
                 _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
             )
@@ -1558,8 +1571,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # Every completion path funnels through here — including `wrap_run`/`on_run_error`
                 # recovering from the very `CancelledError` an external cancel delivered. If that
                 # cancellation is still pending on this task, re-assert it rather than let the run
-                # finalize as a success.
+                # finalize as a success. A first-party request remains terminal even if a hook
+                # consumed the task's cancellation counter.
                 _utils.raise_if_cancelling()
+                if graph_deps.cancellation.cancel_requested:
+                    raise asyncio.CancelledError
                 agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
                 _run_error = None
 
@@ -1625,10 +1641,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # If on_run_error didn't recover either, re-raise.
             # In an @asynccontextmanager, not re-raising suppresses the exception.
             if _run_error is not None:
-                # A `CancelledError` that landed outside a graph step boundary (e.g. in the
-                # caller's own code inside the `iter()` block) hasn't been resolved yet: if it
-                # was requested via `cancel()`, surface it as `RunCancelled` here.
-                raise agent_run._translated_cancellation(_run_error)  # pyright: ignore[reportPrivateUsage]
+                raise _run_error
 
     def _get_metadata(
         self,

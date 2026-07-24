@@ -218,11 +218,8 @@ class RunCancelled(AgentRunError):
     messages: list[ModelMessage]
     """The cancelled run's message history.
 
-    This is the run's live history list: teardown may still append to it (e.g. completed
-    sibling tool results recorded in an interrupted request) while the exception propagates.
-    By the time it escapes `agent.run()` (or the `agent.iter()` context) the run is over and
-    the list is final and complete; only if you catch it *inside* the `iter()` block, before
-    the run context has exited, may it still grow.
+    A complete snapshot of the run's message history at termination, ready to pass as
+    `message_history` for a resumed run.
     """
 
     def __init__(self, message: str, messages: list[ModelMessage]):
