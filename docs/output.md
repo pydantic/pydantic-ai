@@ -364,7 +364,7 @@ _(This example is complete, it can be run "as is")_
 
 ##### Output Examples
 
-You can provide examples of correct output tool usage with the `examples` parameter on [`ToolOutput`][pydantic_ai.output.ToolOutput]. Anthropic models send these examples through the native `input_examples` field. Other models include them in the tool description.
+You can provide examples of correct output tool usage with the `examples` parameter on [`ToolOutput`][pydantic_ai.output.ToolOutput]. Pydantic AI sends them through Anthropic's native `input_examples` field when the transport supports it. Other providers and legacy Amazon Bedrock include them in the tool description.
 
 ```python {title="output_examples.py"}
 from pydantic import BaseModel

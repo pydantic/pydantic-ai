@@ -111,3 +111,19 @@ Good default split:
 
 - use `WebSearch()` capability when the user wants model-agnostic search with native fallback
 - use `duckduckgo_search_tool()` / Tavily / Exa when the user explicitly wants those engines as tools
+
+## Provide Tool Input Examples
+
+Pass structured examples when a model would benefit from seeing representative tool arguments:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('anthropic:claude-opus-4-8')
+
+@agent.tool_plain(examples=[{'location': 'London', 'celsius': True}])
+def get_weather(location: str, celsius: bool) -> str:
+    return f'Weather for {location}'
+```
+
+Anthropic transports that support `input_examples` receive the examples natively. Other providers and legacy Amazon Bedrock receive them in the tool description.

@@ -582,11 +582,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
+        supports_tool_examples = _profile.get('supports_tool_examples', False) and not isinstance(
+            client, AsyncAnthropicBedrock
+        )
         _profile = merge_profile(
             _profile,
             AnthropicModelProfile(
                 supported_native_tools=supported_native_tools,
                 anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
+                supports_tool_examples=supports_tool_examples,
             ),
         )
         return cast(AnthropicModelProfile, _profile)

@@ -488,11 +488,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
-        examples: list[Any] | None = None,
         defer_loading: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         include_return_schema: bool | None = None,
+        examples: list[Any] | None = None,
     ) -> Tool[AgentDepsT]:
         """Add a function as a tool to the toolset.
 
@@ -533,8 +533,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
-            examples: Example inputs demonstrating correct tool usage. Defaults to None.
-                See [`ToolDefinition.examples`][pydantic_ai.tools.ToolDefinition.examples] for more info.
             defer_loading: Whether to hide this tool until it's discovered via tool search.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 If `None`, the default value is determined by the toolset.
@@ -544,6 +542,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Defaults to None (no timeout).
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, the default value is determined by the toolset.
+            examples: Example inputs demonstrating correct tool usage. Defaults to None.
+                See [`ToolDefinition.examples`][pydantic_ai.tools.ToolDefinition.examples] for more info.
         """
         if docstring_format is None:
             docstring_format = self.docstring_format

@@ -11741,7 +11741,7 @@ async def test_anthropic_tool_definition_examples(allow_model_requests: None):
     assert mapped.get('input_examples') == examples
 
 
-async def test_anthropic_tool_examples(allow_model_requests: None, anthropic_api_key: str):
+async def test_anthropic_tool_examples(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
     m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
@@ -11752,6 +11752,36 @@ async def test_anthropic_tool_examples(allow_model_requests: None, anthropic_api
 
     result = await agent.run('Call the add_one tool with 5')
     assert result.output == snapshot('The result of calling `add_one` with 5 is **6**.')
+    requests: list[Any] = cast(Any, vcr).requests
+    request_bodies = [json.loads(request.body) for request in requests]
+    assert [body['tools'][0]['input_examples'] for body in request_bodies] == [[{'x': 5}], [{'x': 5}]]
+
+
+def test_anthropic_tool_examples_transport_support():
+    assert AsyncAnthropicBedrock is not None
+    assert AsyncAnthropicBedrockMantle is not None
+    legacy_client = AsyncAnthropicBedrock(
+        aws_access_key='x',
+        aws_secret_key='y',
+        aws_region='us-east-1',
+    )
+    mantle_client = AsyncAnthropicBedrockMantle(
+        aws_access_key='x',
+        aws_secret_key='y',
+        aws_region='us-east-1',
+    )
+
+    legacy_model = AnthropicModel(
+        'us.anthropic.claude-opus-4-8-v1:0',
+        provider=AnthropicProvider(anthropic_client=legacy_client),
+    )
+    mantle_model = AnthropicModel(
+        'anthropic.claude-opus-4-8',
+        provider=AnthropicProvider(anthropic_client=mantle_client),
+    )
+
+    assert legacy_model.profile.get('supports_tool_examples') is False
+    assert mantle_model.profile.get('supports_tool_examples') is True
 
 
 async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None):

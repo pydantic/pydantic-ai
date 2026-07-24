@@ -3391,6 +3391,65 @@ def test_tool_from_schema_examples():
     assert tool.tool_def.examples == examples
 
 
+def test_tool_from_schema_preserves_positional_args_validator():
+    def my_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    def validate_args(ctx: RunContext[None], x: int) -> None:
+        assert x == 1
+
+    tool = Tool.from_schema(
+        my_tool,
+        'my_tool',
+        'desc',
+        {'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+        False,
+        False,
+        validate_args,
+    )
+    assert tool.args_validator is validate_args
+    assert tool.examples is None
+
+
+def test_function_toolset_add_function_preserves_positional_options():
+    def my_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    toolset = FunctionToolset()
+    tool = toolset.add_function(
+        my_tool,
+        False,
+        'my_tool',
+        'desc',
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        False,
+        False,
+        False,
+        {'source': 'test'},
+        1.0,
+        False,
+    )
+
+    assert tool.defer_loading is False
+    assert tool.metadata == {'source': 'test'}
+    assert tool.timeout == 1.0
+    assert tool.examples is None
+
+
+def test_tool_examples_must_be_json_objects():
+    def my_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    with pytest.raises(UserError, match='Tool examples must be JSON objects'):
+        Tool(my_tool, examples=[1]).tool_def
+
+
 def test_agent_tool_decorators_examples():
     agent = Agent('test')
     examples = [{'x': 1}]
@@ -3434,30 +3493,6 @@ def test_tool_examples_flattening():
     assert tool.tool_def.examples == [{'x': 1}, {'x': 2}]
 
 
-def test_tool_docstring_examples():
-    def my_tool(x: int) -> int:
-        """
-        My tool description.
-
-        Examples:
-            >>> my_tool(1)
-            1
-        """
-        return x  # pragma: no cover
-
-    tool = Tool(my_tool)
-
-    assert tool.description == snapshot(
-        """\
-My tool description.
-
-Examples:
-    >>> my_tool(1)
-    1\
-"""
-    )
-
-
 def test_tool_output_flattening():
     class MyModel(BaseModel):
         x: int
@@ -3489,65 +3524,6 @@ def test_tool_output_model_examples():
     assert model.last_model_request_parameters is not None
     tool_def = model.last_model_request_parameters.output_tools[0]
     assert tool_def.examples == [{'x': 1}]
-
-
-def test_docstring_no_description():
-    def my_tool(x: int) -> int:
-        """
-        Examples:
-            >>> my_tool(1)
-            1
-        """
-        return x  # pragma: no cover
-
-    tool = Tool(my_tool)
-    assert tool.description == snapshot(
-        """\
-Examples:
-    >>> my_tool(1)
-    1\
-"""
-    )
-
-
-def test_docstring_text_example():
-    def my_tool(x: int) -> int:
-        """
-        Examples:
-            Just some text
-        """
-        return x  # pragma: no cover
-
-    tool = Tool(my_tool)
-    assert tool.description == snapshot(
-        """\
-Examples:
-    Just some text\
-"""
-    )
-
-
-def test_docstring_example_with_and_without_output():
-    def my_tool(x: int) -> int:
-        """
-        My tool.
-
-        Examples:
-            Some text explanation.
-
-            >>> my_tool(1)
-            1
-            >>> my_tool(2)
-        """
-        return x  # pragma: no cover
-
-    tool = Tool(my_tool)
-
-    expected_description = (
-        'My tool.\n\nExamples:\n    Some text explanation.\n\n    >>> my_tool(1)\n    1\n    >>> my_tool(2)'
-    )
-
-    assert tool.description == expected_description
 
 
 def test_tool_examples_fallback():
@@ -3583,6 +3559,17 @@ def test_tool_examples_fallback_no_desc():
 
     assert tool_def.examples is None
     assert tool_def.description == 'Examples:\n[\n  {\n    "x": 1\n  }\n]'
+
+
+def test_output_tool_examples_fallback():
+    model = TestModel()
+    Agent('test', output_type=ToolOutput(int, examples=[1])).run_sync('hello', model=model)
+
+    assert model.last_model_request_parameters is not None
+    tool_def = model.last_model_request_parameters.output_tools[0]
+    assert tool_def.examples is None
+    assert tool_def.description is not None
+    assert 'Examples:\n[\n  {\n    "response": 1\n  }\n]' in tool_def.description
 
 
 @pytest.mark.anyio

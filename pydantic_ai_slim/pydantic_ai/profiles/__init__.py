@@ -137,6 +137,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_thinking': False,
     'thinking_always_enabled': False,
     'thinking_tags': DEFAULT_THINKING_TAGS,
+    'supports_tool_examples': False,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
 }

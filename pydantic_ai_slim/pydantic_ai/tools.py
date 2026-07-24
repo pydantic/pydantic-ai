@@ -294,18 +294,17 @@ def _process_examples(
     outer_typed_dict_key: str | None = None,
 ) -> list[dict[str, Any]]:
     """Process tool examples by flattening, serializing, and optionally wrapping them."""
-    if single_arg_name:
-        examples = [
-            example[single_arg_name] if isinstance(example, dict) and single_arg_name in example else example
-            for example in examples
-        ]
-
-    examples = [to_jsonable_python(example) for example in examples]
-
-    if outer_typed_dict_key:
-        examples = [{outer_typed_dict_key: example} for example in examples]
-
-    return examples
+    processed_examples: list[dict[str, Any]] = []
+    for example in examples:
+        if single_arg_name and isinstance(example, dict) and single_arg_name in example:
+            example = cast(dict[str, Any], example)[single_arg_name]
+        processed_example: Any = to_jsonable_python(example)
+        if outer_typed_dict_key:
+            processed_example = {outer_typed_dict_key: processed_example}
+        if not _utils.is_str_dict(processed_example):
+            raise UserError('Tool examples must be JSON objects.')
+        processed_examples.append(processed_example)
+    return processed_examples
 
 
 @dataclass(init=False)
@@ -468,8 +467,8 @@ class Tool(Generic[ToolAgentDepsT]):
         json_schema: JsonSchemaValue,
         takes_ctx: bool = False,
         sequential: bool = False,
-        examples: list[Any] | None = None,
         args_validator: ArgsValidatorFunc[Any, ...] | None = None,
+        examples: list[Any] | None = None,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
@@ -486,8 +485,6 @@ class Tool(Generic[ToolAgentDepsT]):
                 accepts the context object as an argument.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
-            examples: Example inputs demonstrating correct tool usage. Defaults to None.
-                See [`ToolDefinition.examples`][pydantic_ai.tools.ToolDefinition.examples] for more info.
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
@@ -495,6 +492,8 @@ class Tool(Generic[ToolAgentDepsT]):
                 arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
                 terminal failure the model should adapt to instead of retrying. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
+            examples: Example inputs demonstrating correct tool usage. Defaults to None.
+                See [`ToolDefinition.examples`][pydantic_ai.tools.ToolDefinition.examples] for more info.
 
         Returns:
             A Pydantic tool that calls the function

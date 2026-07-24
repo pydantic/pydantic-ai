@@ -62,13 +62,13 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         if bedrock_provider == 'anthropic':
             model_name = base_model_name
         profile = anthropic_model_profile(model_name)
-        result = merge_profile(AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer), profile)
-        if bedrock_provider == 'anthropic':
-            # `anthropic_model_profile` enables `supports_tool_examples` for the direct Anthropic API, where
-            # `input_examples` is a standard tool field. Via Bedrock it's still beta-gated behind the
-            # `tool-examples-2025-10-29` header (which we don't send), so fall back to the description instead.
-            result['supports_tool_examples'] = False
-        return result
+        return merge_profile(
+            AnthropicModelProfile(
+                json_schema_transformer=AnthropicJsonSchemaTransformer,
+                supports_tool_examples=True,
+            ),
+            profile,
+        )
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...

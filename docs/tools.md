@@ -378,12 +378,9 @@ _(This example is complete, it can be run "as is")_
 
 ## Tool Examples
 
-You can provide examples of correct tool usage to improve the model's understanding of your tool's expected input. Examples can be provided in two ways:
+You can provide examples of correct tool usage with the `examples` parameter on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], or the [`Tool`][pydantic_ai.tools.Tool] class.
 
-1. **Structured Examples**: Pass a list of examples to the `examples` parameter in [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], or the [`Tool`][pydantic_ai.tools.Tool] class directly.
-2. **Docstring Examples**: Include an `Examples:` section in the tool's docstring.
-
-Anthropic models natively support structured examples via the `input_examples` parameter in their API payload. For models that do not natively support this feature, Pydantic AI will gracefully fall back to serializing the structured examples as JSON and appending them to the tool's text description.
+Pydantic AI sends examples through Anthropic's native [`input_examples`](https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools#providing-tool-use-examples) field when the transport supports it. For other providers and legacy Amazon Bedrock, it includes the examples in the tool description.
 
 ```python {title="tool_examples.py"}
 from pydantic_ai import Agent
@@ -397,12 +394,7 @@ agent = Agent('anthropic:claude-opus-4-6')
     ]
 )
 def get_weather(location: str, celsius: bool) -> str:
-    """Get the weather for a given location.
-
-    Examples:
-        >>> get_weather('London', True)
-        'It is 20°C in London.'
-    """
+    """Get the weather for a given location."""
     return f"It is 20{'°C' if celsius else '°F'} in {location}."
 ```
 
