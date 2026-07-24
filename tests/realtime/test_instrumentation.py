@@ -275,7 +275,10 @@ async def test_session_and_tool_spans_with_usage() -> None:
     # The semconv operation-name enum has no realtime value, so the session span reports the
     # session as an agent invocation like the classic agent-run span.
     assert sess.attributes['gen_ai.operation.name'] == 'invoke_agent'
-    assert sess.attributes['gen_ai.request.model'] == 'gpt-realtime'
+    # The session span reports the model under `model_name` like the classic agent-run span (not
+    # `gen_ai.request.model`, which stays on the child `chat`/turn spans).
+    assert sess.attributes['model_name'] == 'gpt-realtime'
+    assert 'gen_ai.request.model' not in sess.attributes
     assert sess.attributes['gen_ai.agent.name'] == 'assistant'
     # `gen_ai.output.type` reports the configured output modality; the default is spoken audio,
     # which the semconv enum calls `speech`. Set on both the session span and the `chat` spans.
@@ -819,7 +822,7 @@ async def test_session_span_without_model_or_usage() -> None:
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert sess.attributes['gen_ai.operation.name'] == 'invoke_agent'
-    assert 'gen_ai.request.model' not in sess.attributes
+    assert 'model_name' not in sess.attributes
     # The agent name defaults to `'agent'` even without an explicit name, mirroring the classic run span.
     assert sess.attributes['gen_ai.agent.name'] == 'agent'
     assert 'gen_ai.agent.description' not in sess.attributes

@@ -485,9 +485,10 @@ class RealtimeSession:
                 'logfire.msg': f'{agent_name} realtime',
             }
             if self._model_name:
-                # The model lives in the attribute, not the span title — matching the classic agent-run
-                # span, which keeps the model on its child `chat` spans only.
-                attributes['gen_ai.request.model'] = self._model_name
+                # Match the classic agent-run span, which reports the model under the plain `model_name`
+                # key (not `gen_ai.request.model`, which it keeps on its child `chat` spans only). The
+                # realtime `chat`/turn spans likewise carry `gen_ai.request.model`.
+                attributes['model_name'] = self._model_name
             if self._provider_name:
                 # Provider/server attributes (`gen_ai.provider.name`, the deprecated `gen_ai.system`, and
                 # `server.address`) so the session span identifies the provider, like the `chat` spans.
