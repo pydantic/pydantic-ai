@@ -193,7 +193,9 @@ The setting is ignored on models that don't support reasoning mode, per [`OpenAI
 
 ### Reasoning context
 
-Reasoning models can use OpenAI's [reasoning context](https://developers.openai.com/api/docs/guides/reasoning#preserve-reasoning-across-calls) to control which prior-turn reasoning items are available to the model when sampling. `auto` (equivalent to omitting the setting) uses the model's default, `current_turn` makes only the active turn's reasoning available, and `all_turns` renders compatible reasoning items from earlier turns into the next sample. `all_turns` requires access to earlier response items via [`previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id], a conversation, or replayed history; on a first request it behaves like `current_turn`.
+Reasoning models can use OpenAI's [reasoning context](https://developers.openai.com/api/docs/guides/reasoning#preserve-reasoning-across-calls) to control which prior-turn reasoning items are available to the model when sampling. `auto` defers to the model's own default (OpenAI treats it exactly like not sending the field), `current_turn` makes only the active turn's reasoning available, and `all_turns` renders compatible reasoning items from earlier turns into the next sample. `all_turns` requires access to earlier response items via [`previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id], a conversation, or replayed history; on a first request it behaves like `current_turn`.
+
+Pydantic AI sends `all_turns` by default on models that support it, so that earlier-turn reasoning stays available without opting in — consistent with how prior thinking is sent back to other models. This renders earlier reasoning into each follow-up sample, which costs additional input tokens; set `auto` explicitly to defer to OpenAI's own per-model default, or `current_turn` to keep earlier turns out of the sample.
 
 Configure the context with [`openai_reasoning_context`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_context]:
 
