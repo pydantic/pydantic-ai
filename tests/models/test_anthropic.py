@@ -10625,7 +10625,7 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
     assert {tool['name'] for tool in create_kwargs['tools']} == {'lookup', 'code_execution', 'web_fetch', 'memory'}
     assert {tool['name']: tool['type'] for tool in create_kwargs['tools'] if 'type' in tool} == {
         'code_execution': 'code_execution_20260120',
-        'web_fetch': 'web_fetch_20260209',
+        'web_fetch': 'web_fetch_20260318',
         'memory': 'memory_20250818',
     }
     assert create_kwargs['betas'] == ['context-management-2025-06-27']

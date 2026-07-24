@@ -76,3 +76,7 @@ Use native tools (`NativeTool(WebSearchTool(...))`) when:
 - the user explicitly wants provider-native behavior
 - provider-specific configuration matters (e.g. `WebSearchTool(user_location=...)`)
 - the user already picked a provider that supports the tool
+
+For Anthropic dynamic web tools, `response_inclusion='excluded'` on `WebSearchTool` or
+`WebFetchTool` omits result blocks consumed by completed code execution calls.
+`WebFetchTool(use_cache=False)` bypasses Anthropic's cache when fresh content is required.

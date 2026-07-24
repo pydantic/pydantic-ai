@@ -4,7 +4,7 @@ from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, TypeAlias, Union
 
 import pydantic
 from pydantic_core import core_schema
@@ -41,6 +41,8 @@ ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '
 
 ImageGenerationModelName = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'] | str
 """Known OpenAI image generation model names, or another OpenAI image model ID."""
+
+_ResponseInclusion: TypeAlias = Literal['full', 'excluded']
 
 
 @dataclass(kw_only=True)
@@ -165,6 +167,16 @@ class WebSearchTool(AbstractNativeTool):
 
     max_uses: int | None = None
     """If provided, the tool will stop searching the web after the given number of uses.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    response_inclusion: _ResponseInclusion | None = None
+    """Controls whether results consumed by completed code execution calls are included in the response.
+
+    If `None`, Anthropic uses its default of `'full'`.
 
     Supported by:
 
@@ -373,6 +385,27 @@ class WebFetchTool(AbstractNativeTool):
 
     max_content_tokens: int | None = None
     """Maximum content length in tokens for fetched content.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    use_cache: bool | None = None
+    """Whether Anthropic may return cached content.
+
+    Set to `False` only when fresh content is required, as bypassing the cache increases latency.
+    If `None`, Anthropic uses its default of `True`.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    response_inclusion: _ResponseInclusion | None = None
+    """Controls whether results consumed by completed code execution calls are included in the response.
+
+    If `None`, Anthropic uses its default of `'full'`.
 
     Supported by:
 

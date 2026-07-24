@@ -63,7 +63,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_supports_dynamic_filtering: bool
     """Whether the model supports Anthropic-managed dynamic filtering for web search/fetch. Default: `False`.
 
-    When enabled, Pydantic AI selects the `web_search_20260209` / `web_fetch_20260209` tool versions,
+    When enabled, Pydantic AI selects the `web_search_20260318` / `web_fetch_20260318` tool versions,
     which let Claude filter web results via code execution before they enter context.
     """
 
