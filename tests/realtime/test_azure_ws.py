@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeError, TurnCompleteEvent
+from pydantic_ai.realtime import TurnCompleteEvent
 from pydantic_ai.realtime._base import SessionErrorEvent
 from pydantic_ai.usage import RunUsage
 
@@ -280,38 +280,47 @@ async def test_message_history_seeding(azure_ws_cassette: tuple[AzureProvider, R
 async def test_audio_in_server_vad_transcription_requires_deployment(
     azure_ws_cassette: tuple[AzureProvider, RealtimeCassette], assets_path: Path
 ) -> None:
-    """Audio-in server-VAD on Azure GA: input transcription needs a *deployed* transcription model.
+    """Azure keeps a placeholder turn when input transcription lacks a deployed model.
 
     Unlike OpenAI, where the default `gpt-realtime-whisper` is hosted, Azure GA realtime resolves the
     input-transcription model against the resource's own deployments — so the default fails with
-    `DeploymentNotFound` on every turn unless a transcription model is deployed and configured. That's a
-    misconfiguration, not a transient per-utterance failure, so the shared codec raises it as a
-    non-recoverable error with a fix-it message (rather than silently dropping user turns via a recoverable
-    event). Pins a transcription model that is deliberately not deployed on the resource, so the failure
-    reproduces on re-record even though real transcription models (e.g. `gpt-realtime-whisper`) are now
-    deployed there — see `test_audio_in_server_vad_transcribes` for the deployed-and-working companion.
+    `DeploymentNotFound` on every turn unless a transcription model is deployed and configured. The
+    failure is surfaced while the user turn remains represented in history. This cassette was recorded
+    against a resource without a transcription deployment.
     """
     provider, _ = azure_ws_cassette
-    model = AzureRealtimeModel(
-        'gpt-realtime',
-        provider=provider,
-        settings=OpenAIRealtimeModelSettings(input_transcription_model='gpt-4o-transcribe-not-deployed'),
-    )
+    model = AzureRealtimeModel('gpt-realtime', provider=provider)
     agent = Agent(instructions='Reply in a few words.')
     pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
 
     events: list[Any] = []
-    with pytest.raises(RealtimeError, match='transcription model is not deployed'):
-        async with agent.realtime(model).session() as session:
-            # Stream the clip in ~100 ms chunks like a live mic; the trailing silence lets server VAD end it.
-            for start in range(0, len(pcm), 4800):
-                await session.send_audio(pcm[start : start + 4800])
-            with anyio.fail_after(45):
-                async for event in session:
-                    events.append(event)
+    async with agent.realtime(model).session() as session:
+        # Stream the clip in ~100 ms chunks like a live mic; the trailing silence lets server VAD end it.
+        for start in range(0, len(pcm), 4800):
+            await session.send_audio(pcm[start : start + 4800])
+        with anyio.fail_after(45):
+            async for event in session:
+                events.append(event)
 
-    # Server VAD brackets the user's speech; the deployment error then ends the session before any reply.
-    assert collapse_event_types(events) == snapshot(['InputSpeechStartEvent', 'InputSpeechEndEvent'])
+    assert collapse_event_types(events) == snapshot(
+        [
+            'InputSpeechStartEvent',
+            'InputSpeechEndEvent',
+            'PartStartEvent',
+            'PartEndEvent',
+            'InputTranscriptionFailedEvent',
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'TurnCompleteEvent',
+        ]
+    )
+    messages = session.new_messages()
+    assert isinstance(messages[0], ModelRequest)
+    user_part = messages[0].parts[0]
+    assert isinstance(user_part, SpeechPart)
+    assert user_part.speaker == 'user' and user_part.transcript is None and user_part.audio is None
+    assert isinstance(messages[1], ModelResponse)
 
 
 async def test_audio_in_server_vad_transcribes(

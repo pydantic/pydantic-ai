@@ -148,8 +148,8 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     google_input_transcription: bool
     """Whether to transcribe input audio. Defaults to `True`.
 
-    When `False`, the session's `audio_retention` must be `'input_audio'` or `'all'` so user turns can be
-    recorded.
+    When `False`, user turns are recorded as retained audio when available, or as content-less
+    placeholders otherwise.
     """
     google_output_transcription: bool
     """Whether to transcribe output audio. Defaults to `True`.

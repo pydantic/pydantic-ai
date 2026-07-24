@@ -35,7 +35,15 @@ from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SpeechPart,
+    TextPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -702,7 +710,7 @@ async def test_chat_span_closed_for_contentless_response() -> None:
     ]
     response = session.new_messages()[0]
     assert isinstance(response, ModelResponse)
-    assert response.parts == []
+    assert response.parts == [SpeechPart(speaker='assistant')]
     assert session.usage.requests == 1
 
 

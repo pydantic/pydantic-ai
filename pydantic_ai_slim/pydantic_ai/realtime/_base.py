@@ -1113,16 +1113,13 @@ def seed_speech_content(
     """
     if part.transcript is not None:
         return part.transcript
+    if part.audio is None:
+        # A content-less placeholder preserves the turn in history but carries nothing to replay.
+        return ''
     if part.speaker == 'assistant':
         raise UserError(
             f'An assistant `SpeechPart` without a transcript cannot be seeded into {provider_name} realtime history. '
             'Enable output transcription or filter the part from `message_history` before connecting.'
-        )
-    if part.audio is None:
-        raise UserError(
-            'A user `SpeechPart` without a transcript or retained audio cannot be seeded into realtime history. '
-            'Enable `input_transcription_model` or `audio_retention`, or filter the part from `message_history` '
-            'before connecting.'
         )
     if not part.audio.is_audio:
         raise UserError(

@@ -61,6 +61,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
     AudioInput,
     InputSpeechEndEvent,
+    InputSpeechStartEvent,
     InputTranscriptionFailedEvent,
     RealtimeError,
     RealtimeEvent,
@@ -78,6 +79,7 @@ from pydantic_ai.realtime._base import (
     ImageInput,
     SessionErrorEvent,
     TextInput,
+    seed_speech_content,
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -609,33 +611,64 @@ async def test_control_events_and_recoverable_error_pass_through() -> None:
 
 
 async def test_input_transcription_failure_passes_through_and_session_continues() -> None:
-    # Failures pass through whether or not they identify their turn (`item_id` may be absent).
+    # Failures finalize placeholder turns whether or not they identify their turn (`item_id` may be absent).
     identified = InputTranscriptionFailedEvent(message='audio unintelligible', item_id='user-1', content_index=0)
     anonymous = InputTranscriptionFailedEvent(message='transcription unavailable')
     conn = FakeRealtimeConnection([identified, anonymous, TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner)
 
-    assert await collect_events(session) == [identified, anonymous, TurnCompleteEvent()]
+    events = await collect_events(session)
+    assert [type(event).__name__ for event in events] == [
+        'PartStartEvent',
+        'PartEndEvent',
+        'InputTranscriptionFailedEvent',
+        'PartStartEvent',
+        'PartEndEvent',
+        'InputTranscriptionFailedEvent',
+        'TurnCompleteEvent',
+    ]
+    assert session.new_messages() == snapshot(
+        [
+            ModelRequest(parts=[SpeechPart(speaker='user', id='user-1')]),
+            ModelRequest(parts=[SpeechPart(speaker='user')]),
+        ]
+    )
 
 
 async def test_input_transcription_failure_after_partial_does_not_block_later_turns() -> None:
-    # Item A streams a partial transcript then its transcription fails; item B then finalizes. A must be
-    # discarded (never a turn) and must NOT sit at the head of the order blocking B — otherwise B only
-    # reaches history at session close, and a mid-session `all_messages()` silently omits it.
+    # Item A streams a partial transcript, item B finalizes out of order, then A's transcription fails.
+    # A's placeholder must unblock the ordered prefix so both turns reach history in provider order.
     conn = FakeRealtimeConnection(
         [
             InputTranscript(text='partial A', is_final=False, item_id='A'),
-            InputTranscriptionFailedEvent(message='transcription failed', item_id='A'),
             InputTranscript(text='hello from B', is_final=True, item_id='B'),
+            InputTranscriptionFailedEvent(message='transcription failed', item_id='A'),
             TurnCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner)
     _ = await collect_events(session)
-    # Only B is recorded, and it's present immediately (not parked behind the failed A until teardown).
     assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello from B', id='B')])]
+        [
+            ModelRequest(parts=[SpeechPart(speaker='user', id='A')]),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello from B', id='B')]),
+        ]
     )
+
+
+@pytest.mark.parametrize('item_id', [None, 'user-1'])
+async def test_input_transcription_failure_retained_audio_fallback(item_id: str | None) -> None:
+    conn = FakeRealtimeConnection([InputTranscriptionFailedEvent(message='failed', item_id=item_id)])
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
+    if item_id is None:
+        await session.send_audio(b'\xaa')
+
+    _ = await collect_events(session)
+
+    expected_audio = _wav_content(b'\xaa') if item_id is None else None
+    assert session.new_messages() == [
+        ModelRequest(parts=[SpeechPart(speaker='user', audio=expected_audio, id=item_id)])
+    ]
 
 
 async def test_fatal_session_error_raises() -> None:
@@ -2184,10 +2217,8 @@ async def test_input_audio_segmented_by_item_id_across_overlapping_turns() -> No
     )
 
 
-async def test_retained_input_audio_dropped_when_transcription_fails() -> None:
-    # A speech-stopped boundary captures the turn's audio segment, but transcription then fails, so the
-    # item never finalizes. Its captured segment must be dropped, not leaked onto a later turn — and the
-    # following turn, whose own audio was consumed by the failed turn's boundary, simply has no audio.
+async def test_retained_input_audio_kept_when_transcription_fails() -> None:
+    # A failed transcript must keep the retained audio on its placeholder without leaking it to a later turn.
     conn = FakeRealtimeConnection(
         [
             InputSpeechEndEvent(item_id='A'),
@@ -2199,25 +2230,46 @@ async def test_retained_input_audio_dropped_when_transcription_fails() -> None:
     session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
     await session.send_audio(b'\xaa')
     _ = await collect_events(session)
-    # Only turn B is recorded (A never finalized), and it carries no audio: A's boundary already consumed
-    # and then dropped the buffered bytes.
     assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hi', id='B')])]
+        [
+            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa'), id='A')]),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='hi', id='B')]),
+        ]
     )
 
 
-async def test_no_transcription_and_no_input_retention_raises() -> None:
-    # Transcription off + retention that doesn't keep input audio = user turns silently dropped. That
-    # contradictory config is rejected up front rather than producing a lossy history.
-    conn = FakeRealtimeConnection([], input_transcription_enabled=False)
-    with pytest.raises(UserError, match="can't capture the user's turns"):
-        RealtimeSession(conn, _noop_runner)  # default audio_retention='transcript_only'
+async def test_no_transcription_and_no_input_retention_records_placeholder_once() -> None:
+    conn = FakeRealtimeConnection(
+        [InputSpeechStartEvent(), InputSpeechEndEvent(), TurnCompleteEvent()], input_transcription_enabled=False
+    )
+    session = RealtimeSession(conn, _noop_runner)
+    events = await collect_events(session)
+
+    assert [type(event).__name__ for event in events] == [
+        'InputSpeechStartEvent',
+        'PartStartEvent',
+        'PartEndEvent',
+        'InputSpeechEndEvent',
+        'TurnCompleteEvent',
+    ]
+    assert session.new_messages() == [ModelRequest(parts=[SpeechPart(speaker='user')])]
 
 
 async def test_no_transcription_with_input_retention_is_allowed() -> None:
     # Disabling transcription is fine as long as input audio is retained (audio-only user turns).
     conn = FakeRealtimeConnection([], input_transcription_enabled=False)
     RealtimeSession(conn, _noop_runner, audio_retention='input_audio')  # no error
+
+
+async def test_manual_contentless_user_turn_without_transcription() -> None:
+    conn = FakeRealtimeConnection([], input_transcription_enabled=False)
+    session = RealtimeSession(conn, _noop_runner)
+
+    await session.commit_audio()
+    events = await collect_events(session)
+
+    assert session.new_messages() == [ModelRequest(parts=[SpeechPart(speaker='user')])]
+    assert [type(event).__name__ for event in events] == ['PartStartEvent', 'PartEndEvent']
 
 
 async def test_text_output_modality_produces_text_part() -> None:
@@ -2244,9 +2296,8 @@ async def test_text_output_modality_produces_text_part() -> None:
     assert response.parts == [TextPart(content='hi there')]
 
 
-async def test_empty_assistant_turn_produces_no_response() -> None:
-    # Audio with no transcript and no retention leaves the assistant part contentless, so the turn
-    # finalizes without appending a `ModelResponse`.
+async def test_empty_assistant_turn_is_recorded() -> None:
+    # Audio with no transcript and no retention leaves a content-less assistant placeholder in history.
     conn = FakeRealtimeConnection([AudioDelta(data=b'\x00\x01'), TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     events = await collect_events(session)
@@ -2256,22 +2307,28 @@ async def test_empty_assistant_turn_produces_no_response() -> None:
         'PartEndEvent',
         'TurnCompleteEvent',
     ]
-    # The finalized part carries no transcript and no audio, so it isn't recorded.
     end = next(e for e in events if isinstance(e, PartEndEvent))
     assert isinstance(end.part, SpeechPart) and end.part.transcript is None and end.part.audio is None
-    assert session.new_messages() == []
+    assert session.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant')],
+                model_name='m',
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            )
+        ]
+    )
 
 
-async def test_empty_input_transcript_produces_no_request() -> None:
-    # A final input transcript that carries no text leaves the user part contentless, so nothing is
-    # appended to history.
+async def test_empty_input_transcript_produces_placeholder_request() -> None:
     conn = FakeRealtimeConnection([InputTranscript(text='', is_final=True)])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     events = await collect_events(session)
     assert [type(e).__name__ for e in events] == ['PartStartEvent', 'PartEndEvent']
     end = next(e for e in events if isinstance(e, PartEndEvent))
     assert isinstance(end.part, SpeechPart) and end.part.transcript is None
-    assert session.new_messages() == []
+    assert session.new_messages() == [ModelRequest(parts=[SpeechPart(speaker='user')])]
 
 
 async def test_duplicate_final_input_transcript_is_idempotent() -> None:
@@ -2369,6 +2426,27 @@ async def test_handoff_to_standard_agent_run() -> None:
             ),
         ]
     )
+
+
+async def test_contentless_speech_parts_are_skipped_for_seeding_and_text_handoff() -> None:
+    user = SpeechPart(speaker='user')
+    assistant = SpeechPart(speaker='assistant')
+    assert seed_speech_content(user, provider_name='test', supports_audio=False) == ''
+    assert seed_speech_content(assistant, provider_name='test', supports_audio=False) == ''
+
+    captured: list[ModelMessage] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured.extend(messages)
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    history: list[ModelMessage] = [ModelRequest(parts=[user]), ModelResponse(parts=[assistant])]
+    result = await Agent(FunctionModel(respond)).run('continue', message_history=history)
+
+    assert result.output == 'ok'
+    assert len(captured) == 1
+    assert isinstance(captured[0], ModelRequest)
+    assert captured[0].parts == [UserPromptPart(content='continue', timestamp=IsDatetime())]
 
 
 async def test_retained_audio_prepares_for_audio_capable_classic_model() -> None:
@@ -2970,7 +3048,7 @@ async def test_existing_assistant_speech_adopts_late_item_id() -> None:
     assert part.id == 'assistant-item'
 
 
-async def test_empty_finalized_user_does_not_block_later_item() -> None:
+async def test_empty_finalized_user_precedes_later_item() -> None:
     session = RealtimeSession(
         FakeRealtimeConnection(
             [
@@ -2981,11 +3059,15 @@ async def test_empty_finalized_user_does_not_block_later_item() -> None:
     )
     _ = await collect_events(session)
 
-    assert session.new_messages() == [ModelRequest(parts=[SpeechPart(speaker='user', transcript='kept', id='kept')])]
+    assert session.new_messages() == [
+        ModelRequest(parts=[SpeechPart(speaker='user', id='empty')]),
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript='kept', id='kept')]),
+    ]
 
 
 async def test_session_close_recovers_finalized_user_orphaned_from_ordered_stream() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]))
+    session._user_item_order.append('missing')  # pyright: ignore[reportPrivateUsage]
     session._user_item_order.append('empty')  # pyright: ignore[reportPrivateUsage]
     session._finalized_users_by_id['empty'] = SpeechPart(speaker='user')  # pyright: ignore[reportPrivateUsage]
     session._user_item_order.append('orphan')  # pyright: ignore[reportPrivateUsage]
@@ -2996,7 +3078,10 @@ async def test_session_close_recovers_finalized_user_orphaned_from_ordered_strea
     async with session:
         pass
 
-    assert session.new_messages() == [ModelRequest(parts=[SpeechPart(speaker='user', transcript='recovered')])]
+    assert session.new_messages() == [
+        ModelRequest(parts=[SpeechPart(speaker='user')]),
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript='recovered')]),
+    ]
 
 
 async def test_replayed_item_tracking_accepts_each_identifier_independently() -> None:

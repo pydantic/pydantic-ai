@@ -443,6 +443,9 @@ provider details are not replayed because they belong to the provider session th
 Provider-executed native-tool metadata is also omitted: the answer it produced is already in the
 history, and the execution itself cannot be replayed in a new session.
 
+Content-less speech parts are skipped when seeding because they preserve a turn boundary but carry
+nothing to replay.
+
 Content that cannot be represented is rejected with a [`UserError`][pydantic_ai.exceptions.UserError]
 instead of being dropped silently. In particular, video, documents, uploaded-file references, and
 model-generated files cannot be seeded. Speech transcripts are preferred over retained audio. When a
@@ -490,15 +493,14 @@ xAI transcribe the user's audio with a dedicated model, set via `input_transcrip
 | --- | --- |
 | `'auto'` (default) | The provider's recommended transcription model, so user turns are captured under the default `audio_retention='transcript_only'`. Pin a specific id when the transcription model must remain fixed. |
 | An explicit id (e.g. `'gpt-4o-transcribe'`) | Used verbatim. Known ids autocomplete via [`KnownRealtimeTranscriptionModelName`][pydantic_ai.realtime.KnownRealtimeTranscriptionModelName], but any string works. |
-| `None` | Transcription disabled — no transcription model is sent. No user transcripts arrive, so [`audio_retention`](#retaining-audio) **must** be `'input_audio'`/`'all'` to keep the raw audio; each user turn is then finalized as an audio-only [`SpeechPart`][pydantic_ai.messages.SpeechPart] (no transcript, so not usable for a text handoff). Disabling transcription while `audio_retention` doesn't retain input audio raises a `UserError`, since the user's turns would otherwise be silently dropped from history. This applies to the server-side path only: a [WebRTC sideband](#browser-webrtc) receives no audio to retain, so it always needs transcription. |
+| `None` | Transcription disabled — no transcription model is sent. Each user turn is still represented in history: as an audio-only [`SpeechPart`][pydantic_ai.messages.SpeechPart] when [`audio_retention`](#retaining-audio) is `'input_audio'`/`'all'`, or as a content-less `SpeechPart` otherwise. A content-less turn carries no words, so it cannot provide user text to a text handoff. On a [WebRTC sideband](#browser-webrtc), which receives no audio to retain, a turn without transcription is recorded as a content-less part — deploy/configure a transcription model to capture what users say. |
 
 Gemini transcribes with `google_input_transcription` (on by default) rather than a model id: the
-Live model transcribes natively, so there is no separate transcription model to choose. If
-`google_input_transcription=False`, set `audio_retention='input_audio'` or `'all'`; otherwise session
-creation raises [`UserError`][pydantic_ai.exceptions.UserError] because user turns could not be
-recorded. If `google_output_transcription=False`, retain output audio to keep assistant audio turns
-in history at all. Transcript-less assistant audio cannot be handed off to a text agent or seeded
-into another realtime session.
+Live model transcribes natively, so there is no separate transcription model to choose. With
+`google_input_transcription=False`, history contains audio-only user turns when input audio is retained
+and content-less user turns otherwise. If `google_output_transcription=False`, retain output audio to
+keep assistant audio turns in history at all. Transcript-less assistant audio cannot be handed off to
+a text agent or seeded into another realtime session.
 
 OpenAI and Gemini may stream partial user transcripts. xAI suppresses revisable partial snapshots
 and emits the finalized user transcript at the end of the turn.
@@ -695,14 +697,15 @@ Because a sideband session doesn't own the audio transport, its audio methods
 is the same session you already know — the [event loop](#the-event-loop), [tools](#tool-calling), and
 [message history](#message-history) all work unchanged, so you can still hand a call off to a text agent.
 
-!!! warning "A sideband needs input transcription — the audio-retention fallback does not apply"
-    Because the sideband never receives the user's audio, the only way its turns reach history is a
-    [transcription model](#transcribing-user-input). The `input_transcription_model=None` +
-    `audio_retention='input_audio'` escape hatch (used on the server-side WebSocket path when you
-    don't want transcripts) is **not** available here: the session has no audio to retain, so it
-    rejects any `audio_retention` other than `'transcript_only'`. Keep transcription enabled — on
-    Azure OpenAI that means the transcription model must be **deployed** on your resource, or every
-    spoken turn fails with `DeploymentNotFound` (see the [Azure page](azure.md#browser-webrtc-and-microsoft-entra-id)).
+!!! note "Capturing a sideband's user transcripts needs input transcription"
+    Because the sideband never receives the user's audio, the only way to capture the *words* a user
+    speaks is a [transcription model](#transcribing-user-input) — the
+    `audio_retention='input_audio'` fallback can't apply (there's no audio to retain, so `audio_retention`
+    stays `'transcript_only'`). Without transcription the user's turns are still represented in history,
+    but as content-less [`SpeechPart`][pydantic_ai.messages.SpeechPart]s. To capture what users say,
+    keep transcription enabled — on Azure OpenAI the transcription model must be **deployed** on your
+    resource, or it fails with `DeploymentNotFound` (see the [Azure page](azure.md#browser-webrtc-and-microsoft-entra-id));
+    the session records content-less turns and keeps running rather than failing.
 
 WebRTC is available for **OpenAI and Azure OpenAI** (see the [OpenAI](openai.md#browser-webrtc) and
 [Azure](azure.md#browser-webrtc-and-microsoft-entra-id) provider pages, including Azure's Microsoft
@@ -1065,6 +1068,7 @@ Some capabilities are intentionally out of scope:
 - **History processing during realtime seeding.** History processors run on classic agent runs, not when a realtime session seeds `message_history`; preprocess the history before passing it when redaction, summarization, or filtering is required.
 - **Dynamic instructions mid-session.** Instructions are resolved once at connect and not re-evaluated during the session.
 - **Provider-limited audio replay when seeding history.** OpenAI and Azure OpenAI can replay retained user audio when a [`SpeechPart`][pydantic_ai.messages.SpeechPart] has no transcript. Gemini and xAI cannot seed retained audio, and no provider can seed assistant audio; use transcripts or filter those parts before connecting (see [Message history](#message-history)).
+- **Content-less turn replay.** Content-less speech parts are skipped when seeding a new realtime session because they carry no transcript or audio to replay.
 - **Proactive resume before Gemini's session cap.** Gemini Live signals an upcoming disconnect (`GoAway`) near its session-length limit, but the session only [reconnects](#reconnecting) after a drop.
 
 ## Implementing a provider

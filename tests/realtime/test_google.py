@@ -1133,17 +1133,22 @@ async def test_connect_rejects_audio_only_user_turn() -> None:
 
 
 async def test_connect_rejects_unseedable_response_parts() -> None:
-    histories = [
-        ([ModelResponse(parts=[SpeechPart(speaker='assistant')])], 'assistant `SpeechPart`'),
-        (
-            [ModelResponse(parts=[FilePart(content=BinaryContent(data=b'file', media_type='application/pdf'))])],
-            '`FilePart`',
-        ),
-    ]
-    for history, match in histories:
-        with pytest.raises(UserError, match=re.escape(match)):
-            async with _connect(_model(_RecordingSession()), 'x', messages=history):
-                pass  # pragma: no cover
+    session = _RecordingSession()
+    async with _connect(
+        _model(session),
+        'x',
+        messages=[
+            ModelRequest(parts=[SpeechPart(speaker='user')]),
+            ModelResponse(parts=[SpeechPart(speaker='assistant')]),
+        ],
+    ):
+        pass
+    assert session.client_content == []
+
+    history = [ModelResponse(parts=[FilePart(content=BinaryContent(data=b'file', media_type='application/pdf'))])]
+    with pytest.raises(UserError, match=re.escape('`FilePart`')):
+        async with _connect(_model(_RecordingSession()), 'x', messages=history):
+            pass  # pragma: no cover
 
 
 async def test_connect_seed_skips_compaction_parts() -> None:
