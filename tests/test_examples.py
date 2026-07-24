@@ -304,6 +304,10 @@ def print_callback(s: str) -> str:
     s = re.sub(r'datetime.date\(', 'date(', s)
     s = re.sub(r"run_id='.+?'", "run_id='...'", s)
     s = re.sub(r"conversation_id='.+?'", "conversation_id='...'", s)
+    # `ReduceFirstValue` guarantees the winning value, not how many siblings finished their
+    # side effect before cancellation, so the graph joins example's completed count is not
+    # deterministic (see docs/graph/builder/joins.md `first_value_reducer.py`).
+    s = re.sub(r'Tasks completed: \d+', 'Tasks completed: ...', s)
     return s
 
 
@@ -929,7 +933,7 @@ async def model_logic(  # noqa: C901
             parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'flight_search':
-        args = {'flight_number': m.content.flight_number}  # type: ignore
+        args = {'flight_number': m.content.flight_number}  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
         return ModelResponse(
             parts=[ToolCallPart(tool_name='final_result_FlightDetails', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )

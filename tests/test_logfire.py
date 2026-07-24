@@ -9,7 +9,16 @@ from dirty_equals import IsJson, IsList
 from pydantic import BaseModel
 from typing_extensions import NotRequired, Self, TypedDict
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    MessageHistoryMutatedWarning,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
@@ -803,7 +812,7 @@ def test_prompted_output_schema_instructions_do_not_set_variable_instructions(
     )
 
     result = my_agent.run_sync('Tell me about Paris')
-    assert result.output == snapshot(City(name='Paris', population=2148000))
+    assert result.output == City(name='Paris', population=2148000)
 
     summary = get_logfire_summary()
     agent_run_attrs = summary.attributes[0]
@@ -1167,6 +1176,105 @@ async def test_aggregated_usage_attribute_names_can_be_disabled(capfire: Capture
     assert agent_run_span['attributes']['gen_ai.usage.input_tokens'] == 10
     assert agent_run_span['attributes']['gen_ai.usage.output_tokens'] == 5
     assert 'gen_ai.aggregated_usage.input_tokens' not in agent_run_span['attributes']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_in_place_history_mutation_warns_and_leaves_stale_request_spans(capfire: CaptureLogfire) -> None:
+    """Mutating a message already in the history in place mid-run is unsupported.
+
+    The per-run fragment cache serves the pre-mutation bytes, so the second request span records the
+    original prompt even though the mutated one was sent to the model, while the run-level
+    `pydantic_ai.all_messages` (always serialized fresh) reflects the mutation — and the run warns at
+    its end. This pins the documented caveat: if the cache ever becomes mutation-proof, update the
+    message-history docs along with these snapshots.
+    """
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('corrupt_history', {}, tool_call_id='call_1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        model=FunctionModel(model_function), capabilities=[Instrumentation(settings=InstrumentationSettings())]
+    )
+
+    @agent.tool
+    async def corrupt_history(ctx: RunContext) -> str:
+        first_part = ctx.messages[0].parts[0]
+        assert isinstance(first_part, UserPromptPart)
+        first_part.content = 'mutated prompt'
+        return 'ok'
+
+    with pytest.warns(MessageHistoryMutatedWarning, match='In-place mutation of messages'):
+        result = await agent.run('original prompt')
+    assert result.output == 'done'
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    chat_inputs = [s['attributes']['gen_ai.input.messages'] for s in spans if s['name'].startswith('chat ')]
+    assert chat_inputs == snapshot(
+        [
+            [{'role': 'user', 'parts': [{'type': 'text', 'content': 'original prompt'}]}],
+            [
+                {'role': 'user', 'parts': [{'type': 'text', 'content': 'original prompt'}]},
+                {
+                    'role': 'assistant',
+                    'parts': [{'type': 'tool_call', 'id': 'call_1', 'name': 'corrupt_history', 'arguments': {}}],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {'type': 'tool_call_response', 'id': 'call_1', 'name': 'corrupt_history', 'result': 'ok'}
+                    ],
+                },
+            ],
+        ]
+    )
+    agent_run_span = next(s for s in spans if s['name'] == 'invoke_agent agent')
+    assert agent_run_span['attributes']['pydantic_ai.all_messages'] == snapshot(
+        [
+            {'role': 'user', 'parts': [{'type': 'text', 'content': 'mutated prompt'}]},
+            {
+                'role': 'assistant',
+                'parts': [{'type': 'tool_call', 'id': 'call_1', 'name': 'corrupt_history', 'arguments': {}}],
+            },
+            {
+                'role': 'user',
+                'parts': [{'type': 'tool_call_response', 'id': 'call_1', 'name': 'corrupt_history', 'result': 'ok'}],
+            },
+            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'done'}]},
+        ]
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_history_mutation_in_errored_run_does_not_displace_the_run_error(capfire: CaptureLogfire) -> None:
+    """A run that errors after an in-place history mutation surfaces the run's own exception.
+
+    The run-end staleness check is skipped on the error path: this suite configures warnings as
+    errors, so a `MessageHistoryMutatedWarning` raised in the run's `finally` would otherwise
+    displace the propagating exception.
+    """
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('corrupt_history', {}, tool_call_id='call_1')])
+        raise RuntimeError('model failure')
+
+    agent = Agent(
+        model=FunctionModel(model_function), capabilities=[Instrumentation(settings=InstrumentationSettings())]
+    )
+
+    @agent.tool
+    async def corrupt_history(ctx: RunContext) -> str:
+        first_part = ctx.messages[0].parts[0]
+        assert isinstance(first_part, UserPromptPart)
+        first_part.content = 'mutated prompt'
+        return 'ok'
+
+    with pytest.raises(RuntimeError, match='model failure'):
+        await agent.run('original prompt')
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

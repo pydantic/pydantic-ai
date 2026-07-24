@@ -370,3 +370,71 @@ async def test_reduce_first_value():
     # Due to cancellation, not all 5 tasks should complete
     # (though timing can be tricky, so we just verify we got a result)
     assert 'completed-1' in state.results
+
+
+async def test_reduce_first_value_keeps_side_effect_of_cancelled_sibling():
+    """`ReduceFirstValue` cancels still-suspended siblings, but cannot un-run a side effect one already ran.
+
+    Cancellation is dispatched synchronously the instant the winner's value is reduced, so a
+    sibling's fate hinges on *where it is suspended* at that instant:
+
+    - a sibling that recorded its side effect and *then* suspended keeps the effect — the
+      `CancelledError` lands at the later await, after the write has happened;
+    - a sibling still suspended *before* its side-effect line is cancelled without ever recording.
+
+    The three branches pin both halves plus the winner, so the guarantee is exact rather than
+    incidental. `asyncio.Event` gates force a single deterministic winner and a fixed ordering
+    with no reliance on sleeps or timers: the winner only reduces once the effect-then-suspend
+    branch has written and parked, so both losing branches are provably suspended (one after its
+    side effect, one before) when cancellation reaches them.
+    """
+
+    @dataclass
+    class CountingState:
+        completed: list[str] = field(default_factory=list[str])
+
+    effect_recorded = asyncio.Event()  # set once the effect-then-suspend branch has written and is about to park
+    never = asyncio.Event()  # never set: whatever awaits it stays suspended until it is cancelled
+
+    g = GraphBuilder(state_type=CountingState, output_type=str)
+
+    @g.step
+    async def generate(ctx: StepContext[CountingState, None, None]) -> list[str]:
+        return ['winner', 'effect-then-suspend', 'suspend-then-effect']
+
+    @g.step
+    async def process(ctx: StepContext[CountingState, None, str]) -> str:
+        if ctx.inputs == 'winner':
+            # Win only after the losing sibling has recorded its effect and parked, so cancellation
+            # is dispatched while that sibling sits at its post-side-effect await.
+            await effect_recorded.wait()
+            ctx.state.completed.append('winner')
+            return 'result-winner'
+        if ctx.inputs == 'effect-then-suspend':
+            ctx.state.completed.append('effect-then-suspend')  # side effect BEFORE the await
+            effect_recorded.set()
+            await never.wait()  # cancelled here, after the write -> the effect survives
+            return 'unreachable'  # pragma: no cover
+        # 'suspend-then-effect': suspended before its side-effect line -> cancelled without recording.
+        await never.wait()
+        ctx.state.completed.append('suspend-then-effect')  # pragma: no cover
+        return 'unreachable'  # pragma: no cover
+
+    first = g.join(ReduceFirstValue[str](), initial='', node_id='first')
+
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map().to(process),
+        g.edge_from(process).to(first),
+        g.edge_from(first).to(g.end_node),
+    )
+
+    state = CountingState()
+    result = await g.build().run(state=state)
+
+    assert result == 'result-winner'
+    # The effect-then-suspend branch recorded before parking and kept its effect despite being
+    # cancelled at the later await; the suspend-then-effect branch was cancelled before its
+    # side-effect line and never recorded. The winner writes only after the event is set, so it
+    # always trails the surviving side effect.
+    assert state.completed == ['effect-then-suspend', 'winner']
