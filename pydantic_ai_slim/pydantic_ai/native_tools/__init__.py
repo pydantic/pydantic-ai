@@ -4,7 +4,7 @@ from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any, Literal, TypeAlias, Union
+from typing import Annotated, Any, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
@@ -210,8 +210,9 @@ class WebSearchTool(AbstractNativeTool):
     * OpenAI Responses `web_search` tool, see <https://developers.openai.com/api/docs/guides/tools-web-search#live-internet-access>
 
     OpenAI's legacy `web_search_preview` tool ignores this parameter.
+    """
 
-    response_inclusion: _ResponseInclusion | None = None
+    response_inclusion: Literal['full', 'excluded'] | None = None
     """Controls whether results consumed by completed code execution calls are included in the response.
 
     If `None`, Anthropic uses its default of `'full'`.
@@ -448,7 +449,7 @@ class WebFetchTool(AbstractNativeTool):
     * Anthropic
     """
 
-    response_inclusion: _ResponseInclusion | None = None
+    response_inclusion: Literal['full', 'excluded'] | None = None
     """Controls whether results consumed by completed code execution calls are included in the response.
 
     If `None`, Anthropic uses its default of `'full'`.
