@@ -1586,6 +1586,7 @@ class RetryPromptPart:
     * Pydantic validation of a structured response failed, here content is derived from a Pydantic
       [`ValidationError`][pydantic_core.ValidationError]
     * an output validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
+    * the model returned no actionable output (e.g. only thinking content), here `cause` is `'no_output'`
     """
 
     content: list[pydantic_core.ErrorDetails] | str
@@ -1609,12 +1610,22 @@ class RetryPromptPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the retry was triggered."""
 
+    cause: Literal['error', 'no_output'] = 'error'
+    """Why the retry was triggered.
+
+    `'error'` (the default) covers validation failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]
+    exceptions, where the model produced output that was rejected. `'no_output'` covers the case where the
+    model produced no actionable output at all, so the framing should not imply that anything failed.
+    """
+
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
         if isinstance(self.content, str):
+            if self.cause == 'no_output':
+                return self.content
             if self.tool_name is None:
                 description = f'Validation feedback:\n{self.content}'
             else:

@@ -230,7 +230,7 @@ async def test_anthropic_agent_recovers_from_unconfigured_native_tool_call(allow
             'role': 'user',
             'content': [
                 {
-                    'text': 'Validation feedback:\nPlease return text.\n\nFix the errors and try again.',
+                    'text': 'Please return text.',
                     'type': 'text',
                 }
             ],

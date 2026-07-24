@@ -1869,6 +1869,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # actionable output alongside their thinking content. so we tell the model to try again.
                     m = _messages.RetryPromptPart(
                         content=f'Please {" or ".join(alternatives)}.',
+                        cause='no_output',
                     )
                     raise ToolRetryError(m)
                 except ToolRetryError as e:

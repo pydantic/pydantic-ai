@@ -2031,6 +2031,44 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     assert '"name"' in response
 
 
+def test_retry_prompt_no_output_renders_content_verbatim():
+    """A `cause='no_output'` retry renders its content verbatim, without the `Validation feedback:`
+    prefix or `Fix the errors and try again.` suffix, since nothing failed validation.
+
+    Unit-tested rather than via VCR: this is internal `model_response()` rendering, and our cassette
+    matchers aren't always sensitive to the request body, so a VCR test could pass green on the old
+    wording.
+    """
+    part = RetryPromptPart(content='Please return text or call a tool.', cause='no_output')
+    response = part.model_response()
+    assert response == snapshot('Please return text or call a tool.')
+    assert 'Validation feedback:' not in response
+    assert 'Fix the errors and try again.' not in response
+
+
+def test_retry_prompt_default_cause_preserves_validation_framing():
+    """The default `cause='error'` path is unchanged: a `tool_name`-less string retry keeps the
+    `Validation feedback:` prefix and `Fix the errors and try again.` suffix. Guards against the
+    no_output split altering existing behavior."""
+    part = RetryPromptPart(content='some feedback')
+    assert part.cause == 'error'
+    assert part.model_response() == snapshot('Validation feedback:\nsome feedback\n\nFix the errors and try again.')
+
+
+def test_retry_prompt_cause_defaults_to_error_for_legacy_history():
+    """A `RetryPromptPart` serialized before `cause` existed deserializes to `cause='error'` and
+    renders identically, confirming the new field is backward compatible per the version policy."""
+    part = RetryPromptPart(content='old feedback')
+    [serialized_request] = ModelMessagesTypeAdapter.dump_python([ModelRequest(parts=[part])], mode='json')
+    # Simulate a message history serialized before the `cause` field was added.
+    del serialized_request['parts'][0]['cause']
+    [restored_request] = ModelMessagesTypeAdapter.validate_python([serialized_request])
+    restored_part = restored_request.parts[0]
+    assert isinstance(restored_part, RetryPromptPart)
+    assert restored_part.cause == 'error'
+    assert restored_part.model_response() == part.model_response()
+
+
 def test_narrow_type_leaves_claim_free_part_unchanged_on_invalid_data():
     """Best-effort: a kwarg `tool_kind` claim whose data doesn't validate against the typed
     subclass leaves the (claim-free) part untouched instead of raising.
