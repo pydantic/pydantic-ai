@@ -12584,7 +12584,6 @@ async def test_openai_responses_compact_messages_direct(allow_model_requests: No
     assert compacted.usage.input_tokens > 0
 
 
-@pytest.mark.moves_cache_prefix(reason='deliberate history compaction')
 async def test_openai_responses_compact_with_auto_previous_response_id(allow_model_requests: None, openai_api_key: str):
     """Test compact_messages with openai_previous_response_id='auto'."""
     from pydantic_ai.models import ModelRequestContext
@@ -12611,7 +12610,6 @@ async def test_openai_responses_compact_with_auto_previous_response_id(allow_mod
     assert isinstance(compacted.parts[0], CompactionPart)
 
 
-@pytest.mark.moves_cache_prefix(reason='deliberate history compaction')
 async def test_openai_responses_compact_with_instructions(allow_model_requests: None, openai_api_key: str):
     """Test compact_messages with custom instructions override."""
     from pydantic_ai.models import ModelRequestContext
@@ -12638,7 +12636,6 @@ async def test_openai_responses_compact_with_instructions(allow_model_requests: 
     assert isinstance(compacted.parts[0], CompactionPart)
 
 
-@pytest.mark.moves_cache_prefix(reason='deliberate history compaction')
 async def test_openai_responses_compact_with_auto_previous_response_id_chain(
     allow_model_requests: None, openai_api_key: str
 ):

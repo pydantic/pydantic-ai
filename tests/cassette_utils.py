@@ -104,7 +104,11 @@ def canonical_prefix_blocks(body: dict[str, Any], url: str) -> tuple[str, list[P
         add('tools', body.get('tools'))
         add('messages', body.get('messages'))
         return 'openai-chat', blocks
-    if path.endswith('/responses') or '/responses' in path:
+    if path.endswith('/responses'):
+        # Only the create endpoint (`.../responses`) carries a cacheable prefix. Auxiliary sub-paths
+        # (`/responses/compact`, `/responses/input_tokens`, `/responses/{id}`) have unrelated bodies and
+        # must not be pooled with it, so match the endpoint exactly rather than as a substring. The
+        # trailing segment keeps every host's create endpoint (`api.openai.com`, Azure, OpenRouter).
         add('system', body.get('instructions'))
         add('tools', body.get('tools'))
         input_ = body.get('input')
