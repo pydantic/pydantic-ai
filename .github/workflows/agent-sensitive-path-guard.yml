@@ -50,7 +50,8 @@ jobs:
 
           # Mirrors SENSITIVE_WRITE_{PREFIXES,BASENAMES,GLOBS} in the pydanty agent.
           is_sensitive() {
-            local p="${1,,}"
+            local p
+            p=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
             local base="${p##*/}"
             case "$p" in
               .github/workflows/*|.github/actions/*|.claude/*|.agents/*|.cursor/*|.codex/*)
@@ -66,62 +67,92 @@ jobs:
             return 1
           }
 
-          violations=""
-          record() {
-            while IFS= read -r f; do
-              [ -z "$f" ] && continue
-              if is_sensitive "$f"; then
-                violations+="$f"$'\n'
+          # Accumulated in the PARENT shell. Never append to this from inside a
+          # pipeline: bash runs the last pipeline element in a subshell, so the
+          # appends would be discarded and the guard would silently always pass.
+          violations=()
+
+          check_paths() {
+            local path
+            for path in "$@"; do
+              [ -n "$path" ] || continue
+              if is_sensitive "$path"; then
+                violations+=("$path")
               fi
             done
           }
 
-          # Extract destination paths from a raw diff's `diff --git a/… b/…` headers.
-          # The diff media type is not capped at 300 files (the compare JSON is) and
-          # emits a header for every changed path including renames, so nothing hides.
-          diff_paths() {
-            grep '^diff --git ' | sed -E 's#^diff --git a/.* b/##'
-          }
+          # Paths are read from the API's structured file list rather than parsed out
+          # of a raw diff. Two things fall out of that: git C-quotes headers for paths
+          # with spaces/non-ASCII (`diff --git "a/x y" "b/x y"`), which a header regex
+          # silently drops — a bypass; and `previous_filename` gives us the pre-rename
+          # path, so moving a protected file *out* of a protected directory is caught
+          # too. `.files` is capped at 300, so a truncated list fails closed below —
+          # otherwise an agent could pad a change past the cap to hide a path.
+          FILE_PATHS_JQ='(.files // [])[] | .filename, (.previous_filename // empty)'
+          TRUNCATION_LIMIT=300
 
           # 1. pydanty PRs: the author is set by the GitHub App token and cannot be
           #    forged by an injected agent, so the entire diff is agent-produced.
           #    This is the forgery-proof layer — it holds even if the agent rewrote
-          #    its own commit metadata to dodge the per-commit check below.
+          #    its own commit metadata to dodge the per-commit check below. Pinned to
+          #    the immutable event SHAs so a force-push can't swap in a clean diff.
           if [ "$PR_AUTHOR" = "pydanty[bot]" ]; then
-            gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA" \
-              -H 'Accept: application/vnd.github.v3.diff' | diff_paths | record
+            compare=$(gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA")
+            if [ "$(printf '%s' "$compare" | jq '(.files // []) | length')" -ge "$TRUNCATION_LIMIT" ]; then
+              echo "::error::This PR changes >= $TRUNCATION_LIMIT files, so GitHub truncates the file list and the guard cannot prove no protected path was touched. Failing closed — split the change or have a maintainer review it by hand."
+              exit 1
+            fi
+            # Read via process substitution, NOT a pipeline, so the array is built
+            # in this shell rather than a discarded subshell.
+            pr_paths=()
+            while IFS= read -r line; do pr_paths+=("$line"); done < <(
+              printf '%s' "$compare" | jq -r "$FILE_PATHS_JQ"
+            )
+            if [ "${#pr_paths[@]}" -gt 0 ]; then check_paths "${pr_paths[@]}"; fi
           fi
 
           # 2. Any PR: commits attributed to a coding agent. This is what catches
           #    @claude, which does not open its own PRs — it pushes commits into an
-          #    existing (often human-authored) PR branch. Matched on the agent's
-          #    author/committer identity. NOTE: commit metadata is agent-controllable,
-          #    so an injected @claude could in principle rewrite its committer to
-          #    evade this; the durable fix is to route @claude's writes through a
-          #    validated, agent-independent push step (tracked separately).
-          # Passed to jq via --arg (not interpolated into the program) so the regex
+          #    existing (often human-authored) PR branch. Only its own commits are
+          #    judged, so a human's dependency bump in the same PR is unaffected.
+          #    @claude commits via the App-signed commit_files tool (see at-claude.yml),
+          #    which exposes no author field, so this identity cannot be rewritten.
+          # The regex goes to jq via --arg (not interpolated into the program) so its
           # backslashes survive as a literal string instead of being parsed as jq
-          # string escapes. `gh api --jq` can't take --arg, so pipe to real jq; the
-          # --paginate stream of arrays is fine for a leading `.[]`.
+          # string escapes. Each field is tested individually: jq's ^/$ anchor to the
+          # whole subject, so testing a joined blob would make the ^name$ alternatives
+          # dead. `gh api --jq` can't take --arg, so pipe to real jq; the --paginate
+          # stream of arrays is fine for a leading `.[]`.
           agent_id='pydanty@pydantic\.dev|pydanty\[bot\]@users\.noreply|noreply@anthropic\.com|claude\[bot\]@users\.noreply|^pydanty$|^claude(\[bot\])?$'
-          mapfile -t agent_shas < <(
+          agent_shas=()
+          while IFS= read -r line; do agent_shas+=("$line"); done < <(
             gh api "repos/$REPO/pulls/$PR/commits" --paginate | jq -r --arg re "$agent_id" '
               .[]
-              | select(([.commit.author.email, .commit.committer.email, .commit.author.name, .commit.committer.name] | join("\n")) | test($re; "i"))
+              | select(
+                  [.commit.author.email, .commit.committer.email, .commit.author.name, .commit.committer.name]
+                  | map(select(. != null) | test($re; "i"))
+                  | any
+                )
               | .sha'
           )
-          for sha in "${agent_shas[@]}"; do
-            [ -z "$sha" ] && continue
-            gh api "repos/$REPO/commits/$sha" \
-              -H 'Accept: application/vnd.github.v3.diff' | diff_paths | record
+          for sha in ${agent_shas[@]+"${agent_shas[@]}"}; do
+            [ -n "$sha" ] || continue
+            commit=$(gh api "repos/$REPO/commits/$sha")
+            if [ "$(printf '%s' "$commit" | jq '(.files // []) | length')" -ge "$TRUNCATION_LIMIT" ]; then
+              echo "::error::Agent commit $sha changes >= $TRUNCATION_LIMIT files; GitHub truncates the file list so the guard cannot verify it. Failing closed."
+              exit 1
+            fi
+            commit_paths=()
+            while IFS= read -r line; do commit_paths+=("$line"); done < <(
+              printf '%s' "$commit" | jq -r "$FILE_PATHS_JQ"
+            )
+            if [ "${#commit_paths[@]}" -gt 0 ]; then check_paths "${commit_paths[@]}"; fi
           done
 
-          if [ -n "$violations" ]; then
-            uniq_violations=$(printf '%s' "$violations" | sort -u)
+          if [ "${#violations[@]}" -gt 0 ]; then
             echo "::error::A coding agent's change touches protected path(s). CI/workflow, agent-instruction, and dependency files are off-limits to the agents; a genuine change to one is a maintainer's to make by hand."
-            printf '%s\n' "$uniq_violations" | while IFS= read -r f; do
-              [ -n "$f" ] && echo "  - $f"
-            done
+            printf '%s\n' "${violations[@]}" | sort -u | sed 's/^/  - /'
             exit 1
           fi
 
