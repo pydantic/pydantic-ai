@@ -2,7 +2,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import ModelRequestParameters, ToolDefinition
+from pydantic_ai.models import ModelProfile, ModelRequestParameters, ToolDefinition
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
     AbstractNativeTool,
@@ -217,6 +217,25 @@ def test_request_visibility_state_survives_serialization_but_stays_out_of_repr()
 def test_anthropic_web_tool_options_rejected_by_other_providers(tool: AbstractNativeTool, option: str):
     with pytest.raises(UserError, match=rf'`{option}` is only supported by Anthropic'):
         TestModel().prepare_request(None, ModelRequestParameters(native_tools=[tool]))
+
+
+def test_native_tool_provider_validation_runs_after_deduplication():
+    _, params = TestModel().prepare_request(
+        None,
+        ModelRequestParameters(
+            native_tools=[WebFetchTool(use_cache=False), WebFetchTool()],
+        ),
+    )
+    assert params.native_tools == [WebFetchTool()]
+
+
+def test_native_tool_provider_validation_runs_after_optional_tools_are_dropped():
+    model = TestModel(profile=ModelProfile(supported_native_tools=frozenset()))
+    _, params = model.prepare_request(
+        None,
+        ModelRequestParameters(native_tools=[WebSearchTool(optional=True, response_inclusion='excluded')]),
+    )
+    assert params.native_tools == []
 
 
 @pytest.mark.parametrize(

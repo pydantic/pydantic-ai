@@ -8,6 +8,7 @@ the dynamic-filtering `caller` round-trip on web-fetch history, and live request
 
 from __future__ import annotations as _annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
@@ -78,6 +79,12 @@ pytestmark = [
 ]
 
 
+def _single_response_body(cassette: Cassette) -> dict[str, Any]:
+    responses = cast(list[dict[str, Any]], cassette.responses)  # pyright: ignore[reportUnknownMemberType]
+    assert len(responses) == 1
+    return cast(dict[str, Any], json.loads(cast(str, responses[0]['body']['string'])))
+
+
 @dataclass(frozen=True)
 class ClientSupportCase:
     """One (client, requested-tools) row of the web-tool support matrix.
@@ -90,6 +97,7 @@ class ClientSupportCase:
     client_cls: Any
     base_url: str
     native_tools: list[AbstractNativeTool]
+    model_name: str = 'claude-sonnet-4-6'
     expected_tool_types: list[str] = field(default_factory=list[str])
     expected_betas: list[str] = field(default_factory=list[str])
     rejected_tool: type[AbstractNativeTool] | None = None
@@ -148,6 +156,22 @@ CLIENT_SUPPORT_CASES = [
         native_tools=[WebFetchTool()],
         rejected_tool=WebFetchTool,
     ),
+    ClientSupportCase(
+        id='mythos-preview-mantle-web-search-rejected',
+        client_cls=AsyncAnthropicBedrockMantle,
+        base_url='https://bedrock-mantle.us-east-1.api.aws',
+        native_tools=[WebSearchTool()],
+        model_name='global.anthropic.claude-mythos-preview-v1:0',
+        rejected_tool=WebSearchTool,
+    ),
+    ClientSupportCase(
+        id='mythos-preview-mantle-web-fetch-rejected',
+        client_cls=AsyncAnthropicBedrockMantle,
+        base_url='https://bedrock-mantle.us-east-1.api.aws',
+        native_tools=[WebFetchTool()],
+        model_name='global.anthropic.claude-mythos-preview-v1:0',
+        rejected_tool=WebFetchTool,
+    ),
 ]
 
 
@@ -160,7 +184,7 @@ def test_anthropic_web_tools_client_support(case: ClientSupportCase):
     matches the sibling tool-search tests in the Anthropic suite, which reach the same private helper.
     """
     m = AnthropicModel(
-        'claude-sonnet-4-6',
+        case.model_name,
         provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(case.client_cls, case.base_url)),
     )
     params = ModelRequestParameters(native_tools=case.native_tools)
@@ -213,6 +237,20 @@ def test_anthropic_previous_web_tools_reject_new_options(tool: AbstractNativeToo
 
     with pytest.raises(UserError, match=rf'`{option}` is not supported by model'):
         m._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+
+def test_anthropic_web_options_allow_custom_provider_name():
+    class ProxyAnthropicProvider(AnthropicProvider):
+        @property
+        def name(self) -> str:
+            return 'my-anthropic-proxy'
+
+    m = AnthropicModel('claude-sonnet-4-6', provider=ProxyAnthropicProvider(api_key='test'))
+    params = ModelRequestParameters(native_tools=[WebFetchTool(use_cache=False)])
+
+    assert m.system == 'my-anthropic-proxy'
+    _, prepared = m.prepare_request(None, params)
+    assert prepared.native_tools == [WebFetchTool(use_cache=False)]
 
 
 def test_anthropic_explicit_profile_instance_narrows_web_tools():
@@ -357,6 +395,14 @@ async def test_anthropic_20260318_web_fetch_options(allow_model_requests: None, 
         if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name == 'web_fetch'
     ]
     assert web_fetch_parts == []
+    code_execution_parts = [
+        part
+        for part in response_parts
+        if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name == 'code_execution'
+    ]
+    assert [type(part) for part in code_execution_parts] == [NativeToolCallPart, NativeToolReturnPart]
+    response_body = _single_response_body(vcr)
+    assert response_body['usage']['server_tool_use'] == {'web_fetch_requests': 1, 'web_search_requests': 0}
 
 
 @pytest.mark.vcr()
@@ -396,6 +442,14 @@ async def test_anthropic_20260318_web_search_response_inclusion(
         if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name == 'web_search'
     ]
     assert web_search_parts == []
+    code_execution_parts = [
+        part
+        for part in response_parts
+        if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name == 'code_execution'
+    ]
+    assert [type(part) for part in code_execution_parts] == [NativeToolCallPart, NativeToolReturnPart]
+    response_body = _single_response_body(vcr)
+    assert response_body['usage']['server_tool_use'] == {'web_fetch_requests': 0, 'web_search_requests': 1}
 
 
 @pytest.mark.vcr()

@@ -441,8 +441,6 @@ class Model(ABC, Generic[InterfaceClient]):
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
         if native_tools := params.native_tools:
-            for tool in native_tools:
-                tool._validate_for_provider(self.system)  # pyright: ignore[reportPrivateUsage]
             # Deduplicate native tools
             params = replace(
                 params,
@@ -491,7 +489,15 @@ class Model(ABC, Generic[InterfaceClient]):
         if params.native_tools or any(t.unless_native or t.with_native for t in params.function_tools):
             params = self._resolve_native_tool_swap(params)
 
+        if params.native_tools:
+            self._validate_native_tools(params.native_tools)
+
         return model_settings, params
+
+    def _validate_native_tools(self, native_tools: list[AbstractNativeTool]) -> None:
+        """Validate provider-specific fields on the native tools retained for this request."""
+        for tool in native_tools:
+            tool._validate_for_provider(self.system)  # pyright: ignore[reportPrivateUsage]
 
     def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
         """Pre-process the message history before it's handed to the adapter's message-prep step.

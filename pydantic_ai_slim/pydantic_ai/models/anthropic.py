@@ -74,6 +74,7 @@ from ..profiles.anthropic import (
     resolve_anthropic_effort,
 )
 from ..providers import Provider, infer_provider
+from ..providers._bedrock_model_names import split_bedrock_model_id
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
@@ -591,6 +592,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {WebFetchTool}
         if isinstance(client, _ADVISOR_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {AdvisorTool}
+        _, base_model_name = split_bedrock_model_id(self.model_name)
+        if isinstance(client, AsyncAnthropicBedrockMantle) and base_model_name.startswith('claude-mythos-preview'):
+            supported_native_tools = supported_native_tools - {WebSearchTool, WebFetchTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _DYNAMIC_WEB_TOOLS_UNSUPPORTED_CLIENTS
         )
@@ -614,6 +618,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return frozenset(
             {WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ToolSearchTool, AdvisorTool}
         )
+
+    def _validate_native_tools(self, native_tools: list[AbstractNativeTool]) -> None:
+        """Validate options against the Anthropic API, independent of a custom provider name."""
+        for tool in native_tools:
+            tool._validate_for_provider('anthropic')  # pyright: ignore[reportPrivateUsage]
 
     async def request(
         self,
