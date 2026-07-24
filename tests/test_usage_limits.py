@@ -3,8 +3,8 @@ import functools
 import operator
 import re
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
-from datetime import timezone
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -437,6 +437,13 @@ def test_request_usage_basics():
 def test_usage_arbitrary_fields():
     usage = RequestUsage(future_tokens=1, label='original')
 
+    assert {'future_tokens', 'label'} <= set(dir(usage))
+    usage.future_tokens = 2
+    assert usage.future_tokens == 2
+    del usage.future_tokens
+    assert not hasattr(usage, 'future_tokens')
+    usage.future_tokens = 1
+
     assert usage == snapshot(RequestUsage(future_tokens=1, label='original'))
     assert usage == RequestUsage(future_tokens=1, label='original')
     assert usage != RequestUsage(future_tokens=2, label='original')
@@ -461,20 +468,79 @@ def test_usage_arbitrary_fields_pydantic_roundtrip(
     )
     adapter = TypeAdapter(usage_type)
 
+    assert adapter.dump_python(usage)['_extra'] == {
+        'future_tokens': 42,
+        'label': 'original',
+        'zero_tokens': 0,
+    }
     loaded = adapter.validate_json(adapter.dump_json(usage))
     assert loaded == usage
-    assert loaded.__dict__['future_tokens'] == 42
+    assert loaded.future_tokens == 42
+    assert vars(loaded)['_extra'] == vars(usage)['_extra']
     assert adapter.validate_python(usage) is usage
+
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_arbitrary_fields_legacy_flat_deserialization(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    loaded = TypeAdapter(usage_type).validate_python(
+        {
+            'input_tokens': 5,
+            'details': {'reasoning_tokens': 3},
+            'future_tokens': 42,
+            'label': 'original',
+            'zero_tokens': 0,
+        }
+    )
+
+    assert loaded == usage_type(
+        input_tokens=5,
+        details={'reasoning_tokens': 3},
+        future_tokens=42,
+        label='original',
+        zero_tokens=0,
+    )
+    assert vars(loaded)['_extra'] == {'future_tokens': 42, 'label': 'original', 'zero_tokens': 0}
+
+
+def test_usage_nested_arbitrary_field_promoted_when_declared():
+    @dataclass(repr=False, init=False, eq=False)
+    class FutureRequestUsage(RequestUsage):
+        future_tokens: int = 0
+
+    adapter = TypeAdapter(FutureRequestUsage)
+    loaded = adapter.validate_python({'input_tokens': 5, '_extra': {'future_tokens': 42, 'label': 'original'}})
+
+    assert loaded == FutureRequestUsage(input_tokens=5, future_tokens=42, label='original')
+    assert adapter.dump_python(loaded) == {
+        'input_tokens': 5,
+        'cache_write_tokens': 0,
+        'cache_read_tokens': 0,
+        'output_tokens': 0,
+        'input_audio_tokens': 0,
+        'cache_audio_read_tokens': 0,
+        'output_audio_tokens': 0,
+        'details': {},
+        '_extra': {'label': 'original'},
+        'future_tokens': 42,
+    }
 
 
 @pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
 def test_usage_reserved_fields_not_loaded_as_arbitrary(
     usage_type: type[RequestUsage] | type[RunUsage],
 ):
-    loaded = TypeAdapter(usage_type).validate_python({'input_tokens': 5, 'cache_hit_ratio': 0.5})
+    loaded = TypeAdapter(usage_type).validate_python(
+        {
+            'input_tokens': 5,
+            'cache_hit_ratio': 0.5,
+            '_extra': {'total_tokens': 99, 'cache_hit_ratio': 0.5},
+        }
+    )
 
     assert loaded == usage_type(input_tokens=5)
-    assert 'cache_hit_ratio' not in loaded.__dict__
+    assert vars(loaded)['_extra'] == {}
 
 
 @pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
@@ -498,21 +564,33 @@ def test_usage_arbitrary_fields_pydantic_serialization_filters():
     assert adapter.dump_python(usage, include={'input_tokens'}) == {'input_tokens': 5}
     assert adapter.dump_python(
         usage,
-        include={'input_tokens', 'future_tokens', 'label'},
+        include={'input_tokens', '_extra'},
         exclude_none=True,
-    ) == {'input_tokens': 5, 'future_tokens': 42}
+    ) == {
+        'input_tokens': 5,
+        '_extra': {
+            'future_tokens': 42,
+            'label': None,
+            'breakdown': {'a': 1, 'b': 2},
+        },
+    }
 
-    serialized = adapter.dump_python(usage, exclude={'future_tokens'})
-    assert 'future_tokens' not in serialized
-    assert serialized['label'] is None
-    assert adapter.dump_python(usage, include={'future_tokens': True}) == {'future_tokens': 42}
-    assert 'future_tokens' not in adapter.dump_python(
-        usage,
-        exclude={'future_tokens': ...},  # pyright: ignore[reportArgumentType]
-    )
+    serialized = adapter.dump_python(usage, exclude={'_extra': {'future_tokens'}})
+    assert serialized['_extra'] == {'label': None, 'breakdown': {'a': 1, 'b': 2}}
+    assert adapter.dump_python(usage, include={'_extra': {'future_tokens'}}) == {'_extra': {'future_tokens': 42}}
 
-    assert adapter.dump_python(usage, include={'breakdown': {'a'}}) == {'breakdown': {'a': 1}}
-    assert adapter.dump_python(usage, exclude={'breakdown': {'a'}})['breakdown'] == {'b': 2}
+    assert adapter.dump_python(usage, include={'_extra': {'breakdown': {'a'}}}) == {'_extra': {'breakdown': {'a': 1}}}
+    assert adapter.dump_python(usage, exclude={'_extra': {'breakdown': {'a'}}})['_extra']['breakdown'] == {'b': 2}
+
+
+def test_usage_arbitrary_fields_use_standard_dataclass_serialization():
+    timestamp = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    usage = RequestUsage(future_data={'timestamp': timestamp})
+    adapter = TypeAdapter(RequestUsage)
+
+    assert asdict(usage)['_extra'] == {'future_data': {'timestamp': timestamp}}
+    assert adapter.dump_python(usage, mode='json')['_extra'] == {'future_data': {'timestamp': '2026-07-24T00:00:00Z'}}
+    assert to_jsonable_python(usage)['_extra'] == {'future_data': {'timestamp': '2026-07-24T00:00:00Z'}}
 
 
 def test_usage_pydantic_core_serialization_subclass():
@@ -520,9 +598,12 @@ def test_usage_pydantic_core_serialization_subclass():
     class CustomUsage(RequestUsage):
         custom_tokens: int = 7
 
-    usage = CustomUsage(future_tokens=42)
+    class UsageModel(BaseModel):
+        usage: RequestUsage
 
-    assert to_jsonable_python(usage) == snapshot(
+    usage = CustomUsage(custom_tokens=9, future_tokens=42)
+
+    expected = snapshot(
         {
             'input_tokens': 0,
             'cache_write_tokens': 0,
@@ -532,10 +613,13 @@ def test_usage_pydantic_core_serialization_subclass():
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
             'details': {},
-            'custom_tokens': 7,
-            'future_tokens': 42,
+            'custom_tokens': 9,
+            '_extra': {'future_tokens': 42},
         }
     )
+    assert to_jsonable_python(usage) == expected
+    assert TypeAdapter(RequestUsage).dump_python(usage) == expected
+    assert UsageModel(usage=usage).model_dump()['usage'] == expected
 
 
 def test_cache_hit_ratio():

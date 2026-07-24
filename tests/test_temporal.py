@@ -3790,7 +3790,7 @@ def test_temporal_run_context_enqueue_raises_inside_activity():
     assert reconstructed.enqueue() is None
 
 
-def test_temporal_run_context_serializes_usage():
+async def test_temporal_run_context_serializes_usage():
     ctx = RunContext(
         deps=None,
         model=TestModel(),
@@ -3810,7 +3810,9 @@ def test_temporal_run_context_serializes_usage():
     serialized = TemporalRunContext.serialize_run_context(ctx)
     assert serialized['usage'] == ctx.usage
 
-    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    payloads = await pydantic_data_converter.encode([serialized])
+    [deserialized] = await pydantic_data_converter.decode(payloads, [dict[str, Any]])
+    reconstructed = TemporalRunContext.deserialize_run_context(deserialized, deps=None)
     assert reconstructed.usage == ctx.usage
 
 

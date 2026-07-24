@@ -27,8 +27,6 @@ _LEGACY_USAGE_KEYS = frozenset({'requests', 'request_tokens', 'response_tokens',
 
 _LEGACY_TOKEN_ALIASES = (('input_tokens', 'request_tokens'), ('output_tokens', 'response_tokens'))
 
-_SERIALIZATION_FILTER_MISSING = object()
-
 
 @cache
 def _usage_serializer(usage_type: type[object]) -> SchemaSerializer:
@@ -40,75 +38,25 @@ class _UsageSerializerDescriptor:
         return _usage_serializer(owner)
 
 
-class _UsageSerializerMixin:
-    # Bare `pydantic_core.to_json()` looks for this attribute but does not build custom core schemas for stdlib
-    # dataclasses. The descriptor builds the same serializer as `TypeAdapter` for each concrete usage class.
-    __pydantic_serializer__ = _UsageSerializerDescriptor()
+@cache
+def _usage_field_names(usage_type: type[UsageBase]) -> frozenset[str]:
+    return frozenset(field.name for field in dataclasses.fields(usage_type))
 
 
-def _usage_field_filter(
-    filter_: core_schema.IncExCall,
-    key: str,
-    *,
-    include: bool,
-) -> tuple[bool, core_schema.IncExCall]:
-    if filter_ is None:
-        return True, None
-    if isinstance(filter_, set):
-        selected = key in filter_
-        return (selected if include else not selected), None
-
-    item_filter = filter_.get(key, _SERIALIZATION_FILTER_MISSING)
-    if item_filter is _SERIALIZATION_FILTER_MISSING:
-        return not include, None
-    if item_filter is True or item_filter is Ellipsis:
-        return include, None
-    return True, cast(core_schema.IncExCall, item_filter)
-
-
-def _serialize_usage(
-    value: UsageBase,
-    inner: core_schema.SerializerFunctionWrapHandler,
-    info: core_schema.SerializationInfo,
-    *,
-    reserved_names: frozenset[str],
-    arbitrary_value_serializer: SchemaSerializer,
-) -> dict[str, Any]:
-    serialized = inner(value)
-    assert isinstance(serialized, dict)
-    result = cast(dict[str, Any], serialized).copy()
-    for key, item in value.__dict__.items():
-        if key in reserved_names:
-            continue
-        included, item_include = _usage_field_filter(info.include, key, include=True)
-        if not included:
-            continue
-        included, item_exclude = _usage_field_filter(info.exclude, key, include=False)
-        if not included:
-            continue
-        if info.exclude_none and item is None:
-            continue
-        if item_include is not None or item_exclude is not None:
-            item = arbitrary_value_serializer.to_python(
-                item,
-                mode=info.mode,
-                include=cast(Any, item_include),
-                exclude=cast(Any, item_exclude),
-                by_alias=info.by_alias,
-                exclude_unset=info.exclude_unset,
-                exclude_defaults=info.exclude_defaults,
-                exclude_none=info.exclude_none,
-                exclude_computed_fields=info.exclude_computed_fields,
-                round_trip=info.round_trip,
-                serialize_as_any=info.serialize_as_any,
-                context=info.context,
-            )
-        result[key] = item
+def _usage_items(usage: UsageBase) -> dict[str, Any]:
+    """Return the public usage data as one mapping, independent of its internal storage."""
+    result = usage.__dict__.copy()
+    extra = cast(dict[str, Any], result.pop('_extra', {}))
+    result.update(extra)
     return result
 
 
 @dataclass(repr=False, init=False, eq=False)
-class UsageBase(_UsageSerializerMixin):
+class UsageBase:
+    # Bare `pydantic_core.to_json()` does not discover custom schemas for stdlib dataclasses. Point it at the
+    # generated `TypeAdapter` serializer so it still uses normal field serialization rather than a custom function.
+    __pydantic_serializer__ = _UsageSerializerDescriptor()
+
     input_tokens: Annotated[
         int,
         # `request_tokens` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
@@ -151,18 +99,23 @@ class UsageBase(_UsageSerializerMixin):
     ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
+    _extra: Annotated[dict[str, Any], Field(exclude_if=lambda value: not value)] = dataclasses.field(
+        default_factory=dict[str, Any], repr=False
+    )
+    """Usage dimensions not known to this version of Pydantic AI."""
+
     def __init__(self, *, details: dict[str, int] | None = None, **kwargs: Any):
         self.details = details or {}
+        self._extra = {}
         for k, v in kwargs.items():
             setattr(self, k, v)
 
     @classmethod
     def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
-        """Preserve arbitrary usage fields across Pydantic serialization."""
+        """Load legacy flat usage data into the nested arbitrary-field mapping."""
         schema = handler(source_type)
-        field_names = frozenset(field.name for field in dataclasses.fields(source_type))
+        field_names = _usage_field_names(source_type)
         reserved_names = field_names | frozenset(dir(source_type)) | _LEGACY_USAGE_KEYS
-        arbitrary_value_serializer = SchemaSerializer(core_schema.any_schema())
 
         def validate(value: Any, inner: core_schema.ValidatorFunctionWrapHandler) -> UsageBase:
             if isinstance(value, dict):
@@ -173,16 +126,26 @@ class UsageBase(_UsageSerializerMixin):
                 for field_name, legacy_name in _LEGACY_TOKEN_ALIASES:
                     if field_name not in value_dict and legacy_name in value_dict and value_dict[legacy_name] is None:
                         input_value[legacy_name] = 0
+
+                nested_extra = input_value.get('_extra')
+                if isinstance(nested_extra, dict):
+                    nested_extra = cast(dict[str, Any], nested_extra)
+                    extra: dict[str, Any] = {}
+                    for key, item in nested_extra.items():
+                        if key in field_names - {'_extra'}:
+                            input_value.setdefault(key, item)
+                        elif key not in reserved_names:
+                            extra[key] = item
+                else:
+                    extra = {}
+                for key in value_dict.keys() - reserved_names:
+                    extra[key] = input_value.pop(key)
+                input_value['_extra'] = extra
             else:
-                value_dict = None
                 input_value = cast(object, value)
 
             result = inner(input_value)
             assert isinstance(result, UsageBase)
-            if value_dict is not None:
-                for key, item in value_dict.items():
-                    if key not in reserved_names:
-                        setattr(result, key, item)
             return result
 
         def serialize(
@@ -190,19 +153,51 @@ class UsageBase(_UsageSerializerMixin):
             inner: core_schema.SerializerFunctionWrapHandler,
             info: core_schema.SerializationInfo,
         ) -> Any:
-            return _serialize_usage(
+            if type(value) is source_type:
+                return inner(value)
+            return _usage_serializer(type(value)).to_python(
                 value,
-                inner,
-                info,
-                reserved_names=reserved_names,
-                arbitrary_value_serializer=arbitrary_value_serializer,
+                mode=info.mode,
+                include=cast(Any, info.include),
+                exclude=cast(Any, info.exclude),
+                by_alias=info.by_alias,
+                exclude_unset=info.exclude_unset,
+                exclude_defaults=info.exclude_defaults,
+                exclude_none=info.exclude_none,
+                exclude_computed_fields=info.exclude_computed_fields,
+                round_trip=info.round_trip,
+                serialize_as_any=info.serialize_as_any,
+                context=info.context,
             )
 
         return core_schema.no_info_wrap_validator_function(
             validate,
             schema,
+            # Hand subclasses to their own generated serializer so declared fields survive base-typed containers.
+            # Each concrete usage class otherwise uses normal dataclass field serialization.
             serialization=core_schema.wrap_serializer_function_ser_schema(serialize, info_arg=True, schema=schema),
         )
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self.__dict__['_extra'][name]
+        except KeyError:
+            raise AttributeError(f'{type(self).__name__!r} object has no attribute {name!r}') from None
+
+    def __dir__(self) -> list[str]:
+        return sorted(set(super().__dir__()) | self.__dict__.get('_extra', {}).keys())
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in _usage_field_names(type(self)) or name in dir(type(self)):
+            object.__setattr__(self, name, value)
+        else:
+            self.__dict__.setdefault('_extra', {})[name] = value
+
+    def __delattr__(self, name: str) -> None:
+        if name in self.__dict__.get('_extra', {}):
+            del self._extra[name]
+        else:
+            object.__delattr__(self, name)
 
     def __copy__(self) -> UsageBase:
         """Shallow copy that also copies mutable fields like `details`."""
@@ -210,6 +205,7 @@ class UsageBase(_UsageSerializerMixin):
         new = cls.__new__(cls)
         new.__dict__.update(self.__dict__)
         new.details = self.details.copy()
+        new._extra = self._extra.copy()
         return new
 
     @property
@@ -269,19 +265,20 @@ class UsageBase(_UsageSerializerMixin):
         return result
 
     def __repr__(self):
-        kv_pairs = (f'{name}={value!r}' for name, value in sorted(self.__dict__.items()) if value)
+        kv_pairs = (f'{name}={value!r}' for name, value in sorted(_usage_items(self).items()) if value)
         return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
     def __eq__(self, value: object, /) -> bool:
         if type(self) is type(value):
+            value = cast(UsageBase, value)
             missing = object()
-            keys = self.__dict__.keys() | value.__dict__.keys()
+            keys = _usage_items(self).keys() | _usage_items(value).keys()
             return all(getattr(self, key, missing) == getattr(value, key, missing) for key in keys)
         return NotImplemented
 
     def has_values(self) -> bool:
         """Whether any values are set and non-zero."""
-        return any(self.details.values()) or any(v for k, v in self.__dict__.items() if k != 'details')
+        return any(self.details.values()) or any(v for k, v in _usage_items(self).items() if k != 'details')
 
 
 @dataclass(repr=False, init=False, eq=False)
@@ -411,7 +408,7 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
         slf: The usage to increment.
         incr_usage: The usage to increment by.
     """
-    for k in (slf.__dict__.keys() | incr_usage.__dict__.keys()) - {'requests', 'tool_calls', 'details'}:
+    for k in (_usage_items(slf).keys() | _usage_items(incr_usage).keys()) - {'requests', 'tool_calls', 'details'}:
         slf_value = getattr(slf, k, 0)
         incr_value = getattr(incr_usage, k, 0)
         if isinstance(slf_value, (int, float)) and isinstance(incr_value, (int, float)):

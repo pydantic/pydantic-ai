@@ -638,9 +638,11 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
             'details': {'reasoning_tokens': 3},
-            'future_tokens': 42,
-            'label': 'original',
-            'zero_tokens': 0,
+            '_extra': {
+                'future_tokens': 42,
+                'label': 'original',
+                'zero_tokens': 0,
+            },
         }
     )
     assert to_jsonable_python(messages)[0]['usage'] == expected_usage
@@ -652,7 +654,8 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
     [loaded] = ModelMessagesTypeAdapter.validate_json(serialized)
     assert isinstance(loaded, ModelResponse)
     assert loaded.usage == usage
-    assert loaded.usage.__dict__['future_tokens'] == 42
+    assert loaded.usage.future_tokens == 42
+    assert vars(loaded.usage)['_extra'] == vars(usage)['_extra']
 
 
 @pytest.mark.anyio
