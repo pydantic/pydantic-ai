@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 
 import pydantic_core
 import pytest
-from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, ValidationError, WithJsonSchema
+from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
@@ -3464,7 +3464,7 @@ def test_tool_examples_must_be_json_objects():
         Tool(my_tool, examples=[1]).tool_def
 
 
-def test_tool_examples_validate_before_single_arg_flattening():
+def test_tool_examples_single_arg_name_collision():
     class Args(BaseModel):
         arg: int
 
@@ -3475,8 +3475,7 @@ def test_tool_examples_validate_before_single_arg_flattening():
     assert tool.tool_def.examples == [{'arg': 1}]
 
     tool = Tool(my_tool, examples=[{'wrong': 1}])
-    with pytest.raises(ValidationError):
-        tool.tool_def
+    assert tool.tool_def.examples == [{'wrong': 1}]
 
 
 def test_tool_examples_preserve_aliases_and_omitted_defaults():
@@ -3516,23 +3515,19 @@ def test_tool_output_examples():
     assert tool_def.examples == [{'response': 1}, {'response': 2}]
 
 
-def test_tool_output_examples_must_match_schema():
-    with pytest.raises(ValidationError):
-        Agent('test', output_type=ToolOutput(int, examples=['wrong']))
-
-
-def test_tool_output_examples_preserve_aliases_and_omitted_defaults():
-    class Output(BaseModel):
-        value: int = Field(validation_alias='inValue', serialization_alias='outValue')
-        optional: int = 2
-
+def test_tool_output_examples_preserve_semantic_dict():
     model = TestModel(profile=ModelProfile(supports_tool_examples=True))
-    example = Output.model_validate({'inValue': 1})
-    Agent('test', output_type=ToolOutput(Output, examples=[example])).run_sync('hello', model=model)
+    Agent(
+        'test',
+        output_type=ToolOutput(
+            dict[str, int],
+            examples=[{'inValue': 1}],
+        ),
+    ).run_sync('hello', model=model)
 
     assert model.last_model_request_parameters is not None
     tool_def = model.last_model_request_parameters.output_tools[0]
-    assert tool_def.examples == [{'inValue': 1}]
+    assert tool_def.examples == [{'response': {'inValue': 1}}]
 
 
 def test_tool_output_dict_example_with_outer_key_name():

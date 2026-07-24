@@ -127,3 +127,5 @@ def get_weather(location: str, celsius: bool) -> str:
 ```
 
 Anthropic transports that support `input_examples` receive the examples natively. Other providers and legacy Amazon Bedrock receive them in the tool description.
+
+Each example must match the tool's JSON Schema. Pydantic AI serializes examples but does not validate them locally.

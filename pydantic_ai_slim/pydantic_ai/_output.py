@@ -1482,8 +1482,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                     parameters_json_schema=processor.object_def.json_schema,
                     outer_typed_dict_key=processor.outer_typed_dict_key,
                 )
-                for example in examples:
-                    processor.validator.validate_python(example)
 
             object_def = processor.object_def
 

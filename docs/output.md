@@ -382,8 +382,8 @@ agent = Agent(
     output_type=ToolOutput(
         Fruit,
         examples=[
-            Fruit(name='banana', color='yellow'),
-            Fruit(name='apple', color='red'),
+            {'name': 'banana', 'color': 'yellow'},
+            {'name': 'apple', 'color': 'red'},
         ],
     ),
 )
