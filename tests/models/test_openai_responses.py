@@ -14251,3 +14251,59 @@ async def test_cursorless_background_resume_stream_cancel_is_noop(allow_model_re
         assert request_stream.cancelled
 
     assert request_stream.cancelled
+
+
+async def test_openai_responses_web_search_tool_external_web_access(allow_model_requests: None) -> None:
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model,
+        capabilities=[NativeTool(WebSearchTool(external_web_access=False))],
+    )
+
+    result = await agent.run('Search the web.')
+
+    assert result.output == 'done'
+    response_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert len(response_kwargs['tools']) == 1
+    assert response_kwargs['tools'] == snapshot(
+        [{'type': 'web_search', 'search_context_size': 'medium', 'external_web_access': False}]
+    )
+
+
+async def test_openai_responses_web_search_tool_external_web_access_default_omitted(allow_model_requests: None) -> None:
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model,
+        capabilities=[NativeTool(WebSearchTool())],
+    )
+
+    result = await agent.run('Search the web.')
+
+    assert result.output == 'done'
+    response_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert len(response_kwargs['tools']) == 1
+    assert response_kwargs['tools'] == snapshot([{'type': 'web_search', 'search_context_size': 'medium'}])

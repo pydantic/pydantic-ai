@@ -170,6 +170,16 @@ class WebSearchTool(AbstractNativeTool):
 
     * Anthropic
     """
+    external_web_access: bool | None = None
+    """Whether the hosted web search tool is allowed to fetch live web content.
+
+    If `False`, the model may use cached or indexed results instead of fetching fresh pages.
+    Supported by:
+
+    * OpenAI Responses `web_search` tool
+
+    Not supported by the legacy `web_search_preview` tool used by OpenAI chat completions.
+    """
 
     kind: str = 'web_search'
     """The kind of tool."""

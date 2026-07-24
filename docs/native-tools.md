@@ -169,6 +169,7 @@ _(This example is complete, it can be run "as is")_
 | `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
 | `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
