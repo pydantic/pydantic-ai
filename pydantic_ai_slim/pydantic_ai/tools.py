@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, BaseModel, Field
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema, to_jsonable_python
 from typing_extensions import ParamSpec, Self, TypeVar
@@ -291,17 +291,51 @@ def _validate_timeout(timeout: float | None) -> None:
 def _process_examples(
     examples: list[Any],
     single_arg_name: str | None = None,
+    parameters_json_schema: ObjectJsonSchema | None = None,
+    outer_typed_dict_key: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Process validated tool examples by flattening and serializing them."""
+    """Serialize tool examples into the shape sent to the model."""
     processed_examples: list[dict[str, Any]] = []
     for example in examples:
-        if single_arg_name and isinstance(example, dict) and single_arg_name in example:
-            example = cast(dict[str, Any], example)[single_arg_name]
-        processed_example: Any = to_jsonable_python(example)
+        processed_example = _to_jsonable_example(example)
+        if outer_typed_dict_key:
+            processed_example = {outer_typed_dict_key: processed_example}
+        elif (
+            single_arg_name
+            and _utils.is_str_dict(processed_example)
+            and list(processed_example) == [single_arg_name]
+            and single_arg_name not in (parameters_json_schema or {}).get('properties', {})
+        ):
+            processed_example = processed_example[single_arg_name]
         if not _utils.is_str_dict(processed_example):
             raise UserError('Tool examples must be JSON objects.')
         processed_examples.append(processed_example)
     return processed_examples
+
+
+def _to_jsonable_example(value: Any) -> Any:
+    """Serialize an example using validation aliases while preserving omitted model fields."""
+    if isinstance(value, BaseModel):
+        result: dict[str, Any] = {}
+        for name, field_info in type(value).model_fields.items():
+            if name not in value.model_fields_set:
+                continue
+            validation_alias = field_info.validation_alias
+            if isinstance(validation_alias, str):
+                key = validation_alias
+            elif isinstance(validation_alias, AliasChoices) and isinstance(validation_alias.choices[0], str):
+                key = validation_alias.choices[0]
+            else:
+                key = name
+            result[key] = _to_jsonable_example(getattr(value, name))
+        return result
+    if isinstance(value, dict):
+        value_dict = cast(dict[Any, Any], value)
+        return to_jsonable_python({key: _to_jsonable_example(item) for key, item in value_dict.items()})
+    if isinstance(value, (list, tuple)):
+        value_sequence = cast(list[Any] | tuple[Any, ...], value)
+        return [_to_jsonable_example(item) for item in value_sequence]
+    return to_jsonable_python(value)
 
 
 @dataclass(init=False)
@@ -521,8 +555,13 @@ class Tool(Generic[ToolAgentDepsT]):
     def tool_def(self) -> ToolDefinition:
         examples = self.examples
         if examples:
-            examples = [self.function_schema.validator.validate_python(example) for example in examples]
-            examples = _process_examples(examples, single_arg_name=self.function_schema.single_arg_name)
+            examples = _process_examples(
+                examples,
+                single_arg_name=self.function_schema.single_arg_name,
+                parameters_json_schema=self.function_schema.json_schema,
+            )
+            for example in examples:
+                self.function_schema.validator.validate_python(example)
 
         return ToolDefinition(
             name=self.name,

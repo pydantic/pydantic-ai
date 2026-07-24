@@ -3391,6 +3391,20 @@ def test_tool_from_schema_examples():
     assert tool.tool_def.examples == examples
 
 
+def test_tool_from_schema_examples_are_caller_validated():
+    def my_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    tool = Tool.from_schema(
+        my_tool,
+        name='my_tool',
+        description='desc',
+        json_schema={'type': 'object', 'required': ['x']},
+        examples=[{'wrong': 1}],
+    )
+    assert tool.tool_def.examples == [{'wrong': 1}]
+
+
 def test_tool_from_schema_preserves_positional_args_validator():
     def my_tool(x: int) -> int:
         return x  # pragma: no cover
@@ -3446,7 +3460,7 @@ def test_tool_examples_must_be_json_objects():
     def my_tool(x: int) -> int:
         return x  # pragma: no cover
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(UserError, match='Tool examples must be JSON objects'):
         Tool(my_tool, examples=[1]).tool_def
 
 
@@ -3463,6 +3477,14 @@ def test_tool_examples_validate_before_single_arg_flattening():
     tool = Tool(my_tool, examples=[{'wrong': 1}])
     with pytest.raises(ValidationError):
         tool.tool_def
+
+
+def test_tool_examples_preserve_aliases_and_omitted_defaults():
+    def my_tool(external_x: Annotated[int, Field(alias='x')], optional: int = 2) -> int:
+        return external_x + optional  # pragma: no cover
+
+    tool = Tool(my_tool, examples=[{'x': 1}])
+    assert tool.tool_def.examples == [{'x': 1}]
 
 
 def test_agent_tool_decorators_examples():
@@ -3497,6 +3519,32 @@ def test_tool_output_examples():
 def test_tool_output_examples_must_match_schema():
     with pytest.raises(ValidationError):
         Agent('test', output_type=ToolOutput(int, examples=['wrong']))
+
+
+def test_tool_output_examples_preserve_aliases_and_omitted_defaults():
+    class Output(BaseModel):
+        value: int = Field(validation_alias='inValue', serialization_alias='outValue')
+        optional: int = 2
+
+    model = TestModel(profile=ModelProfile(supports_tool_examples=True))
+    example = Output.model_validate({'inValue': 1})
+    Agent('test', output_type=ToolOutput(Output, examples=[example])).run_sync('hello', model=model)
+
+    assert model.last_model_request_parameters is not None
+    tool_def = model.last_model_request_parameters.output_tools[0]
+    assert tool_def.examples == [{'inValue': 1}]
+
+
+def test_tool_output_dict_example_with_outer_key_name():
+    model = TestModel(profile=ModelProfile(supports_tool_examples=True))
+    Agent(
+        'test',
+        output_type=ToolOutput(dict[str, int], examples=[{'response': 1}]),
+    ).run_sync('hello', model=model)
+
+    assert model.last_model_request_parameters is not None
+    tool_def = model.last_model_request_parameters.output_tools[0]
+    assert tool_def.examples == [{'response': {'response': 1}}]
 
 
 def test_tool_examples_flattening():

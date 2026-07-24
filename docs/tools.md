@@ -382,6 +382,8 @@ You can provide examples of correct tool usage with the `examples` parameter on 
 
 Pydantic AI sends examples through Anthropic's native [`input_examples`](https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools#providing-tool-use-examples) field when the transport supports it. For other providers and legacy Amazon Bedrock, it includes the examples in the tool description.
 
+Examples registered from Python functions are validated against the generated tool schema. When using [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], you are responsible for ensuring that each example matches the supplied JSON Schema.
+
 ```python {title="tool_examples.py"}
 from pydantic_ai import Agent
 
