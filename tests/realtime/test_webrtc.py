@@ -20,7 +20,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters
 
 from ..conftest import try_import
-from .conftest import _scrub_ephemeral_secret
+from .conftest import _scrub_ephemeral_secret  # pyright: ignore[reportPrivateUsage]
 
 with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider

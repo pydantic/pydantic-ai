@@ -47,9 +47,13 @@ def _scrub_ephemeral_secret(response: dict[str, Any]) -> dict[str, Any]:
         data = json.loads(raw)
     except (ValueError, TypeError):  # pragma: no cover - non-JSON body
         return response
-    if isinstance(data, dict) and isinstance(data.get('value'), str) and data['value'].startswith('ek_'):
-        data['value'] = 'ek_scrubbed'
-        body = json.dumps(data)
+    if not isinstance(data, dict):  # pragma: no cover - non-object JSON body
+        return response
+    body_data = cast('dict[str, Any]', data)
+    value = body_data.get('value')
+    if isinstance(value, str) and value.startswith('ek_'):
+        body_data['value'] = 'ek_scrubbed'
+        body = json.dumps(body_data)
         response['body']['string'] = body.encode() if isinstance(raw, bytes) else body
     return response
 
