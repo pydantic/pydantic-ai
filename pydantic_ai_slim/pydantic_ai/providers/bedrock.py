@@ -151,7 +151,7 @@ class BedrockModelProfile(ModelProfile, total=False):
     and video next to a `toolResult`, while Llama and Mistral reject *any* content sharing the turn (the
     `toolResult` must be alone). When a merge would co-locate a `toolResult` with a kind not listed here,
     the adapter splits the turns and separates them with a synthetic assistant message (Bedrock re-merges
-    consecutive same-role turns, so a bare split doesn't suffice). See #6081.
+    consecutive same-role turns, so a bare split doesn't suffice). See https://github.com/pydantic/pydantic-ai/issues/6081.
 
     Default: all kinds (no restriction); the model receives merged turns unchanged.
     """
@@ -256,7 +256,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_tool_caching=True,
             bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
             # Anthropic on Bedrock rejects a `toolResult` co-located with a document or video block, but
-            # accepts text and images alongside it. See #6081.
+            # accepts text and images alongside it. See https://github.com/pydantic/pydantic-ai/issues/6081.
             bedrock_tool_result_colocatable_content=frozenset({'text', 'image'}),
             bedrock_supports_leading_assistant_message=True,
             bedrock_thinking_variant='anthropic',
@@ -318,7 +318,7 @@ def bedrock_meta_model_profile(model_name: str) -> ModelProfile | None:
         _strip_builtin_tools(meta_model_profile(model_name)),
         BedrockModelProfile(
             # Llama on Bedrock requires a `toolResult` to be alone in its user message; it rejects
-            # any co-located text or attachment block. See #6081.
+            # any co-located text or attachment block. See https://github.com/pydantic/pydantic-ai/issues/6081.
             bedrock_tool_result_colocatable_content=frozenset(),
             # Llama on Bedrock accepts both images and documents inside a `toolResult`'s content; it has
             # no video support. Verified live against `us.meta.llama4-maverick-17b-instruct-v1:0`.
@@ -343,7 +343,7 @@ def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
             # Mistral on Bedrock requires a `toolResult` to be alone in its user message; it rejects
-            # any co-located text or attachment block. See #6081.
+            # any co-located text or attachment block. See https://github.com/pydantic/pydantic-ai/issues/6081.
             bedrock_tool_result_colocatable_content=frozenset(),
             # Mistral (pixtral) on Bedrock accepts documents inside a `toolResult`'s content but rejects
             # images there — even though it accepts images in a plain user message — and has no video
@@ -449,7 +449,7 @@ def bedrock_writer_model_profile(model_name: str) -> ModelProfile | None:
         json_schema_transformer=BedrockJsonSchemaTransformer,
         # Writer Palmyra on Bedrock requires a `toolResult` to be alone in its user message; it rejects
         # any co-located text or attachment block (like Llama and Mistral). Verified live against
-        # `writer.palmyra-x4-v1:0` and `writer.palmyra-x5-v1:0`. See #6081.
+        # `writer.palmyra-x4-v1:0` and `writer.palmyra-x5-v1:0`. See https://github.com/pydantic/pydantic-ai/issues/6081.
         bedrock_tool_result_colocatable_content=frozenset(),
         # Writer Palmyra also rejects the `status` field on a `toolResult` block, unlike every other family.
         bedrock_supports_tool_result_status=False,
@@ -497,6 +497,7 @@ class BedrockProvider(Provider[BaseClient]):
 
     @property
     def client(self) -> BaseClient:
+        """The boto3 client used to make requests to the Bedrock API."""
         return self._client
 
     @client.setter

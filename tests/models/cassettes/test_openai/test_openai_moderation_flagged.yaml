@@ -1,0 +1,220 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '153'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: I want to kill them.
+        role: user
+      model: gpt-5
+      moderation:
+        model: omni-moderation-latest
+      stream: false
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4578'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '21933'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: |-
+            I'm really sorry you're feeling this angry and overwhelmed. I can't help with anything that would harm someone, and I want to help you and others stay safe.
+
+            If you feel like you might act on this right now, please call your local emergency number or go to the nearest emergency department.
+
+            Things you can do right now to cool down:
+            - Create distance from the person/situation; step outside or into another room.
+            - Slow your breathing: inhale 4 seconds, hold 4, exhale 6-8, repeat for a few minutes.
+            - Avoid alcohol or drugs; put away or leave any objects that could be used to hurt someone.
+            - Call or text someone you trust and tell them you need help calming down.
+
+            You don't have to handle this alone. Free, confidential support:
+            - US/Canada: Call or text 988 (Suicide & Crisis Lifeline) or chat at 988lifeline.org
+            - UK & ROI: Samaritans 116 123, email jo@samaritans.org
+            - Australia: Lifeline 13 11 14, lifeline.org.au
+            - Elsewhere: findahelpline.com to locate a local crisis line
+
+            If you want to talk about what's going on, I'm here to listen and help you find a safer way forward. Are you and everyone around you safe right now?
+          refusal: null
+          role: assistant
+      created: 1784742798
+      id: chatcmpl-E4VQ6XcCyuVqUxQQH9n9C5QyjWEte
+      model: gpt-5-2025-08-07
+      moderation:
+        input:
+          model: omni-moderation-latest
+          results:
+          - categories:
+              harassment: true
+              harassment/threatening: true
+              hate: false
+              hate/threatening: false
+              illicit: false
+              illicit/violent: false
+              self-harm: false
+              self-harm/instructions: false
+              self-harm/intent: false
+              sexual: false
+              sexual/minors: false
+              violence: true
+              violence/graphic: false
+            category_applied_input_types:
+              harassment:
+              - text
+              harassment/threatening:
+              - text
+              hate:
+              - text
+              hate/threatening:
+              - text
+              illicit:
+              - text
+              illicit/violent:
+              - text
+              self-harm:
+              - text
+              self-harm/instructions:
+              - text
+              self-harm/intent:
+              - text
+              sexual:
+              - text
+              sexual/minors:
+              - text
+              violence:
+              - text
+              violence/graphic:
+              - text
+            category_scores:
+              harassment: 0.3998791611998704
+              harassment/threatening: 0.46157949247490154
+              hate: 0.03544004051522365
+              hate/threatening: 0.023518631721968726
+              illicit: 0.0943894540155202
+              illicit/violent: 0.05758081155757371
+              self-harm: 0.0005177977297866245
+              self-harm/instructions: 2.5071593847983196e-06
+              self-harm/intent: 0.0002832988454686559
+              sexual: 7.793660930208434e-05
+              sexual/minors: 4.264746818557914e-06
+              violence: 0.9530094249314258
+              violence/graphic: 4.238847419937498e-05
+            flagged: true
+            model: omni-moderation-latest
+            type: moderation_result
+          type: moderation_results
+        output:
+          model: omni-moderation-latest
+          results:
+          - categories:
+              harassment: false
+              harassment/threatening: false
+              hate: false
+              hate/threatening: false
+              illicit: false
+              illicit/violent: false
+              self-harm: false
+              self-harm/instructions: false
+              self-harm/intent: false
+              sexual: false
+              sexual/minors: false
+              violence: false
+              violence/graphic: false
+            category_applied_input_types:
+              harassment:
+              - text
+              harassment/threatening:
+              - text
+              hate:
+              - text
+              hate/threatening:
+              - text
+              illicit:
+              - text
+              illicit/violent:
+              - text
+              self-harm:
+              - text
+              self-harm/instructions:
+              - text
+              self-harm/intent:
+              - text
+              sexual:
+              - text
+              sexual/minors:
+              - text
+              violence:
+              - text
+              violence/graphic:
+              - text
+            category_scores:
+              harassment: 4.583129006350382e-05
+              harassment/threatening: 3.8596609058077356e-05
+              hate: 1.6346470245419304e-05
+              hate/threatening: 4.61127481426412e-06
+              illicit: 0.006255989061489174
+              illicit/violent: 8.426423087564058e-05
+              self-harm: 0.01500330418131775
+              self-harm/instructions: 0.0005263128433688932
+              self-harm/intent: 0.008895123414492744
+              sexual: 3.9204178923762816e-05
+              sexual/minors: 8.750299760661308e-06
+              violence: 0.010227841972407455
+              violence/graphic: 2.913700606794303e-05
+            flagged: false
+            model: omni-moderation-latest
+            type: moderation_result
+          type: moderation_results
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 1888
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 1600
+          rejected_prediction_tokens: 0
+        prompt_tokens: 12
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 1900
+    status:
+      code: 200
+      message: OK
+version: 1

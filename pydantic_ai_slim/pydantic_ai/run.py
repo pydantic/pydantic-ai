@@ -435,7 +435,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     @property
     def pending_messages(self) -> list[PendingMessage]:
-        """Internal: live view of the queue mutated by `enqueue` and drained by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+        """Internal: live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
 
         Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages.
         """
@@ -445,7 +445,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
         *content: EnqueueContent,
         priority: PendingMessagePriority = 'asap',
-    ) -> None:
+    ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
         Designed to be called from the same event loop driving `agent.iter()`. If
@@ -456,7 +456,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         atomic against concurrent appends from a different thread.
 
         Args:
-            *content: One or more [`EnqueueContent`][pydantic_ai._enqueue.EnqueueContent] items.
+            *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
                 Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
                 content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]) is gathered into one
                 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], and each
@@ -470,11 +470,17 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 `'asap'` (default) — at the earliest opportunity (next model request,
                     or a redirect if the agent would otherwise end).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+
+        Returns:
+            The `enqueue_id` of the queued message, echoed on the
+            [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when it's
+            delivered, or `None` when there was nothing to enqueue (an empty call).
         """
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:
-            return
+            return None
         self._graph_run.state.pending_messages.append(pending)
+        return pending.enqueue_id
 
     def cancel(self) -> None:
         """Cancel the whole agent run.

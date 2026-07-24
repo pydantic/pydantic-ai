@@ -123,6 +123,8 @@ Output functions are similar to [function tools](tools.md), but the model is for
 
 As with tool functions, output function arguments provided by the model are validated using Pydantic (with optional [validation context](#validation-context)), can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
+Output functions do not support [`ToolFailed`][pydantic_ai.exceptions.ToolFailed], which is reserved for [function-tool failures](tools-advanced.md#tool-failed). Here, `ToolFailed` is treated like any ordinary exception: an [`on_output_process_error` hook](hooks.md#error-hooks) can recover from it, otherwise it aborts the run.
+
 To specify output functions, you set the agent's `output_type` to either a single function (or bound instance method), or a list of functions. The list can also contain other output types like simple scalars or entire Pydantic models.
 You typically do not want to also register your output function as a tool (using the `@agent.tool` decorator or `tools` argument), as this could confuse the model about which it should be calling.
 
@@ -362,7 +364,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Native Output
 
-Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, Gemini cannot use tools at the same time as structured output, and attempting to do so will result in an error.
+Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools.
 
 To use this mode, you can wrap the output type(s) in the [`NativeOutput`][pydantic_ai.output.NativeOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient.
 
@@ -570,6 +572,8 @@ Some validation is inconvenient or impossible to do in Pydantic validators, in p
 
 Each [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] raised here consumes one unit of the run's output retry budget. The budget defaults to `1` and can be set on the agent with [`AgentRetries`][pydantic_ai.agent.AgentRetries] via `Agent(retries={'output': N})`, on a single run via `agent.run(retries={'output': N})`, or per output tool via [`ToolOutput(max_retries=N)`](#tool-output). Inside the validator, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects the limit that will actually stop you (the global budget on the text path, or the per-tool limit on the tool path) and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is the global retry counter, so it stays consistent across output-tool switches within a single run. See [How output retries are enforced](agent.md#how-output-retries-are-enforced) for the full enforcement model.
 
+Output validators do not support [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]. Raise `ModelRetry` to ask the model for another output. Here, `ToolFailed` is treated like any ordinary exception: an [`on_output_process_error` hook](hooks.md#error-hooks) can recover from it, otherwise it aborts the run.
+
 If you want to implement separate validation logic for different output types, it's recommended to use [output functions](#output-functions) instead, to save you from having to do `isinstance` checks inside the output validator.
 If you want the model to output plain text, do your own processing or validation, and then have the agent's final output be the result of your function, it's recommended to use an [output function](#output-functions) with the [`TextOutput` marker class](#text-output).
 
@@ -700,7 +704,7 @@ Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip
 
 ## Optional output (allowing `None`) {#optional-output}
 
-Some agents perform their work entirely through tool calls and don't need to produce a final output — for example, an agent that updates a record via a tool and then stops. But with `str` in the `output_type` — including the default — the model is required to end its final turn with text. If it considers its work finished and has nothing left to say, it will return an empty response, or one containing only [thinking](thinking.md) content (as [Anthropic](models/anthropic.md) models notably do), and Pydantic AI will ask it to produce text anyway.
+Some agents perform their work entirely through tool calls and don't need to produce a final output — for example, an agent that updates a record via a tool and then stops. But with `str` in the `output_type` — including the default — the model is required to end its final turn with text. If it considers its work finished and has nothing left to say, it will return an empty response, or one containing only [thinking](capabilities/thinking.md) content (as [Anthropic](models/anthropic.md) models notably do), and Pydantic AI will ask it to produce text anyway.
 
 Include `None` in the `output_type` when finishing without a final message is a valid outcome for your agent, and you'd rather receive `None` than have the model say something for the sake of saying it:
 
@@ -723,7 +727,7 @@ print(result.output)
 
 When the model returns an empty response and `None` is an allowed output type, the agent will return `None` instead of retrying. [Output validator functions](#output-validator-functions) still run with `None` as the argument, so you can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject it if needed.
 
-`output_type=str | None` is the canonical case: it's handled as regular text output, and the **only** way the model signals `None` is by returning a response with no text output — either an empty response, or one containing only [thinking](thinking.md) content, which some reasoning models emit after completing their work through a tool call. There's no output tool or structured schema involved. This mirrors how plain `str` is already treated specially as free-form text output rather than a structured tool call.
+`output_type=str | None` is the canonical case: it's handled as regular text output, and the **only** way the model signals `None` is by returning a response with no text output — either an empty response, or one containing only [thinking](capabilities/thinking.md) content, which some reasoning models emit after completing their work through a tool call. There's no output tool or structured schema involved. This mirrors how plain `str` is already treated specially as free-form text output rather than a structured tool call.
 
 `None` is also supported in the other output modes, with an extra structured commit path in addition to (or in place of) the empty-response fallback:
 
@@ -734,7 +738,7 @@ When the model returns an empty response and `None` is an allowed output type, t
     `output_type=None` on its own is not valid — at least one other output type must be provided alongside `None`.
 
 !!! note
-    When using [`agent.run_stream()`][pydantic_ai.Agent.run_stream] with an optional output type, an empty model response has no intermediate values to yield, so [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] produces an empty iterator in this case. Use [`get_output()`][pydantic_ai.result.StreamedRunResult.get_output] to retrieve the final `None` value instead.
+    When using [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] with an optional output type, an empty model response has no intermediate values to yield, so [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] produces an empty iterator in this case. Use [`get_output()`][pydantic_ai.result.StreamedRunResult.get_output] to retrieve the final `None` value instead.
 
 ## Streamed Results
 
@@ -852,7 +856,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-As setting an `output_type` uses the [Tool Output](#tool-output) mode by default, this will only work if the model supports streaming tool arguments. For models that don't, like Gemini, try [Native Output](#native-output) or [Prompted Output](#prompted-output) instead.
+As setting an `output_type` uses the [Tool Output](#tool-output) mode by default, this will only work if the model supports streaming tool arguments. For models that don't, try [Native Output](#native-output) or [Prompted Output](#prompted-output) instead. With Gemini 3, use Native Output; with earlier Gemini models that also use function tools, use Prompted Output.
 
 ### Streaming Model Responses
 
