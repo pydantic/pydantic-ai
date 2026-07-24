@@ -22,6 +22,7 @@ from typing_extensions import assert_never
 
 from .._enqueue import PendingMessage, PendingMessagePriority
 from .._instrumentation import (
+    InstrumentationNames,
     model_metric_attributes,
     provider_attributes,
     response_attributes,
@@ -448,25 +449,46 @@ class RealtimeSession:
 
         settings = self._instrumentation
         if settings is not None:
-            # The session is the realtime analog of an agent run, and the semconv operation-name
-            # enum has no realtime/speech value (nor do other voice frameworks emit one), so use
-            # `invoke_agent` like the classic agent-run span — backends render the session as an
-            # agent invocation — with `gen_ai.output.type` (`speech`/`text`) capturing the modality.
+            # The session is the realtime analog of an agent run, and the semconv operation-name enum has
+            # no realtime/speech value (nor do the OTel-native voice frameworks — LiveKit, Pipecat — emit
+            # one), so report it as an `invoke_agent` invocation like the classic agent-run span, with
+            # `gen_ai.output.type` (`speech`/`text`) marking the modality. `agent_name` defaults to
+            # `'agent'` like the classic span so an unnamed agent's session still carries the attribute
+            # that backends group runs by (e.g. Logfire's Runs view).
+            agent_name = self._agent_name or 'agent'
+            names = InstrumentationNames.for_version(settings.version)
             attributes: dict[str, Any] = {
                 'gen_ai.operation.name': 'invoke_agent',
                 'gen_ai.output.type': self._otel_output_type,
+                # Both the semconv (`gen_ai.agent.name`) and legacy (`agent_name`) keys, matching the
+                # classic run span, so backends that group runs by either recognize the session as a run.
+                'gen_ai.agent.name': agent_name,
+                'agent_name': agent_name,
+                # An explicit marker so a backend can tell a realtime session (and its `chat` turns) apart
+                # from a classic run: the semconv has no realtime operation, and `gen_ai.output.type` only
+                # distinguishes audio from text, not realtime from a classic run that happens to be text.
+                'pydantic_ai.realtime': True,
+                # Display the session as `<agent> realtime`, mirroring the classic run span's `<agent> run`
+                # message, so it reads as the realtime variant of an agent run regardless of span name.
+                'logfire.msg': f'{agent_name} realtime',
             }
             if self._model_name:
+                # The model lives in the attribute, not the span title — matching the classic agent-run
+                # span, which keeps the model on its child `chat` spans only.
                 attributes['gen_ai.request.model'] = self._model_name
-            if self._agent_name:
-                attributes['gen_ai.agent.name'] = self._agent_name
             if self._agent_description:
                 attributes['gen_ai.agent.description'] = self._agent_description
             if self._conversation_id:
                 # Match the classic agent-run span's key (see `capabilities/instrumentation.py`) so a
                 # realtime session can be correlated with other runs sharing the conversation id.
                 attributes['gen_ai.conversation.id'] = self._conversation_id
-            span_name = f'realtime {self._model_name}' if self._model_name else 'realtime'
+            # Follow the configured instrumentation version's agent-run naming: the semconv
+            # `invoke_agent {name}` when that version is active (v3+), otherwise a bare `realtime`
+            # operation name (the classic v2 span name is likewise a bare `agent run`).
+            if names.agent_run_span_name == 'invoke_agent':
+                span_name = names.get_agent_run_span_name(agent_name)
+            else:
+                span_name = 'realtime'
             parent_context = otel_context.get_current()
             span = settings.tracer.start_span(
                 span_name,
@@ -914,6 +936,9 @@ class RealtimeSession:
         attributes: dict[str, Any] = {
             'gen_ai.operation.name': 'chat',
             'gen_ai.output.type': self._otel_output_type,
+            # Mark the turn as realtime too (see the session span), so a backend can tell a realtime
+            # `chat` span apart from a classic model-request `chat` span.
+            'pydantic_ai.realtime': True,
         }
         if self._model_name:
             attributes['gen_ai.request.model'] = self._model_name

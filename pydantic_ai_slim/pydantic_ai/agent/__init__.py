@@ -3213,7 +3213,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model_name=model.model_name,
                     provider_name=model.system,
                     provider_url=model.base_url,
-                    agent_name=self.name,
+                    # Fall back to 'agent' like the classic run span (see `capabilities/instrumentation.py`)
+                    # so the session span always carries an `agent_name`; backends that group runs by it
+                    # (e.g. Logfire's Runs view) would otherwise skip an unnamed agent's realtime session.
+                    agent_name=self.name or 'agent',
                     usage=run_context.usage,
                     usage_limits=usage_limits,
                     audio_retention=audio_retention,

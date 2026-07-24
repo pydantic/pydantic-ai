@@ -202,7 +202,7 @@ async def test_owner_error_marks_active_chat_and_session_spans() -> None:
 
     spans = {span.name: span for span in exporter.get_finished_spans()}
     assert spans['chat gpt-realtime'].status.is_ok is False
-    assert spans['realtime gpt-realtime'].status.is_ok is False
+    assert spans['invoke_agent agent'].status.is_ok is False
     assert all(span.events for span in spans.values())
 
 
@@ -238,7 +238,7 @@ async def test_nested_agent_run_nests_under_session_span() -> None:
         _ = [e async for e in session]
 
     by_id = {s.context.span_id: s for s in exporter.get_finished_spans() if s.context is not None}
-    session_span = next(s for s in by_id.values() if s.name == 'realtime gpt-realtime')
+    session_span = next(s for s in by_id.values() if s.name == 'invoke_agent agent')
     tool_span = next(s for s in by_id.values() if s.name == 'execute_tool analyze')
     # the delegated sub-agent run is a real root agent span, nested under the tool span
     agent_span = next(s for s in by_id.values() if s.name.startswith('agent run') or s.name.startswith('invoke_agent'))
@@ -265,9 +265,9 @@ async def test_session_and_tool_spans_with_usage() -> None:
         _ = [e async for e in session]
 
     spans = {s.name: s for s in exporter.get_finished_spans()}
-    assert set(spans) == {'realtime gpt-realtime', 'chat gpt-realtime', 'execute_tool get_weather'}
+    assert set(spans) == {'invoke_agent assistant', 'chat gpt-realtime', 'execute_tool get_weather'}
 
-    sess = spans['realtime gpt-realtime']
+    sess = spans['invoke_agent assistant']
     assert sess.attributes is not None
     # The semconv operation-name enum has no realtime value, so the session span reports the
     # session as an agent invocation like the classic agent-run span.
@@ -302,6 +302,24 @@ async def test_session_and_tool_spans_with_usage() -> None:
     assert tool.parent is not None and tool.parent.span_id == sess.context.span_id
 
 
+async def test_unnamed_agent_session_span_defaults_agent_name() -> None:
+    # An agent with no `name=` still gets `agent_name='agent'` on its session span (both the semconv
+    # `gen_ai.agent.name` and legacy `agent_name` keys), mirroring the classic run span. Backends that
+    # group runs by `agent_name` (e.g. Logfire's Runs view) would otherwise skip an unnamed session.
+    settings, exporter = _settings()
+    agent: Agent[None, str] = Agent()
+    agent.instrument = settings
+    conn = _Connection([Transcript(text='hi', is_final=True), TurnCompleteEvent()])
+
+    async with agent.realtime(_Model(conn)).session() as session:
+        _ = [event async for event in session]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.agent.name'] == 'agent'
+    assert sess.attributes['agent_name'] == 'agent'
+
+
 async def test_output_type_reflects_text_modality() -> None:
     # With `output_modality='text'` the model replies as plain text rather than speech, and the
     # session and `chat` spans report `gen_ai.output.type='text'` (threaded from the model settings
@@ -315,7 +333,7 @@ async def test_output_type_reflects_text_modality() -> None:
     ).session() as session:
         _ = [e async for e in session]
     spans = {s.name: s for s in exporter.get_finished_spans()}
-    for name in ('realtime gpt-realtime', 'chat gpt-realtime'):
+    for name in ('invoke_agent assistant', 'chat gpt-realtime'):
         attributes = spans[name].attributes
         assert attributes is not None
         assert attributes['gen_ai.output.type'] == 'text'
@@ -360,7 +378,7 @@ async def test_chat_spans_split_on_tool_call_are_session_children() -> None:
         _ = [e async for e in session]
 
     finished = exporter.get_finished_spans()
-    sess = next(s for s in finished if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in finished if s.name == 'invoke_agent agent')
     chats = [s for s in finished if s.name == 'chat gpt-realtime']
     tool = next(s for s in finished if s.name == 'execute_tool get_weather')
     assert len(chats) == 2
@@ -429,7 +447,7 @@ async def test_conversation_span_tree() -> None:
     assert _span_tree(exporter) == snapshot(
         [
             {
-                'realtime gpt-realtime': [
+                'invoke_agent assistant': [
                     {'chat gpt-realtime': []},
                     {'execute_tool get_weather': []},
                     {'chat gpt-realtime': []},
@@ -480,7 +498,7 @@ async def test_explicit_capability_produces_session_chat_and_tool_spans() -> Non
     async with agent.realtime(_Model(conn)).session() as session:
         _ = [e async for e in session]
     spans = {s.name for s in exporter.get_finished_spans()}
-    assert spans == {'realtime gpt-realtime', 'chat gpt-realtime', 'execute_tool get_weather'}
+    assert spans == {'invoke_agent assistant', 'chat gpt-realtime', 'execute_tool get_weather'}
 
 
 async def test_explicit_capability_settings_win_over_instrument() -> None:
@@ -504,7 +522,7 @@ async def test_explicit_capability_settings_win_over_instrument() -> None:
     async with agent.realtime(_Model(conn)).session() as session:
         _ = [e async for e in session]
     assert {s.name for s in cap_exporter.get_finished_spans()} == {
-        'realtime gpt-realtime',
+        'invoke_agent assistant',
         'chat gpt-realtime',
         'execute_tool get_weather',
     }
@@ -529,7 +547,7 @@ async def test_session_captures_transcript_messages() -> None:
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
 
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert json.loads(str(sess.attributes['pydantic_ai.all_messages'])) == [
         {'role': 'user', 'parts': [{'type': 'text', 'content': 'hello there'}]},
@@ -559,7 +577,7 @@ async def test_session_span_includes_resolved_run_attributes() -> None:
     async with agent.realtime(_Model(conn), metadata={'tier': 'gold'}).session() as session:
         _ = [event async for event in session]
 
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent assistant')
     assert sess.attributes is not None
     assert sess.attributes['gen_ai.agent.description'] == 'Handles realtime conversations.'
     assert json.loads(str(sess.attributes['gen_ai.system_instructions'])) == [
@@ -588,7 +606,7 @@ async def test_session_span_marks_seeded_history_boundary() -> None:
     )
     _ = await collect_events(session)
 
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert sess.attributes['pydantic_ai.new_message_index'] == 2
     all_messages = json.loads(str(sess.attributes['pydantic_ai.all_messages']))
@@ -610,7 +628,7 @@ async def test_include_content_false_redacts_transcript_messages() -> None:
         metadata={'tier': 'gold'},
     )
     _ = await collect_events(session)
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert json.loads(str(sess.attributes['pydantic_ai.all_messages'])) == [
         {'role': 'user', 'parts': [{'type': 'text'}]},
@@ -629,7 +647,7 @@ async def test_session_span_sets_conversation_id() -> None:
     conn = _Connection([TurnCompleteEvent()])
     async with agent.realtime(_Model(conn), conversation_id='conv-123').session() as session:
         _ = [event async for event in session]
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert sess.attributes['gen_ai.conversation.id'] == 'conv-123'
 
@@ -639,21 +657,22 @@ async def test_session_span_omits_conversation_id_when_unset() -> None:
     conn = _Connection([TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert 'gen_ai.conversation.id' not in sess.attributes
 
 
 async def test_session_span_without_model_or_usage() -> None:
     settings, exporter = _settings()
-    conn = _Connection([TurnCompleteEvent()])  # no model/agent name, no Usage event
+    conn = _Connection([TurnCompleteEvent()])  # no model name, no Usage event
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings)
     _ = await collect_events(session)
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert sess.attributes['gen_ai.operation.name'] == 'invoke_agent'
     assert 'gen_ai.request.model' not in sess.attributes
-    assert 'gen_ai.agent.name' not in sess.attributes
+    # The agent name defaults to `'agent'` even without an explicit name, mirroring the classic run span.
+    assert sess.attributes['gen_ai.agent.name'] == 'agent'
     assert 'gen_ai.agent.description' not in sess.attributes
     assert 'gen_ai.system_instructions' not in sess.attributes
     assert 'metadata' not in sess.attributes
@@ -728,7 +747,7 @@ async def test_session_usage_without_aggregated_attribute_names() -> None:
     )
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert sess.attributes['gen_ai.usage.input_tokens'] == 10
     assert 'gen_ai.aggregated_usage.input_tokens' not in sess.attributes
@@ -975,8 +994,8 @@ async def test_early_break_finishes_chat_span(caplog: pytest.LogCaptureFixture) 
     # These are all spans this path starts. They must be exported before the owner block returns,
     # without GC or extra event-loop turns, and the session remains the explicit parent of `chat`.
     spans = {span.name: span for span in exporter.get_finished_spans()}
-    assert set(spans) == {'realtime gpt-realtime', 'chat gpt-realtime'}
-    session_span = spans['realtime gpt-realtime']
+    assert set(spans) == {'invoke_agent agent', 'chat gpt-realtime'}
+    session_span = spans['invoke_agent agent']
     chat_span = spans['chat gpt-realtime']
     assert session_span.context is not None
     assert chat_span.parent is not None and chat_span.parent.span_id == session_span.context.span_id
@@ -1025,8 +1044,8 @@ async def test_early_break_finishes_running_tool_span(caplog: pytest.LogCaptureF
     assert tool_task is not None and tool_task.done() and tool_task.cancelled()
     assert cancelled.is_set()
     spans = {span.name: span for span in exporter.get_finished_spans()}
-    assert set(spans) == {'realtime gpt-realtime', 'chat gpt-realtime', 'execute_tool get_weather'}
-    session_span = spans['realtime gpt-realtime']
+    assert set(spans) == {'invoke_agent agent', 'chat gpt-realtime', 'execute_tool get_weather'}
+    session_span = spans['invoke_agent agent']
     assert session_span.context is not None
     for child_name in ('chat gpt-realtime', 'execute_tool get_weather'):
         parent = spans[child_name].parent
