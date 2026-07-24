@@ -1,0 +1,104 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '455'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: In code execution, use web_search with the query 'site:ai.pydantic.dev Pydantic AI' and reply with the first
+            result title.
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      tools:
+      - allowed_domains: null
+        blocked_domains: null
+        max_uses: null
+        name: web_search
+        response_inclusion: excluded
+        type: web_search_20260318
+        user_location: null
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1503'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-7a0b759abd91c4255191d4f0bf4b0032-140e7299d4c84dfb-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container:
+        expires_at: '2026-07-24T08:13:18.920348Z'
+        id: container_018fjqSfNfH1TGawKnej3vMf
+      content:
+      - id: srvtoolu_017cZmPaEEoxKq777Pqsm3mJ
+        input:
+          code: |2
+
+            import json
+
+            results = await web_search({"query": "site:ai.pydantic.dev Pydantic AI"})
+            parsed = json.loads(results) if isinstance(results, str) else results
+
+            print(parsed[0]["title"])
+        name: code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          encrypted_stdout: EqoBCioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDJyKkbIhI/nkBv69MBoMyYZzGhfM3VKtM6qsIjCV81++k4PZW8uC0GYkYw0rDeO0OMJWnG7QhQ/y/uKPzKBg+CWb6kx/6A8Gh6hHnL0qLgMkoDcMFJZqxNZk8nExh6neJ0wLGKTGL2W+26S9e1FNgyUSVw2ilXhIkKKlfskYAw==
+          return_code: 0
+          stderr: ''
+          type: encrypted_code_execution_result
+        tool_use_id: srvtoolu_017cZmPaEEoxKq777Pqsm3mJ
+        type: code_execution_tool_result
+      - text: 'The title of the first search result is: **Pydantic AI | Pydantic Docs**'
+        type: text
+      id: msg_011CdLU6vTxosquEQeqsGqEs
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 9177
+        output_tokens: 138
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 1
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

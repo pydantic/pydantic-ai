@@ -45,6 +45,9 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
     max_uses: int | None
     """Maximum number of web searches per run. Requires native support."""
 
+    response_inclusion: Literal['full', 'excluded'] | None
+    """Whether Anthropic includes results consumed by completed code execution calls. Requires native support."""
+
     def __init__(
         self,
         *,
@@ -57,6 +60,7 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         blocked_domains: list[str] | None = None,
         allowed_domains: list[str] | None = None,
         max_uses: int | None = None,
+        response_inclusion: Literal['full', 'excluded'] | None = None,
         id: str | None = None,
         defer_loading: bool = False,
         description: str | None = None,
@@ -71,6 +75,7 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         self.blocked_domains = blocked_domains
         self.allowed_domains = allowed_domains
         self.max_uses = max_uses
+        self.response_inclusion = response_inclusion
         self.__post_init__()
 
     def _default_native(self) -> WebSearchTool:
@@ -85,6 +90,8 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
             kwargs['allowed_domains'] = self.allowed_domains
         if self.max_uses is not None:
             kwargs['max_uses'] = self.max_uses
+        if self.response_inclusion is not None:
+            kwargs['response_inclusion'] = self.response_inclusion
         return WebSearchTool(**kwargs)
 
     def _native_unique_id(self) -> str:
@@ -108,4 +115,9 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         )
 
     def _requires_native(self) -> bool:
-        return self.blocked_domains is not None or self.allowed_domains is not None or self.max_uses is not None
+        return (
+            self.blocked_domains is not None
+            or self.allowed_domains is not None
+            or self.max_uses is not None
+            or self.response_inclusion is not None
+        )

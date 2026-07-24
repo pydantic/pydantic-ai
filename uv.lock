@@ -314,7 +314,7 @@ wheels = [
 
 [[package]]
 name = "anthropic"
-version = "0.109.0"
+version = "0.119.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -326,9 +326,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8e/3b/96c84c2d70fb7e185d240fbd101c185f7f9b0f6fea39d0f86d22c628add5/anthropic-0.109.0.tar.gz", hash = "sha256:86719114c62f21b50bf7148a373371605f065d22e6eeee3d4d361ac0ea079d0e", size = 927503, upload-time = "2026-06-09T20:04:24.701Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2a/c5/f1d53b7d27b25a7f491d39c5cd9d39805be2d115d7f7431a8bf22f286afe/anthropic-0.119.0.tar.gz", hash = "sha256:40a81b094ae2a0056a77771257943b19bd46edce1326e22f85c2794492097f0a", size = 999050, upload-time = "2026-07-23T17:34:40.233Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fc/e9/267ea711185049714c4f3d1256b23e26f6968594651c155910584cc533bb/anthropic-0.109.0-py3-none-any.whl", hash = "sha256:b5d930af26fdeeb7c7e7a6ff6c4bcdaf46ee50403b26ada25d08fd853c751fff", size = 923835, upload-time = "2026-06-09T20:04:26.098Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/2e/5e90df53b474e856a3ae065c0df77e62bf58cb2df8819ec850d08b82518a/anthropic-0.119.0-py3-none-any.whl", hash = "sha256:2b39107077489d19d7c66000e9d9263293d431550fcf6b543ead785c6ac85962", size = 1012756, upload-time = "2026-07-23T17:34:41.896Z" },
 ]
 
 [[package]]
@@ -5673,7 +5673,7 @@ zai = [
 [package.metadata]
 requires-dist = [
     { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.108.0" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.119.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.42.63" },
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.20.6" },

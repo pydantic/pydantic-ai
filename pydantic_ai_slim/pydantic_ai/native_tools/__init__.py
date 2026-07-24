@@ -4,12 +4,13 @@ from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, TypeAlias, Union
 
 import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import UploadedFile
 
 __all__ = (
@@ -41,6 +42,8 @@ ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '
 
 ImageGenerationModelName = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'] | str
 """Known OpenAI image generation model names, or another OpenAI image model ID."""
+
+_ResponseInclusion: TypeAlias = Literal['full', 'excluded']
 
 
 @dataclass(kw_only=True)
@@ -85,6 +88,9 @@ class AbstractNativeTool(ABC):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         NATIVE_TOOL_TYPES[cls.kind] = cls
+
+    def _validate_for_provider(self, provider: str) -> None:
+        """Validate provider-specific fields before mapping the tool."""
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -171,8 +177,25 @@ class WebSearchTool(AbstractNativeTool):
     * Anthropic
     """
 
+    response_inclusion: _ResponseInclusion | None = None
+    """Controls whether results consumed by completed code execution calls are included in the response.
+
+    If `None`, Anthropic uses its default of `'full'`.
+    Only supported by Anthropic models and clients that support dynamic web tools.
+
+    Supported by:
+
+    * Anthropic
+    """
+
     kind: str = 'web_search'
     """The kind of tool."""
+
+    def _validate_for_provider(self, provider: str) -> None:
+        if provider != 'anthropic' and self.response_inclusion is not None:
+            raise UserError(
+                f'`response_inclusion` is only supported by Anthropic models, but the provider is {provider!r}.'
+            )
 
 
 class WebSearchUserLocation(TypedDict, total=False):
@@ -379,8 +402,39 @@ class WebFetchTool(AbstractNativeTool):
     * Anthropic
     """
 
+    use_cache: bool | None = None
+    """Whether Anthropic may return cached content.
+
+    Set to `False` only when fresh content is required, as bypassing the cache increases latency.
+    If `None`, Anthropic uses its default of `True`.
+    Only supported by Anthropic models and clients that support dynamic web tools.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    response_inclusion: _ResponseInclusion | None = None
+    """Controls whether results consumed by completed code execution calls are included in the response.
+
+    If `None`, Anthropic uses its default of `'full'`.
+    Only supported by Anthropic models and clients that support dynamic web tools.
+
+    Supported by:
+
+    * Anthropic
+    """
+
     kind: str = 'web_fetch'
     """The kind of tool."""
+
+    def _validate_for_provider(self, provider: str) -> None:
+        if provider != 'anthropic' and self.use_cache is not None:
+            raise UserError(f'`use_cache` is only supported by Anthropic models, but the provider is {provider!r}.')
+        if provider != 'anthropic' and self.response_inclusion is not None:
+            raise UserError(
+                f'`response_inclusion` is only supported by Anthropic models, but the provider is {provider!r}.'
+            )
 
 
 @dataclass(kw_only=True)

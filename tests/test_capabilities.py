@@ -1443,6 +1443,16 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                             'title': 'Max Content Tokens',
                         },
+                        'use_cache': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Use Cache',
+                        },
+                        'response_inclusion': {
+                            'anyOf': [{'enum': ['full', 'excluded'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Response Inclusion',
+                        },
                     },
                     'title': 'WebFetchTool',
                     'type': 'object',
@@ -1475,6 +1485,11 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Max Uses',
+                        },
+                        'response_inclusion': {
+                            'anyOf': [{'enum': ['full', 'excluded'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Response Inclusion',
                         },
                     },
                     'title': 'WebSearchTool',
@@ -1918,6 +1933,11 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'title': 'Max Content Tokens',
                         },
+                        'use_cache': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Use Cache'},
+                        'response_inclusion': {
+                            'anyOf': [{'enum': ['full', 'excluded'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Response Inclusion',
+                        },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
@@ -1950,6 +1970,10 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Allowed Domains',
                         },
                         'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
+                        'response_inclusion': {
+                            'anyOf': [{'enum': ['full', 'excluded'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Response Inclusion',
+                        },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
@@ -9974,6 +9998,8 @@ def test_web_fetch_with_constraints():
         max_uses=5,
         enable_citations=True,
         max_content_tokens=1000,
+        use_cache=False,
+        response_inclusion='excluded',
     )
     builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
@@ -9984,6 +10010,8 @@ def test_web_fetch_with_constraints():
     assert tool.max_uses == 5
     assert tool.enable_citations is True
     assert tool.max_content_tokens == 1000
+    assert tool.use_cache is False
+    assert tool.response_inclusion == 'excluded'
     # `max_uses` requires native support; domains are handled locally.
     assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
@@ -9992,6 +10020,18 @@ def test_web_fetch_unique_id():
     """WebFetch returns the correct native unique_id."""
     cap = WebFetch(local=True)
     assert cap._native_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    'capability',
+    [
+        pytest.param(WebSearch(response_inclusion='excluded'), id='search-response-inclusion'),
+        pytest.param(WebFetch(use_cache=False), id='fetch-use-cache'),
+        pytest.param(WebFetch(response_inclusion='excluded'), id='fetch-response-inclusion'),
+    ],
+)
+def test_anthropic_web_options_require_native(capability: WebSearch[Any] | WebFetch[Any]):
+    assert capability._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 
 def test_xsearch_unique_id():
@@ -10011,6 +10051,7 @@ def test_web_search_with_constraints():
         blocked_domains=['bad.com'],
         allowed_domains=['good.com'],
         max_uses=3,
+        response_inclusion='excluded',
     )
     builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
@@ -10021,6 +10062,7 @@ def test_web_search_with_constraints():
     assert tool.blocked_domains == ['bad.com']
     assert tool.allowed_domains == ['good.com']
     assert tool.max_uses == 3
+    assert tool.response_inclusion == 'excluded'
     assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 

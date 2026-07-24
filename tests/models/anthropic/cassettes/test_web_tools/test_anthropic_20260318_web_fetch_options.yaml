@@ -1,0 +1,108 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '459'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use web fetch to read https://ai.pydantic.dev and reply with exactly the page title.
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      tools:
+      - allowed_domains: null
+        blocked_domains: null
+        citations: null
+        max_content_tokens: null
+        max_uses: null
+        name: web_fetch
+        response_inclusion: excluded
+        type: web_fetch_20260318
+        use_cache: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1294'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-92194eb7767e529397d6a50a85396adc-eaf8a6e4b23c5db6-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container:
+        expires_at: '2026-07-24T08:13:10.322721Z'
+        id: container_01VsTxKyFjddciAsRoJR6961
+      content:
+      - id: srvtoolu_01GVvQdAP3ER2vkPGvRQFsYr
+        input:
+          code: |2
+
+            import json
+            result = await web_fetch({"url": "https://ai.pydantic.dev"})
+            entry = json.loads(result)[0]
+            if entry.get("error_code"):
+                print("Error:", entry["error_code"])
+            else:
+                print("Title:", entry.get("title"))
+        name: code_execution
+        type: server_tool_use
+      - content:
+          abort_reason: null
+          content: []
+          return_code: 0
+          stderr: ''
+          stdout: |
+            Title: Pydantic AI
+          type: code_execution_result
+        tool_use_id: srvtoolu_01GVvQdAP3ER2vkPGvRQFsYr
+        type: code_execution_tool_result
+      - text: The page title is **Pydantic AI**.
+        type: text
+      id: msg_011CdLU6CQdn1htvxuGvxMwk
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 7820
+        output_tokens: 142
+        server_tool_use:
+          web_fetch_requests: 1
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

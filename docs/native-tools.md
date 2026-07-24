@@ -129,7 +129,7 @@ _(This example is complete, it can be run "as is")_
 
 The `WebSearchTool` supports several configuration parameters:
 
-```py {title="web_search_configured.py"}
+```py {title="web_search_configured.py" test="skip"}
 from pydantic_ai import Agent, WebSearchTool, WebSearchUserLocation
 from pydantic_ai.capabilities import NativeTool
 
@@ -148,6 +148,7 @@ agent = Agent(
                 blocked_domains=['example.com', 'spam-site.net'],
                 allowed_domains=None,  # Cannot use both blocked_domains and allowed_domains with Anthropic
                 max_uses=5,  # Anthropic only: limit tool usage
+                response_inclusion='excluded',
             )
         )
     ],
@@ -169,13 +170,14 @@ _(This example is complete, it can be run "as is")_
 | `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
 | `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `response_inclusion` | ❌ | ✅ | ❌ | ❌ | ❌ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
 
 !!! note "Anthropic Web Search Tool Versions"
     Pydantic AI does not expose a `dynamic_filtering` option. For Anthropic, Pydantic AI selects
-    the web search tool version from the model profile and Anthropic client: `web_search_20260209`
+    the web search tool version from the model profile and Anthropic client: `web_search_20260318`
     for models and platforms that support Anthropic's dynamic-filtering web tools, and
     `web_search_20250305` otherwise.
     The legacy Amazon Bedrock client does not support Anthropic web search, so Pydantic AI raises
@@ -186,9 +188,15 @@ _(This example is complete, it can be run "as is")_
     and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
 
+    Set `response_inclusion='excluded'` to omit search result blocks consumed by a completed code
+    execution call in the same turn. The default is `'full'`. Direct results and paused code
+    execution results are always included. Pydantic AI raises a `UserError` if
+    `response_inclusion` is set for a non-Anthropic provider or a model or client that uses the
+    earlier tool version.
+
     Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
-    Anthropic's standalone code execution tool; it is not needed to use `web_search_20260209`.
-    For Zero Data Retention behavior with `_20260209` web tools, see Anthropic's
+    Anthropic's standalone code execution tool; it is not needed to use `web_search_20260318`.
+    For Zero Data Retention behavior with dynamic web tools, see Anthropic's
     [server tools docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
 
 ## X Search Tool
@@ -628,7 +636,7 @@ _(This example is complete, it can be run "as is")_
 
 The `WebFetchTool` supports several configuration parameters:
 
-```py {title="web_fetch_configured.py"}
+```py {title="web_fetch_configured.py" test="skip"}
 from pydantic_ai import Agent, WebFetchTool
 from pydantic_ai.capabilities import NativeTool
 
@@ -641,6 +649,8 @@ agent = Agent(
                 max_uses=10,
                 enable_citations=True,
                 max_content_tokens=50000,
+                use_cache=False,
+                response_inclusion='excluded',
             )
         )
     ],
@@ -666,13 +676,15 @@ _(This example is complete, it can be run "as is")_
 | `blocked_domains` | ✅ | ❌ |
 | `enable_citations` | ✅ | ❌ |
 | `max_content_tokens` | ✅ | ❌ |
+| `use_cache` | ✅ | ❌ |
+| `response_inclusion` | ✅ | ❌ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
 
 !!! note "Anthropic Web Fetch Tool Versions"
     Pydantic AI does not expose a `dynamic_filtering` option. For Anthropic, Pydantic AI selects
-    the web fetch tool version from the model profile and Anthropic client: `web_fetch_20260209`
+    the web fetch tool version from the model profile and Anthropic client: `web_fetch_20260318`
     for models and platforms that support Anthropic's dynamic-filtering web tools, and
     `web_fetch_20250910` otherwise.
     `WebFetchTool` is unavailable on the legacy Amazon Bedrock and Vertex AI Anthropic clients, so
@@ -683,9 +695,15 @@ _(This example is complete, it can be run "as is")_
     and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
 
+    Set `use_cache=False` only when fresh content is required, as bypassing Anthropic's cache
+    increases latency. Set `response_inclusion='excluded'` to omit fetch result blocks consumed
+    by a completed code execution call in the same turn. Their defaults are `True` and `'full'`.
+    Pydantic AI raises a `UserError` if either option is set for a non-Anthropic provider or a model
+    or client that uses the earlier tool version.
+
     Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
-    Anthropic's standalone code execution tool; it is not needed to use `web_fetch_20260209`.
-    For Zero Data Retention behavior with `_20260209` web tools, see Anthropic's
+    Anthropic's standalone code execution tool; it is not needed to use `web_fetch_20260318`.
+    For Zero Data Retention behavior with dynamic web tools, see Anthropic's
     [server tools docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
 
 ## Memory Tool

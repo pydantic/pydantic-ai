@@ -1,8 +1,11 @@
 import pytest
 from pydantic import TypeAdapter
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
+    AbstractNativeTool,
     CodeExecutionTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -93,6 +96,7 @@ def test_model_request_parameters_are_serializable():
                     'blocked_domains': None,
                     'allowed_domains': None,
                     'max_uses': None,
+                    'response_inclusion': None,
                 },
                 {'kind': 'code_execution', 'optional': False, 'files': None},
                 {
@@ -103,6 +107,8 @@ def test_model_request_parameters_are_serializable():
                     'blocked_domains': None,
                     'enable_citations': False,
                     'max_content_tokens': None,
+                    'use_cache': None,
+                    'response_inclusion': None,
                 },
                 {
                     'kind': 'image_generation',
@@ -172,6 +178,21 @@ def test_model_request_parameters_are_serializable():
         }
     )
     assert ta.validate_python(dumped) == params
+
+
+@pytest.mark.parametrize(
+    'tool, option',
+    [
+        pytest.param(
+            WebSearchTool(response_inclusion='excluded'), 'response_inclusion', id='search-response-inclusion'
+        ),
+        pytest.param(WebFetchTool(use_cache=False), 'use_cache', id='fetch-use-cache'),
+        pytest.param(WebFetchTool(response_inclusion='excluded'), 'response_inclusion', id='fetch-response-inclusion'),
+    ],
+)
+def test_anthropic_web_tool_options_rejected_by_other_providers(tool: AbstractNativeTool, option: str):
+    with pytest.raises(UserError, match=rf'`{option}` is only supported by Anthropic'):
+        TestModel().prepare_request(None, ModelRequestParameters(native_tools=[tool]))
 
 
 @pytest.mark.parametrize(
