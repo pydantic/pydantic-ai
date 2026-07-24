@@ -6,7 +6,8 @@ import re
 import shutil
 import ssl
 import sys
-from collections.abc import AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from inspect import FrameInfo
 from pathlib import Path
@@ -47,6 +48,8 @@ from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.realtime import RealtimeModel, TurnCompleteEvent
+from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput, Transcript
 
 from .conftest import TestEnv, try_import
 
@@ -131,6 +134,36 @@ def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
         pass
 
 
+class MockRealtimeConnection(RealtimeConnection):
+    """A minimal scripted realtime connection for executable documentation examples."""
+
+    async def send(self, content: RealtimeInput) -> None:
+        pass
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield Transcript(text='Hello from the realtime assistant.', is_final=True)
+        yield TurnCompleteEvent()
+
+
+@asynccontextmanager
+async def _mock_realtime_connect(
+    self: RealtimeModel,
+    **kwargs: Any,
+) -> AsyncGenerator[RealtimeConnection]:
+    yield MockRealtimeConnection()
+
+
+def _patch_realtime_models(mocker: MockerFixture) -> None:
+    """Route realtime documentation examples through the scripted connection."""
+    from pydantic_ai.realtime.azure import AzureRealtimeModel
+    from pydantic_ai.realtime.google import GoogleRealtimeModel
+    from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+    from pydantic_ai.realtime.xai import XaiRealtimeModel
+
+    for model_class in (OpenAIRealtimeModel, AzureRealtimeModel, GoogleRealtimeModel, XaiRealtimeModel):
+        mocker.patch.object(model_class, 'connect', new=_mock_realtime_connect)
+
+
 def _check_python_version(min_version: str | None, max_version: str | None) -> None:
     if min_version:
         min_info = tuple(int(v) for v in min_version.split('.'))
@@ -179,6 +212,7 @@ def test_docs_examples(
     mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
 
     _patch_optional_mcp_modules(mocker)
+    _patch_realtime_models(mocker)
     try:
         mocker.patch('sentence_transformers.SentenceTransformer')
     except ModuleNotFoundError:
@@ -802,6 +836,8 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[TextPart('The secret is safe with me')])
         elif m.content == 'What is the secret code?':
             return ModelResponse(parts=[TextPart('1234')])
+        elif m.content == 'Summarize the conversation.':
+            return ModelResponse(parts=[TextPart('- The assistant greeted the user.')])
         elif m.content == 'Tell me a two-sentence story about an axolotl with an illustration.':
             return ModelResponse(
                 parts=[

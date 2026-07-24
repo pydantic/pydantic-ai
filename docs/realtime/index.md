@@ -46,13 +46,18 @@ Browser/WebRTC and telephony stacks remain transport concerns that connect users
 
 ## Quickstart
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai.messages import SpeechPart, SpeechPartDelta
 from pydantic_ai.realtime import PartDeltaEvent, PartEndEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 agent = Agent(instructions='You are a helpful voice assistant.')
+microphone_chunk = b'...'
+
+
+def play_audio(chunk: bytes) -> None:
+    pass
 
 
 @agent.tool_plain
@@ -67,9 +72,10 @@ async def main():
         async for event in session:
             match event:
                 case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
-                    speaker.play(chunk)
+                    play_audio(chunk)
                 case PartEndEvent(part=SpeechPart(speaker='assistant', transcript=transcript)):
                     print('assistant:', transcript)
+#> assistant: Hello from the realtime assistant.
 ```
 
 You stream content in with the session's `send_*` helpers and consume events by iterating the
@@ -90,23 +96,62 @@ covers browser/telephony transports.
 Handle the events your application needs: play audio deltas, render transcripts, show tool lifecycle
 updates, mark turns complete, react to reconnection, and surface recoverable errors.
 
-```python {test="skip" lint="skip"}
-async for event in session:
-    match event:
-        case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
-            play_audio(chunk)
-        case PartEndEvent(part=SpeechPart(transcript=transcript)):
-            show_transcript(transcript)
-        case FunctionToolCallEvent():
-            show_tool_status('running')
-        case FunctionToolResultEvent():
-            show_tool_status('complete')
-        case TurnCompleteEvent(interrupted=interrupted):
-            finish_turn(interrupted)
-        case ReconnectedEvent(state_restored=state_restored):
-            show_reconnected(state_restored)
-        case SessionErrorEvent(message=message):
-            show_error(message)
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    SpeechPart,
+    SpeechPartDelta,
+)
+from pydantic_ai.realtime import (
+    PartDeltaEvent,
+    PartEndEvent,
+    ReconnectedEvent,
+    SessionErrorEvent,
+    TurnCompleteEvent,
+)
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+agent = Agent()
+
+
+def play_audio(chunk: bytes) -> None: ...
+
+
+def show_transcript(transcript: str) -> None: ...
+
+
+def show_tool_status(status: str) -> None: ...
+
+
+def finish_turn(interrupted: bool) -> None: ...
+
+
+def show_reconnected(state_restored: bool) -> None: ...
+
+
+def show_error(message: str) -> None: ...
+
+
+async def main():
+    async with agent.realtime(OpenAIRealtimeModel('gpt-realtime')).session() as session:
+        async for event in session:
+            match event:
+                case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
+                    play_audio(chunk)
+                case PartEndEvent(part=SpeechPart(transcript=transcript)):
+                    show_transcript(transcript)
+                case FunctionToolCallEvent():
+                    show_tool_status('running')
+                case FunctionToolResultEvent():
+                    show_tool_status('complete')
+                case TurnCompleteEvent(interrupted=interrupted):
+                    finish_turn(interrupted)
+                case ReconnectedEvent(state_restored=state_restored):
+                    show_reconnected(state_restored)
+                case SessionErrorEvent(message=message):
+                    show_error(message)
 ```
 
 ### Event reference
@@ -151,17 +196,21 @@ vocabulary: `tool_choice`, `parallel_tool_calls`, `max_tokens`, `voice`,
 [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking]. Pass settings for one session,
 set defaults on the realtime model, or combine both — per-session values override model defaults:
 
-```python {test="skip" lint="skip"}
+```python
+from pydantic_ai import Agent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
 
+agent = Agent()
 defaults = OpenAIRealtimeModelSettings(voice='alloy', max_tokens=2_000)
 model = OpenAIRealtimeModel('gpt-realtime', settings=defaults)
 
-async with agent.realtime(
-    model,
-    model_settings=OpenAIRealtimeModelSettings(max_tokens=4_000),
-).session() as session:
-    ...
+
+async def main():
+    async with agent.realtime(
+        model,
+        model_settings=OpenAIRealtimeModelSettings(max_tokens=4_000),
+    ).session() as session:
+        await session.send('Say hello.')
 ```
 
 The agent's regular `model_settings` and capability `get_model_settings()` contributions do not
@@ -190,13 +239,19 @@ response. Pass `audio_end_ms` (how many milliseconds of the response the user ac
 provider truncates its stored transcript to match — otherwise the model "remembers" saying words the
 user never heard:
 
-```python {test="skip" lint="skip"}
-async for event in session:
-    if isinstance(event, InputSpeechStartEvent):
-        speaker.flush()  # drop buffered audio locally
-        # `interrupt()` (and `audio_end_ms`) require provider support — OpenAI and Azure OpenAI here.
-        # Gemini and xAI handle barge-in themselves; see the model profile reference below.
-        await session.interrupt(audio_end_ms=speaker.played_ms())
+```python {test="skip"}
+from typing import Any
+
+from pydantic_ai.realtime import InputSpeechStartEvent
+
+
+async def handle_events(session: Any, speaker: Any):
+    async for event in session:
+        if isinstance(event, InputSpeechStartEvent):
+            speaker.flush()  # drop buffered audio locally
+            # `interrupt()` (and `audio_end_ms`) require provider support — OpenAI and Azure OpenAI here.
+            # Gemini and xAI handle barge-in themselves; see the model profile reference below.
+            await session.interrupt(audio_end_ms=speaker.played_ms())
 ```
 
 `interrupt()` is server-side only — it does not flush your local playback buffer; that is the
@@ -215,14 +270,21 @@ Azure OpenAI, and xAI — see [`supports_manual_turn_control`](#model-profile-re
 [`create_response`][pydantic_ai.realtime.RealtimeSession.create_response] to ask the model to reply.
 [`clear_audio`][pydantic_ai.realtime.RealtimeSession.clear_audio] discards uncommitted audio.
 
-```python {test="skip" lint="skip"}
+```python
+from pydantic_ai import Agent
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
+
+agent = Agent()
 model = OpenAIRealtimeModel(
     'gpt-realtime', settings=OpenAIRealtimeModelSettings(turn_detection=False)
 )
-async with agent.realtime(model).session() as session:
-    await session.send_audio(chunk)
-    await session.commit_audio()
-    await session.create_response()
+
+
+async def main():
+    async with agent.realtime(model).session() as session:
+        await session.send_audio(b'...')
+        await session.commit_audio()
+        await session.create_response()
 ```
 
 ### Tool calling
@@ -267,21 +329,24 @@ into the session. **Gemini** maps [`WebSearch`][pydantic_ai.capabilities.WebSear
 Google Search and [`WebFetch`][pydantic_ai.capabilities.WebFetch] to URL context, so the model can
 search the web and read a page mid-conversation:
 
-```python {test="skip" lint="skip"}
+```python
+from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.messages import NativeToolReturnPart, PartEndEvent
 from pydantic_ai.realtime.google import GoogleRealtimeModel
 
 agent = Agent(instructions='Answer questions, searching the web when useful.')
 
-async with agent.realtime(
-    GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest'),
-    capabilities=[WebSearch()],
-).session() as session:
-    async for event in session:
-        if isinstance(event, PartEndEvent) and isinstance(event.part, NativeToolReturnPart):
-            # Cite what the model grounded its answer on.
-            print(event.part.content)
+
+async def main():
+    async with agent.realtime(
+        GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest'),
+        capabilities=[WebSearch()],
+    ).session() as session:
+        async for event in session:
+            if isinstance(event, PartEndEvent) and isinstance(event.part, NativeToolReturnPart):
+                # Cite what the model grounded its answer on.
+                print(event.part.content)
 ```
 
 `WebFetch()` works the same way on models that support URL context — but see the caveats below before
@@ -344,7 +409,7 @@ The session exposes two snapshots (each a copy, so it won't change as the sessio
 
 Seed a session with `message_history=` and hand its history off to a text agent afterwards:
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
@@ -352,17 +417,18 @@ voice = Agent(instructions='You are a helpful voice assistant.')
 notetaker = Agent('openai:gpt-5', instructions='Summarize the conversation as bullet points.')
 
 
-async def main(prior_history):
+async def main(prior_history=()):
     async with voice.realtime(
         OpenAIRealtimeModel('gpt-realtime'),
         message_history=prior_history,  # resume an earlier conversation
     ).session() as session:
-        async for event in session:
-            ...  # stream audio, run tools
+        async for _event in session:
+            pass  # stream audio, run tools
 
     # Hand the spoken conversation to a text agent.
-    summary = await notetaker.run(message_history=session.all_messages())
+    summary = await notetaker.run('Summarize the conversation.', message_history=session.all_messages())
     print(summary.output)
+    #> - The assistant greeted the user.
 ```
 
 Seeding projects every replayable part of the prior conversation into the provider's initial
@@ -441,10 +507,13 @@ Send an image as conversation context (for example a video frame) with
 response — the model picks it up on the next turn (via VAD, a text turn, or `create_response` where
 manual turn-taking is supported).
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai import BinaryContent
 
-await session.send(BinaryContent(data=jpeg_bytes, media_type='image/jpeg'))
+
+async def send_image(session):
+    jpeg_bytes = b'...'
+    await session.send(BinaryContent(data=jpeg_bytes, media_type='image/jpeg'))
 ```
 
 **Live vision (Gemini).** For a "show the camera and ask about it" experience, stream frames
@@ -466,11 +535,19 @@ Input-transcription (ASR) usage is reported separately in
 not included in the response token totals or attributed to any [`ModelResponse`][pydantic_ai.messages.ModelResponse],
 because transcription of the user's input audio uses a separate model and billing meter.
 
-```python {test="skip" lint="skip"}
-async with agent.realtime(model).session() as session:
-    async for event in session:
-        ...
-    print(session.usage)  # cumulative tokens + tool calls for the session
+```python
+from pydantic_ai import Agent
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+agent = Agent()
+
+
+async def main():
+    async with agent.realtime(OpenAIRealtimeModel('gpt-realtime')).session() as session:
+        async for _event in session:
+            pass
+        print(session.usage)  # cumulative tokens + tool calls for the session
+        #> RunUsage(requests=1)
 ```
 
 Pass `usage` to accumulate into a shared [`RunUsage`][pydantic_ai.usage.RunUsage] (e.g. to total a
@@ -479,14 +556,22 @@ tool-call limits are enforced as usage accrues; a breach raises
 [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from the session's event iterator,
 matching how `run` / `iter` surface a usage limit.
 
-```python {test="skip" lint="skip"}
+```python
+from pydantic_ai import Agent
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 from pydantic_ai.usage import RunUsage, UsageLimits
 
+agent = Agent()
 shared = RunUsage()
-async with agent.realtime(
-    model, usage=shared, usage_limits=UsageLimits(total_tokens_limit=100_000)
-).session() as session:
-    ...
+
+
+async def main():
+    async with agent.realtime(
+        OpenAIRealtimeModel('gpt-realtime'),
+        usage=shared,
+        usage_limits=UsageLimits(total_tokens_limit=100_000),
+    ).session() as session:
+        await session.send('Say hello.')
 ```
 
 ### Observability with Logfire
@@ -506,7 +591,7 @@ Gemini finalizes a function-call response before the provider reports usage; tha
 usage, while Gemini's later completed turn carries the reported turn usage. The cumulative
 `session.usage` and session span remain authoritative totals.
 
-```python {test="skip" lint="skip"}
+```python
 import logfire
 
 logfire.configure()
@@ -550,7 +635,7 @@ A long-lived connection can drop. Pass a
 exponential backoff, re-apply the session configuration, and emit a
 [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] event:
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai.realtime import ReconnectPolicy
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
@@ -575,7 +660,7 @@ both `google_enable_session_resumption=True` and a
 [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] — the session re-dials from the
 latest resumption handle the server issued:
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai.realtime import ReconnectPolicy
 from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelSettings
 
@@ -629,18 +714,25 @@ realtime tool. The default `priority='asap'` sends it into the live conversation
 recorded as a normal user turn. Multimodal content and prebuilt message/part sequences are rejected
 because the realtime live-input channel cannot preserve their full classic-run semantics.
 
-```python {test="skip" lint="skip"}
+```python {test="skip"}
+from typing import Any
+
+from pydantic_ai import Agent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 from pydantic_ai.usage import UsageLimits
 
-async with agent.realtime(
-    OpenAIRealtimeModel('gpt-realtime'),
-    toolsets=[extra_toolset],            # extra tools for this session
-    capabilities=[my_capability],        # tool-lifecycle hooks run
-    usage_limits=UsageLimits(total_tokens_limit=100_000),
-    metadata={'tenant': 'acme'},
-).session() as session:
-    ...
+agent = Agent()
+
+
+async def main(extra_toolset: Any, my_capability: Any):
+    async with agent.realtime(
+        OpenAIRealtimeModel('gpt-realtime'),
+        toolsets=[extra_toolset],  # extra tools for this session
+        capabilities=[my_capability],  # tool-lifecycle hooks run
+        usage_limits=UsageLimits(total_tokens_limit=100_000),
+        metadata={'tenant': 'acme'},
+    ).session() as session:
+        await session.send('Say hello.')
 ```
 
 `realtime()` lives on [`AbstractAgent`][pydantic_ai.agent.AbstractAgent], so it's available on
@@ -696,7 +788,7 @@ than a frontier text model. The robust pattern is to keep the realtime model as 
 surface and expose a single tool that delegates the hard work to a normal [`Agent`][pydantic_ai.Agent]
 with an `output_type`:
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -720,7 +812,7 @@ async def consult(question: str) -> str:
 
 async def main():
     async with voice.realtime(OpenAIRealtimeModel('gpt-realtime')).session() as session:
-        ...
+        await session.send('What is the answer?')
 ```
 
 The delegated run executes concurrently, so the model can keep talking while the analysis runs.
@@ -810,12 +902,17 @@ raises while `interrupt()` works. Calling a method the model doesn't support rai
 [`UserError`][pydantic_ai.exceptions.UserError] *before* anything is sent, so you can branch on the
 model's `profile` up front rather than handle a mid-session failure:
 
-```python {test="skip" lint="skip"}
+```python {test="skip"}
+from typing import Any
+
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 model = OpenAIRealtimeModel('gpt-realtime')
-if model.profile['supports_interruption']:
-    await session.interrupt(audio_end_ms=speaker.played_ms())
+
+
+async def interrupt_if_supported(session: Any, speaker: Any):
+    if model.profile['supports_interruption']:
+        await session.interrupt(audio_end_ms=speaker.played_ms())
 ```
 
 ### Gateway
@@ -829,7 +926,7 @@ Realtime models take a `provider=` just like standard models, so you can route a
 [Pydantic AI Gateway](../gateway.md) (or, for OpenAI, any OpenAI-compatible endpoint that exposes a
 realtime API) by naming the upstream provider:
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 model = OpenAIRealtimeModel('gpt-realtime', provider='gateway/openai')
@@ -838,7 +935,7 @@ model = OpenAIRealtimeModel('gpt-realtime', provider='gateway/openai')
 You can also infer the model from a gateway-prefixed identifier. This reads gateway credentials from
 [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider]:
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai.realtime import infer_realtime_model
 
 model = infer_realtime_model('gateway/openai:gpt-realtime')
@@ -850,10 +947,19 @@ gateway that emits its own spans nests them under the same trace. The provider c
 established before the realtime session span opens, so wrap the entire session context in your own
 span to ensure gateway handshake spans join the trace:
 
-```python {test="skip" lint="skip"}
-with logfire.span('voice call'):
-    async with agent.realtime(model).session() as session:
-        ...
+```python
+import logfire
+
+from pydantic_ai import Agent
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+agent = Agent()
+
+
+async def main():
+    with logfire.span('voice call'):
+        async with agent.realtime(OpenAIRealtimeModel('gpt-realtime')).session() as session:
+            await session.send('Say hello.')
 ```
 
 ## Limitations
