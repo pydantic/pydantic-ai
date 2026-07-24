@@ -2984,6 +2984,15 @@ async def test_replayed_item_tracking_accepts_each_identifier_independently() ->
     assert not session._accept_item('item-only')  # pyright: ignore[reportPrivateUsage]
     assert not session._accept_item(None, 'call-only')  # pyright: ignore[reportPrivateUsage]
 
+    # A normal (non-replayed) conversation item is not resumption traffic, so it records nothing and
+    # every later event for it is accepted. Pinned directly rather than relying on incidental coverage
+    # from a provider WS test.
+    session._handle_conversation_item(  # pyright: ignore[reportPrivateUsage]
+        ConversationItemCreated(item_id='live-item', tool_call_id='live-call', replayed=False)
+    )
+    assert session._accept_item('live-item')  # pyright: ignore[reportPrivateUsage]
+    assert session._accept_item(None, 'live-call')  # pyright: ignore[reportPrivateUsage]
+
 
 def test_asap_notifications_without_live_loop_and_after_close_are_ignored() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]))
