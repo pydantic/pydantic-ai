@@ -333,3 +333,12 @@ async def test_voice_live_rejects_webrtc_signaling() -> None:
     # `answer_webrtc_offer` mints through `create_client_secret`, so it is rejected too.
     with pytest.raises(NotImplementedError, match='not yet supported for Azure AI Voice Live'):
         await model.answer_webrtc_offer('v=0\r\n')
+
+    # The guard reads *merged* settings, so a per-call `azure_voice_live=True` is rejected on a GA-default
+    # model too (not only when it's a model-level default).
+    ga_model = AzureRealtimeModel('gpt-realtime', provider=provider)
+    per_call = AzureRealtimeModelSettings(azure_voice_live=True)
+    with pytest.raises(NotImplementedError, match='not yet supported for Azure AI Voice Live'):
+        await ga_model.create_client_secret(model_settings=per_call)
+    with pytest.raises(NotImplementedError, match='not yet supported for Azure AI Voice Live'):
+        await ga_model.answer_webrtc_offer('v=0\r\n', model_settings=per_call)
