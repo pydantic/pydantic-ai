@@ -17,7 +17,7 @@ from pydantic_graph import GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import _output, exceptions, messages as _messages, result
-from .exceptions import ToolRetryError
+from .exceptions import ToolFailedError, ToolRetryError
 from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDenied, ToolKind
 
 if TYPE_CHECKING:
@@ -361,6 +361,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
         if not validated.args_valid:
             assert validated.validation_error is not None
+            # Output-tool validation (`validate_output_tool_call`) only ever raises
+            # `ToolRetryError`/`ValidationError`/`ModelRetry`, never `ToolFailed`, so
+            # `validation_error` is always a `ToolRetryError` here — unlike the function-tool
+            # path, which also handles `ToolFailedError`.
+            assert isinstance(validated.validation_error, ToolRetryError)
             self.output_retries_increment += 1
             return _OutputCallResult(call=call, args_valid=False, retry_part=validated.validation_error.tool_retry)
 
@@ -530,6 +535,14 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     tool_call_id=call.tool_call_id,
                     outcome='denied',
                 ), None
+            elif isinstance(tool_call_result, exceptions.ToolFailed):
+                m = _messages.ToolReturnPart(
+                    tool_name=call.tool_name,
+                    content=tool_call_result.message,
+                    tool_call_id=call.tool_call_id,
+                    outcome='failed',
+                )
+                raise ToolFailedError(m)
             elif isinstance(tool_call_result, exceptions.ModelRetry):
                 m = _messages.RetryPromptPart(
                     content=tool_call_result.message,
@@ -545,6 +558,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 tool_result = tool_call_result
         except ToolRetryError as e:
             return e.tool_retry, None
+        except ToolFailedError as e:
+            return e.tool_failed, None
 
         if isinstance(tool_result, _messages.ToolReturn):
             tool_return = cast(_messages.ToolReturn[Any], tool_result)
@@ -797,12 +812,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         self.deferred_calls['unapproved'].append(call)
                 else:
                     # Call execute_tool_call to raise the validation error inside a trace span;
-                    # retries are already tracked by validate_tool_call() via failed_tools.
+                    # retry failures are already tracked by validate_tool_call() via failed_tools.
                     try:
                         await self.tool_manager.execute_tool_call(validated)
-                    except ToolRetryError as e:
-                        self.output_parts.append(e.tool_retry)
-                        yield _messages.FunctionToolResultEvent(e.tool_retry)
+                    except (ToolRetryError, ToolFailedError) as e:
+                        part = e.tool_retry if isinstance(e, ToolRetryError) else e.tool_failed
+                        self.output_parts.append(part)
+                        yield _messages.FunctionToolResultEvent(part)
 
     async def _resolve_deferred_calls(self) -> AsyncIterator[_messages.HandleResponseEvent]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
@@ -821,12 +837,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             metadata=self.deferred_metadata,
         )
 
+        # Emit the batch of deferred requests so stream consumers can observe the pending
+        # interactions without coupling to the resolution handler. (Each deferred call already
+        # emitted its own `FunctionToolCallEvent`.)
+        yield _messages.DeferredToolRequestsEvent(deferred_tool_requests)
+
         # Let capability handlers resolve deferred calls inline (one shot).
         # Results are fed back through the existing tool-execution pipeline so that
         # approvals, denials, retries, and ToolReturn unwrapping all behave identically
         # to the UserPromptNode resume path.
         handler_results = await self.tool_manager.resolve_deferred_tool_calls(deferred_tool_requests)
         if handler_results is not None:
+            yield _messages.DeferredToolResultsEvent(handler_results)
             handler_tool_call_results = handler_results.to_tool_call_results()
             resolved_calls = [
                 call
@@ -866,6 +888,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
             deferred_tool_requests = deferred_tool_requests.remaining(handler_results)
             if new_deferred_calls['external'] or new_deferred_calls['unapproved']:
+                # A resolved call can defer again when it re-executes (e.g. an approved tool raises
+                # `CallDeferred`). No second `DeferredToolRequestsEvent` is emitted for these: the
+                # batch was already announced above, and re-announcing the same tool call IDs
+                # (possibly under a different kind) would be ambiguous for consumers. The final
+                # pending batch still surfaces as the run's `DeferredToolRequests` output below.
                 if deferred_tool_requests is None:
                     deferred_tool_requests = DeferredToolRequests()
                 deferred_tool_requests.calls.extend(new_deferred_calls['external'])

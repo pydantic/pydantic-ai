@@ -8,6 +8,8 @@
 
 ::: pydantic_ai.providers.google
 
+::: pydantic_ai.providers.google_cloud
+
 ::: pydantic_ai.providers.openai
 
 ::: pydantic_ai.providers.xai

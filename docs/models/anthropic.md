@@ -243,6 +243,7 @@ result2 = agent.run_sync(
 )
 print(f'Cache write: {result1.usage.cache_write_tokens}')
 print(f'Cache read: {result2.usage.cache_read_tokens}')
+print(f'Cache hit ratio: {result2.usage.cache_hit_ratio}')
 ```
 
 This is ideal for multi-turn conversations where the cache breakpoint should move forward as the conversation grows. You can also specify a custom TTL with `anthropic_cache='1h'`.

@@ -73,6 +73,7 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
+from pydantic_ai.usage import UsageLimits
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, message, message_part, try_import
@@ -2776,6 +2777,216 @@ async def test_run_stream_output_tool_error():
     )
 
 
+async def test_run_stream_error_closes_open_text():
+    """A mid-stream `UsageLimitExceeded` while a text part is open must emit `text-end` before `error`.
+
+    The AI SDK v6 client aborts at the `error` chunk, so a missing `text-end` leaves the text part
+    stuck in `state: 'streaming'`. See #6546, mirroring #4963 for dangling tool calls.
+    """
+
+    async def stream_text(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield 'lots of streamed text '
+
+    agent = Agent(model=FunctionModel(stream_function=stream_text))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    # `text-end` must land immediately before `error`; anything after `error` is dropped by the client.
+    assert event_types[event_types.index('error') - 1] == 'text-end'
+    # ...and it must carry the same `id` as its `text-start`, or the client can't mark the part done.
+    text_start = next(e for e in events if not isinstance(e, str) and e['type'] == 'text-start')
+    text_end = next(e for e in events if not isinstance(e, str) and e['type'] == 'text-end')
+    assert text_end['id'] == text_start['id']
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'text-start',
+            'text-delta',
+            'text-delta',
+            'text-end',
+            'error',
+            'finish-step',
+            'finish',
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_error_closes_open_thinking():
+    """A mid-stream `UsageLimitExceeded` while a thinking part is open must emit `reasoning-end` before `error`."""
+
+    async def stream_thinking(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield {0: DeltaThinkingPart(content='lots of thinking ')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_thinking))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    assert event_types[event_types.index('error') - 1] == 'reasoning-end'
+    # The `reasoning-end` must carry the same `id` as its `reasoning-start`, or the client can't mark the part done.
+    reasoning_start = next(e for e in events if not isinstance(e, str) and e['type'] == 'reasoning-start')
+    reasoning_end = next(e for e in events if not isinstance(e, str) and e['type'] == 'reasoning-end')
+    assert reasoning_end['id'] == reasoning_start['id']
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'reasoning-start',
+            'reasoning-delta',
+            'reasoning-delta',
+            'reasoning-delta',
+            'reasoning-end',
+            'error',
+            'finish-step',
+            'finish',
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_error_closes_open_native_tool_call():
+    """A mid-stream `UsageLimitExceeded` while a native tool call is open must emit `tool-input-available` before `error`.
+
+    Same defect class as #6546 (text/thinking), one part kind over: a `NativeToolCallPart` lands outside
+    `_pending_tool_calls` (which only holds already-dispatched calls), so without an explicit close the AI SDK v6
+    client aborts at the `error` chunk leaving the call stuck in an input-streaming state.
+    """
+
+    async def stream_native_tool_call(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns]:
+        # A native tool call opens at index 0 and stays open (never gets a `PartEndEvent`)...
+        yield {
+            0: NativeToolCallPart(
+                provider_name='function', tool_name='web_search', tool_call_id='call_1', args={'query': 'hi'}
+            )
+        }
+        # ...while a second call at a new index carries enough tokens to trip the usage limit mid-stream, so the run
+        # errors before `call_1` is closed.
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield {
+                1: NativeToolCallPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='call_2',
+                    args={'query': ' '.join(f'word{i}' for i in range(40))},
+                )
+            }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_native_tool_call))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    # `tool-input-available` must land immediately before `error`; anything after `error` is dropped by the client.
+    assert event_types[event_types.index('error') - 1] == 'tool-input-available'
+    # ...and it must carry the same `toolCallId` as its `tool-input-start`, or the client can't mark the call done.
+    tool_start = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-start')
+    tool_available = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-available')
+    assert tool_available['toolCallId'] == tool_start['toolCallId']
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'error',
+            'finish-step',
+            'finish',
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_error_closes_open_tool_call():
+    """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must emit `tool-input-available` before `error`.
+
+    A `ToolCallPart` — the streamed form of both function and output tool calls — is tracked in neither the
+    open text/thinking slot nor `_pending_tool_calls` (which only holds already-dispatched calls), so without
+    an explicit close the AI SDK v6 client aborts at the `error` chunk leaving the call stuck in an
+    input-streaming state.
+    """
+
+    async def stream_tool_call(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        # A function tool call opens at index 0 and stays open (never gets a `PartEndEvent`)...
+        yield {0: DeltaToolCall(name='my_tool', json_args='{"query": "hi"}', tool_call_id='call_1')}
+        # ...while a second call at a new index carries enough tokens to trip the usage limit mid-stream, so the
+        # run errors before `call_1` is closed.
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield {
+                1: DeltaToolCall(
+                    name='my_tool', json_args=' '.join(f'word{i}' for i in range(40)), tool_call_id='call_2'
+                )
+            }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_tool_call))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    # `tool-input-available` must land immediately before `error`; anything after `error` is dropped by the client.
+    assert event_types[event_types.index('error') - 1] == 'tool-input-available'
+    # ...and it must carry the same `toolCallId` as its `tool-input-start`, or the client can't mark the call done.
+    tool_start = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-start')
+    tool_available = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-available')
+    assert tool_available['toolCallId'] == tool_start['toolCallId']
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'error',
+            'finish-step',
+            'finish',
+            '[DONE]',
+        ]
+    )
+
+
 async def test_run_stream_on_complete_error():
     agent = Agent(model=TestModel())
 
@@ -3589,6 +3800,59 @@ async def test_adapter_dispatch_request():
             '[DONE]',
         ]
     )
+
+
+async def test_adapter_dispatch_request_explicit_run_id():
+    """`run_id=` passed to `dispatch_request` stamps the run result and agent messages.
+
+    Not a VCR test: adapter kwarg forwarding and id stamping are in-memory framework
+    behavior, no provider request shape is involved.
+    """
+    captured_results: list[AgentRunResult[Any]] = []
+
+    agent = Agent(model=TestModel())
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': request.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [
+                (b'content-type', b'application/json'),
+            ],
+        },
+        receive=receive,
+    )
+
+    response = await VercelAIAdapter.dispatch_request(
+        starlette_request,
+        agent=agent,
+        run_id='run-from-dispatch',
+        on_complete=captured_results.append,
+    )
+    assert isinstance(response, StreamingResponse)
+
+    async def send(data: MutableMapping[str, Any]) -> None:
+        pass
+
+    await response.stream_response(send)
+
+    assert captured_results[0].run_id == 'run-from-dispatch'
+    messages = captured_results[0].all_messages()
+    assert len(messages) == 2
+    assert all(m.run_id == 'run-from-dispatch' for m in messages)
 
 
 def test_manage_system_prompt_visible_in_vercel_adapter_signatures():

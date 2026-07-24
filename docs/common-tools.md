@@ -211,82 +211,22 @@ Here are some recent papers about transformer architectures from arxiv.org:
 
 ## Exa Search Tool
 
-!!! info
-    Exa is a paid service with free credits to explore their product.
+!!! warning "Deprecated"
+    The Exa common tools (`exa_search_tool`, `exa_find_similar_tool`, `exa_get_contents_tool`, `exa_answer_tool`, and `ExaToolset`) are deprecated and will be removed in v3.
 
-    You need to [sign up for an account](https://dashboard.exa.ai) and get an API key to use the Exa tools.
+    Use the [`ExaSearch`](https://pydantic.dev/docs/ai/harness/exa-search/) capability from the Pydantic AI Harness instead, which bundles web search, full-page retrieval, deep search, and an `ExaAgent` capability for long-running research:
 
-Exa is a neural search engine that finds high-quality, relevant results across billions of web pages.
-It provides several tools including web search, finding similar pages, content retrieval, and AI-powered answers.
+    ```bash
+    pip/uv-add "pydantic-ai-harness[exa]"
+    ```
 
-### Installation
+    ```py {title="exa_search.py" test="skip"}
+    from pydantic_ai_harness.exa import ExaSearch
 
-To use Exa tools, you need to install [`pydantic-ai-slim`](install.md#slim-install) with the `exa` optional group:
+    from pydantic_ai import Agent
 
-```bash
-pip/uv-add "pydantic-ai-slim[exa]"
-```
+    agent = Agent('openai:gpt-5.2', capabilities=[ExaSearch()])
 
-### Usage
-
-You can use Exa tools individually or as a toolset. The following tools are available:
-
-- [`exa_search_tool`][pydantic_ai.common_tools.exa.exa_search_tool]: Search the web with various search types (auto, keyword, neural, fast, deep)
-- [`exa_find_similar_tool`][pydantic_ai.common_tools.exa.exa_find_similar_tool]: Find pages similar to a given URL
-- [`exa_get_contents_tool`][pydantic_ai.common_tools.exa.exa_get_contents_tool]: Get full text content from URLs
-- [`exa_answer_tool`][pydantic_ai.common_tools.exa.exa_answer_tool]: Get AI-powered answers with citations
-
-#### Using Individual Tools
-
-```py {title="exa_search.py" test="skip"}
-import os
-
-from pydantic_ai import Agent
-from pydantic_ai.common_tools.exa import exa_search_tool
-
-api_key = os.getenv('EXA_API_KEY')
-assert api_key is not None
-
-agent = Agent(
-    'openai:gpt-5.2',
-    tools=[exa_search_tool(api_key, num_results=5, max_characters=1000)],
-    system_prompt='Search the web for information using Exa.',
-)
-
-result = agent.run_sync('What are the latest developments in quantum computing?')
-print(result.output)
-```
-
-#### Using ExaToolset
-
-For better efficiency when using multiple Exa tools, use [`ExaToolset`][pydantic_ai.common_tools.exa.ExaToolset]
-which shares a single API client across all tools. You can configure which tools to include:
-
-```py {title="exa_toolset.py" test="skip"}
-import os
-
-from pydantic_ai import Agent
-from pydantic_ai.common_tools.exa import ExaToolset
-
-api_key = os.getenv('EXA_API_KEY')
-assert api_key is not None
-
-toolset = ExaToolset(
-    api_key,
-    num_results=5,
-    max_characters=1000,  # Limit text content to control token usage
-    include_search=True,  # Include the search tool (default: True)
-    include_find_similar=True,  # Include the find_similar tool (default: True)
-    include_get_contents=False,  # Exclude the get_contents tool
-    include_answer=True,  # Include the answer tool (default: True)
-)
-
-agent = Agent(
-    'openai:gpt-5.2',
-    toolsets=[toolset],
-    system_prompt='You have access to Exa search tools to find information on the web.',
-)
-
-result = agent.run_sync('Find recent AI research papers and summarize the key findings.')
-print(result.output)
-```
+    result = agent.run_sync('What are the latest developments in quantum computing?')
+    print(result.output)
+    ```

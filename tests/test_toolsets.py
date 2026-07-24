@@ -32,7 +32,15 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import (
+    CallDeferred,
+    ModelRetry,
+    ToolFailed,
+    ToolRetryError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import (
     InstructionPart,
     ModelRequest,
@@ -44,7 +52,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import Tool, ToolDefinition
+from pydantic_ai.tools import DeferredToolResults, Tool, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -797,6 +805,102 @@ async def test_tool_manager_retry_logic():
         await another_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
 
 
+async def test_tool_manager_retry_count_survives_interleaved_successful_step():
+    """Retry counts carry over when a failed tool is skipped in an intervening step."""
+
+    @dataclass
+    class TestDeps:
+        pass
+
+    toolset = FunctionToolset[TestDeps](max_retries=2)
+    retry_values: list[int] = []
+
+    @toolset.tool
+    def failing_tool(ctx: RunContext[Any], x: int) -> int:
+        """A tool that always fails."""
+        retry_values.append(ctx.retry)
+        raise ModelRetry('This tool always fails')
+
+    @toolset.tool_plain
+    def other_tool(x: int) -> int:
+        """A tool that works."""
+        return x * 2
+
+    step_0_context = build_run_context(TestDeps())
+    step_0_tool_manager = await ToolManager[TestDeps](toolset).for_run_step(step_0_context)
+
+    with pytest.raises(ToolRetryError):
+        await step_0_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
+
+    step_1_context = build_run_context(TestDeps(), run_step=1)
+    step_1_tool_manager = await step_0_tool_manager.for_run_step(step_1_context)
+    assert step_1_tool_manager.ctx is not None
+    assert step_1_tool_manager.ctx.retries == {'failing_tool': 1}
+
+    result = await step_1_tool_manager.handle_call(ToolCallPart(tool_name='other_tool', args={'x': 3}))
+    assert result == 6
+
+    step_2_context = build_run_context(TestDeps(), run_step=2)
+    step_2_tool_manager = await step_1_tool_manager.for_run_step(step_2_context)
+    assert step_2_tool_manager.ctx is not None
+    assert step_2_tool_manager.ctx.retries == {'failing_tool': 1}
+
+    with pytest.raises(ToolRetryError):
+        await step_2_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
+
+    step_3_context = build_run_context(TestDeps(), run_step=3)
+    step_3_tool_manager = await step_2_tool_manager.for_run_step(step_3_context)
+    assert step_3_tool_manager.ctx is not None
+    assert step_3_tool_manager.ctx.retries == {'failing_tool': 2}
+
+    with pytest.raises(UnexpectedModelBehavior, match="Tool 'failing_tool' exceeded max retries count of 2"):
+        await step_3_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
+
+    assert retry_values == [0, 1, 2]
+
+
+async def test_tool_manager_retry_count_increments_when_same_tool_fails_and_succeeds_in_one_step():
+    """A tool that both fails and succeeds in a single step still counts the failure toward its retry budget.
+
+    Pins the parallel same-tool contract from #2311/#2317: within one step the failing call increments the
+    count (failure wins), rather than the successful call resetting it. A "success wins" rule — dropping any
+    tool that appears in `succeeded_tools` even when it also failed — would reintroduce the #6581 unbounded
+    loop for a model that pairs a succeeding and a failing call to the same tool on every step.
+    """
+
+    @dataclass
+    class TestDeps:
+        pass
+
+    toolset = FunctionToolset[TestDeps](max_retries=2)
+    calls = 0
+
+    @toolset.tool_plain
+    def flaky_tool(x: int) -> int:
+        """Fails on its first call in the step, succeeds on the second."""
+        nonlocal calls
+        calls += 1
+        if calls % 2 == 1:
+            raise ModelRetry('This call fails')
+        return x * 2
+
+    step_0_context = build_run_context(TestDeps())
+    step_0_tool_manager = await ToolManager[TestDeps](toolset).for_run_step(step_0_context)
+
+    # Same step: the tool fails once and succeeds once, landing in both failed_tools and succeeded_tools.
+    with pytest.raises(ToolRetryError):
+        await step_0_tool_manager.handle_call(ToolCallPart(tool_name='flaky_tool', args={'x': 1}))
+    assert await step_0_tool_manager.handle_call(ToolCallPart(tool_name='flaky_tool', args={'x': 3})) == 6
+    assert step_0_tool_manager.failed_tools == {'flaky_tool'}
+    assert step_0_tool_manager.succeeded_tools == {'flaky_tool'}
+
+    # Failure wins: the count carries forward as 1, not dropped by the same-step success.
+    step_1_context = build_run_context(TestDeps(), run_step=1)
+    step_1_tool_manager = await step_0_tool_manager.for_run_step(step_1_context)
+    assert step_1_tool_manager.ctx is not None
+    assert step_1_tool_manager.ctx.retries == {'flaky_tool': 1}
+
+
 async def test_handle_call_wrap_validation_errors_false():
     """`handle_call(wrap_validation_errors=False)` propagates raw errors and leaves retry-budget state untouched.
 
@@ -826,6 +930,9 @@ async def test_handle_call_wrap_validation_errors_false():
         )
         == 10
     )
+    # The raw-mode success leaves retry-budget state untouched: it is not recorded in
+    # succeeded_tools, so it can't reset a carried retry count in the next run step.
+    assert tool_manager.succeeded_tools == set()
 
     # Pydantic ValidationError on bad args propagates raw, not as ToolRetryError.
     with pytest.raises(ValidationError):
@@ -851,6 +958,76 @@ async def test_handle_call_wrap_validation_errors_false():
     with pytest.raises(ToolRetryError):
         await tool_manager.handle_call(ToolCallPart(tool_name='retrying', args={}))
     assert tool_manager.failed_tools == {'needs_int', 'retrying'}
+
+
+async def test_handle_call_raw_mode_propagates_tool_failed_from_body():
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def failing() -> None:
+        raise ToolFailed('body failed')
+
+    tool_manager = await ToolManager[None](toolset).for_run_step(build_run_context(None))
+
+    with pytest.raises(ToolFailed, match='body failed'):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='failing', args={}),
+            wrap_validation_errors=False,
+        )
+
+
+async def test_handle_call_raw_mode_propagates_deferred_tool_failed():
+    """A deferred handler result honors the same raw-error contract as an in-process failure."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def failing_later() -> None:
+        raise CallDeferred
+
+    tool_manager = await ToolManager[None](toolset).for_run_step(build_run_context(None))
+    tool_manager.resolve_deferred_tool_calls = AsyncMock(
+        return_value=DeferredToolResults(calls={'call-1': ToolFailed('deferred failed')})
+    )
+
+    with pytest.raises(ToolFailed, match='deferred failed'):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='failing_later', args={}, tool_call_id='call-1'),
+            wrap_validation_errors=False,
+        )
+
+
+@pytest.mark.parametrize('hook_name', ['execute', 'validate'])
+async def test_handle_call_raw_mode_propagates_tool_failed_from_hooks(hook_name: str):
+    class FailingCapability(AbstractCapability[None]):
+        async def before_tool_execute(
+            self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            if hook_name == 'execute':
+                raise ToolFailed('hook failed')
+            return args  # pragma: no cover - unreachable: the 'validate' hook fails before execute runs
+
+        async def before_tool_validate(
+            self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+        ) -> str | dict[str, Any]:
+            if hook_name == 'validate':
+                raise ToolFailed('hook failed')
+            return args
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def tool() -> str:
+        return 'ok'  # pragma: no cover - unreachable: a hook always fails before the tool body runs
+
+    tool_manager = await ToolManager[None](toolset, root_capability=FailingCapability()).for_run_step(
+        build_run_context(None)
+    )
+
+    with pytest.raises(ToolFailed, match='hook failed'):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='tool', args={}),
+            wrap_validation_errors=False,
+        )
 
 
 async def test_toolset_max_retries_inherits_from_agent():

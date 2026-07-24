@@ -97,7 +97,7 @@ The best embedding model depends on your language, domain, latency, deployment, 
 
 For Retrieval-Augmented Generation (RAG), embeddings are one part of a larger retrieval pipeline. Pydantic AI provides [`Embedder`][pydantic_ai.embeddings.Embedder] for query and document embeddings, and [tools](tools.md) for giving retrieved context to an agent. The [RAG example](examples/rag.md) demonstrates vector storage, retrieval, and passing retrieved context to an agent using pre-split data.
 
-If you want a provider-managed pipeline instead, first upload or import files into a provider-managed store, then pass its ID to [`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool]. The provider handles chunking, embeddings, storage, and retrieval; see the [File Search Tool docs](builtin-tools.md#file-search-tool) for supported providers. The rest of this section covers building your own pipeline, where these choices stay application-specific.
+If you want a provider-managed pipeline instead, first upload or import files into a provider-managed store, then pass its ID to [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]. The provider handles chunking, embeddings, storage, and retrieval; see the [File Search Tool docs](native-tools.md#file-search-tool) for supported providers. The rest of this section covers building your own pipeline, where these choices stay application-specific.
 
 A typical custom RAG pipeline looks like this:
 

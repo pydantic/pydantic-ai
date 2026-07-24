@@ -102,13 +102,11 @@ ProductionGroqModelNames = Literal[
 
 PreviewGroqModelNames = Literal[
     'meta-llama/llama-4-maverick-17b-128e-instruct',
-    'meta-llama/llama-4-scout-17b-16e-instruct',
     'meta-llama/llama-prompt-guard-2-22m',
     'meta-llama/llama-prompt-guard-2-86m',
     'openai/gpt-oss-safeguard-20b',
     'playai-tts',
     'playai-tts-arabic',
-    'qwen/qwen3-32b',
 ]
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 

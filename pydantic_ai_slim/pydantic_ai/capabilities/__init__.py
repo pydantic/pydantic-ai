@@ -14,11 +14,14 @@ from ._dynamic import CapabilityFunc, DynamicCapability
 from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
+    AgentModel,
     AgentNode,
     CapabilityDescription,
     CapabilityOrdering,
     CapabilityPosition,
     CapabilityRef,
+    ModelSelection,
+    ModelSelector,
     NodeResult,
     RawOutput,
     RawToolArgs,
@@ -33,6 +36,7 @@ from .abstract import (
 )
 from .capability import Capability
 from .combined import CombinedCapability
+from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
@@ -46,6 +50,8 @@ from .prepare_tools import PrepareOutputTools, PrepareTools
 from .process_event_stream import ProcessEventStream
 from .process_history import ProcessHistory
 from .reinject_system_prompt import ReinjectSystemPrompt
+from .resolve_model_id import ModelIdResolver, ResolveModelId
+from .select_model import SelectModel
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
 from .thread_executor import ThreadExecutor
@@ -67,6 +73,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         NativeTool,
+        RaiseContentFilterError,
         ImageGeneration,
         IncludeToolReturnSchemas,
         Instrumentation,
@@ -93,12 +100,16 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 __all__ = [
     'AbstractCapability',
     'AgentCapability',
+    'AgentModel',
     'AgentNode',
     'CapabilityDescription',
     'CapabilityFunc',
     'CapabilityOrdering',
     'CapabilityPosition',
     'CapabilityRef',
+    'ModelSelection',
+    'ModelSelector',
+    'ModelIdResolver',
     'NodeResult',
     'RawToolArgs',
     'ValidatedToolArgs',
@@ -112,6 +123,7 @@ __all__ = [
     'WrapOutputProcessHandler',
     'NativeTool',
     'NativeOrLocalTool',
+    'RaiseContentFilterError',
     'Capability',
     'CAPABILITY_TYPES',
     'ImageGeneration',
@@ -124,6 +136,8 @@ __all__ = [
     'ProcessEventStream',
     'ProcessHistory',
     'ReinjectSystemPrompt',
+    'ResolveModelId',
+    'SelectModel',
     'SetToolMetadata',
     'Thinking',
     'ThreadExecutor',
