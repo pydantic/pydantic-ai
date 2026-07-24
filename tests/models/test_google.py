@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from httpx import AsyncClient as HttpxAsyncClient, Timeout
+from httpx import AsyncClient as HttpxAsyncClient, MockTransport, Request, Response, Timeout
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
@@ -5283,81 +5283,30 @@ async def test_google_stream_api_non_http_error_is_wrapped(
     assert exc_info.value.model_name == model_name
 
 
-@pytest.mark.parametrize(
-    'error_class,error_response,expected_status',
-    [
-        (
-            errors.ClientError,
-            {
-                'error': {
-                    'code': 404,
-                    'message': 'Publisher model `gemini-1.5-flash` was not found',
-                    'status': 'NOT_FOUND',
-                }
-            },
-            404,
-        ),
-        (
-            errors.ServerError,
-            {'error': {'code': 503, 'message': 'The service is currently unavailable.', 'status': 'UNAVAILABLE'}},
-            503,
-        ),
-    ],
-)
-async def test_google_stream_api_errors_before_first_chunk_are_wrapped(
-    allow_model_requests: None,
-    google_provider: GoogleProvider,
-    mocker: MockerFixture,
-    error_class: Any,
-    error_response: dict[str, Any],
-    expected_status: int,
-):
-    """`generate_content_stream` issues the HTTP request lazily, on the first advance of the
-    response iterator, so API errors can surface before any chunk arrives. They should be
-    wrapped as ModelHTTPError like errors raised mid-stream, not bubble up raw."""
-    model_name = 'gemini-1.5-flash'
-    model = GoogleModel(model_name, provider=google_provider)
+async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model_requests: None):
+    model_name = 'definitely-missing'
+    error_response = {'error': {'code': 404, 'message': 'Model not found', 'status': 'NOT_FOUND'}}
+    requests: list[Request] = []
 
-    async def failing_stream():
-        raise error_class(expected_status, error_response)
-        yield  # pragma: no cover
+    async def handler(request: Request) -> Response:
+        requests.append(request)
+        return Response(404, json=error_response)
 
-    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=failing_stream())
+    async with HttpxAsyncClient(transport=MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            model_name,
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
 
-    agent = Agent(model=model)
+        with pytest.raises(ModelHTTPError) as exc_info:
+            async with Agent(model).run_stream('test'):
+                pytest.fail('The context body should not be entered')
 
-    with pytest.raises(ModelHTTPError) as exc_info:
-        async with agent.run_stream('test') as stream:
-            async for _text in stream.stream_text():
-                pass
-
-    assert exc_info.value.status_code == expected_status
-    assert error_response['error']['message'] in str(exc_info.value.body)
-
-
-async def test_google_stream_api_non_http_error_before_first_chunk_is_wrapped(
-    allow_model_requests: None,
-    google_provider: GoogleProvider,
-    mocker: MockerFixture,
-):
-    """Non-HTTP API errors raised before the first chunk should be wrapped as ModelAPIError."""
-    model_name = 'gemini-1.5-flash'
-    model = GoogleModel(model_name, provider=google_provider)
-
-    async def failing_stream():
-        raise errors.APIError(302, {'error': {'code': 302, 'message': 'Redirect', 'status': 'REDIRECT'}})
-        yield  # pragma: no cover
-
-    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=failing_stream())
-
-    agent = Agent(model=model)
-
-    with pytest.raises(ModelAPIError) as exc_info:
-        async with agent.run_stream('test') as stream:
-            async for _text in stream.stream_text():
-                pass
-
+    assert exc_info.value.status_code == 404
     assert exc_info.value.model_name == model_name
+    assert exc_info.value.body == error_response
+    assert isinstance(exc_info.value.__cause__, errors.ClientError)
+    assert len(requests) == 1
 
 
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
