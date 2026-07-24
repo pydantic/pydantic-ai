@@ -24,7 +24,13 @@ from pydantic_ai._instrumentation import (
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._tool_execution import process_tool_calls
-from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
+from pydantic_ai._utils import (
+    cancel_and_drain,
+    dataclasses_no_defaults_repr,
+    fill_run_metadata,
+    is_trailing_provider_metadata_native_tool_call,
+    now_utc,
+)
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
@@ -1800,7 +1806,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 tool_calls: list[_messages.ToolCallPart] = []
                 files: list[_messages.BinaryContent] = []
 
-                for part in self.model_response.parts:
+                for index, part in enumerate(self.model_response.parts):
                     if isinstance(part, _messages.TextPart):
                         text += part.content
                     elif isinstance(part, _messages.ToolCallPart):
@@ -1808,10 +1814,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.FilePart):
                         files.append(part.content)
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        # Text parts before a native tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text.
-                        # The part itself was already surfaced through `PartStartEvent` / `PartDeltaEvent`.
-                        text = ''
+                        if not is_trailing_provider_metadata_native_tool_call(self.model_response, index):
+                            # Text parts before a native tool call are essentially thoughts,
+                            # not part of the final result output, so we reset the accumulated text.
+                            # A provider may append a synthetic native tool pair after streamed text
+                            # to expose metadata for that output; that marked pair must not erase it.
+                            text = ''
                     elif isinstance(part, _messages.NativeToolReturnPart):
                         # Already surfaced through `PartStartEvent` / `PartDeltaEvent`.
                         pass

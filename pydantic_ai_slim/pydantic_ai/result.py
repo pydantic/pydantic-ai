@@ -253,13 +253,18 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 return await self._validate_image_output(message.images[0], allow_partial=allow_partial)
             elif text_processor := self._output_schema.text_processor:
                 text = ''
-                for part in message.parts:
+                for index, part in enumerate(message.parts):
                     if isinstance(part, _messages.TextPart):
                         text += part.content
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        # Text parts before a built-in tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text
-                        text = ''
+                        if not _utils.is_trailing_provider_metadata_native_tool_call(message, index):
+                            # Text parts before a built-in tool call are essentially thoughts,
+                            # not part of the final result output, so we reset the accumulated text.
+                            # A provider may append a synthetic native tool pair after streamed text
+                            # to expose metadata for that output; that marked pair must not erase it.
+                            # Unmarked calls reset partial and final output alike, preserving the
+                            # established behavior for actual native tool execution.
+                            text = ''
 
                 run_ctx = replace(self._run_ctx, partial_output=allow_partial)
                 return await run_output_with_hooks(
@@ -310,10 +315,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             # yields tuples of (text_content, part_index)
             # we don't currently make use of the part_index, but in principle this may be useful
             # so we retain it here for now to make possible future refactors simpler
-            msg = self.response
-            for i, part in enumerate(msg.parts):
+            for index, part in enumerate(self.response.parts):
                 if isinstance(part, _messages.TextPart) and part.content:
-                    yield part.content, i
+                    yield part.content, index
 
             last_text_index: int | None = None
             async for event in self:
@@ -336,8 +340,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     and isinstance(event.part, _messages.NativeToolCallPart)
                     and last_text_index is not None
                 ):
-                    # Text parts that are interrupted by a built-in tool call should not be joined together directly
-                    yield '\n\n', event.index
+                    # Text parts that are interrupted by a native tool call should not be joined together directly.
+                    # Omit the separator only for a synthetic provider-metadata pair that trails the response.
+                    # Ordinary native tool calls keep the established behavior of emitting it immediately.
+                    if not _utils.is_trailing_provider_metadata_native_tool_call(self.response, event.index):
+                        yield '\n\n', event.index
                     last_text_index = None
 
         async def _stream_text_deltas() -> AsyncGenerator[str, None]:

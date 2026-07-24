@@ -31,6 +31,7 @@ from typing import (
     Generic,
     TypeAlias,
     TypeGuard,
+    cast,
     get_args,
     get_origin,
     overload,
@@ -842,6 +843,68 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
 def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     """Check if obj is a dict, narrowing the type to `dict[str, Any]`."""
     return isinstance(obj, dict)
+
+
+def is_str_list(obj: Any) -> TypeGuard[list[str]]:
+    """Check if obj is a list containing only strings."""
+    return isinstance(obj, list) and all(isinstance(item, str) for item in cast(list[Any], obj))
+
+
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
+_PROVIDER_METADATA_TOOL_CALL_IDS_KEY = 'provider_metadata_tool_call_ids'
+
+
+def add_provider_metadata_tool_call_id(metadata: dict[str, Any] | None, tool_call_id: str) -> dict[str, Any]:
+    """Add a provider-metadata tool call ID to the framework's serialized response metadata."""
+    metadata = {**(metadata or {})}
+    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
+    namespace = {**namespace} if is_str_dict(namespace) else {}
+    existing_tool_call_ids = namespace.get(_PROVIDER_METADATA_TOOL_CALL_IDS_KEY)
+    tool_call_ids = list(existing_tool_call_ids) if is_str_list(existing_tool_call_ids) else []
+    tool_call_ids.append(tool_call_id)
+    namespace[_PROVIDER_METADATA_TOOL_CALL_IDS_KEY] = tool_call_ids
+    metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
+    return metadata
+
+
+def is_trailing_provider_metadata_native_tool_call(response: _messages.ModelResponse, index: int) -> bool:
+    """Whether `response.parts[index]` starts a trailing native-tool pair synthesized from provider metadata.
+
+    Producers may append multiple marked pairs, but each one must be a unique adjacent call/return pair
+    after the response's final text part, as `GoogleModel` does on both streamed and non-streamed paths.
+    """
+    from . import messages
+
+    parts = response.parts
+    call = parts[index]
+    if not isinstance(call, messages.NativeToolCallPart):  # pragma: no cover
+        return False
+    if any(isinstance(part, messages.TextPart) for part in parts[index + 1 :]):
+        return False
+    metadata = response.metadata
+    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY) if is_str_dict(metadata) else None
+    tool_call_ids = namespace.get(_PROVIDER_METADATA_TOOL_CALL_IDS_KEY) if is_str_dict(namespace) else None
+    if not is_str_list(tool_call_ids) or tool_call_ids.count(call.tool_call_id) != 1:
+        return False
+    if index + 1 >= len(parts):
+        return False
+    tool_return = parts[index + 1]
+    if not isinstance(tool_return, messages.NativeToolReturnPart):
+        return False
+    if (
+        tool_return.tool_call_id != call.tool_call_id
+        or tool_return.tool_name != call.tool_name
+        or tool_return.provider_name != call.provider_name
+    ):
+        return False
+    return (
+        sum(isinstance(part, messages.NativeToolCallPart) and part.tool_call_id == call.tool_call_id for part in parts)
+        == 1
+        and sum(
+            isinstance(part, messages.NativeToolReturnPart) and part.tool_call_id == call.tool_call_id for part in parts
+        )
+        == 1
+    )
 
 
 def is_text_like_media_type(media_type: str) -> bool:

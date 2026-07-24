@@ -37,10 +37,14 @@ from pydantic_ai import (
     FunctionToolResultEvent,
     ImageUrl,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestContext,
     ModelResponse,
+    ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -78,7 +82,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models import CompletedStreamedResponse
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, BuiltinToolCallsReturns, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
@@ -4412,6 +4416,187 @@ def test_agent_stream_metadata_falls_back_to_run_context() -> None:
     )
 
     assert stream.metadata == {'source': 'run-context'}
+
+
+@pytest.mark.parametrize(
+    ('leading_text', 'trailing_text', 'provider_metadata', 'expected'),
+    [
+        pytest.param('pre-tool text', None, False, '', id='trailing-native-pair-resets-prior-text'),
+        pytest.param('final answer', None, True, 'final answer', id='trailing-provider-metadata-preserves-prior-text'),
+        pytest.param(
+            'pre-tool text', 'final answer', True, 'final answer', id='later-text-resets-before-provider-metadata'
+        ),
+    ],
+)
+async def test_agent_stream_text_output_with_native_tool_parts(
+    leading_text: str, trailing_text: str | None, provider_metadata: bool, expected: str
+) -> None:
+    # Synthetic by design: this exercises provider-agnostic `AgentStream` assembly and has no HTTP boundary
+    # to record. Provider behavior is covered by the model-specific VCR tests.
+    parts: list[ModelResponsePart] = [
+        TextPart(leading_text),
+        NativeToolCallPart(
+            tool_name='web_search',
+            args={'queries': ['query']},
+            tool_call_id='web-search-call',
+            provider_name='test',
+        ),
+        NativeToolReturnPart(
+            tool_name='web_search',
+            content=[{'uri': 'https://example.com', 'title': 'Example'}],
+            tool_call_id='web-search-call',
+            provider_name='test',
+        ),
+    ]
+    if trailing_text is not None:
+        parts.append(TextPart(trailing_text))
+    response = ModelResponse(parts=parts, model_name='test')
+    if provider_metadata:
+        response.metadata = _utils.add_provider_metadata_tool_call_id(response.metadata, 'web-search-call')
+        [round_tripped] = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response]))
+        response = cast(ModelResponse, round_tripped)
+
+    assert await _make_text_output_agent_stream(response).validate_response_output(response) == expected
+
+
+@pytest.mark.parametrize(
+    'return_part',
+    [
+        pytest.param(None, id='missing-return'),
+        pytest.param(ThinkingPart('not a return'), id='non-return-part'),
+        pytest.param(
+            NativeToolReturnPart(tool_name='web_search', content=[], tool_call_id='other-call', provider_name='test'),
+            id='mismatched-return-id',
+        ),
+        pytest.param(
+            NativeToolReturnPart(
+                tool_name='file_search', content=[], tool_call_id='web-search-call', provider_name='test'
+            ),
+            id='mismatched-return-name',
+        ),
+        pytest.param(
+            NativeToolReturnPart(
+                tool_name='web_search', content=[], tool_call_id='web-search-call', provider_name='other'
+            ),
+            id='mismatched-return-provider',
+        ),
+    ],
+)
+async def test_agent_rejects_malformed_provider_metadata_native_tool_pair(
+    return_part: ModelResponsePart | None,
+) -> None:
+    parts: list[ModelResponsePart] = [
+        TextPart('not final'),
+        NativeToolCallPart(
+            tool_name='web_search',
+            args={'queries': ['query']},
+            tool_call_id='web-search-call',
+            provider_name='test',
+        ),
+    ]
+    if return_part is not None:
+        parts.append(return_part)
+    response = ModelResponse(parts=parts, model_name='test')
+    response.metadata = _utils.add_provider_metadata_tool_call_id(response.metadata, 'web-search-call')
+    responses = iter([response, ModelResponse(parts=[TextPart('final answer')], model_name='test')])
+    agent = Agent(FunctionModel(lambda _messages, _info: next(responses)))
+
+    result = await agent.run('test')
+
+    assert result.output == 'final answer'
+    assert result.usage.requests == 2
+
+
+def _make_text_output_agent_stream(response: ModelResponse) -> AgentStream[None, str]:
+    stream_response = ModelTestStreamedResponse(
+        model_request_parameters=models.ModelRequestParameters(),
+        _model_name='test',
+        _structured_response=response,
+        _messages=[],
+        _provider_name='test',
+    )
+    stream_response.final_result_event = FinalResultEvent(tool_name=None, tool_call_id=None)
+    output_schema = TextOutputSchema[str](
+        text_processor=TextOutputProcessor(),
+        allows_deferred_tools=False,
+        allows_image=False,
+        allows_none=False,
+    )
+    return AgentStream(
+        _raw_stream_response=stream_response,
+        _output_schema=output_schema,
+        _model_request_parameters=models.ModelRequestParameters(),
+        _output_validators=[],
+        _run_ctx=RunContext(deps=None, model=TestModel(), usage=RunUsage()),
+        _usage_limits=None,
+        _tool_manager=ToolManager(toolset=MagicMock()),
+        _root_capability=CombinedCapability([]),
+    )
+
+
+async def test_agent_stream_text_separator_before_trailing_native_tool_pair() -> None:
+    """An ordinary trailing native tool pair retains the established separator delta."""
+
+    async def stream_function(
+        _messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | BuiltinToolCallsReturns]:
+        yield 'first'
+        yield {
+            0: NativeToolCallPart(
+                tool_name='web_search',
+                args={'queries': ['query']},
+                tool_call_id='web-search-call',
+                provider_name='function',
+            )
+        }
+        yield {
+            1: NativeToolReturnPart(
+                tool_name='web_search',
+                content=[{'uri': 'https://example.com', 'title': 'Example'}],
+                tool_call_id='web-search-call',
+                provider_name='function',
+            )
+        }
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    deltas: list[str] = []
+    async with agent.iter('hello') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    deltas = [text async for text in stream.stream_text(delta=True, debounce_by=None)]
+                break
+
+    assert deltas == snapshot(['first', '\n\n'])
+
+
+async def test_agent_does_not_treat_text_before_trailing_native_pair_as_output() -> None:
+    async def function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    TextPart('Let me search.'),
+                    NativeToolCallPart(
+                        tool_name='web_search',
+                        args={'queries': ['query']},
+                        tool_call_id='web-search-call',
+                        provider_name='function',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        content=[{'uri': 'https://example.com', 'title': 'Example'}],
+                        tool_call_id='web-search-call',
+                        provider_name='function',
+                    ),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('final answer')])
+
+    result = await Agent(FunctionModel(function=function)).run('hello')
+
+    assert result.output == 'final answer'
+    assert result.usage.requests == 2
 
 
 def _make_run_result(*, metadata: dict[str, Any] | None) -> AgentRunResult[str]:
