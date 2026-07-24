@@ -296,8 +296,9 @@ async def test_image_output_unsupported(allow_model_requests: None) -> None:
 
 
 async def test_native_tool_unsupported(allow_model_requests: None) -> None:
-    """Mantle proxies the OpenAI models but not OpenAI's server-hosted tools, so a native tool fails with a
-    clean `UserError` before any request. No cassette: the profile guard raises during request preparation.
+    """Mantle's Lambda/MCP server-side tools differ from Pydantic AI's OpenAI-native tools, so a native
+    tool fails with a clean `UserError` before any request. No cassette: the profile guard raises during
+    request preparation.
     """
     model = infer_model('bedrock-mantle:openai.gpt-5.6-luna', lambda _: _provider())
     agent = Agent(model, capabilities=[NativeTool(WebSearchTool())])
