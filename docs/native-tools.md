@@ -130,7 +130,7 @@ _(This example is complete, it can be run "as is")_
 
 The `WebSearchTool` supports several configuration parameters:
 
-```py {title="web_search_configured.py" test="skip"}
+```py {title="web_search_configured.py"}
 from pydantic_ai import Agent, WebSearchTool, WebSearchUserLocation
 from pydantic_ai.capabilities import NativeTool
 
@@ -639,7 +639,7 @@ _(This example is complete, it can be run "as is")_
 
 The `WebFetchTool` supports several configuration parameters:
 
-```py {title="web_fetch_configured.py" test="skip"}
+```py {title="web_fetch_configured.py"}
 from pydantic_ai import Agent, WebFetchTool
 from pydantic_ai.capabilities import NativeTool
 

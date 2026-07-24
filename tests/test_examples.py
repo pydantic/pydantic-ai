@@ -1187,12 +1187,14 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         return model
     else:
         model_name = model if isinstance(model, str) else model.model_name
-        return FunctionModel(
+        function_model = FunctionModel(
             model_logic,
             stream_function=stream_model_logic,
             model_name=model_name,
             profile=model.profile if isinstance(model, Model) else None,
         )
+        function_model._system = model.system  # pyright: ignore[reportPrivateUsage]
+        return function_model
 
 
 def mock_group_by_temporal(aiter: Any, soft_max_interval: float | None) -> Any:
