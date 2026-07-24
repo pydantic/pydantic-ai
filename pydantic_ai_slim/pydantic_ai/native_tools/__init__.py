@@ -4,7 +4,7 @@ from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, TypeAlias, Union
 
 import pydantic
 from pydantic_core import core_schema
@@ -63,6 +63,8 @@ executor consults mid-generation. The executor/advisor pairing is validated by t
 The literals are Anthropic model IDs; on OpenRouter, pass a catalog slug string instead
 (e.g. `anthropic/claude-opus-4.8` or the `~anthropic/claude-opus-latest` alias).
 """
+
+_ResponseInclusion: TypeAlias = Literal['full', 'excluded']
 
 
 @dataclass(kw_only=True)
@@ -204,6 +206,15 @@ class WebSearchTool(AbstractNativeTool):
     * OpenAI Responses `web_search` tool, see <https://developers.openai.com/api/docs/guides/tools-web-search#live-internet-access>
 
     OpenAI's legacy `web_search_preview` tool ignores this parameter.
+
+    response_inclusion: _ResponseInclusion | None = None
+    """Controls whether results consumed by completed code execution calls are included in the response.
+
+    If `None`, Anthropic uses its default of `'full'`.
+
+    Supported by:
+
+    * Anthropic
     """
 
     kind: str = 'web_search'
@@ -408,6 +419,27 @@ class WebFetchTool(AbstractNativeTool):
 
     max_content_tokens: int | None = None
     """Maximum content length in tokens for fetched content.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    use_cache: bool | None = None
+    """Whether Anthropic may return cached content.
+
+    Set to `False` only when fresh content is required, as bypassing the cache increases latency.
+    If `None`, Anthropic uses its default of `True`.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    response_inclusion: _ResponseInclusion | None = None
+    """Controls whether results consumed by completed code execution calls are included in the response.
+
+    If `None`, Anthropic uses its default of `'full'`.
 
     Supported by:
 

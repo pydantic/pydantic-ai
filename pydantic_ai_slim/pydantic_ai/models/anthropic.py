@@ -196,11 +196,11 @@ try:
         BetaToolUseBlockParam,
         BetaUsage,
         BetaWebFetchTool20250910Param,
-        BetaWebFetchTool20260209Param,
+        BetaWebFetchTool20260318Param,
         BetaWebFetchToolResultBlock,
         BetaWebFetchToolResultBlockParam,
         BetaWebSearchTool20250305Param,
-        BetaWebSearchTool20260209Param,
+        BetaWebSearchTool20260318Param,
         BetaWebSearchToolResultBlock,
         BetaWebSearchToolResultBlockContent,
         BetaWebSearchToolResultBlockParam,
@@ -261,7 +261,7 @@ _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 #   Foundry support dynamic-filtering web tools on supported model profiles.
 _WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 _WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
-_WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+_DYNAMIC_WEB_TOOLS_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
 # The advisor tool is available on the direct Anthropic API and Claude Platform on AWS
 # (`AsyncAnthropicBedrockMantle`) only — not on the legacy Bedrock InvokeModel client, Vertex, or
 # Foundry. `AsyncAnthropicBedrockMantle` isn't a subclass of `AsyncAnthropicBedrock`, so the plain
@@ -592,7 +592,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(client, _ADVISOR_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {AdvisorTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
-            client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
+            client, _DYNAMIC_WEB_TOOLS_UNSUPPORTED_CLIENTS
         )
         _profile = merge_profile(
             _profile,
@@ -1211,7 +1211,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         implicit_code_execution_names = {'code_execution', 'bash_code_execution', 'text_editor_code_execution'}
         if 'code_execution' in enabled_server_tool_names:
             enabled_server_tool_names.update(implicit_code_execution_names)
-        # The 20260209 web tools provision code execution for dynamic filtering server-side.
+        # Dynamic web tools provision code execution for filtering server-side.
         if self.profile.get('anthropic_supports_dynamic_filtering', False) and any(
             isinstance(tool, WebSearchTool | WebFetchTool) for tool in model_request_parameters.native_tools
         ):
@@ -1286,17 +1286,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     @staticmethod
     def _map_web_search_tool(
         tool: WebSearchTool, supports_dynamic_filtering: bool
-    ) -> BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
+    ) -> BetaWebSearchTool20260318Param | BetaWebSearchTool20250305Param:
         user_location = BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
         if supports_dynamic_filtering:
-            return BetaWebSearchTool20260209Param(
+            web_search_tool = BetaWebSearchTool20260318Param(
                 name='web_search',
-                type='web_search_20260209',
+                type='web_search_20260318',
                 max_uses=tool.max_uses,
                 allowed_domains=tool.allowed_domains,
                 blocked_domains=tool.blocked_domains,
                 user_location=user_location,
             )
+            if tool.response_inclusion is not None:
+                web_search_tool['response_inclusion'] = tool.response_inclusion
+            return web_search_tool
         return BetaWebSearchTool20250305Param(
             name='web_search',
             type='web_search_20250305',
@@ -1309,19 +1312,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     @staticmethod
     def _map_web_fetch_tool(
         tool: WebFetchTool, supports_dynamic_filtering: bool
-    ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
+    ) -> tuple[BetaWebFetchTool20260318Param | BetaWebFetchTool20250910Param, str | None]:
         citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
         if supports_dynamic_filtering:
+            web_fetch_tool = BetaWebFetchTool20260318Param(
+                name='web_fetch',
+                type='web_fetch_20260318',
+                max_uses=tool.max_uses,
+                allowed_domains=tool.allowed_domains,
+                blocked_domains=tool.blocked_domains,
+                citations=citations,
+                max_content_tokens=tool.max_content_tokens,
+            )
+            if tool.use_cache is not None:
+                web_fetch_tool['use_cache'] = tool.use_cache
+            if tool.response_inclusion is not None:
+                web_fetch_tool['response_inclusion'] = tool.response_inclusion
             return (
-                BetaWebFetchTool20260209Param(
-                    name='web_fetch',
-                    type='web_fetch_20260209',
-                    max_uses=tool.max_uses,
-                    allowed_domains=tool.allowed_domains,
-                    blocked_domains=tool.blocked_domains,
-                    citations=citations,
-                    max_content_tokens=tool.max_content_tokens,
-                ),
+                web_fetch_tool,
                 None,
             )
         return (

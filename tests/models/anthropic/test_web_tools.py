@@ -1,6 +1,6 @@
 """Anthropic `web_search` / `web_fetch` native-tool versioning and per-client support.
 
-The wire tool version (`web_search_20260209` / `web_fetch_20260209` vs the earlier ones) and the
+The wire tool version (`web_search_20260318` / `web_fetch_20260318` vs the earlier ones) and the
 beta headers are narrowed by the concrete Anthropic client the provider wraps — first-party,
 Bedrock(-Mantle), Vertex, and Foundry each support a different subset. These tests pin that matrix,
 the dynamic-filtering `caller` round-trip on web-fetch history, and the live request shape via VCR.
@@ -21,7 +21,7 @@ from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool,
 
 from ..._inline_snapshot import snapshot
 from ...cassette_utils import single_request_body
-from ...conftest import IsStr, TestEnv, try_import
+from ...conftest import TestEnv, try_import
 from ..test_anthropic import (
     MockAnthropic,
     _mock_anthropic_client,  # pyright: ignore[reportPrivateUsage]
@@ -100,28 +100,31 @@ CLIENT_SUPPORT_CASES = [
         id='anthropic',
         client_cls=AsyncAnthropic,
         base_url='https://api.anthropic.com',
-        native_tools=[WebSearchTool(), WebFetchTool()],
-        expected_tool_types=['web_search_20260209', 'web_fetch_20260209'],
+        native_tools=[
+            WebSearchTool(response_inclusion='excluded'),
+            WebFetchTool(use_cache=False, response_inclusion='excluded'),
+        ],
+        expected_tool_types=['web_search_20260318', 'web_fetch_20260318'],
     ),
     ClientSupportCase(
         id='bedrock-mantle',
         client_cls=AsyncAnthropicBedrockMantle,
         base_url='https://bedrock-mantle.us-east-1.api.aws',
         native_tools=[WebSearchTool(), WebFetchTool()],
-        expected_tool_types=['web_search_20260209', 'web_fetch_20260209'],
+        expected_tool_types=['web_search_20260318', 'web_fetch_20260318'],
     ),
     ClientSupportCase(
         id='foundry',
         client_cls=AsyncAnthropicFoundry,
         base_url='https://example.services.ai.azure.com/anthropic',
         native_tools=[WebSearchTool(), WebFetchTool()],
-        expected_tool_types=['web_search_20260209', 'web_fetch_20260209'],
+        expected_tool_types=['web_search_20260318', 'web_fetch_20260318'],
     ),
     ClientSupportCase(
         id='vertex-web-search',
         client_cls=AsyncAnthropicVertex,
         base_url='https://us-central1-aiplatform.googleapis.com',
-        native_tools=[WebSearchTool()],
+        native_tools=[WebSearchTool(response_inclusion='excluded')],
         expected_tool_types=['web_search_20250305'],
     ),
     ClientSupportCase(
@@ -172,6 +175,23 @@ def test_anthropic_web_tools_client_support(case: ClientSupportCase):
 
     tools, _, beta_features = m._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
     assert [tool.get('type') for tool in tools] == case.expected_tool_types
+    if case.id == 'anthropic':
+        assert [
+            {key: value for key, value in tool.items() if key in {'name', 'type', 'response_inclusion', 'use_cache'}}
+            for tool in tools
+        ] == [
+            {
+                'name': 'web_search',
+                'type': 'web_search_20260318',
+                'response_inclusion': 'excluded',
+            },
+            {
+                'name': 'web_fetch',
+                'type': 'web_fetch_20260318',
+                'response_inclusion': 'excluded',
+                'use_cache': False,
+            },
+        ]
     assert sorted(beta_features) == case.expected_betas
 
 
@@ -187,7 +207,7 @@ def test_anthropic_explicit_profile_instance_narrows_web_tools():
     assert WebSearchTool not in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
 
-async def test_anthropic_web_fetch_20260209_caller_pass_history_back(env: TestEnv, allow_model_requests: None):
+async def test_anthropic_dynamic_web_fetch_caller_pass_history_back(env: TestEnv, allow_model_requests: None):
     """Pass Anthropic dynamic-filtering caller metadata back with web fetch history.
 
     Unit (not VCR) test: it asserts the `caller` re-emitted onto the *outgoing* second request's
@@ -284,17 +304,45 @@ async def test_anthropic_web_fetch_20260209_caller_pass_history_back(env: TestEn
 
 
 @pytest.mark.vcr()
-async def test_anthropic_supported_model_uses_20260209_web_tools(
+async def test_anthropic_supported_model_uses_20260318_web_tools(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ):
+    """The API accepts cache bypass and excludes web results consumed by completed code execution."""
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, capabilities=[NativeTool(WebSearchTool()), NativeTool(WebFetchTool())])
+    agent = Agent(
+        m,
+        capabilities=[
+            NativeTool(WebSearchTool(response_inclusion='excluded')),
+            NativeTool(WebFetchTool(use_cache=False, response_inclusion='excluded')),
+        ],
+    )
 
     result = await agent.run('Use web fetch to read https://ai.pydantic.dev and reply with exactly the page title.')
 
     assert result.output
-    assert [tool['type'] for tool in single_request_body(vcr)['tools']] == snapshot(
-        ['web_search_20260209', 'web_fetch_20260209']
+    assert single_request_body(vcr)['tools'] == snapshot(
+        [
+            {
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'max_uses': None,
+                'name': 'web_search',
+                'response_inclusion': 'excluded',
+                'type': 'web_search_20260318',
+                'user_location': None,
+            },
+            {
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'citations': None,
+                'max_content_tokens': None,
+                'max_uses': None,
+                'name': 'web_fetch',
+                'response_inclusion': 'excluded',
+                'type': 'web_fetch_20260318',
+                'use_cache': False,
+            },
+        ]
     )
     response_parts = [part for message in result.all_messages() for part in message.parts]
     web_fetch_parts = [
@@ -302,15 +350,7 @@ async def test_anthropic_supported_model_uses_20260209_web_tools(
         for part in response_parts
         if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name == 'web_fetch'
     ]
-    assert len(web_fetch_parts) == 2
-    caller_details = [part.provider_details for part in web_fetch_parts]
-    assert caller_details == snapshot(
-        [
-            {'anthropic_caller': {'tool_id': IsStr(), 'type': 'code_execution_20260120'}},
-            {'anthropic_caller': {'tool_id': IsStr(), 'type': 'code_execution_20260120'}},
-        ]
-    )
-    assert caller_details[0] == caller_details[1]
+    assert web_fetch_parts == []
 
 
 @pytest.mark.vcr()

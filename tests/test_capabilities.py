@@ -1497,6 +1497,16 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                             'title': 'Max Content Tokens',
                         },
+                        'use_cache': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Use Cache',
+                        },
+                        'response_inclusion': {
+                            'anyOf': [{'enum': ['full', 'excluded'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Response Inclusion',
+                        },
                     },
                     'title': 'WebFetchTool',
                     'type': 'object',
@@ -1534,6 +1544,11 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
                             'default': None,
                             'title': 'External Web Access',
+                        },
+                        'response_inclusion': {
+                            'anyOf': [{'enum': ['full', 'excluded'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Response Inclusion',
                         },
                     },
                     'title': 'WebSearchTool',
