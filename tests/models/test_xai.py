@@ -4166,7 +4166,7 @@ async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
                         'content': [
                             {
                                 'text': """\
-<thinking note="continued from another model in this conversation">
+<thinking note="carried over from earlier in this conversation">
 First reasoning
 </thinking>\
 """

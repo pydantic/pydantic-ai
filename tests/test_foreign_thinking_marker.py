@@ -6,8 +6,8 @@ chain) can't be sent through the model's own native reasoning channel. Anthropic
 `<thinking>` tags in the prompt get generalized into the model's own output, so re-rendering such a
 part in that native format teaches the model to leak it into user-visible answers. The three providers
 with a native thinking-block concept (Anthropic, xAI, Bedrock) instead wrap it in a `<thinking>` tag
-carrying an explicit note that the reasoning is carried over from another model in the conversation. The
-source provider is deliberately not named.
+carrying an explicit note that the reasoning is carried over from earlier in the conversation. The source
+is deliberately not named.
 
 The outbound request body is asserted directly via each model's `_map_message`/`_map_messages`:
 provider cassettes match on method+URI only, so a VCR test would play back green regardless of how the
@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai._thinking_part import FOREIGN_THINKING_NOTE
+from pydantic_ai._thinking_part import FOREIGN_THINKING_NOTE, render_foreign_thinking
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -138,7 +138,7 @@ CASES = [
                     'content': [
                         {
                             'text': """\
-<thinking note="continued from another model in this conversation">
+<thinking note="carried over from earlier in this conversation">
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </thinking>\
 """,
@@ -192,7 +192,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<thinking note="continued from another model in this conversation">
+<thinking note="carried over from earlier in this conversation">
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </thinking>\
 """
@@ -241,7 +241,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<thinking note="continued from another model in this conversation">
+<thinking note="carried over from earlier in this conversation">
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </thinking>\
 """
@@ -292,7 +292,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<thinking note="continued from another model in this conversation">
+<thinking note="carried over from earlier in this conversation">
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </thinking>\
 """,
@@ -322,7 +322,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<thinking note="continued from another model in this conversation">
+<thinking note="carried over from earlier in this conversation">
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </thinking>\
 """
@@ -353,7 +353,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<thinking note="continued from another model in this conversation">
+<thinking note="carried over from earlier in this conversation">
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </thinking>\
 """
@@ -379,3 +379,16 @@ async def test_foreign_thinking_marker(case: Case):
     serialized = json.dumps(body, default=str)
     assert (FOREIGN_THINKING_NOTE in serialized) is case.expect_marker
     assert '<thinking>' not in serialized
+
+
+def test_render_foreign_thinking_escapes_closing_tag():
+    """A literal `</thinking>` in the reasoning is neutralized so it can't close the wrapper early and spill
+    the remainder as plain assistant text."""
+    rendered = render_foreign_thinking('reasoning that mentions </thinking> mid-sentence')
+    assert rendered == snapshot("""\
+<thinking note="carried over from earlier in this conversation">
+reasoning that mentions <\\/thinking> mid-sentence
+</thinking>\
+""")
+    assert rendered.count('</thinking>') == 1
+    assert rendered.endswith('</thinking>')
