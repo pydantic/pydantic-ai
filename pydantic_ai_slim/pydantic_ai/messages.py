@@ -722,7 +722,9 @@ class CachePoint:
 
     - Anthropic
     - Amazon Bedrock (Converse API)
-    - OpenRouter (Anthropic and Gemini models)
+    - OpenAI (GPT-5.6 models)
+    - OpenRouter (Anthropic and Gemini models via `OpenRouterModel`, plus OpenAI GPT-5.6 models when
+      using `OpenAIChatModel` or `OpenAIResponsesModel` with `OpenRouterProvider`)
     """
 
     kind: Literal['cache-point'] = 'cache-point'
@@ -735,6 +737,7 @@ class CachePoint:
 
     * Anthropic — see https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information.
     * Amazon Bedrock (Converse API) — see https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    * OpenAI ignores this per-marker value and uses the request-wide `openai_prompt_cache_options['ttl']` setting instead.
     * OpenRouter with Anthropic models (automatically omitted for Gemini models, which do not support explicit TTL).
     """
 
@@ -906,6 +909,7 @@ def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
 
 
 UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
+"""A single item of user prompt content: a string, a typed text or multi-modal content part, or a [`CachePoint`][pydantic_ai.messages.CachePoint] marker."""
 
 
 _ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
@@ -1271,12 +1275,18 @@ class BaseToolReturnPart:
     """The outcome of the tool call.
 
     - `'success'`: The tool executed successfully.
-    - `'failed'`: The tool raised an error during execution.
-    - `'denied'`: The tool call was denied by the approval mechanism.
+    - `'failed'`: The tool call failed — the tool raised an error during execution (the common case), or
+      an args validator or tool hook reported a failure via [`ToolFailed`][pydantic_ai.exceptions.ToolFailed].
+    - `'denied'`: The tool call was denied — either by the approval mechanism or by a
+      [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler
+      returning [`ToolDenied`][pydantic_ai.tools.ToolDenied].
     - `'interrupted'`: The tool call did not produce a result because the run was interrupted (e.g. a
-      cancelled stream or a crash mid-execution); synthesized during message-history repair. Unlike
-      `'failed'`, `'interrupted'` is not mapped to any provider native-error channel — the result's
-      content string carries the interruption wording.
+      cancelled stream or a crash mid-execution); synthesized during message-history repair.
+
+    Only `'failed'` is mapped to a provider's native error channel (e.g. Anthropic `is_error`,
+    Bedrock `status='error'`). A denial is a deliberate policy decision rather than a runtime error,
+    while an interruption means no result was produced. Both are sent as ordinary results; their
+    content tells the model what happened without suggesting a transient tool failure.
     """
 
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:
@@ -1326,13 +1336,15 @@ class BaseToolReturnPart:
     def content_items(self, *, mode: Literal['raw'] = 'raw') -> list[ToolReturnContent]: ...
 
     @overload
-    def content_items(self, *, mode: Literal['str']) -> list[str | MultiModalContent]: ...
+    def content_items(self, *, mode: Literal['str'], wrap_if_error: bool = True) -> list[str | MultiModalContent]: ...
 
     @overload
-    def content_items(self, *, mode: Literal['jsonable']) -> list[Any | MultiModalContent]: ...
+    def content_items(
+        self, *, mode: Literal['jsonable'], wrap_if_error: bool = True
+    ) -> list[Any | MultiModalContent]: ...
 
     def content_items(
-        self, *, mode: Literal['raw', 'str', 'jsonable'] = 'raw'
+        self, *, mode: Literal['raw', 'str', 'jsonable'] = 'raw', wrap_if_error: bool = True
     ) -> list[ToolReturnContent] | list[str | MultiModalContent] | list[Any | MultiModalContent]:
         """Return content as a flat list for iteration, with optional serialization.
 
@@ -1343,6 +1355,11 @@ class BaseToolReturnPart:
                   File items (`MultiModalContent`) pass through unchanged.
                 - `'jsonable'`: Non-file items are serialized to JSON-compatible Python objects
                   via `tool_return_ta`. File items pass through unchanged.
+            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object (ignored in
+                `'raw'` mode). When `True` (the default), a failed return's non-file data collapses into a
+                single wrapped error item so providers without a native error channel still see the failure
+                explicitly; files pass through unchanged. Set this to `False` when the provider has a native
+                error channel (e.g. Anthropic `is_error`) and should receive the content unwrapped.
         """
         items: list[ToolReturnContent]
         if isinstance(self.content, list):
@@ -1352,6 +1369,10 @@ class BaseToolReturnPart:
 
         if mode == 'raw':
             return items
+
+        if wrap_if_error and self.outcome == 'failed':
+            wrapped = self.model_response_str() if mode == 'str' else self.model_response_object()
+            return [wrapped, *self.files]
 
         result: list[str | MultiModalContent] | list[Any | MultiModalContent] = []
         for item in items:
@@ -1365,24 +1386,40 @@ class BaseToolReturnPart:
                 result.append(tool_return_ta.dump_python(item, mode='json', by_alias=True))
         return result
 
-    def model_response_str(self) -> str:
+    def model_response_str(self, *, wrap_if_error: bool = True) -> str:
         """Return a string representation of the data content for the model.
 
         This excludes multimodal files - use `.files` to get those separately.
+
+        Args:
+            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+                Set this to `False` when the provider has a native error channel.
         """
         value, _ = self._unwrap_data()
         if value is None:
-            return ''
-        if isinstance(value, str):
-            return value
-        return tool_return_ta.dump_json(value, by_alias=True).decode()
+            response = ''
+        elif isinstance(value, str):
+            response = value
+        else:
+            response = tool_return_ta.dump_json(value, by_alias=True).decode()
 
-    def model_response_object(self) -> dict[str, Any]:
+        if wrap_if_error and self.outcome == 'failed':
+            return tool_return_ta.dump_json({'error': response}).decode()
+        return response
+
+    def model_response_object(self, *, wrap_if_error: bool = True) -> dict[str, Any]:
         """Return a dictionary representation of the data content, wrapping non-dict types appropriately.
 
         This excludes multimodal files - use `.files` to get those separately.
         Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
+
+        Args:
+            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+                Set this to `False` when the provider has a native error channel.
         """
+        if wrap_if_error and self.outcome == 'failed':
+            return {'error': self.model_response_str(wrap_if_error=False)}
+
         value, _ = self._unwrap_data()
         if value is None:
             return {}
@@ -1415,21 +1452,25 @@ class BaseToolReturnPart:
             return cast('list[Any]', content)
         return None
 
-    def model_response_str_and_user_content(self) -> tuple[str, list[UserContent]]:
+    def model_response_str_and_user_content(self, *, wrap_if_error: bool = True) -> tuple[str, list[UserContent]]:
         """Build a text-only tool result with multimodal files extracted for a trailing user message.
 
         For providers whose tool result API only accepts text. Multimodal files are referenced
         by identifier in the tool result text ('See file {id}.') and included in full in the
         returned file content list ('This is file {id}:' followed by the file).
+
+        Args:
+            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+                Set this to `False` when the provider has a native error channel.
         """
         _, files, was_list = self._split_content()
         if not files:
-            return self.model_response_str(), []
+            return self.model_response_str(wrap_if_error=wrap_if_error), []
 
         tool_content_parts: list[str] = []
         file_content: list[UserContent] = []
 
-        for item in self.content_items(mode='str'):
+        for item in self.content_items(mode='str', wrap_if_error=False):
             if is_multi_modal_content(item):
                 tool_content_parts.append(f'See file {item.identifier}.')
                 file_content.append(f'This is file {item.identifier}:')
@@ -1437,6 +1478,10 @@ class BaseToolReturnPart:
             elif isinstance(item, str):  # pragma: no branch
                 tool_content_parts.append(item)
 
+        if wrap_if_error and self.outcome == 'failed':
+            error = {'error': self.model_response_str(wrap_if_error=False)}
+            file_references = [f'See file {file.identifier}.' for file in files]
+            return tool_return_ta.dump_json([error, *file_references]).decode(), file_content
         if was_list:
             return tool_return_ta.dump_json(tool_content_parts).decode(), file_content
         # Safe: when was_list is False, content is either scalar data (→ str item) or a single

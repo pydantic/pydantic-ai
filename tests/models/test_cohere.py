@@ -81,7 +81,7 @@ class MockAsyncClientV2:
     completions: MockChatResponse | Sequence[MockChatResponse] | None = None
     index = 0
     chat_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
-    _client_wrapper: MockClientWrapper = None  # type: ignore
+    _client_wrapper: MockClientWrapper = None  # pyright: ignore[reportAssignmentType]
 
     def __post_init__(self):
         self._client_wrapper = MockClientWrapper()
@@ -129,7 +129,7 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.usage == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
-    mock_client.index = 0  # type: ignore
+    mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'

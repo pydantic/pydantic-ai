@@ -242,6 +242,7 @@ print(test_model.last_model_request_parameters.function_tools)
             'required': ['name'],
             'type': 'object',
         },
+        toolset_id='<agent>',
     )
 ]
 """
@@ -389,7 +390,7 @@ result = agent.run_sync(
 
 ### Dynamic tool choice via capabilities {#dynamic-tool-choice-via-capabilities}
 
-`tool_choice='required'` and `['tool_a', ...]` exclude output tools, so setting either one *statically* would force a tool call on every step and leave the agent unable to produce a final response. `agent.run()` raises a `UserError` when it detects these values on the static baseline (the `model_settings` argument of [`Agent.run`][pydantic_ai.Agent.run], the agent's own `model_settings`, or the underlying model's defaults).
+`tool_choice='required'` and `['tool_a', ...]` exclude output tools, so setting either one *statically* would force a tool call on every step and leave the agent unable to produce a final response. `agent.run()` raises a `UserError` when it detects these values on the static baseline (the `model_settings` argument of [`Agent.run`][pydantic_ai.agent.AbstractAgent.run], the agent's own `model_settings`, or the underlying model's defaults).
 
 To vary `tool_choice` *per step* — for example, to force a specific tool on the first step and then let the model decide — return a callable from a capability's [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings]. The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] with full access to `ctx.messages` and `ctx.run_step`, so it can inspect what has already happened in the run and adapt.
 
@@ -466,11 +467,20 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 
 If preserving cache hits matters, prefer providers/cases marked "Never", or use `ToolOrOutput` (which keeps the full set) instead of a restrictive list.
 
-## Tool Execution and Retries {#tool-retries}
+## Tool Execution, Retries, and Failures {#tool-retries}
 
 When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic (with optional [validation context](output.md#validation-context)). If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
 
-Beyond automatic validation errors, the tool's own internal logic can also explicitly request a retry by raising the [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception. This is useful for situations where the parameters were technically valid, but an issue occurred during execution (like a transient network error, or the tool determining the initial attempt needs modification).
+If a tool's own logic cannot produce a normal result, choose the exception based on what you want the model to do next:
+
+- Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] when the model should try the tool call again with corrected arguments or a different approach.
+- Raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] when the tool call should be reported to the model as a failed result, without consuming the tool's retry budget.
+
+Any other exception propagates out of the agent run and is not sent back to the model.
+
+### Requesting a Tool Retry
+
+Raising `ModelRetry` generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the exception message. That prompt is sent back to the LLM so it can correct the tool call, choose another tool, or try a different approach.
 
 ```python
 from pydantic_ai import ModelRetry
@@ -484,13 +494,59 @@ def my_flaky_tool(query: str) -> str:
     return 'Success!'
 ```
 
-Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the configured retry limit — set per-tool via [`Tool(max_retries=N)`][pydantic_ai.tools.Tool] (or `@agent.tool(retries=N)`), per-toolset via [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset], or agent-wide via [`Agent(retries={'tools': N})`][pydantic_ai.agent.Agent.__init__], applied in that order of precedence.
+Both `ValidationError` and `ModelRetry` respect the configured retry limit — set per-tool via [`Tool(max_retries=N)`][pydantic_ai.tools.Tool] (or `@agent.tool(retries=N)`), per-toolset via [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset], or agent-wide via [`Agent(retries={'tools': N})`][pydantic_ai.agent.Agent.__init__], applied in that order of precedence. The agent-wide default can also be overridden per run via [`agent.run(retries={'tools': N})`][pydantic_ai.agent.Agent.run] (and `run_sync`/`run_stream`/`iter`, or for a block of runs via [`agent.override()`][pydantic_ai.agent.Agent.override]); a per-run value replaces the agent-wide default at the bottom of the precedence chain, so explicit per-tool and per-toolset limits still win. A bare `int` at these run-time call sites overrides both budgets (matching construction) — pass a dict such as `retries={'tools': N}` or `retries={'output': N}` to change just one.
 
-Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries'`. User-provided toolsets inherit `Agent(retries={'tools': ...})` as their default when no per-toolset value is set.
+Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries'`. User-provided toolsets inherit the agent-wide tool-retry default — or its per-run override — as their default when no per-toolset value is set.
+
+!!! note
+    The agent-wide default and its per-run override apply to function tools and output tools. MCP tools registered through a durable-exec wrapper ([`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] / [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent]) do not yet honor them and fall back to their toolset-level `max_retries` (default `1`); see [pydantic-ai#5180](https://github.com/pydantic/pydantic-ai/issues/5180).
+
+### Which retry limit wins
+
+Two independent budgets — the **tool** budget (per function/output tool) and the **output** budget (output validation) — each resolve through the same layered precedence. The first layer that sets a value wins; unset layers fall through to the next:
+
+| Precedence (highest first) | How to set it | Budget it sets |
+|----------------------------|---------------|----------------|
+| 1. Per-tool limit | `@agent.tool(retries=N)` / [`Tool(max_retries=N)`][pydantic_ai.tools.Tool]; [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries] for an output tool | that one tool |
+| 2. Per-toolset limit | [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset] | tools in that toolset |
+| 3. Override block | [`agent.override(retries=...)`][pydantic_ai.agent.Agent.override] | tool and/or output |
+| 4. Per-run argument | [`agent.run(retries=...)`][pydantic_ai.agent.Agent.run] (and `run_sync`/`run_stream`/`iter`) | tool and/or output |
+| 5. Per-run spec | `agent.run(spec={'retries': ...})` | tool and/or output |
+| 6. Agent-wide default | [`Agent(retries=...)`][pydantic_ai.agent.Agent.__init__] | tool and/or output |
+| 7. Built-in default | — | `1` |
+
+At layers 3–6, a bare `int` sets **both** budgets to that value, while an [`AgentRetries`][pydantic_ai.agent.AgentRetries] dict sets only the keys it names (`{'tools': N}`, `{'output': N}`, or both). Layers 3–5 override the agent-wide default (layer 6) but never a more specific per-tool (layer 1) or per-toolset (layer 2) limit.
+
+### Reporting a Failed Tool Result {#tool-failed}
+
+Not every tool failure is a correction request. When the call is complete but unsuccessful — the resource doesn't exist, the operation isn't supported, the upstream service returned a definitive error — you usually want the model to *see* the failed result and decide what to do next. Raise `ToolFailed` for this:
+
+```python
+from pathlib import Path
+
+from pydantic_ai import ToolFailed
+
+
+def read_file(path: str) -> str:
+    file_path = Path(path)
+    if not file_path.is_file():
+        raise ToolFailed(f'File not found: {path}')
+    return file_path.read_text()
+```
+
+The exception message is recorded in message history as a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='failed'`. Where the model API has a native error or failed-status field for tool results, Pydantic AI uses it. For APIs without a native error channel, the model-visible content is JSON-framed as `{"error": ...}` so the failure is still explicit. The failed outcome is preserved in Pydantic AI message history; protocol adapters may need their own carrier when that history is round-tripped, as described for [AG-UI](ui/ag-ui.md#preserving-failed-tool-outcomes). The call is traced as an error in telemetry.
+
+Unlike `ModelRetry`, `ToolFailed` does **not** consume the per-tool retry budget; bounding repeated failures is the job of [`UsageLimits`][pydantic_ai.usage.UsageLimits] at the run level — specifically [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit], since [`tool_calls_limit`][pydantic_ai.usage.UsageLimits.tool_calls_limit] only counts successful tool invocations.
+
+Rule of thumb: raise `ModelRetry` when you want the model to try again with corrections; raise `ToolFailed` when the call is done and the result is a failure. For MCP server tool errors, the same choice is available as the [`tool_error_behavior`](mcp/client.md#tool-errors) configuration.
+
+You can also raise `ModelRetry` or `ToolFailed` from tool validation and execution hooks. This is useful for converting third-party exceptions without repeating `try`/`except` in every tool; see [Error hooks](hooks.md#error-hooks) and [Tool execution hooks](hooks.md#tool-execution-hooks).
+
+`ToolFailed` is handled for function tools, their `args_validator`, and tool validation or execution hooks. [Output functions](output.md#output-functions) and [output validators](output.md#output-validator-functions) use `ModelRetry` when the model should try again; there, `ToolFailed` is an ordinary exception that aborts the run unless an output-process error hook recovers from it.
 
 ### Tool Timeout
 
-You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a failure and a retry prompt is sent to the model (counting towards the retry limit).
+You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a retryable failure and a retry prompt is sent to the model (counting towards the retry limit).
 
 ```python
 import asyncio
@@ -518,13 +574,13 @@ async def fast_tool() -> str:
 - **Agent-level timeout**: Set `tool_timeout` on the [`Agent`][pydantic_ai.agent.Agent] to apply a default timeout to all tools.
 - **Per-tool timeout**: Set `timeout` on individual tools via [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], or the [`Tool`][pydantic_ai.tools.Tool] dataclass. This overrides the agent-level default.
 
-When a timeout occurs, the tool is considered to have failed and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
+When a timeout occurs, the tool is treated as a retryable failure and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
 
 ### Custom Args Validator {#args-validator}
 
 The `args_validator` parameter lets you define custom validation that runs after Pydantic schema validation but before the tool executes. This is useful for business logic validation, cross-field validation, or validating arguments before requesting [human approval](deferred-tools.md) for deferred tools.
 
-The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, or raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on failure.
+The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the arguments and try again, or raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a terminal failure the model should adapt to instead of retrying.
 
 ```python {title="args_validator_approval.py"}
 from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
@@ -555,7 +611,7 @@ print(result.output.approvals[0].args)
 
 _(This example is complete, it can be run "as is")_
 
-When validation fails, the error message is sent back to the LLM as a retry prompt. This respects the `retries` setting on the tool. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred, while failed validation triggers a retry just like regular tools.
+When schema validation fails, or an `args_validator` raises `ModelRetry`, the error message is sent back to the LLM as a retry prompt (with instructions to try again) and respects the tool's `retries` setting. When an `args_validator` raises `ToolFailed`, the model instead receives a failed tool result it should adapt to rather than retry, and the retry budget is left untouched. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred.
 
 The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions.
 
@@ -651,7 +707,7 @@ For more information on how `end_strategy` works with function tools, output too
 
 Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can spend a lot of input tokens on tool definitions before any work happens, and tool selection accuracy noticeably degrades past ~30–50 available tools. Marking tools for deferred loading hides them from the model's initial context; the model discovers hidden tools by keyword when it needs them.
 
-For workflow *bundles* — instructions, tools, model settings, and hooks that travel together — see [on-demand capabilities](capabilities.md#on-demand-capabilities), which build on the same machinery but disclose at the bundle level rather than the individual-tool level.
+For workflow *bundles* — instructions, tools, model settings, and hooks that travel together — see [on-demand capabilities](capabilities/on-demand.md), which build on the same machinery but disclose at the bundle level rather than the individual-tool level.
 
 Reach for it when:
 
@@ -671,7 +727,7 @@ Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`]
 
 Pydantic AI prefers native search whenever available because the discovery exchange happens append-only (a `tool_search_call` + `tool_search_output` pair) — the deferred tools never enter the prompt prefix, so prompt caching is preserved across rounds. The local fallback, by contrast, flips each discovered tool's `defer_loading=False` between rounds, which changes the tool-definition prefix and invalidates the cached request prefix on every discovery turn.
 
-Runs that include tools owned by [on-demand capabilities](capabilities.md#on-demand-capabilities) trade hosted-search quality for capability gating and cache stability on native-supporting providers: deferred function tools are searched by Pydantic AI through the provider's client-executed native surface, so each `load_capability` reveal can keep the prompt-cache prefix warm without exposing tools from unloaded capabilities. Runs with only standalone deferred tools keep using the provider's hosted search.
+Runs that include tools owned by [on-demand capabilities](capabilities/on-demand.md) trade hosted-search quality for capability gating and cache stability on native-supporting providers: deferred function tools are searched by Pydantic AI through the provider's client-executed native surface, so each `load_capability` reveal can keep the prompt-cache prefix warm without exposing tools from unloaded capabilities. Runs with only standalone deferred tools keep using the provider's hosted search.
 
 For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
 

@@ -193,7 +193,7 @@ class ModelSettings(TypedDict, total=False):
     * [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]: Specified function tools plus output tools/text/image
 
     Note: setting `'required'` or `list[str]` *statically* (via the `model_settings` argument
-    of [`Agent.run`][pydantic_ai.Agent.run] or the agent's own `model_settings`) raises a
+    of [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] or the agent's own `model_settings`) raises a
     `UserError`, because it would force a tool call on every step and prevent the agent from
     producing a final response. To vary `tool_choice` per step (e.g. force a tool on the
     first step only), return a callable from a capability's
@@ -311,6 +311,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenRouter
     * Cerebras
     * xAI
+    * Mistral
     """
 
     service_tier: ServiceTier

@@ -97,7 +97,9 @@ ArgsValidatorFunc: TypeAlias = (
 The validator receives the same typed parameters as the tool function,
 with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument for dependency access.
 
-Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure.
+Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the arguments and try
+again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a terminal failure the model should
+adapt to instead of retrying. Return `None` on success.
 """
 ToolPrepareFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT], 'ToolDefinition'],
@@ -382,8 +384,9 @@ class Tool(Generic[ToolAgentDepsT]):
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
-                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
-                return `None` on success.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the
+                arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
+                terminal failure the model should adapt to instead of retrying. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
@@ -460,8 +463,9 @@ class Tool(Generic[ToolAgentDepsT]):
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
-                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
-                return `None` on success.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the
+                arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
+                terminal failure the model should adapt to instead of retrying. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
 
         Returns:
@@ -576,7 +580,7 @@ class ToolDefinition:
     A `sequential=True` tool acts as a barrier: it runs alone, with tools the model emitted before it
     completing first and tools emitted after it starting only once it finishes. Other tools still run
     in parallel around it. To run an entire run's tools serially, use
-    [`parallel_execution_mode('sequential')`][pydantic_ai.tool_manager.ToolManager.parallel_execution_mode]
+    [`ToolManager.parallel_execution_mode('sequential')`][pydantic_ai.tool_manager.ToolManager.parallel_execution_mode]
     instead.
     """
 
@@ -613,7 +617,7 @@ class ToolDefinition:
        to opt this tool into deferred loading. This is what `prepare_tools` hooks and other
        pre-toolset-wrapping consumers see, and is the value users persist on `ToolDefinition`.
     2. **Current visibility state** — after a toolset like
-       [`ToolSearchToolset`][pydantic_ai.toolsets._tool_search.ToolSearchToolset] processes
+       the internal `ToolSearchToolset` processes
        the corpus, it flips this field to `False` for tools whose discovery shows up in
        message history, so downstream `Model.prepare_request` filtering and adapter wire
        formatting can read "should this be on the wire?" off a single boolean.
@@ -699,6 +703,13 @@ class ToolDefinition:
     When `False`, the `return_schema` will be cleared before sending.
     When `None` (default), defaults to `False` unless the
     [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
+    """
+
+    toolset_id: str | None = None
+    """The ID of the toolset that this tool belongs to.
+
+    Set automatically when tools are collected from toolsets. Can be used by capabilities
+    (e.g. durable execution) to apply per-toolset configuration to tool operations.
     """
 
     capability_id: str | None = None

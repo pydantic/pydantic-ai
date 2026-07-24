@@ -3,7 +3,7 @@ from typing import Any
 from unittest.mock import Mock
 
 from pydantic_ai import RunContext
-from pydantic_ai._function_schema import _takes_ctx  # type: ignore
+from pydantic_ai._function_schema import _takes_ctx  # pyright: ignore[reportPrivateUsage]
 
 
 def test_regular_function_with_ctx():
@@ -171,11 +171,11 @@ def test_class_method_without_ctx():
 def test_function_no_annotations():
     """Test function with no type annotations."""
 
-    def func_no_annotations(ctx, x):  # type: ignore
+    def func_no_annotations(ctx, x):  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]
         ...  # pragma: no cover
 
     # Without annotations, _takes_ctx should return False
-    assert _takes_ctx(func_no_annotations) is False  # type: ignore
+    assert _takes_ctx(func_no_annotations) is False  # pyright: ignore[reportUnknownArgumentType]
 
 
 def test_function_wrong_annotation_type():
@@ -188,10 +188,10 @@ def test_function_wrong_annotation_type():
 
 def test_lambda_with_ctx():
     """Test lambda function that takes RunContext as first parameter."""
-    lambda_with_ctx = lambda ctx, x: f'{ctx.deps} {x}'  # type: ignore # noqa: E731
+    lambda_with_ctx = lambda ctx, x: f'{ctx.deps} {x}'  # pyright: ignore[reportUnknownLambdaType, reportUnknownMemberType, reportUnknownVariableType]  # noqa: E731
 
     # Lambda without annotations should return False
-    assert _takes_ctx(lambda_with_ctx) is False  # type: ignore
+    assert _takes_ctx(lambda_with_ctx) is False  # pyright: ignore[reportUnknownArgumentType]
 
 
 def test_builtin_function():

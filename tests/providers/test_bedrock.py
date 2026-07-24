@@ -88,8 +88,8 @@ def test_bedrock_provider_timeout(env: TestEnv):
     assert provider.name == 'bedrock'
 
     config = cast(BedrockRuntimeClient, provider.client).meta.config
-    assert config.read_timeout == 1  # type: ignore
-    assert config.connect_timeout == 1  # type: ignore
+    assert config.read_timeout == 1  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+    assert config.connect_timeout == 1  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
 
 def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
