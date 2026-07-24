@@ -41,6 +41,7 @@ from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
 from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import to_jsonable_python
 from typing_extensions import ParamSpec, TypeIs, TypeVar, is_typeddict
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
@@ -842,6 +843,22 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
 def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     """Check if obj is a dict, narrowing the type to `dict[str, Any]`."""
     return isinstance(obj, dict)
+
+
+def process_tool_examples(
+    examples: list[Any],
+    outer_typed_dict_key: str | None = None,
+) -> list[dict[str, Any]]:
+    """Serialize tool examples into the shape sent to the model."""
+    processed_examples: list[dict[str, Any]] = []
+    for example in examples:
+        processed_example: Any = to_jsonable_python(example)
+        if outer_typed_dict_key:
+            processed_example = {outer_typed_dict_key: processed_example}
+        if not is_str_dict(processed_example):
+            raise UserError('Tool examples must be JSON objects.')
+        processed_examples.append(processed_example)
+    return processed_examples
 
 
 def is_text_like_media_type(media_type: str) -> bool:

@@ -36,7 +36,6 @@ from .tools import (
     GenerateToolJsonSchema,
     ObjectJsonSchema,
     ToolDefinition,
-    _process_examples,  # pyright: ignore[reportPrivateUsage]
 )
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
@@ -1470,7 +1469,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             )
 
             if examples:
-                examples = _process_examples(
+                examples = _utils.process_tool_examples(
                     examples,
                     outer_typed_dict_key=processor.outer_typed_dict_key,
                 )

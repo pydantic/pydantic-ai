@@ -8,7 +8,7 @@ from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Uni
 
 from pydantic import AliasChoices, Field
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
-from pydantic_core import SchemaValidator, core_schema, to_jsonable_python
+from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
@@ -288,22 +288,6 @@ def _validate_timeout(timeout: float | None) -> None:
         raise UserError(f'timeout must be > 0, got {timeout}')
 
 
-def _process_examples(
-    examples: list[Any],
-    outer_typed_dict_key: str | None = None,
-) -> list[dict[str, Any]]:
-    """Serialize tool examples into the shape sent to the model."""
-    processed_examples: list[dict[str, Any]] = []
-    for example in examples:
-        processed_example: Any = to_jsonable_python(example)
-        if outer_typed_dict_key:
-            processed_example = {outer_typed_dict_key: processed_example}
-        if not _utils.is_str_dict(processed_example):
-            raise UserError('Tool examples must be JSON objects.')
-        processed_examples.append(processed_example)
-    return processed_examples
-
-
 @dataclass(init=False)
 class Tool(Generic[ToolAgentDepsT]):
     """A tool function for an agent."""
@@ -521,7 +505,7 @@ class Tool(Generic[ToolAgentDepsT]):
     def tool_def(self) -> ToolDefinition:
         examples = self.examples
         if examples:
-            examples = _process_examples(examples)
+            examples = _utils.process_tool_examples(examples)
 
         return ToolDefinition(
             name=self.name,
