@@ -39,6 +39,7 @@ from .. import (
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from ..capabilities import AgentCapability
+from ..exceptions import RunCancelled
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
@@ -156,6 +157,9 @@ class AgentRunEvents(
         if self._closed or self._result_yielded:
             raise StopAsyncIteration
 
+        if self._task is None and self._binding.cancellation.cancel_requested:
+            raise RunCancelled('The agent run was cancelled.', messages=[])
+
         await self._ensure_started()
         assert self._receive_stream is not None
         assert self._task is not None
@@ -178,7 +182,8 @@ class AgentRunEvents(
         first (e.g. `loop.call_soon_threadsafe(events.cancel)`). It does not affect external
         cancellation of the consumer task. If iteration continues, cancellation surfaces as
         [`RunCancelled`][pydantic_ai.exceptions.RunCancelled]; leaving the context instead performs
-        quiet teardown.
+        quiet teardown. Cancelling before the first iteration prevents the run from starting at
+        all; iterating afterwards raises `RunCancelled` with empty `messages`.
         """
         self._binding.cancellation.cancel()
 

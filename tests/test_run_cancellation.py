@@ -375,16 +375,29 @@ async def _consume_events(events: AsyncIterable[AgentStreamEvent | AgentRunResul
 
 
 async def test_run_stream_events_cancel_before_iteration():
-    """A pre-start cancellation is delivered as soon as lazy iteration starts the run."""
-    agent = Agent(TestModel())
+    """A pre-start cancellation prevents the lazy run from starting."""
+    model_calls = 0
+
+    def model_func(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_calls
+        model_calls += 1
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_func))
+    received: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
 
     async with agent.run_stream_events('go') as events:
-        with pytest.raises(RunCancelled):
+        with pytest.raises(RunCancelled) as exc_info:
             events.cancel()
-            async for _event in events:
-                pass
+            async for event in events:
+                received.append(event)
 
+        assert received == []
+        assert model_calls == 0
+        assert exc_info.value.messages == []
         assert events.result is None
+        with pytest.raises(UserError, match='run has not started; iterate the events first'):
+            events.all_messages()
 
 
 async def test_run_stream_events_cancel_without_iteration():
