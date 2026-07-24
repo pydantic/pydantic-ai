@@ -5299,8 +5299,7 @@ async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model
         )
 
         with pytest.raises(ModelHTTPError) as exc_info:
-            async with Agent(model).run_stream('test'):
-                pytest.fail('The context body should not be entered')
+            await Agent(model).run_stream('test').__aenter__()
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.model_name == model_name
