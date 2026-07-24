@@ -785,7 +785,7 @@ See Anthropic's [Advisor tool](https://platform.claude.com/docs/en/agents-and-to
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | Anthropic | ✅ | Available on the direct Claude API and Claude Platform on AWS. Not available on Bedrock (InvokeModel), Vertex, or Foundry. |
-| OpenRouter | ✅ | A gateway server tool that works with any executor model, not just Anthropic ones. The advisor runs entirely server-side, so the consultation is not surfaced as message parts; the counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']` are the only trace it ran. `max_uses` and `caching` are not supported and raise a `UserError`. |
+| OpenRouter | ✅ | A gateway server tool that works with any executor model, not just Anthropic ones. The advisor runs entirely server-side, so the consultation is not surfaced as message parts; the counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']` are the only trace it ran. OpenRouter uses its default advisor context rather than forwarding the full conversation transcript. `max_uses` and `caching` are ignored. |
 | OpenAI | ❌ | |
 | Google | ❌ | |
 | xAI | ❌ | |
@@ -841,9 +841,9 @@ Advisor tokens are reported separately under `advisor_*` keys on [`RequestUsage.
 | Parameter | Anthropic | OpenRouter |
 |-----------|-----------|------------|
 | `model` | ✅ (required — the advisor model to consult) | ✅ (required — an OpenRouter catalog slug) |
-| `max_uses` | ✅ (cap on advisor consultations per request) | ❌ (fixed gateway limit; raises `UserError`) |
+| `max_uses` | ✅ (cap on advisor consultations per request) | ❌ (fixed gateway limit; ignored) |
 | `max_tokens` | ✅ (cap on advisor output tokens, minimum 1024; makes the result carry a `stop_reason`) | ✅ (maps to `max_completion_tokens`) |
-| `caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; raises `UserError`) |
+| `caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; ignored) |
 
 ## MCP Server Tool
 

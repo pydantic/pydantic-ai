@@ -632,8 +632,8 @@ class AdvisorTool(AbstractNativeTool):
     """A native tool that lets a faster executor model consult a stronger advisor model mid-generation.
 
     The fields map 1:1 to the parameters of Anthropic's advisor tool definition. OpenRouter exposes
-    the advisor as a gateway server tool that honors a subset (`model`, `max_tokens`); see the
-    per-field docstrings for which provider supports each.
+    the advisor as a gateway server tool that honors a subset (`model`, `max_tokens`) and ignores
+    the unsupported fields; see the per-field docstrings for which provider supports each.
 
     Supported by:
 
@@ -664,8 +664,8 @@ class AdvisorTool(AbstractNativeTool):
 
     * Anthropic
 
-    OpenRouter caps advisor consultations per request with a fixed gateway limit that `max_uses`
-    cannot lower, so setting it on an OpenRouter model raises a `UserError` rather than being ignored.
+    OpenRouter caps advisor consultations per request with a fixed gateway limit and ignores
+    `max_uses`.
     """
 
     max_tokens: int | None = None
@@ -688,8 +688,7 @@ class AdvisorTool(AbstractNativeTool):
 
     * Anthropic
 
-    OpenRouter's advisor tool has no equivalent knob, so setting it on an OpenRouter model raises a
-    `UserError` rather than being ignored.
+    OpenRouter's advisor tool has no equivalent knob and ignores `caching`.
     """
 
     kind: str = 'advisor'

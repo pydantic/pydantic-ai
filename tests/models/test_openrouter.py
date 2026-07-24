@@ -23,7 +23,6 @@ from pydantic_ai import (
     ToolCallPart,
     ToolDefinition,
     UnexpectedModelBehavior,
-    UserError,
     UserPromptPart,
     VideoUrl,
 )
@@ -1044,7 +1043,7 @@ def _openrouter_completion(content: str) -> ChatCompletion:
         pytest.param(
             'openai/gpt-4.1',
             {'model': 'anthropic/claude-opus-4.8', 'max_tokens': 2048},
-            {'model': 'anthropic/claude-opus-4.8', 'forward_transcript': True, 'max_completion_tokens': 2048},
+            {'model': 'anthropic/claude-opus-4.8', 'forward_transcript': False, 'max_completion_tokens': 2048},
             id='max-tokens-set',
         ),
         # claude-3.5-haiku is NOT a valid advisor executor on the Claude API, so the Anthropic
@@ -1055,7 +1054,7 @@ def _openrouter_completion(content: str) -> ChatCompletion:
         pytest.param(
             'anthropic/claude-3.5-haiku',
             {'model': 'anthropic/claude-opus-4.8'},
-            {'model': 'anthropic/claude-opus-4.8', 'forward_transcript': True},
+            {'model': 'anthropic/claude-opus-4.8', 'forward_transcript': False},
             id='any-executor',
         ),
     ],
@@ -1069,9 +1068,9 @@ async def test_openrouter_advisor_tool_request(
     """`AdvisorTool` maps to an `openrouter:advisor` server-tool entry in the request `tools` array.
 
     Unit test with a mocked client because our cassette matchers aren't sensitive to the request
-    body, so a VCR test wouldn't pin the mapped payload. `forward_transcript` is always sent as
-    `True` to match the shared `AdvisorTool` semantics (the advisor reads the full conversation,
-    as on Anthropic) rather than OpenRouter's prompt-only default.
+    body, so a VCR test wouldn't pin the mapped payload. `forward_transcript` remains `False` so
+    OpenRouter uses its default context behavior until provider-specific native tool parameters
+    can expose this choice to users.
     """
     mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
     model = OpenRouterModel(executor, provider=OpenRouterProvider(openai_client=mock_client))
@@ -1088,19 +1087,26 @@ async def test_openrouter_advisor_tool_request(
 async def test_openrouter_advisor_tool_unsupported_fields(
     allow_model_requests: None, field_kwargs: dict[str, Any]
 ) -> None:
-    """`caching` and `max_uses` are Anthropic-only knobs OpenRouter's advisor doesn't honor.
+    """OpenRouter silently ignores the unsupported `caching` and `max_uses` fields.
 
-    Fail loudly instead of silently dropping them: the user explicitly asked for the behavior,
-    so silently substituting different behavior (uncached / uncapped consultations) is worse
-    than an error, matching the `AbstractNativeTool.optional` philosophy.
+    This mocked-client test pins the request body because the VCR matcher would not detect these
+    unsupported fields accidentally being forwarded.
     """
     c = _openrouter_completion('done')
     mock_client = MockOpenAI.create_mock(c)
     model = OpenRouterModel('openai/gpt-4.1', provider=OpenRouterProvider(openai_client=mock_client))
     agent = Agent(model, capabilities=[NativeTool(AdvisorTool(model='anthropic/claude-opus-4.8', **field_kwargs))])
 
-    with pytest.raises(UserError, match=r'`caching` and `max_uses` are not supported by OpenRouter for Advisor tools.'):
-        await agent.run('hello')
+    result = await agent.run('hello')
+
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tools'] == [
+        {
+            'type': 'openrouter:advisor',
+            'parameters': {'model': 'anthropic/claude-opus-4.8', 'forward_transcript': False},
+        }
+    ]
 
 
 async def test_openrouter_advisor_tool(allow_model_requests: None, openrouter_api_key: str) -> None:

@@ -942,12 +942,11 @@ class OpenRouterModel(OpenAIChatModel):
         # last function tool; the advisor entry is a small stable dict after the breakpoint.
         advisor = next((t for t in model_request_parameters.native_tools if isinstance(t, AdvisorTool)), None)
         if advisor is not None:
-            if advisor.caching is not None or advisor.max_uses is not None:
-                raise UserError('`caching` and `max_uses` are not supported by OpenRouter for Advisor tools.')
-
             parameters: dict[str, Any] = {
                 'model': advisor.model,
-                'forward_transcript': True,
+                # TODO: Allow provider-specific native tool parameters so users can opt into forwarding the transcript.
+                # https://github.com/pydantic/pydantic-ai/pull/6605#discussion_r3640554790
+                'forward_transcript': False,
                 **({'max_completion_tokens': advisor.max_tokens} if advisor.max_tokens is not None else {}),
             }
             tools.append(cast(chat.ChatCompletionToolParam, {'type': 'openrouter:advisor', 'parameters': parameters}))
