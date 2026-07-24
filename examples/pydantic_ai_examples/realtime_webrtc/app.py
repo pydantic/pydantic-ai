@@ -148,7 +148,8 @@ async def run_sideband(call: Call) -> None:
         raise
     except Exception as exc:
         logfire.exception('sideband session for {call_id} failed', call_id=call_id)
-        call.attach_error = exc  # so `/offer` can surface the failure instead of returning a dead call
+        # Record the failure so `/offer` can surface it instead of returning a dead call.
+        call.attach_error = exc
         call.attached.set()
     finally:
         CALLS.pop(call_id, None)
@@ -197,9 +198,13 @@ async def offer(request: Request) -> JSONResponse:
     except asyncio.TimeoutError:
         call.task.cancel()
         CALLS.pop(answer.session.call_id, None)
-        raise HTTPException(status_code=504, detail='Timed out attaching the server-side session.')
+        raise HTTPException(
+            status_code=504, detail='Timed out attaching the server-side session.'
+        )
     if call.attach_error is not None:
-        raise HTTPException(status_code=502, detail='The server-side session failed to attach.')
+        raise HTTPException(
+            status_code=502, detail='The server-side session failed to attach.'
+        )
 
     return JSONResponse({'sdp': call.answer_sdp, 'call_id': answer.session.call_id})
 
