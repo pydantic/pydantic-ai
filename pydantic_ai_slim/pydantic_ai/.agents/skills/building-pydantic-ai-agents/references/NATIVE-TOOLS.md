@@ -81,4 +81,5 @@ For Anthropic dynamic web tools, `response_inclusion='excluded'` on `WebSearch`,
 `WebFetch`, `WebSearchTool`, or `WebFetchTool` omits result blocks consumed by completed code
 execution calls. `use_cache=False` on `WebFetch` or `WebFetchTool` bypasses Anthropic's cache when
 fresh content is required.
-These options raise `UserError` on models or clients that use earlier web tool versions.
+These options raise `UserError` on non-Anthropic providers or models and clients that use earlier
+web tool versions.

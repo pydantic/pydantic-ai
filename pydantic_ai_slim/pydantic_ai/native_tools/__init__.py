@@ -10,6 +10,7 @@ import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import UploadedFile
 
 __all__ = (
@@ -87,6 +88,9 @@ class AbstractNativeTool(ABC):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         NATIVE_TOOL_TYPES[cls.kind] = cls
+
+    def _validate_for_provider(self, provider: str) -> None:
+        """Validate provider-specific fields before mapping the tool."""
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -186,6 +190,12 @@ class WebSearchTool(AbstractNativeTool):
 
     kind: str = 'web_search'
     """The kind of tool."""
+
+    def _validate_for_provider(self, provider: str) -> None:
+        if provider != 'anthropic' and self.response_inclusion is not None:
+            raise UserError(
+                f'`response_inclusion` is only supported by Anthropic models, but the provider is {provider!r}.'
+            )
 
 
 class WebSearchUserLocation(TypedDict, total=False):
@@ -417,6 +427,14 @@ class WebFetchTool(AbstractNativeTool):
 
     kind: str = 'web_fetch'
     """The kind of tool."""
+
+    def _validate_for_provider(self, provider: str) -> None:
+        if provider != 'anthropic' and self.use_cache is not None:
+            raise UserError(f'`use_cache` is only supported by Anthropic models, but the provider is {provider!r}.')
+        if provider != 'anthropic' and self.response_inclusion is not None:
+            raise UserError(
+                f'`response_inclusion` is only supported by Anthropic models, but the provider is {provider!r}.'
+            )
 
 
 @dataclass(kw_only=True)

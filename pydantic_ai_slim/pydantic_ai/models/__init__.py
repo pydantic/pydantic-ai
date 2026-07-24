@@ -426,6 +426,8 @@ class Model(ABC, Generic[InterfaceClient]):
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
         if native_tools := params.native_tools:
+            for tool in native_tools:
+                tool._validate_for_provider(self.system)  # pyright: ignore[reportPrivateUsage]
             # Deduplicate native tools
             params = replace(
                 params,

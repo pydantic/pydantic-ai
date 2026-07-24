@@ -274,11 +274,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 LatestAnthropicModelNames = ModelParam
 """Anthropic model names from the installed SDK."""
 
-# TODO(anthropic): drop the `claude-sonnet-5` literal once the `anthropic` floor is bumped past the
-# SDK release that adds it to `ModelParam` (installed 0.109.0 still lags). See
-# https://github.com/pydantic/pydantic-ai/pull/5849 for the same
-# bridge-then-drop pattern applied to `claude-fable-5`.
-AnthropicModelName = LatestAnthropicModelNames | Literal['claude-sonnet-5']
+AnthropicModelName = LatestAnthropicModelNames
 """Possible Anthropic model names.
 
 The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.

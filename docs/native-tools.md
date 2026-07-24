@@ -191,7 +191,8 @@ _(This example is complete, it can be run "as is")_
     Set `response_inclusion='excluded'` to omit search result blocks consumed by a completed code
     execution call in the same turn. The default is `'full'`. Direct results and paused code
     execution results are always included. Pydantic AI raises a `UserError` if
-    `response_inclusion` is set for a model or client that uses the earlier tool version.
+    `response_inclusion` is set for a non-Anthropic provider or a model or client that uses the
+    earlier tool version.
 
     Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
     Anthropic's standalone code execution tool; it is not needed to use `web_search_20260318`.
@@ -697,8 +698,8 @@ _(This example is complete, it can be run "as is")_
     Set `use_cache=False` only when fresh content is required, as bypassing Anthropic's cache
     increases latency. Set `response_inclusion='excluded'` to omit fetch result blocks consumed
     by a completed code execution call in the same turn. Their defaults are `True` and `'full'`.
-    Pydantic AI raises a `UserError` if either option is set for a model or client that uses the
-    earlier tool version.
+    Pydantic AI raises a `UserError` if either option is set for a non-Anthropic provider or a model
+    or client that uses the earlier tool version.
 
     Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
     Anthropic's standalone code execution tool; it is not needed to use `web_fetch_20260318`.
