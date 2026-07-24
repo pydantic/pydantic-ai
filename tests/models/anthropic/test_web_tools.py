@@ -3,7 +3,7 @@
 The wire tool version (`web_search_20260318` / `web_fetch_20260318` vs the earlier ones) and the
 beta headers are narrowed by the concrete Anthropic client the provider wraps — first-party,
 Bedrock(-Mantle), Vertex, and Foundry each support a different subset. These tests pin that matrix,
-the dynamic-filtering `caller` round-trip on web-fetch history, and the live request shape via VCR.
+the dynamic-filtering `caller` round-trip on web-fetch history, and live request shapes via VCR.
 """
 
 from __future__ import annotations as _annotations
@@ -324,17 +324,12 @@ async def test_anthropic_dynamic_web_fetch_caller_pass_history_back(env: TestEnv
 
 
 @pytest.mark.vcr()
-async def test_anthropic_supported_model_uses_20260318_web_tools(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
-):
-    """The API accepts cache bypass and excludes web results consumed by completed code execution."""
+async def test_anthropic_20260318_web_fetch_options(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    """The API accepts cache bypass and excludes fetch results consumed by completed code execution."""
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
-        capabilities=[
-            NativeTool(WebSearchTool(response_inclusion='excluded')),
-            NativeTool(WebFetchTool(use_cache=False, response_inclusion='excluded')),
-        ],
+        capabilities=[NativeTool(WebFetchTool(use_cache=False, response_inclusion='excluded'))],
     )
 
     result = await agent.run('Use web fetch to read https://ai.pydantic.dev and reply with exactly the page title.')
@@ -342,15 +337,6 @@ async def test_anthropic_supported_model_uses_20260318_web_tools(
     assert result.output
     assert single_request_body(vcr)['tools'] == snapshot(
         [
-            {
-                'allowed_domains': None,
-                'blocked_domains': None,
-                'max_uses': None,
-                'name': 'web_search',
-                'response_inclusion': 'excluded',
-                'type': 'web_search_20260318',
-                'user_location': None,
-            },
             {
                 'allowed_domains': None,
                 'blocked_domains': None,
@@ -371,6 +357,45 @@ async def test_anthropic_supported_model_uses_20260318_web_tools(
         if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name == 'web_fetch'
     ]
     assert web_fetch_parts == []
+
+
+@pytest.mark.vcr()
+async def test_anthropic_20260318_web_search_response_inclusion(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    """The API accepts response exclusion and omits search results consumed by completed code execution."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        capabilities=[NativeTool(WebSearchTool(response_inclusion='excluded'))],
+    )
+
+    result = await agent.run(
+        "In code execution, use web_search with the query 'site:ai.pydantic.dev Pydantic AI' "
+        'and reply with the first result title.'
+    )
+
+    assert result.output
+    assert single_request_body(vcr)['tools'] == snapshot(
+        [
+            {
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'max_uses': None,
+                'name': 'web_search',
+                'response_inclusion': 'excluded',
+                'type': 'web_search_20260318',
+                'user_location': None,
+            }
+        ]
+    )
+    response_parts = [part for message in result.all_messages() for part in message.parts]
+    web_search_parts = [
+        part
+        for part in response_parts
+        if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name == 'web_search'
+    ]
+    assert web_search_parts == []
 
 
 @pytest.mark.vcr()
