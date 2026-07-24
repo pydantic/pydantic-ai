@@ -265,6 +265,33 @@ async def cancel_and_drain(*tasks: asyncio.Task[Any], msg: object = None) -> Non
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+def raise_if_cancelling() -> None:
+    """Re-assert an external cancellation that a completed step absorbed (level-triggered backstop).
+
+    A step the run awaits — a Temporal activity under `WAIT_CANCELLATION_COMPLETED`, an
+    `event_stream_handler`, a capability hook — can catch the `CancelledError` injected by
+    `task.cancel()` and return normally. asyncio even *delegates* a task's cancellation to the
+    future it is currently awaiting, so an awaited child task that absorbs its cancel silently
+    completes the awaiting task too. Either way the cancellation is an edge the framework never
+    sees, and without a re-check the run would complete as if it was never cancelled.
+
+    `Task.cancelling()` stays elevated in exactly those cases (well-behaved consumers of their
+    own cancellation, like `asyncio.timeout()` and AnyIO cancel scopes, balance it back down
+    with `Task.uncancel()`), so a positive count at a step boundary means an external cancel is
+    still pending and must be re-raised. Call this only after the just-completed step's results
+    have been recorded to message history, so cancellation never discards completed work.
+
+    On Python 3.10 `Task.cancelling()` does not exist and this is a no-op: an absorbed external
+    cancellation cannot be reliably detected there, so the cancellation guarantee is documented
+    as best-effort on 3.10.
+    """
+    if sys.version_info < (3, 11):  # pragma: lax no cover
+        return
+    task = asyncio.current_task()
+    if task is not None and task.cancelling() > 0:
+        raise asyncio.CancelledError()
+
+
 class Unset:
     """A singleton to represent an unset value."""
 
