@@ -115,6 +115,7 @@ from .abstract import (
     EventStreamHandler,
     EventStreamProcessor,
     RunOutputDataT,
+    _RealtimeSessionResolution,  # pyright: ignore[reportPrivateUsage]
 )
 from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
@@ -124,7 +125,14 @@ if TYPE_CHECKING:
 
     from pydantic_graph import GraphRunContext
 
-    from ..realtime import AudioRetention, KnownRealtimeModelName, RealtimeModel, RealtimeModelSettings, RealtimeSession
+    from ..realtime import (
+        AudioRetention,
+        KnownRealtimeModelName,
+        RealtimeModel,
+        RealtimeModelSettings,
+        RealtimeProviderSession,
+        RealtimeSession,
+    )
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -1372,7 +1380,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         initial_ctx.metadata = state.metadata
 
         # Resolve the capability layers and extract their per-run contributions. Shared with
-        # `realtime_session` via `_resolve_run_capabilities` so both wire capabilities up identically;
+        # `_open_realtime_session` via `_resolve_run_capabilities` so both wire capabilities up identically;
         # this call site keeps the graph-only surroundings: the `InstrumentedModel` unwrap and
         # instrumentation-settings resolution above, the deferred loader (`inject_deferred_loader=True`),
         # the output toolset below, and the layered `get_model_settings` closure. Keep those in sync
@@ -1401,7 +1409,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
         )
 
-        # Build model settings resolver using per-run capability. Shared with `realtime_session` via
+        # Build model settings resolver using per-run capability. Shared with `_open_realtime_session` via
         # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
         # base for a graph run). Resolved per model-request step here; once at connect in a session.
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
@@ -2599,7 +2607,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _base_run_capability(self) -> tuple[CombinedCapability[AgentDepsT], bool]:
         """The base capability layer for a run, plus whether it came from `override(root_capability=...)`.
 
-        `iter` and `realtime_session` both resolve the base layer through this so the override is honored
+        `iter` and `_open_realtime_session` both resolve the base layer through this so the override is honored
         identically — KEEP the two call sites in sync (a realtime session that ignored the override would
         silently drop a `with agent.override(root_capability=...):` block).
         """
@@ -2612,7 +2620,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Bind per-run capabilities to this agent via `for_agent` before capability resolution.
 
         `_resolve_run_capabilities` only ever calls `for_run`, so binding the per-run layer via
-        `for_agent` is the caller's responsibility. `iter` and `realtime_session` both MUST call this —
+        `for_agent` is the caller's responsibility. `iter` and `_open_realtime_session` both MUST call this —
         skipping it uses a capability that overrides `for_agent` (e.g. the durability capabilities)
         unbound, a silent divergence. KEEP the two call sites in sync.
         """
@@ -2731,7 +2739,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Resolve the per-run capability layers and extract their contributions.
 
         Shared by [`iter`][pydantic_ai.agent.AbstractAgent.iter] / [`run`][pydantic_ai.agent.AbstractAgent.run]
-        and [`realtime_session`][pydantic_ai.agent.Agent.realtime_session] so both wire capabilities up
+        and [`_open_realtime_session`][pydantic_ai.agent.Agent.realtime] so both wire capabilities up
         identically: the outermost `Instrumentation` injection, per-layer `for_run` resolution (never
         composing first — see below), optional deferred-loader injection, and the native-tool /
         instruction / model-settings / toolset contributions with `override(native_tools=...)` folded
@@ -3016,7 +3024,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return schema
 
     @asynccontextmanager
-    async def _open_realtime_session(
+    async def _resolve_realtime_session(
         self,
         model: RealtimeModel | KnownRealtimeModelName | str,
         *,
@@ -3026,20 +3034,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         usage: _usage.RunUsage | None = None,
-        usage_limits: _usage.UsageLimits | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         conversation_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
-        audio_retention: AudioRetention = 'transcript_only',
-        retain_images_every_n: int = 1,
-    ) -> AsyncGenerator[RealtimeSession]:
-        """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
-
-        Opens the realtime session and drives the agent's tools. Users go through
-        [`agent.realtime(model).session()`][pydantic_ai.agent.AbstractAgent.realtime]; see
-        [`realtime`][pydantic_ai.agent.AbstractAgent.realtime] for the parameter reference.
-        """
-        from ..realtime import RealtimeModel, RealtimeSession, infer_realtime_model
+    ) -> AsyncGenerator[_RealtimeSessionResolution[AgentDepsT]]:
+        """Resolve the agent configuration shared by realtime sessions and WebRTC signaling."""
+        from ..realtime import RealtimeModel, infer_realtime_model
 
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
@@ -3190,43 +3190,117 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 *(message_history or ()),
                 _messages.ModelRequest(parts=[], instructions=resolved_instructions or None),
             ]
-            model_request_parameters = models.ModelRequestParameters(
-                function_tools=tool_defs,
+            yield _RealtimeSessionResolution(
+                model=model,
+                run_context=run_context,
+                tool_manager=tool_manager,
+                tool_defs=tool_defs,
                 native_tools=native_tools,
+                model_settings=effective_model_settings,
+                instructions=resolved_instructions or None,
+                request_messages=request_messages,
+                model_profile=model_profile,
+                instrumentation_settings=session_instrumentation_settings,
             )
 
-            if message_history and not model_profile.get('supports_session_seeding', False):
+    @asynccontextmanager
+    async def _open_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
+        provider_session: RealtimeProviderSession | None = None,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
+
+        Opens the realtime session and drives the agent's tools. Users go through
+        [`agent.realtime(model).session()`][pydantic_ai.agent.AbstractAgent.realtime]; see
+        [`realtime`][pydantic_ai.agent.AbstractAgent.realtime] for the parameter reference.
+        """
+        from ..realtime import RealtimeSession
+
+        async with self._resolve_realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            message_history=message_history,
+        ) as resolved:
+            # A WebRTC sideband session doesn't own the audio transport: the browser streams audio to the
+            # provider directly, so the session disables its audio methods and retains no audio bytes.
+            owns_media = provider_session is None
+            if provider_session is not None and audio_retention != 'transcript_only':
+                # Reject an audio-retention request that can never be satisfied (no audio bytes flow here).
                 raise exceptions.UserError(
-                    f'The {model.model_name!r} realtime model does not support seeding a session with '
+                    "A WebRTC sideband session can't retain audio: the browser exchanges audio with the "
+                    'provider directly, so no audio bytes reach this connection. Leave `audio_retention` at '
+                    "'transcript_only' (transcripts still build the conversation history)."
+                )
+
+            if message_history and not resolved.model_profile.get('supports_session_seeding', False):
+                raise exceptions.UserError(
+                    f'The {resolved.model.model_name!r} realtime model does not support seeding a session with '
                     '`message_history`.'
                 )
 
-            async with model.connect(
-                messages=request_messages,
-                model_settings=effective_model_settings,
-                model_request_parameters=model_request_parameters,
-            ) as connection:
+            model_request_parameters = models.ModelRequestParameters(
+                function_tools=resolved.tool_defs,
+                native_tools=resolved.native_tools,
+            )
+            if provider_session is not None:
+                connection_manager = resolved.model.connect_webrtc(
+                    provider_session,
+                    messages=resolved.request_messages,
+                    model_settings=resolved.model_settings,
+                    model_request_parameters=model_request_parameters,
+                )
+            else:
+                connection_manager = resolved.model.connect(
+                    messages=resolved.request_messages,
+                    model_settings=resolved.model_settings,
+                    model_request_parameters=model_request_parameters,
+                )
+            async with connection_manager as connection:
                 session = RealtimeSession(
                     connection,
-                    tool_manager,
-                    instrumentation=session_instrumentation_settings,
-                    model_name=model.model_name,
-                    provider_name=model.system,
-                    provider_url=model.base_url,
+                    resolved.tool_manager,
+                    instrumentation=resolved.instrumentation_settings,
+                    model_name=resolved.model.model_name,
+                    provider_name=resolved.model.system,
+                    provider_url=resolved.model.base_url,
                     agent_name=self.name,
-                    usage=run_context.usage,
+                    usage=resolved.run_context.usage,
                     usage_limits=usage_limits,
                     audio_retention=audio_retention,
                     retain_images_every_n=retain_images_every_n,
                     message_history=message_history,
-                    profile=model_profile,
+                    profile=resolved.model_profile,
+                    owns_media=owns_media,
                     conversation_id=conversation_id,
-                    instructions=resolved_instructions or None,
-                    metadata=run_context.metadata,
+                    instructions=resolved.instructions,
+                    metadata=resolved.run_context.metadata,
                     agent_description=(
-                        self.render_description(deps) if session_instrumentation_settings is not None else None
+                        self.render_description(resolved.run_context.deps)
+                        if resolved.instrumentation_settings is not None
+                        else None
                     ),
-                    output_modality=(effective_model_settings or {}).get('output_modality', 'audio'),
+                    output_modality=(resolved.model_settings or {}).get('output_modality', 'audio'),
                 )
                 async with session:
                     yield session
@@ -3481,7 +3555,7 @@ def _validate_native_tool_ids(native_tools: Sequence[AgentNativeTool[Any]], *, s
 
 @dataclasses.dataclass
 class _ResolvedRunCapabilities(Generic[AgentDepsT]):
-    """The per-run capability state shared by `run`/`iter` and `realtime_session`.
+    """The per-run capability state shared by `run`/`iter` and `_open_realtime_session`.
 
     Produced by [`Agent._resolve_run_capabilities`][]: the resolved capability tree plus the
     contributions extracted from it (instructions, native tools, model settings, toolsets), so both a
@@ -3512,7 +3586,7 @@ def _layer_model_settings(
     Each layer is a static `ModelSettings`, a callable resolved against the run context, or `None`.
     Stamping the merged-so-far onto `run_context.model_settings` before a callable layer runs lets it
     observe the previous layers — the agent -> capability -> run order both `iter` (per model-request
-    step) and `realtime_session` (once, at connect) rely on. `base` is the model's own settings for a
+    step) and `_open_realtime_session` (once, at connect) rely on. `base` is the model's own settings for a
     graph run; a realtime model has none, so it defaults to `None`.
     """
     merged = base

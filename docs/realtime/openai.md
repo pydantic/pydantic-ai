@@ -51,6 +51,43 @@ cheaper prompt-cached audio prefix as a session grows. OpenAI realtime does not 
 `temperature`. Input transcription defaults to `'auto'`; see
 [Transcribing user input](index.md#transcribing-user-input).
 
+## Browser WebRTC
+
+For browser voice agents, OpenAI recommends WebRTC: the audio flows browser ↔ OpenAI directly, while
+your backend attaches a control-plane **sideband** to run the agent. See
+[Browser / WebRTC](index.md#browser-webrtc) in the overview for the topology and the secure flow, and
+the [realtime WebRTC example](../examples/realtime-webrtc.md) for a runnable app.
+
+[`AgentRealtime`][pydantic_ai.agent.AgentRealtime] exposes two signaling helpers, both resolving and
+binding the agent's session configuration (instructions, tools, voice, VAD) server-side:
+
+- [`answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer] — the **secure** path:
+  relay the browser's SDP offer to `POST /v1/realtime/calls`, returning the SDP answer and a
+  [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession] to attach a sideband to with
+  [`agent.realtime(model).session(provider_session=…)`][pydantic_ai.agent.AgentRealtime.session]. The browser
+  never sees a token.
+- [`create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] — mint a short-lived
+  [`RealtimeClientSecret`][pydantic_ai.realtime.RealtimeClientSecret] (ephemeral token) for a browser
+  that negotiates the WebRTC call itself, when you don't relay the SDP through your backend.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+agent = Agent(instructions='You are a helpful voice assistant.')
+realtime = agent.realtime(OpenAIRealtimeModel('gpt-realtime'))
+
+
+# In your `POST /offer` handler, `sdp_offer` is the browser's SDP offer (the request body):
+async def handle_offer(sdp_offer: str) -> str:
+    answer = await realtime.answer_webrtc_offer(sdp_offer)
+    # Return `answer.sdp` to the browser, then run the agent over the sideband:
+    async with realtime.session(provider_session=answer.session) as session:
+        async for event in session:
+            ...
+    return answer.sdp
+```
+
 ## Reasoning
 
 The cross-provider [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting mirrors

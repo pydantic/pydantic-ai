@@ -6,7 +6,7 @@ Two span sources meet here:
   [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession]; tests that only exercise those construct
   a `RealtimeSession` directly with `instrumentation=`.
 - The per-tool `execute_tool` span is owned by the `Instrumentation` capability's `wrap_tool_execute`
-  hook, which [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] injects into the
+  hook, which [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] injects into the
   tool runner's `ToolManager` (mirroring a classic run). Tests that assert on tool spans go through
   `Agent.realtime_session` so the capability produces them.
 """

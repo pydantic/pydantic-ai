@@ -2,7 +2,7 @@
 
 These complement the network-free `test_openai.py` unit tests: the fakes there pin event mapping and
 send/handshake logic cheaply, while these replay recorded provider frames end-to-end through
-[`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] to prove the real protocol —
+[`Agent.realtime`][pydantic_ai.agent.Agent.realtime] to prove the real protocol —
 the streamed part events, the tool round-trip, and message-history seeding. Recorded once against the
 live API with `--record-mode=rewrite`, then replayed offline forever.
 """
@@ -17,6 +17,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
     FunctionToolCallEvent,
@@ -36,6 +37,38 @@ from pydantic_ai.usage import RunUsage
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
+
+# A complete WebRTC SDP offer (audio + data-channel sections) that the realtime `/realtime/calls`
+# endpoint accepts. Media never actually flows in a test — this is only enough for the provider to
+# create the call and return a `call_id` for the sideband control connection to attach to.
+SAMPLE_WEBRTC_SDP_OFFER = """v=0
+o=- 3984138995 3984138995 IN IP4 192.0.2.10
+s=-
+t=0 0
+a=group:BUNDLE 0 1
+a=msid-semantic:WMS *
+m=audio 55983 UDP/TLS/RTP/SAVPF 96 0 8
+c=IN IP4 198.51.100.20
+a=sendrecv
+a=mid:0
+a=rtcp-mux
+a=rtpmap:96 opus/48000/2
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=ice-ufrag:JCSJ
+a=ice-pwd:4VjSN9HmbfuizcxBRohAKf
+a=fingerprint:sha-256 A4:48:06:9B:5F:3C:23:B7:FF:02:08:A2:30:6A:BB:39:D3:0E:5A:8D:3E:EB:B9:BA:AC:91:C0:AD:3F:A1:46:B8
+a=setup:actpass
+m=application 57304 UDP/DTLS/SCTP webrtc-datachannel
+c=IN IP4 198.51.100.20
+a=mid:1
+a=sctp-port:5000
+a=max-message-size:65536
+a=ice-ufrag:xNB3
+a=ice-pwd:imPFbPwvIpZaDrxqpdwWiI
+a=fingerprint:sha-256 A4:48:06:9B:5F:3C:23:B7:FF:02:08:A2:30:6A:BB:39:D3:0E:5A:8D:3E:EB:B9:BA:AC:91:C0:AD:3F:A1:46:B8
+a=setup:actpass
+"""
 
 with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
@@ -372,3 +405,51 @@ def test_profile_allow_seeding() -> None:
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
     )
+
+
+@pytest.mark.vcr
+async def test_webrtc_sideband_text_turn(
+    openai_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """The secure WebRTC flow end to end: relay the offer over HTTP, then run the agent over the sideband.
+
+    The HTTP offer relay is a VCR cassette; the control WebSocket (attached by `call_id`) is a WS
+    cassette. The browser's media path isn't involved — this proves the server-side control plane: the
+    sideband applies the session config, runs the tool-free turn, and builds the conversation history,
+    while the audio methods are unavailable because the session doesn't own the media transport.
+    """
+    provider, cassette = openai_ws_sideband_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
+    )
+    agent = Agent(instructions='Answer in two words.')
+
+    answer = await model.answer_webrtc_offer(SAMPLE_WEBRTC_SDP_OFFER, instructions='Answer in two words.')
+    assert answer.sdp.startswith('v=0')
+    assert answer.session.provider_name == 'openai'
+    assert answer.session.call_id.startswith('rtc_')
+
+    events: list[Any] = []
+    async with agent.realtime(model).session(provider_session=answer.session) as session:
+        # The sideband doesn't own the audio transport, so the audio methods are unavailable.
+        with pytest.raises(UserError, match='does not own the audio transport'):
+            await session.send_audio(b'\x00\x00')
+
+        await session.send('Say hello.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+                events.append(event)
+                if isinstance(event, TurnCompleteEvent):
+                    break
+
+    # The first control frame applies the session config (no `session.created` handshake wait).
+    assert cassette.interactions[0].data['type'] == 'session.update'  # type: ignore[union-attr]
+
+    assert [event for event in events if isinstance(event, SessionErrorEvent)] == []
+    messages = session.all_messages()
+    assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
+    assert messages[0] == ModelRequest(parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())])
+    reply = messages[1]
+    assert isinstance(reply, ModelResponse)
+    assert reply.model_name == 'gpt-realtime'
+    assert isinstance(reply.parts[0], TextPart)

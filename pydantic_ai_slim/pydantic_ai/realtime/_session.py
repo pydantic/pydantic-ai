@@ -317,6 +317,7 @@ class RealtimeSession:
         retain_images_every_n: int = 1,
         message_history: Sequence[ModelMessage] | None = None,
         profile: RealtimeModelProfile | None = None,
+        owns_media: bool = True,
         conversation_id: str | None = None,
         instructions: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -329,6 +330,11 @@ class RealtimeSession:
         self._tool_manager_lock = Lock()
         self._instrumentation = instrumentation
         self._profile = profile if profile is not None else _FULL_PROFILE
+        # Whether this session owns the audio transport. `False` for a WebRTC sideband session: the
+        # browser exchanges audio with the provider directly, and this connection is only the control
+        # plane, so the audio methods are unavailable and no audio bytes flow over it (transcripts still
+        # build history). Set by the connect path when a `provider_session` is attached.
+        self._owns_media = owns_media
         self._model_name = model_name
         self._provider_name = provider_name
         self._provider_url = provider_url
@@ -664,6 +670,7 @@ class RealtimeSession:
 
     async def send_audio(self, data: bytes) -> None:
         """Stream a chunk of audio to the model."""
+        self._require_media_ownership('send_audio')
         previous_length: int | None = None
         if self._retain_input:
             # Buffer the raw input so the finalized user turn can retain it. A per-item speech-stopped
@@ -680,6 +687,7 @@ class RealtimeSession:
 
     async def commit_audio(self) -> None:
         """Commit buffered input audio as a user turn (manual turn-taking / push-to-talk)."""
+        self._require_media_ownership('commit_audio')
         self._require_capability(
             self._profile.get('supports_manual_turn_control', False), 'commit_audio', 'manual turn-taking'
         )
@@ -689,6 +697,7 @@ class RealtimeSession:
 
     async def clear_audio(self) -> None:
         """Discard buffered, uncommitted input audio."""
+        self._require_media_ownership('clear_audio')
         self._require_capability(
             self._profile.get('supports_manual_turn_control', False), 'clear_audio', 'manual turn-taking'
         )
@@ -731,6 +740,15 @@ class RealtimeSession:
         """Raise a clear `UserError` before sending when the model doesn't support `method`."""
         if not supported:
             raise UserError(f'This realtime model does not support {feature}, so `session.{method}()` is unavailable.')
+
+    def _require_media_ownership(self, method: str) -> None:
+        """Raise a clear `UserError` when an audio-transport method is used on a session that doesn't own media."""
+        if not self._owns_media:
+            raise UserError(
+                f'This realtime session does not own the audio transport, so `session.{method}()` is unavailable. '
+                'The browser exchanges audio with the provider directly over WebRTC; this sideband session only '
+                'runs the control plane (instructions, tools, transcripts, history).'
+            )
 
     # --- history assembly -------------------------------------------------------------------------
 

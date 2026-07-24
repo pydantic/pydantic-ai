@@ -271,6 +271,12 @@ Key facts for building realtime agents:
   setting. Automatic detection is on by default (`True`); set `turn_detection=False` for push-to-talk
   (OpenAI/Azure/xAI only — Gemini has no manual turn controls and raises).
 - **Tools**: every tool runs concurrently, so the model keeps speaking while it runs.
+- **Browser WebRTC (OpenAI and Azure OpenAI)**: for browser voice agents, relay the browser's SDP
+  offer server-side with `agent.realtime(model).answer_webrtc_offer(sdp_offer)` — the agent's
+  resolved instructions and tools are baked in and the API key stays on the server — then attach a
+  control-plane **sideband** with `.session(provider_session=answer.session)`. The browser owns the
+  audio; the sideband session runs tools and builds history (its audio methods raise, and
+  `audio_retention` must stay `'transcript_only'`).
 
 See the [Realtime guide](https://ai.pydantic.dev/realtime/) for the full walkthrough.
 

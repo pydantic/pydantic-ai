@@ -172,6 +172,7 @@ nav:
           - examples/realtime-text-to-audio.md
           - examples/realtime-handoff.md
           - examples/realtime-camera.md
+          - examples/realtime-webrtc.md
       - Complex Workflows:
           - examples/flight-booking.md
       - Business Applications:

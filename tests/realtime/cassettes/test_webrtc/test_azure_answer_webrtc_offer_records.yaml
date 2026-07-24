@@ -1,0 +1,165 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '416'
+      content-type:
+      - application/json
+      host:
+      - pydantic-ai-realtime-dev.openai.azure.com
+    method: POST
+    parsed_body:
+      session:
+        audio:
+          input:
+            format:
+              rate: 24000
+              type: audio/pcm
+            transcription:
+              model: gpt-realtime-whisper
+            turn_detection:
+              create_response: true
+              interrupt_response: true
+              type: server_vad
+          output:
+            format:
+              rate: 24000
+              type: audio/pcm
+        instructions: Answer in two or three words.
+        model: gpt-realtime
+        output_modalities:
+        - audio
+        type: realtime
+    uri: https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/realtime/client_secrets
+  response:
+    headers:
+      apim-request-id:
+      - 7e6d6293-10d8-4989-9ec0-296cf87fb8b1
+      azureml-served-by-cluster:
+      - hyena-eastus2-02
+      content-length:
+      - '873'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '40'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      expires_at: 1784859437
+      session:
+        audio:
+          input:
+            format:
+              rate: 24000
+              type: audio/pcm
+            noise_reduction: null
+            transcription:
+              language: null
+              model: gpt-realtime-whisper
+              prompt: null
+            turn_detection:
+              create_response: true
+              idle_timeout_ms: null
+              interrupt_response: true
+              prefix_padding_ms: 300
+              silence_duration_ms: 200
+              threshold: 0.5
+              type: server_vad
+          output:
+            format:
+              rate: 24000
+              type: audio/pcm
+            speed: 1.0
+            voice: alloy
+        expires_at: 0
+        id: sess_E4xtF9353L24i5JHAwuYb
+        include: null
+        instructions: Answer in two or three words.
+        max_output_tokens: inf
+        model: gpt-realtime
+        object: realtime.session
+        output_modalities:
+        - audio
+        prompt: null
+        tool_choice: auto
+        tools: []
+        tracing: null
+        truncation: auto
+        type: realtime
+      value: ek_scrubbed
+    status:
+      code: 200
+      message: OK
+- request:
+    body: "v=0\r\no=- 3993840254 3993840254 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\na=msid-semantic:WMS *\r\nm=audio
+      51603 UDP/TLS/RTP/SAVPF 96 9 0 8\r\nc=IN IP4 0.0.0.0\r\na=sendrecv\r\na=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid\r\na=extmap:2
+      urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\na=mid:0\r\na=msid:993a573d-865c-4f89-b4d6-bf0023b36333 28299f45-cf21-4e7d-8945-3fc2846d1979\r\na=rtcp:9
+      IN IP4 0.0.0.0\r\na=rtcp-mux\r\na=ssrc:596951577 cname:54390b83-64d1-4178-a0ef-a2cafdb3f3a7\r\na=rtpmap:96 opus/48000/2\r\na=rtpmap:9
+      G722/8000\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=ice-ufrag:YnNx\r\na=ice-pwd:jIsRuXZmV9Yq00qk4a33Xe\r\na=fingerprint:sha-256
+      97:A7:E2:EF:70:B3:AD:B9:06:C8:DF:11:61:01:E5:6F:8F:46:EB:15:50:F2:54:D0:72:51:5B:37:0F:00:21:CB\r\na=setup:actpass\r\nm=application
+      34376 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=sctp-port:5000\r\na=max-message-size:65536\r\na=ice-ufrag:YnNx\r\na=ice-pwd:jIsRuXZmV9Yq00qk4a33Xe\r\na=fingerprint:sha-256
+      97:A7:E2:EF:70:B3:AD:B9:06:C8:DF:11:61:01:E5:6F:8F:46:EB:15:50:F2:54:D0:72:51:5B:37:0F:00:21:CB\r\na=setup:actpass\r\n"
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1060'
+      content-type:
+      - application/sdp
+      host:
+      - pydantic-ai-realtime-dev.openai.azure.com
+    method: POST
+    uri: https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/realtime/calls?webrtcfilter=on
+  response:
+    body:
+      string: "v=0\r\no=- 2373039095713856808 1784852237 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=msid-semantic:WMS *\r\na=fingerprint:sha-256
+        95:F4:0D:67:52:13:CC:5F:E5:DC:1F:44:19:88:3C:11:11:4D:E3:5A:A2:30:40:7D:B1:D1:DE:DC:ED:2E:13:AD\r\na=group:BUNDLE
+        0 1\r\nm=audio 9 UDP/TLS/RTP/SAVPF 96 0 8\r\nc=IN IP4 0.0.0.0\r\na=setup:active\r\na=mid:0\r\na=ice-ufrag:DFuboQHH/realtime-api-vmss-prod-eastus2-4000005\r\na=ice-pwd:mLlzIfShbTyM6ntgvTHXoB13bCYE1gG1\r\na=rtcp-mux\r\na=rtcp-rsize\r\na=rtpmap:96
+        opus/48000/2\r\na=fmtp:96 minptime=10;useinbandfec=1\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=ssrc:2507504125
+        cname:realtimeapi\r\na=ssrc:2507504125 msid:realtimeapi audio\r\na=ssrc:2507504125 mslabel:realtimeapi\r\na=ssrc:2507504125
+        label:audio\r\na=msid:realtimeapi audio\r\na=sendrecv\r\na=candidate:251932399 1 udp 2130706431 20.96.169.209 3478
+        typ host ufrag DFuboQHH/realtime-api-vmss-prod-eastus2-4000005\r\na=candidate:251932399 2 udp 2130706431 20.96.169.209
+        3478 typ host ufrag DFuboQHH/realtime-api-vmss-prod-eastus2-4000005\r\na=candidate:3002556175 1 tcp 1671430143 20.96.169.209
+        3478 typ host tcptype passive ufrag DFuboQHH/realtime-api-vmss-prod-eastus2-4000005\r\na=candidate:3002556175 2 tcp
+        1671430143 20.96.169.209 3478 typ host tcptype passive ufrag DFuboQHH/realtime-api-vmss-prod-eastus2-4000005\r\na=end-of-candidates\r\nm=application
+        9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=setup:active\r\na=mid:1\r\na=sendrecv\r\na=sctp-port:5000\r\na=max-message-size:1073741823\r\na=ice-ufrag:DFuboQHH/realtime-api-vmss-prod-eastus2-4000005\r\na=ice-pwd:mLlzIfShbTyM6ntgvTHXoB13bCYE1gG1\r\n"
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - Location,X-Request-Id
+      apim-request-id:
+      - bd891d1e-6e12-4349-a271-dc6edbfb3f65
+      azureml-served-by-cluster:
+      - hyena-eastus2-02
+      content-length:
+      - '1537'
+      content-type:
+      - text/plain; charset=utf-8
+      location:
+      - /v1/realtime/calls/rtc_990b6ba8f11341c9b697c970849587c1
+      openai-processing-ms:
+      - '102'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      timing-allow-origin:
+      - '*'
+    status:
+      code: 201
+      message: Created
+version: 1

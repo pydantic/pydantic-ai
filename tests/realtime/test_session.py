@@ -1690,6 +1690,33 @@ async def test_image_input_guard() -> None:
     assert conn.sent == []
 
 
+async def test_owns_media_guard() -> None:
+    # A WebRTC sideband session (owns_media=False) doesn't own the audio transport, so the audio
+    # methods are unavailable up front — the browser streams audio to the provider directly.
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner, owns_media=False)
+    with pytest.raises(UserError, match='does not own the audio transport'):
+        await session.send_audio(b'\x00\x00')
+    with pytest.raises(UserError, match='does not own the audio transport'):
+        await session.commit_audio()
+    with pytest.raises(UserError, match='does not own the audio transport'):
+        await session.clear_audio()
+    # The routing through `send()` (audio input / audio bytes) is gated by the same guard.
+    with pytest.raises(UserError, match='does not own the audio transport'):
+        await session.send(AudioInput(data=b'\x00\x00'))
+    with pytest.raises(UserError, match='does not own the audio transport'):
+        await session.send(BinaryContent(data=b'\x00\x00', media_type='audio/pcm'))
+    assert conn.sent == []  # nothing reached the connection
+
+
+async def test_owns_media_default_allows_audio() -> None:
+    # The default (owns_media=True) leaves the audio methods available.
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner, profile=_profile())
+    await session.send_audio(b'\x00\x00')
+    assert conn.sent == [AudioInput(data=b'\x00\x00')]
+
+
 async def test_early_break_cancels_pump() -> None:
     # Breaking out early must cancel the background pump task so it doesn't leak, parked forever
     # awaiting an upstream event that never comes. A finite connection wouldn't test this — its pump

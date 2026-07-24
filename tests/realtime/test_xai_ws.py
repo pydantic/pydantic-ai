@@ -2,7 +2,7 @@
 
 These complement the network-free `test_xai.py` unit tests: the fakes there pin the xAI-specific event
 mapping, session config, and handshake cheaply, while these replay recorded provider frames end-to-end
-through [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] to prove the real protocol —
+through [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] to prove the real protocol —
 the streamed part events, the tool round-trip, and message-history seeding.
 
 Recording requires xAI realtime API access (`XAI_API_KEY` with the voice-agent capability); when the

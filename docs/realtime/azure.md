@@ -46,8 +46,9 @@ model = AzureRealtimeModel('gpt-realtime', provider=provider)
 [`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel] reuses
 [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] for endpoint and API key, and uses the
 same settings/event protocol as
-[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel]. API-key authentication is
-supported; Microsoft Entra ID is not supported for realtime connections. Noise reduction, output
+[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel]. Both the WebSocket transport
+and browser [WebRTC signaling](#browser-webrtc-and-microsoft-entra-id) authenticate with the API key by
+default, or with a Microsoft Entra ID token when you pass a `credential`. Noise reduction, output
 speed, server/semantic VAD, and truncation use
 [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]. Azure
 realtime does not expose `temperature`. Input transcription defaults to `'auto'`; see
@@ -63,6 +64,39 @@ realtime does not expose `temperature`. Input transcription defaults to `'auto'`
     [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]. If you don't
     need transcripts, disable transcription with `input_transcription_model=None` and pass
     `audio_retention='input_audio'` so the spoken turn is still kept as audio.
+
+## Browser WebRTC and Microsoft Entra ID
+
+Azure OpenAI supports the same browser WebRTC flow as OpenAI — the audio flows browser ↔ Azure directly
+while your backend runs a control-plane **sideband**. See [Browser / WebRTC](index.md#browser-webrtc)
+for the topology, and use
+[`AgentRealtime.answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer] /
+[`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] exactly as on OpenAI.
+Azure relays the offer with `webrtcfilter=on`, which limits the events forwarded to the browser to a
+safe subset so the session instructions stay on the server's control connection.
+
+Azure requests authenticate with the resource's API key by default. To use **Microsoft Entra ID**
+instead — so no API key is involved, e.g. when the resource is locked to managed identity — pass a
+`credential` (any [`azure.identity`](https://learn.microsoft.com/python/api/overview/azure/identity-readme)
+credential, e.g. `DefaultAzureCredential`). It authenticates **every** request to the resource — the
+realtime WebSocket session and the WebRTC signaling — with a bearer token for the Azure OpenAI data
+plane (scope `https://ai.azure.com/.default`), which requires the **Cognitive Services User** role on
+the resource:
+
+```python {test="skip"}
+from azure.identity import DefaultAzureCredential
+
+from pydantic_ai.providers.azure import AzureProvider
+from pydantic_ai.realtime.azure import AzureRealtimeModel
+
+model = AzureRealtimeModel(
+    'gpt-realtime',
+    provider=AzureProvider(azure_endpoint='https://my-resource.openai.azure.com'),
+    credential=DefaultAzureCredential(),
+)
+# The realtime session, `answer_webrtc_offer`, and `create_client_secret` now authenticate with an Entra
+# bearer token; the browser only ever receives the short-lived ephemeral secret, never it or the API key.
+```
 
 ## Azure AI Voice Live support is coming soon
 
