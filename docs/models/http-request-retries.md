@@ -316,14 +316,14 @@ agent = Agent(model)
 6. **Consider Circuit Breakers**: For high-traffic applications, consider implementing circuit breaker patterns.
 
 !!! tip "Monitoring Retries in Production"
-    Excessive retries can indicate underlying issues and increase costs. [Logfire](logfire.md) helps you track retry patterns:
+    Excessive retries can indicate underlying issues and increase costs. [Logfire](../logfire.md) helps you track retry patterns:
 
     - See which requests triggered retries
     - Understand retry causes (rate limits, server errors, timeouts)
     - Monitor retry frequency over time
     - Identify opportunities to reduce retries
 
-    With [HTTPX instrumentation](logfire.md#monitoring-http-requests) enabled, retry attempts are automatically captured in your traces.
+    With [HTTPX instrumentation](../logfire.md#monitoring-http-requests) enabled, retry attempts are automatically captured in your traces.
 
 ## Error Handling
 
@@ -362,4 +362,4 @@ from botocore.config import Config
 config = Config(retries={'max_attempts': 5, 'mode': 'adaptive'})
 ```
 
-See [Bedrock: Configuring Retries](models/bedrock.md#configuring-retries) for complete examples.
+See [Bedrock: Configuring Retries](bedrock.md#configuring-retries) for complete examples.

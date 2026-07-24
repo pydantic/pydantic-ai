@@ -1,12 +1,11 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import dataclasses
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Generic, Literal, NoReturn, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
 from pydantic_graph import BaseNode, End, EndMarker, ErrorMarker, GraphRun, GraphRunContext, GraphTaskRequest, JoinItem
 from pydantic_graph.step import NodeStep
@@ -218,11 +217,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             # so if it absorbed an external cancellation, re-assert it before advancing.
             _utils.raise_if_cancelling()
         except BaseException as exc:
-            translated = self._translated_cancellation(exc)
-            self._node_error = translated
-            if translated is exc:
-                raise
-            raise translated from exc
+            self._node_error = exc
+            raise
         node = self._task_to_node(task)
         if isinstance(node, End) and self._graph_run.state.pending_messages:
             # `asap` messages drain in `before_model_request` (which fires either way), but
@@ -257,28 +253,6 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     def _node_to_task(self, node: _agent_graph.AgentNode[AgentDepsT, OutputDataT]) -> GraphTaskRequest:
         return GraphTaskRequest(NodeStep(type(node)).id, inputs=node, fork_stack=())
-
-    def _translated_cancellation(self, exc: BaseException) -> BaseException:
-        """Translate a first-party-cancellation `CancelledError` into `RunCancelled`.
-
-        Returns `exc` unchanged if it isn't a `CancelledError`, or if the cancellation was
-        external — external cancellation always keeps propagating as `CancelledError` and
-        outranks a racing first-party `cancel()`.
-        """
-        if isinstance(exc, asyncio.CancelledError) and self.ctx.deps.cancellation.resolve():
-            # Deliberately the live history list, not a copy: teardown (e.g. `CallToolsNode`
-            # recording completed sibling tool results in an interrupted request) appends to it
-            # *while* this exception propagates, and the caller must see those messages too. By
-            # the time the exception reaches user code the run is over and the list is final.
-            return exceptions.RunCancelled('The agent run was cancelled.', messages=self.ctx.state.message_history)
-        return exc
-
-    def _raise_translated_cancellation(self, exc: asyncio.CancelledError) -> NoReturn:
-        """Re-raise a caught `CancelledError`, translated to `RunCancelled` if it was first-party."""
-        translated = self._translated_cancellation(exc)
-        if translated is exc:
-            raise exc
-        raise translated from exc
 
     def _sync_graph_state(self, result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]) -> None:
         """Synchronize the graph runner's state to match a hook-modified result.
@@ -320,30 +294,27 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         `before_node_run` separately (before streaming).
         """
         self.ctx.deps.cancellation.bind()
+        cap = self.ctx.deps.root_capability
         try:
-            cap = self.ctx.deps.root_capability
-            try:
-                result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
-            except Exception as e:
-                result = await cap.on_node_run_error(run_context, node=node, error=e)
-                # on_node_run_error recovered by returning a result.
-                # The graph runner is in ErrorMarker state; update it to match.
-                self._sync_graph_state(result)
-            # If the step (or a hook wrapping it) absorbed an external cancellation, re-assert it
-            # before `after_node_run` fires; the step's messages are already recorded.
-            _utils.raise_if_cancelling()
-            pre_hook_result = result
-            result = await cap.after_node_run(run_context, node=node, result=result)
+            result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
+        except Exception as e:
+            result = await cap.on_node_run_error(run_context, node=node, error=e)
+            # on_node_run_error recovered by returning a result.
+            # The graph runner is in ErrorMarker state; update it to match.
+            self._sync_graph_state(result)
+        # If the step (or a hook wrapping it) absorbed an external cancellation, re-assert it
+        # before `after_node_run` fires; the step's messages are already recorded.
+        _utils.raise_if_cancelling()
+        pre_hook_result = result
+        result = await cap.after_node_run(run_context, node=node, result=result)
 
-            # If after_node_run changed the result, sync the graph runner state so
-            # agent_run.result correctly reflects whether the run is finished.
-            if result is not pre_hook_result:
-                self._sync_graph_state(result)
+        # If after_node_run changed the result, sync the graph runner state so
+        # agent_run.result correctly reflects whether the run is finished.
+        if result is not pre_hook_result:
+            self._sync_graph_state(result)
 
-            _utils.raise_if_cancelling()
-            return result
-        except asyncio.CancelledError as exc:
-            self._raise_translated_cancellation(exc)
+        _utils.raise_if_cancelling()
+        return result
 
     async def _run_node_with_hooks(
         self,
@@ -360,13 +331,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         run_context = _agent_graph.build_run_context(self.ctx)
         cap = self.ctx.deps.root_capability
-        try:
-            node = await cap.before_node_run(run_context, node=node)
-            # A `before_node_run` hook that absorbed an external cancellation must not
-            # let the node itself start.
-            _utils.raise_if_cancelling()
-        except asyncio.CancelledError as exc:
-            self._raise_translated_cancellation(exc)
+        node = await cap.before_node_run(run_context, node=node)
+        # A `before_node_run` hook that absorbed an external cancellation must not
+        # let the node itself start.
+        _utils.raise_if_cancelling()
         return await self._wrap_and_advance(run_context, node, step_fn)
 
     async def next(
@@ -467,7 +435,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     @property
     def pending_messages(self) -> list[PendingMessage]:
-        """Internal: live view of the queue mutated by `enqueue` and drained by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+        """Internal: live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
 
         Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages.
         """
@@ -477,7 +445,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
         *content: EnqueueContent,
         priority: PendingMessagePriority = 'asap',
-    ) -> None:
+    ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
         Designed to be called from the same event loop driving `agent.iter()`. If
@@ -488,7 +456,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         atomic against concurrent appends from a different thread.
 
         Args:
-            *content: One or more [`EnqueueContent`][pydantic_ai._enqueue.EnqueueContent] items.
+            *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
                 Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
                 content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]) is gathered into one
                 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], and each
@@ -502,23 +470,29 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 `'asap'` (default) — at the earliest opportunity (next model request,
                     or a redirect if the agent would otherwise end).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+
+        Returns:
+            The `enqueue_id` of the queued message, echoed on the
+            [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when it's
+            delivered, or `None` when there was nothing to enqueue (an empty call).
         """
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:
-            return
+            return None
         self._graph_run.state.pending_messages.append(pending)
+        return pending.enqueue_id
 
     def cancel(self) -> None:
         """Cancel the whole agent run.
 
         The run stops what it is doing — the in-flight model request is torn down, in-flight tool
         tasks are cancelled and drained, a suspended server-side job is best-effort cancelled — and
-        [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] is raised from whatever is driving the
-        run (an `agent_run.next(...)` call, iteration, or the enclosing `agent.run()`). Everything
-        that completed before the cancellation took effect is preserved in message history, on
-        [`RunCancelled.messages`][pydantic_ai.exceptions.RunCancelled.messages] as well as
-        [`all_messages()`][pydantic_ai.run.AgentRun.all_messages], and can be passed to a new run as
-        `message_history` to resume the conversation.
+        the code driving the run sees `asyncio.CancelledError`. When the `agent.iter()` context
+        exits, this becomes [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] (including for
+        `agent.run()`, which wraps `iter()`). Everything that completed before the cancellation took
+        effect is preserved in message history. [`RunCancelled.messages`][pydantic_ai.exceptions.RunCancelled.messages]
+        contains a complete snapshot that can be passed to a new run as `message_history` to resume
+        the conversation.
 
         Unlike [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel], which
         only stops the current model response and lets the run continue, this ends the run itself.

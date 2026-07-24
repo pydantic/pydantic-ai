@@ -462,12 +462,15 @@ def sanitize_tool_name(name: str) -> str:
     return TOOL_NAME_SANITIZER.sub('_', name)
 
 
+TOOL_CALL_ID_PREFIX = 'pyd_ai_'
+
+
 def generate_tool_call_id() -> str:
     """Generate a tool call id.
 
     Ensure that the tool call id is unique.
     """
-    return f'pyd_ai_{uuid.uuid4().hex}'
+    return f'{TOOL_CALL_ID_PREFIX}{uuid.uuid4().hex}'
 
 
 SourceT = TypeVar('SourceT', bound=AsyncIterable[Any], default=AsyncIterable[T])
@@ -880,4 +883,15 @@ def is_text_like_media_type(media_type: str) -> bool:
         or media_type == 'application/xml'
         or media_type.endswith('+xml')
         or media_type in ('application/x-yaml', 'application/yaml')
+    )
+
+
+def format_inlined_text_file(text: str, *, media_type: str, identifier: str) -> str:
+    """Format text file content with delimiters for inlining into a text prompt."""
+    return '\n'.join(
+        [
+            f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
+            text,
+            f'-----END FILE id="{identifier}"-----',
+        ]
     )

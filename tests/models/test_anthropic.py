@@ -46,6 +46,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolDefinition,
+    ToolFailed,
     ToolReturnPart,
     UsageLimitExceeded,
     UserPromptPart,
@@ -79,7 +80,17 @@ from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, message, raise_if_exception, try_import
+from ..conftest import (
+    IsDatetime,
+    IsInstance,
+    IsNow,
+    IsStr,
+    TestEnv,
+    iter_message_parts,
+    message,
+    raise_if_exception,
+    try_import,
+)
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
@@ -322,7 +333,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
         )
     )
     # reset the index so we get the same response again
-    mock_client.index = 0  # type: ignore
+    mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
@@ -2199,6 +2210,38 @@ async def test_request_tool_call(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
         ]
+    )
+
+
+async def test_tool_failed_maps_to_anthropic_error_tool_result(allow_model_requests: None):
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='1', input={'city': 'London'}, name='get_weather', type='tool_use')],
+            usage=BetaUsage(input_tokens=2, output_tokens=1),
+        ),
+        completion_message(
+            [BetaTextBlock(text='weather unavailable', type='text')],
+            usage=BetaUsage(input_tokens=3, output_tokens=5),
+        ),
+    ]
+
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        raise ToolFailed(f'Weather service is unavailable for {city}.')
+
+    await agent.run('hello')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[1]['messages'][2]['content'][0] == snapshot(
+        {
+            'tool_use_id': '1',
+            'type': 'tool_result',
+            'content': [{'text': 'Weather service is unavailable for London.', 'type': 'text'}],
+            'is_error': True,
+        }
     )
 
 
@@ -8743,8 +8786,8 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
     result = await agent.run('What day is today?')
 
     # Verify we have server tool parts in the history
-    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolCallPart)]
-    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolReturnPart)]
+    server_tool_calls = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
+    server_tool_returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
     assert server_tool_calls[0].tool_name == 'web_search'
@@ -8803,8 +8846,8 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     result = await agent.run('What is 2 + 2?')
 
     # Verify we have server tool parts in the history
-    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolCallPart)]
-    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolReturnPart)]
+    server_tool_calls = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
+    server_tool_returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
     assert server_tool_calls[0].tool_name == 'code_execution'
@@ -10524,8 +10567,8 @@ async def test_anthropic_count_tokens_with_mock(allow_model_requests: None):
 
     result = await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
     assert result.output == 'hello world'
-    assert len(mock_client.chat_completion_kwargs) == 2  # type: ignore
-    count_tokens_kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert len(mock_client.chat_completion_kwargs) == 2  # pyright: ignore[reportAttributeAccessIssue, reportUnknownArgumentType, reportUnknownMemberType]
+    count_tokens_kwargs = mock_client.chat_completion_kwargs[0]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
     assert 'model' in count_tokens_kwargs
     assert 'messages' in count_tokens_kwargs
 

@@ -13,11 +13,11 @@ from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapH
 
 from pydantic_ai._agent_graph import EndStrategy
 from pydantic_ai._spec import CapabilitySpec, build_registry, build_schema_types
-from pydantic_ai._template import TemplateStr
 from pydantic_ai._utils import get_function_type_hints, is_str_dict
 from pydantic_ai.agent.abstract import AgentRetries
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.template import TemplateStr
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -205,7 +205,7 @@ class AgentSpec(BaseModel):
             tool_timeout: float | None = None
             metadata: dict[str, Any] | None = None
             if capability_schema_types:  # pragma: no branch
-                capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore  # noqa: UP007
+                capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore[reportUnknownVariableType, reportInvalidTypeArguments, reportInvalidTypeForm]  # noqa: UP007
 
         json_schema = _AgentSpecSchema.model_json_schema()
         json_schema['title'] = 'AgentSpec'

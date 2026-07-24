@@ -289,7 +289,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
     ) -> OutputT:
         """Synchronously execute the graph and return the final output.
 
-        This is a convenience wrapper around [`run`][pydantic_graph.Graph.run] that runs the coroutine on the
+        This is a convenience wrapper around [`run`][pydantic_graph.graph_builder.Graph.run] that runs the coroutine on the
         current event loop via `loop.run_until_complete(...)`. As such, it cannot be called from inside async
         code or when an event loop is already running.
 

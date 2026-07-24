@@ -5,11 +5,12 @@ cancelling the asyncio task that drives the run: that wakes whatever the run is 
 model stream, tool tasks, a suspended-job poll) and reuses the exact same teardown machinery as
 external cancellation — streams are closed, in-flight tool tasks are cancelled and drained,
 suspended server-side jobs are best-effort cancelled, and completed work is recorded to message
-history. At the run's boundaries, the resulting `CancelledError` is then translated back into
+history. At the outer edge of [`Agent.iter()`][pydantic_ai.agent.Agent.iter], after teardown, the
+resulting `CancelledError` is translated back into
 [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] — but only if the cancellation was ours:
 
 - The controller counts every `Task.cancel()` it issues. On catching `CancelledError`, the
-  boundary consumes exactly that many cancellations via `Task.uncancel()` (mirroring what
+  outer edge consumes exactly that many cancellations via `Task.uncancel()` (mirroring what
   `asyncio.timeout()` does for its own cancellation).
 - If `Task.cancelling()` is still positive afterwards, an *external* cancellation raced in; it
   wins, and the `CancelledError` keeps propagating as itself.
@@ -97,7 +98,7 @@ class RunCancellation:
         self._finished = True
 
     def resolve(self) -> bool:
-        """Resolve a caught `CancelledError` on the owner task: is it ours to translate?
+        """Resolve a caught `CancelledError` at the run's outer edge: is it ours to translate?
 
         Consumes exactly the cancellations this controller issued via `Task.uncancel()`. Returns
         `True` if the cancellation was first-party and no external cancellation is still pending
