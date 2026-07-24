@@ -49,7 +49,7 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
     """Whether OpenAI Responses may fetch live web content. `False` requires native support."""
 
     response_inclusion: Literal['full', 'excluded'] | None
-    """Whether Anthropic includes results consumed by completed code execution calls."""
+    """Whether Anthropic includes results consumed by completed code execution calls. Requires native support."""
 
     def __init__(
         self,
@@ -127,4 +127,5 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
             or self.allowed_domains is not None
             or self.max_uses is not None
             or self.external_web_access is False
+            or self.response_inclusion is not None
         )

@@ -8,8 +8,8 @@ For the local side, pass `local='duckduckgo'` (or `local=True`) for a [DuckDuckG
 
 Native configuration fields: `search_context_size`, `user_location`, `blocked_domains`, `allowed_domains`,
 `max_uses`, OpenAI Responses' `external_web_access`, and Anthropic's `response_inclusion`. The domain and `max_uses`
-constraints require native support. Setting `external_web_access=False` also requires native support because a local
-fallback cannot guarantee cached or indexed-only search.
+constraints and `response_inclusion` require native support. Setting `external_web_access=False` also requires native
+support because a local fallback cannot guarantee cached or indexed-only search.
 
 ```python {title="web_search.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import WebSearch
