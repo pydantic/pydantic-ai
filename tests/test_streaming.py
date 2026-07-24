@@ -4459,6 +4459,54 @@ async def test_agent_stream_text_output_with_native_tool_parts(
     assert await _make_text_output_agent_stream(response).validate_response_output(response) == expected
 
 
+@pytest.mark.parametrize(
+    'return_part',
+    [
+        pytest.param(None, id='missing-return'),
+        pytest.param(ThinkingPart('not a return'), id='non-return-part'),
+        pytest.param(
+            NativeToolReturnPart(tool_name='web_search', content=[], tool_call_id='other-call', provider_name='test'),
+            id='mismatched-return-id',
+        ),
+        pytest.param(
+            NativeToolReturnPart(
+                tool_name='file_search', content=[], tool_call_id='web-search-call', provider_name='test'
+            ),
+            id='mismatched-return-name',
+        ),
+        pytest.param(
+            NativeToolReturnPart(
+                tool_name='web_search', content=[], tool_call_id='web-search-call', provider_name='other'
+            ),
+            id='mismatched-return-provider',
+        ),
+    ],
+)
+async def test_agent_rejects_malformed_provider_metadata_native_tool_pair(
+    return_part: ModelResponsePart | None,
+) -> None:
+    parts: list[ModelResponsePart] = [
+        TextPart('not final'),
+        NativeToolCallPart(
+            tool_name='web_search',
+            args={'queries': ['query']},
+            tool_call_id='web-search-call',
+            provider_name='test',
+        ),
+    ]
+    if return_part is not None:
+        parts.append(return_part)
+    response = ModelResponse(parts=parts, model_name='test')
+    response.metadata = _utils.add_provider_metadata_tool_call_id(response.metadata, 'web-search-call')
+    responses = iter([response, ModelResponse(parts=[TextPart('final answer')], model_name='test')])
+    agent = Agent(FunctionModel(lambda _messages, _info: next(responses)))
+
+    result = await agent.run('test')
+
+    assert result.output == 'final answer'
+    assert result.usage.requests == 2
+
+
 def _make_text_output_agent_stream(response: ModelResponse) -> AgentStream[None, str]:
     stream_response = ModelTestStreamedResponse(
         model_request_parameters=models.ModelRequestParameters(),

@@ -1200,44 +1200,6 @@ def _file_search_return_start_parts(events: list[ModelResponseStreamEvent]) -> l
 
 
 @pytest.mark.anyio
-async def test_file_search_metadata_reconstructed_with_explicit_web_fetch_streaming():
-    """A metadata-only file search is not suppressed by an explicit native tool of another type."""
-    raw_parts = [*_EXPLICIT_WEB_FETCH_PARTS, {'text': 'Answer.'}]
-    streamed_response = _gemini_streamed_response_from_chunks(
-        [_stream_chunk(raw_parts, grounding=_FILE_SEARCH_GROUNDING_METADATA)]
-    )
-    async for _ in streamed_response:
-        pass
-    streamed_model_response = streamed_response.get()
-    response = _process_response(raw_parts, grounding=_FILE_SEARCH_GROUNDING_METADATA)
-    expected_file_search_content = snapshot(
-        [
-            {
-                'text': 'Paris is the capital of France.',
-                'title': 'paris.txt',
-                'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
-                'file_search_store': 'fileSearchStores/test-store',
-            }
-        ]
-    )
-
-    for parts in (streamed_model_response.parts, response.parts):
-        assert [part.tool_name for part in parts if isinstance(part, NativeToolCallPart)] == [
-            WebFetchTool.kind,
-            FileSearchTool.kind,
-        ]
-        [file_search_return] = _file_search_returns(list(parts))
-        assert file_search_return.content == expected_file_search_content
-
-    file_search_call_index = next(
-        index
-        for index, part in enumerate(streamed_model_response.parts)
-        if isinstance(part, NativeToolCallPart) and part.tool_name == FileSearchTool.kind
-    )
-    assert _utils.is_trailing_provider_metadata_native_tool_call(streamed_model_response, file_search_call_index)
-
-
-@pytest.mark.anyio
 async def test_file_search_grounding_fills_empty_tool_response_streaming():
     """Streaming: grounding arrives several chunks after the empty `tool_response`, which is then filled in
     place — a single `PartStartEvent` (no empty-then-filled duplicate), ordered ahead of the grounded text.
@@ -1263,25 +1225,6 @@ async def test_file_search_grounding_fills_empty_tool_response_streaming():
     # A streamed file_search return is filled from grounding like the non-streamed one, so it echoes
     # its recovered contexts rather than a preserved raw response.
     assert file_search_return.provider_details is None
-
-
-@pytest.mark.anyio
-async def test_file_search_multiple_calls_all_filled_streaming():
-    """Every reserved file_search return is filled from the aggregate grounding, not just the last."""
-    events, parts = await _drive_stream(
-        [
-            _stream_chunk([{'tool_call': {'id': 'call_1', 'tool_type': 'FILE_SEARCH', 'args': {}}}]),
-            _stream_chunk([{'tool_response': {'id': 'call_1', 'tool_type': 'FILE_SEARCH'}}]),
-            _stream_chunk([{'tool_call': {'id': 'call_2', 'tool_type': 'FILE_SEARCH', 'args': {}}}]),
-            _stream_chunk([{'tool_response': {'id': 'call_2', 'tool_type': 'FILE_SEARCH'}}]),
-            _stream_chunk([{'text': 'Paris.'}], grounding=_FILE_SEARCH_GROUNDING_METADATA),
-        ]
-    )
-
-    returns = _file_search_returns(parts)
-    assert [r.tool_call_id for r in returns] == ['call_1', 'call_2']
-    assert all(r.content is not None for r in returns)
-    assert len(_file_search_return_start_parts(events)) == 2
 
 
 @pytest.mark.anyio

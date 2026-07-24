@@ -1475,11 +1475,11 @@ class GeminiStreamedResponse(StreamedResponse):
                     self._grounding_metadata, self.provider_name
                 )
                 if web_search_call and web_search_return:
-                    self.metadata = _utils.add_provider_metadata_tool_call_id(
-                        self.metadata, web_search_call.tool_call_id
+                    call_event, return_event = self._handle_provider_metadata_native_tool_pair(
+                        web_search_call, web_search_return
                     )
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_search_call)
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_search_return)
+                    yield call_event
+                    yield return_event
 
             file_search_part = self._handle_file_search_grounding_metadata_streaming(self._grounding_metadata)
             if file_search_part is not None:
@@ -1489,11 +1489,11 @@ class GeminiStreamedResponse(StreamedResponse):
                     self._grounding_metadata, self.provider_name
                 )
                 if file_search_call and file_search_return:
-                    self.metadata = _utils.add_provider_metadata_tool_call_id(
-                        self.metadata, file_search_call.tool_call_id
+                    call_event, return_event = self._handle_provider_metadata_native_tool_pair(
+                        file_search_call, file_search_return
                     )
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_call)
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_return)
+                    yield call_event
+                    yield return_event
 
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
@@ -1503,6 +1503,15 @@ class GeminiStreamedResponse(StreamedResponse):
                     body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
                 ) from e
             raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+
+    def _handle_provider_metadata_native_tool_pair(
+        self, tool_call: NativeToolCallPart, tool_return: NativeToolReturnPart
+    ) -> tuple[ModelResponseStreamEvent, ModelResponseStreamEvent]:
+        """Stage a synthesized pair atomically so stream consumers can validate its marker."""
+        self.metadata = _utils.add_provider_metadata_tool_call_id(self.metadata, tool_call.tool_call_id)
+        call_event = self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call)
+        return_event = self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_return)
+        return call_event, return_event
 
     def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None
