@@ -376,9 +376,9 @@ def _json_message(event: RealtimeEvent) -> dict[str, object] | None:
     covers the remaining one-shot events (barge-in, grounding sources, end of turn).
     """
     match event:
-        case InputSpeechStartEvent(item_id=item_id):
+        case InputSpeechStartEvent():
             # The user started talking over the model — a barge-in; the browser flushes buffered audio.
-            logfire.info('User barge-in', item_id=item_id)
+            # (The realtime session records the barge-in in its telemetry.)
             return {'type': 'speech_started'}
         case PartEndEvent(part=NativeToolReturnPart(content=content)):
             # Google Search grounding finished; surface its cited sources as chips.
@@ -387,8 +387,7 @@ def _json_message(event: RealtimeEvent) -> dict[str, object] | None:
                 'queries': [],
                 'sources': _grounding_sources(content),
             }
-        case TurnCompleteEvent(interrupted=interrupted):
-            logfire.info('Turn complete', interrupted=interrupted)
+        case TurnCompleteEvent():
             return {'type': 'turn_complete'}
         case _:
             return None
@@ -514,6 +513,7 @@ async def ws(socket: WebSocket) -> None:
         model = _build_model(socket.query_params)
     except (UserError, ValueError) as exc:
         # Unknown provider prefix, or a model that can't take camera frames.
+        logfire.exception('Could not build realtime model')
         await emit({'type': 'error', 'message': str(exc)})
         return
 
@@ -521,8 +521,10 @@ async def ws(socket: WebSocket) -> None:
         async with agent.realtime(model, deps=deps).session() as session:
             await _run_session(session, socket, emit, send_lock)
     except ModelAPIError as exc:
-        # The provider rejected the session at connect time — e.g. a voice this model doesn't support,
-        # or an unknown model/deployment. Surface it to the browser instead of a bare disconnect.
+        # The provider rejected the session at connect time — e.g. a voice this model doesn't support, or
+        # an unknown model/deployment. Log the full error (with its chained cause) so the underlying
+        # reason is visible in Logfire, and surface a message to the browser instead of a bare disconnect.
+        logfire.exception('Realtime session failed to connect')
         await emit({'type': 'error', 'message': str(exc)})
 
 

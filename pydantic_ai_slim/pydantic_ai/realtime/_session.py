@@ -506,6 +506,20 @@ class RealtimeSession:
 
         return self
 
+    def _record_lifecycle_event(self, name: str, **attributes: Any) -> None:
+        """Record a realtime lifecycle moment (barge-in, turn boundary) as an event on the session span.
+
+        Turn boundaries and barge-ins have no request/response of their own, so they surface as span
+        events that make the stream's progression visible in a trace (rather than `logfire.info` calls,
+        which each app would otherwise have to add itself). An event, not a child span, so it doesn't
+        clutter the span tree or double-count. Names are lowercase to match the surrounding spans;
+        attributes whose value is `None` are dropped so the event stays clean. No-op without a span.
+        """
+        span = self._session_span
+        if span is None:
+            return
+        span.add_event(name, attributes={key: value for key, value in attributes.items() if value is not None})
+
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
@@ -1023,6 +1037,7 @@ class RealtimeSession:
             ),
         )
         events.append(event)
+        self._record_lifecycle_event('turn complete', interrupted=event.interrupted or None)
         return events
 
     def _handle_tool_call_part(self, call_part: ToolCallPart, *, response_usage_follows: bool) -> list[RealtimeEvent]:
@@ -1332,6 +1347,7 @@ class RealtimeSession:
         if isinstance(event, ReconnectedEvent):
             return self._handle_reconnected(event)
         self._user_turn_active = True
+        self._record_lifecycle_event('user speech started')
         return [event]
 
     def _handle_conversation_item(self, event: ConversationItemCreated) -> None:

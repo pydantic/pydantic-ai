@@ -48,6 +48,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.realtime import (
+    InputSpeechStartEvent,
     RealtimeEvent,
     RealtimeModel,
     RealtimeModelProfile,
@@ -300,6 +301,40 @@ async def test_session_and_tool_spans_with_usage() -> None:
     assert sess.context is not None
     assert chat.parent is not None and chat.parent.span_id == sess.context.span_id
     assert tool.parent is not None and tool.parent.span_id == sess.context.span_id
+
+
+async def test_session_span_records_lifecycle_events() -> None:
+    # Barge-ins and turn boundaries have no span of their own, so the session span records them as span
+    # events, making the stream's progression visible. Names are lowercase; `interrupted` is attached
+    # only when true (a clean turn carries no null attribute).
+    settings, exporter = _settings()
+    conn = _Connection(
+        [
+            InputSpeechStartEvent(),
+            Transcript(text='wait', is_final=True),
+            TurnCompleteEvent(interrupted=True),
+        ]
+    )
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    _ = await collect_events(session)
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.events is not None
+    events = {event.name: dict(event.attributes or {}) for event in sess.events}
+    assert events == {'user speech started': {}, 'turn complete': {'interrupted': True}}
+
+
+async def test_session_span_turn_complete_event_omits_interrupted_when_false() -> None:
+    # A clean (uninterrupted) turn records the `turn complete` event with no `interrupted` attribute,
+    # rather than a null one.
+    settings, exporter = _settings()
+    conn = _Connection([Transcript(text='hi', is_final=True), TurnCompleteEvent()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    _ = await collect_events(session)
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    turn_complete = next(event for event in (sess.events or []) if event.name == 'turn complete')
+    assert dict(turn_complete.attributes or {}) == {}
 
 
 async def test_unnamed_agent_session_span_defaults_agent_name() -> None:
