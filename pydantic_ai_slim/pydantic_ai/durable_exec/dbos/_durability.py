@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
@@ -8,12 +8,13 @@ from typing import Any, ClassVar, cast
 from dbos import DBOS
 
 from pydantic_ai import messages as _messages
-from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapModelRequestHandler, WrapRunHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
+from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
+from pydantic_ai.durable_exec._toolset import Lifecycle
 from pydantic_ai.durable_exec._utils import (
     DurableModel,
     StreamedActivityResult,
@@ -24,8 +25,6 @@ from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestCon
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
-from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._agent import DBOSParallelExecutionMode
 from ._utils import StepConfig, guard_enqueue_in_workflow
@@ -55,10 +54,20 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     """
 
     engine_name = 'DBOS'
+    _codec: ClassVar = IDENTITY_CODEC
     _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset({'mcp', 'dynamic'})
+    _wrapped_toolset_kinds: ClassVar[frozenset[ToolsetKind]] = frozenset({'mcp', 'dynamic'})
+    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
+        'function': 'enter-never',
+        'mcp': 'enter-never',
+        'dynamic': 'enter-never',
+    }
+    _tool_call_result_upgrade_lenient = True
+    _journal_discovery = True
 
     _durable_unit_noun = 'step'
     _durable_container_noun = 'workflow'
+    _tool_config_key = 'dbos'
 
     def __init__(
         self,
@@ -117,6 +126,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._event_stream_handler_step: Any = None
         self._legacy_run_workflow: Any = None
         self._legacy_run_sync_workflow: Any = None
+        self._durable_unit_fns: ContextVar[dict[str, Callable[[], Awaitable[Any]]]] = ContextVar(
+            '_durable_unit_fns', default={}
+        )
+        self._durable_unit_steps: dict[str, Callable[[], Awaitable[Any]]] = {}
         self._init_legacy_context_vars()
 
     def _init_legacy_context_vars(self) -> None:
@@ -138,6 +151,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # one capability instance attached to several agents would leak one agent's per-run
         # legacy state into another's runs.
         self._init_legacy_context_vars()
+        self._durable_unit_fns = ContextVar('_durable_unit_fns', default={})
+        self._durable_unit_steps = {}
 
         # --- Model request steps ---
 
@@ -150,7 +165,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             run_context: RunContext[Any],
         ) -> ModelResponse:
             model = await self._resolve_model_for_request(model_id, run_context)
-            with set_current_run_context(run_context):
+            with self._durable_run_context_scope(run_context):
                 return await model.request(messages, model_settings, model_request_parameters)
 
         self._request_step = request_step
@@ -182,7 +197,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             model_id: str | None, response: ModelResponse, run_context: RunContext[Any]
         ) -> None:
             model = await self._resolve_model_for_request(model_id, run_context)
-            with set_current_run_context(run_context):
+            with self._durable_run_context_scope(run_context):
                 await model.cancel_suspended_response(response)
 
         self._cancel_suspended_response_step = cancel_suspended_response_step
@@ -249,6 +264,38 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # safe, so only guard once actually inside a workflow.
         return guard_enqueue_in_workflow(ctx)
 
+    async def run_durable_unit(
+        self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
+    ) -> Any:
+        step = self._durable_unit_steps.get(name)
+        if step is None:
+            step_config = cast(StepConfig, config or {})
+
+            @DBOS.step(name=name, **step_config)
+            async def durable_unit_step() -> Any:
+                return await self._durable_unit_fns.get()[name]()
+
+            self._durable_unit_steps[name] = step = durable_unit_step
+        current = self._durable_unit_fns.get()
+        token = self._durable_unit_fns.set({**current, name: fn})
+        try:
+            return await step()
+        finally:
+            self._durable_unit_fns.reset(token)
+
+    def _unit_name(self, kind: str, **parts: Any) -> str:
+        prefix = parts.get('prefix', f'{self.name}__{kind}')
+        if parts.get('tool_name') is not None:
+            return f'{prefix}.call_tool'
+        return f'{prefix}{parts.get("suffix", "")}'
+
+    def _toolset_base_config(self, kind: ToolsetKind) -> StepConfig:
+        return self._mcp_step_config
+
+    def _toolset_in_durable_context(self) -> bool:
+        # DBOS steps degrade to inline calls outside a workflow, preserving the wrapper-era lifecycle.
+        return True
+
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         if self._in_legacy_workflow.get():
             # Wrapper-era recordings contain no `__event_stream_handler` steps (the wrapper called
@@ -263,21 +310,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # don't re-run when the workflow recovers.
         assert self._event_stream_handler_step is not None
         await self._event_stream_handler_step(event, ctx)
-
-    def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
-        if isinstance(ts, DynamicToolset):
-            from ._dynamic_toolset import dbosify_dynamic_toolset
-
-            return dbosify_dynamic_toolset(wrapped=ts, step_name_prefix=self.name, step_config=self._mcp_step_config)
-        try:
-            from pydantic_ai.mcp import MCPToolset
-
-            from ._mcp_toolset import dbosify_mcp_toolset
-        except ImportError:  # pragma: no cover
-            return None
-        if isinstance(ts, MCPToolset):
-            return dbosify_mcp_toolset(wrapped=ts, step_name_prefix=self.name, step_config=self._mcp_step_config)
-        return None
 
     # --- Capability hooks ---
 
