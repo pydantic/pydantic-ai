@@ -334,11 +334,12 @@ async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyP
         async with _connect(model, 'hi'):
             pass  # pragma: no cover - the dial short-circuits before yielding
 
-    # The SDK swaps https→wss and appends the Vertex BidiGenerateContent path onto the gateway base URL;
-    # the gateway's platform relay accepts exactly this URL and derives the billed model from the setup
-    # frame, so pydantic-ai does not rewrite it.
+    # The SDK swaps https→wss and appends the Vertex BidiGenerateContent path onto the gateway base URL.
+    # TEMPORARY: the gateway relay only routes the OpenAI-shaped `/v1/realtime?model=` upgrade path, not
+    # this native Bidi path, so `_ws_gateway_url_rewrite` reshapes the dialed URL until the gateway accepts
+    # the Bidi path (see that helper). Once it does, this reverts to the native `.../BidiGenerateContent`.
     assert captured['uri'] == snapshot(
-        'wss://gateway.pydantic.dev/proxy/google-vertex/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent'
+        'wss://gateway.pydantic.dev/proxy/google-vertex/v1/realtime?model=gemini-live-2.5-flash'
     )
     assert captured['headers'].get('Authorization') == 'Bearer gw-key'
     # `_single_ws_user_agent` still runs, so the handshake carries exactly one user-agent header.
