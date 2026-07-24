@@ -1,0 +1,19 @@
+tests/test_temporal.py
+  s_a1768203f8e01b::t_b62cc0e736e844 3812-3813,3836-3837
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "62d5252e23748d6d64b005756ce6383cb1c4e37c",
+  "prompts": {},
+  "sessions": {
+    "s_a1768203f8e01b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8f50-dd59-7853-b87c-a4ea7b45eb45",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
