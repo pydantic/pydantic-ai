@@ -418,14 +418,14 @@ async def test_openai_responses_reasoning_context_defaults_to_all_turns(
     'model_name,model_settings,expected_reasoning',
     [
         # Unset + a supporting model: the default puts `all_turns` on the wire.
-        pytest.param('gpt-5.6-sol', OpenAIResponsesModelSettings(), {'context': 'all_turns'}, id='default-supported'),
+        pytest.param('gpt-5.6-sol', {}, {'context': 'all_turns'}, id='default-supported'),
         # Unset + a model without `all_turns` support: no `reasoning` object at all, so no
         # `context` key is sent that the provider would reject.
-        pytest.param('o3', OpenAIResponsesModelSettings(), None, id='default-unsupported'),
+        pytest.param('o3', {}, None, id='default-unsupported'),
         # An explicit value beats the default, including `auto` (which must not be overridden).
         pytest.param(
             'gpt-5.6-sol',
-            OpenAIResponsesModelSettings(openai_reasoning_context='auto'),
+            {'openai_reasoning_context': 'auto'},
             {'context': 'auto'},
             id='explicit-auto-wins',
         ),
@@ -436,7 +436,7 @@ async def test_openai_responses_reasoning_context_default_wire_contract(
     openai_api_key: str,
     vcr: Cassette,
     model_name: str,
-    model_settings: OpenAIResponsesModelSettings,
+    model_settings: 'OpenAIResponsesModelSettings',
     expected_reasoning: dict[str, str] | None,
 ):
     """VCR test: the real Responses API accepts the `reasoning.context` we default to.
