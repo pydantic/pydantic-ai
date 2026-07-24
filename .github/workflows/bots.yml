@@ -228,7 +228,7 @@ jobs:
       pull-requests: write
       actions: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
@@ -392,3 +392,15 @@ jobs:
         run: gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/auto-review" --method DELETE 2>/dev/null || true
         env:
           GH_TOKEN: ${{ github.token }}
+
+      # Without this, a review that crashed and a review that found nothing look
+      # identical from the PR: the label is gone either way and no comment lands.
+      # A silent breakage went unnoticed for three weeks that way.
+      - name: Report review failure
+        if: failure()
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
+            "The \`auto-review\` run ended without posting a review — see [the run](${RUN_URL}) for why. Nothing here is a verdict on this PR. If the cause was transient, re-apply the \`auto-review\` label to retry."
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
