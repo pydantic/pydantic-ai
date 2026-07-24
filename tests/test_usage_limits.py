@@ -3,12 +3,14 @@ import functools
 import operator
 import re
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import timezone
 from decimal import Decimal
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
 from pydantic import BaseModel, TypeAdapter
+from pydantic_core import to_jsonable_python
 
 from pydantic_ai import (
     Agent,
@@ -511,6 +513,29 @@ def test_usage_arbitrary_fields_pydantic_serialization_filters():
 
     assert adapter.dump_python(usage, include={'breakdown': {'a'}}) == {'breakdown': {'a': 1}}
     assert adapter.dump_python(usage, exclude={'breakdown': {'a'}})['breakdown'] == {'b': 2}
+
+
+def test_usage_pydantic_core_serialization_subclass():
+    @dataclass(repr=False, init=False, eq=False)
+    class CustomUsage(RequestUsage):
+        custom_tokens: int = 7
+
+    usage = CustomUsage(future_tokens=42)
+
+    assert to_jsonable_python(usage) == snapshot(
+        {
+            'input_tokens': 0,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 0,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {},
+            'custom_tokens': 7,
+            'future_tokens': 42,
+        }
+    )
 
 
 def test_cache_hit_ratio():

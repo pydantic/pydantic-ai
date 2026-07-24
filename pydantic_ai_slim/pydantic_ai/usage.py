@@ -3,10 +3,11 @@ from __future__ import annotations as _annotations
 import dataclasses
 from copy import copy
 from dataclasses import dataclass
+from functools import cache
 from typing import Annotated, Any, cast
 
 from genai_prices.data_snapshot import get_snapshot
-from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler
+from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import SchemaSerializer, core_schema
 
 from . import _utils
@@ -27,6 +28,22 @@ _LEGACY_USAGE_KEYS = frozenset({'requests', 'request_tokens', 'response_tokens',
 _LEGACY_TOKEN_ALIASES = (('input_tokens', 'request_tokens'), ('output_tokens', 'response_tokens'))
 
 _SERIALIZATION_FILTER_MISSING = object()
+
+
+@cache
+def _usage_serializer(usage_type: type[object]) -> SchemaSerializer:
+    return TypeAdapter(usage_type).serializer
+
+
+class _UsageSerializerDescriptor:
+    def __get__(self, instance: object, owner: type[object]) -> SchemaSerializer:
+        return _usage_serializer(owner)
+
+
+class _UsageSerializerMixin:
+    # Bare `pydantic_core.to_json()` looks for this attribute but does not build custom core schemas for stdlib
+    # dataclasses. The descriptor builds the same serializer as `TypeAdapter` for each concrete usage class.
+    __pydantic_serializer__ = _UsageSerializerDescriptor()
 
 
 def _usage_field_filter(
@@ -91,7 +108,7 @@ def _serialize_usage(
 
 
 @dataclass(repr=False, init=False, eq=False)
-class UsageBase:
+class UsageBase(_UsageSerializerMixin):
     input_tokens: Annotated[
         int,
         # `request_tokens` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed

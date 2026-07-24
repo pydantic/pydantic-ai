@@ -9,6 +9,7 @@ from typing import Annotated, Any, Literal, cast, get_args, get_origin
 
 import pytest
 from pydantic import TypeAdapter
+from pydantic_core import to_json, to_jsonable_python
 
 from pydantic_ai import (
     Agent,
@@ -627,8 +628,7 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
     )
     messages: list[ModelMessage] = [ModelResponse(parts=[], usage=usage)]
 
-    serialized = ModelMessagesTypeAdapter.dump_json(messages)
-    assert json.loads(serialized)[0]['usage'] == snapshot(
+    expected_usage = snapshot(
         {
             'input_tokens': 5,
             'cache_write_tokens': 0,
@@ -643,6 +643,11 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
             'zero_tokens': 0,
         }
     )
+    assert to_jsonable_python(messages)[0]['usage'] == expected_usage
+    assert json.loads(to_json(messages))[0]['usage'] == expected_usage
+
+    serialized = ModelMessagesTypeAdapter.dump_json(messages)
+    assert json.loads(serialized)[0]['usage'] == expected_usage
 
     [loaded] = ModelMessagesTypeAdapter.validate_json(serialized)
     assert isinstance(loaded, ModelResponse)
