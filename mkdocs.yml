@@ -24,6 +24,12 @@ nav:
           - tools.md
           - output.md
           - Multimodal Input: input.md
+          - Realtime (speech-to-speech):
+              - realtime/index.md
+              - OpenAI: realtime/openai.md
+              - Azure: realtime/azure.md
+              - xAI: realtime/xai.md
+              - Google Gemini: realtime/gemini.md
           - Hooks: hooks.md
           - Agent Specs: agent-spec.md
           - message-history.md
@@ -161,6 +167,11 @@ nav:
       - Streaming:
           - examples/stream-markdown.md
           - examples/stream-whales.md
+      - Realtime:
+          - examples/realtime-voice.md
+          - examples/realtime-text-to-audio.md
+          - examples/realtime-handoff.md
+          - examples/realtime-camera.md
       - Complex Workflows:
           - examples/flight-booking.md
       - Business Applications:
@@ -207,6 +218,7 @@ nav:
           - api/output.md
           - api/profiles.md
           - api/providers.md
+          - api/realtime.md
           - api/result.md
           - api/retries.md
           - api/run.md

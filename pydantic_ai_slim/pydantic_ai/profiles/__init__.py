@@ -72,6 +72,18 @@ class ModelProfile(TypedDict, total=False):
     supports_image_output: bool
     """Whether the model supports image output. Default: `False`."""
 
+    supports_audio_input: bool
+    """Whether the model supports audio in user messages. Default: `False`.
+
+    Used when converting `SpeechPart`s from realtime session history in
+    `Model.prepare_messages`: if `True`, retained audio is sent to the model as `BinaryContent`;
+    otherwise the transcript text is used.
+
+    No shipping profile sets this to `True` yet, so retained realtime audio is currently always
+    forwarded as transcript text on handoff; enabling it needs per-model-family verification that the
+    provider accepts audio in user messages.
+    """
+
     supports_inline_system_prompts: bool
     """Whether the provider's API accepts `SystemPromptPart`s inline at any position. Default: `False`.
 
@@ -127,6 +139,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_json_schema_output': False,
     'supports_json_object_output': False,
     'supports_image_output': False,
+    'supports_audio_input': False,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,

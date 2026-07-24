@@ -38,6 +38,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -596,6 +597,9 @@ class MistralModel(Model[Mistral]):
                         tool_call_id=part.tool_call_id,
                         content=part.model_response(),
                     )
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
+                pass
             else:
                 assert_never(part)
         if file_content:
@@ -630,6 +634,9 @@ class MistralModel(Model[Mistral]):
                         pass
                     elif isinstance(part, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
+                        pass
+                    elif isinstance(part, SpeechPart):  # pragma: no cover
+                        # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
                         pass
                     else:
                         assert_never(part)

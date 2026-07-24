@@ -26,6 +26,8 @@ from ..messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    SpeechPart,
+    SpeechPartDelta,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -359,7 +361,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case _:
                 pass
 
-    async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:
+    async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:  # noqa: C901
         """Handle a `PartStartEvent`.
 
         This method dispatches to specific `handle_*` methods based on part type:
@@ -402,6 +404,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case CompactionPart():  # pragma: no cover
                 async for e in self.handle_compaction(part):
                     yield e
+            case SpeechPart():  # pragma: no cover
+                # Realtime audio parts don't flow through UI event streams.
+                pass
 
     async def handle_part_delta(self, event: PartDeltaEvent) -> AsyncIterator[EventT]:
         """Handle a PartDeltaEvent.
@@ -426,9 +431,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case ThinkingPartDelta():
                 async for e in self.handle_thinking_delta(delta):
                     yield e
-            case ToolCallPartDelta():  # pragma: no branch
+            case ToolCallPartDelta():
                 async for e in self.handle_tool_call_delta(delta):
                     yield e
+            case SpeechPartDelta():  # pragma: no cover
+                # Realtime audio deltas don't flow through UI event streams.
+                pass
 
     async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[EventT]:
         """Handle a `PartEndEvent`.
@@ -463,6 +471,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case NativeToolReturnPart() | FilePart() | CompactionPart():  # pragma: no cover
                 # These don't have deltas, so they don't need to be ended.
+                pass
+            case SpeechPart():  # pragma: no cover
+                # Realtime audio parts don't flow through UI event streams.
                 pass
 
     async def before_stream(self) -> AsyncIterator[EventT]:

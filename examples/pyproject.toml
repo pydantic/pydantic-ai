@@ -48,11 +48,12 @@ requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,google,groq,anthropic,ag-ui]=={{ version }}",
+    "pydantic-ai-slim[openai,google,groq,anthropic,ag-ui,realtime]=={{ version }}",
     "pydantic-evals=={{ version }}",
     "asyncpg>=0.31.0",
     "fastapi>=0.117.0",
     "logfire[asyncpg,fastapi,sqlite3,httpx]>=3.14.1",
+    "python-dotenv>=1.0.0",
     "python-multipart>=0.0.17",
     "rich>=13.9.2",
     "uvicorn>=0.32.0",
@@ -64,6 +65,7 @@ dependencies = [
     "datasets>=4.0.0",
     "pandas>=2.3.3",
     "twelvelabs>=1.2.8",
+    "sounddevice>=0.5.0",
     # On Python 3.14, the locked numpy 2.2.6 has no cp314 wheel and would be
     # source-built in CI. numpy 2.3.2+ ships cp314 wheels, so require it there.
     "numpy>=2.3.2 ; python_version >= '3.14'",

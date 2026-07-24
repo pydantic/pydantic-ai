@@ -36,6 +36,7 @@ from ..messages import (
     SystemPromptPart,
 )
 from ..settings import ModelSettings
+from ..usage import UsageBase
 from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
@@ -280,6 +281,19 @@ class InstrumentationSettings:
             }
         return {}
 
+    def aggregated_usage_attributes(self, usage: UsageBase) -> dict[str, int]:
+        """Cumulative-usage OpenTelemetry attributes for a run/session span.
+
+        Remaps `gen_ai.usage.*` to `gen_ai.aggregated_usage.*` when `use_aggregated_usage_attribute_names`
+        is set, so a backend that sums span attributes doesn't double-count the run's cumulative usage
+        against the per-request `chat` spans' `gen_ai.usage.*`. Shared by the classic agent-run span (the
+        `Instrumentation` capability) and the realtime session span so the two can't drift.
+        """
+        attributes = usage.opentelemetry_attributes()
+        if not self.use_aggregated_usage_attribute_names:
+            return attributes
+        return {key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value for key, value in attributes.items()}
+
     def record_metrics(
         self,
         response: ModelResponse,
@@ -288,7 +302,7 @@ class InstrumentationSettings:
         time_to_first_chunk: float | None = None,
     ):
         for typ in ['input', 'output']:
-            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no cover
+            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)

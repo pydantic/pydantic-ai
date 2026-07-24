@@ -1,0 +1,82 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    setup:
+      model: models/gemini-2.5-flash-native-audio-preview-09-2025
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Answer in two or three words.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Say a short greeting.
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - text: '**Crafting Initial Greeting**
+
+
+            I''ve decided to move forward with a brief, common greeting. I''m focusing
+            on ensuring it''s concise, fitting the length constraints, and generally
+            usable for the purpose. I have provided a common greeting.
+
+
+
+            '
+          thought: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: Hello there.
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Bv0IAOYBMQJNAp4AdP/1/vP/iwD1AGYBxgB7AHn/HQCM
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 1130
+      responseTokenCount: 27
+      totalTokenCount: 1157
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 1130
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 27
+      thoughtsTokenCount: 23

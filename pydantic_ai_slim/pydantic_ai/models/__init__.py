@@ -40,12 +40,14 @@ from ..messages import (
     InstructionPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
     ModelResponseState,
     ModelResponseStreamEvent,
     PartEndEvent,
     PartStartEvent,
+    SpeechPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -226,6 +228,79 @@ class ModelRequestContext:
     """
 
 
+class AbstractModel(ABC):
+    """Shared identity for request-response and realtime models."""
+
+    @property
+    @abstractmethod
+    def model_name(self) -> str:
+        """The model name."""
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def system(self) -> str:
+        """The model provider, ex: openai.
+
+        Use to populate the `gen_ai.system` OpenTelemetry semantic convention attribute,
+        so should use well-known values listed in
+        https://opentelemetry.io/docs/specs/semconv/attributes-registry/gen-ai/#gen-ai-system
+        when applicable.
+        """
+        raise NotImplementedError()
+
+    @property
+    def base_url(self) -> str | None:
+        """The base URL for the provider API, if available."""
+        return None
+
+    @property
+    def model_id(self) -> str:
+        """The fully qualified model name in `'provider:model_name'` format."""
+        return f'{self.system}:{self.model_name}'
+
+    @property
+    def label(self) -> str:
+        """Human-friendly display label for the model.
+
+        Handles common patterns:
+        - gpt-5 -> GPT 5
+        - claude-sonnet-4-5 -> Claude Sonnet 4.5
+        - gemini-2.5-pro -> Gemini 2.5 Pro
+        - meta-llama/llama-3-70b -> Llama 3 70b (OpenRouter style)
+        """
+        label = self.model_name
+        # Handle OpenRouter-style names with / (e.g., meta-llama/llama-3-70b)
+        if '/' in label:
+            label = label.split('/')[-1]
+
+        parts = label.split('-')
+        result: list[str] = []
+        for i, part in enumerate(parts):
+            if i == 0 and part.lower() == 'gpt':
+                result.append(part.upper())
+            elif part.replace('.', '').isdigit():
+                if result and result[-1].replace('.', '').isdigit():
+                    result[-1] = f'{result[-1]}.{part}'
+                else:
+                    result.append(part)
+            else:
+                result.append(part.capitalize())
+        return ' '.join(result)
+
+    async def __aenter__(self) -> Self:
+        """Enter the model context."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        """Exit the model context."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class ModelResolutionContext(Generic[ModelContextDepsT]):
     """Context used to resolve a model ID before a model is available.
@@ -258,7 +333,7 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     """Usage accumulated by the run before this request step."""
 
 
-class Model(ABC, Generic[InterfaceClient]):
+class Model(AbstractModel, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
     _provider: Provider[InterfaceClient]
@@ -487,12 +562,16 @@ class Model(ABC, Generic[InterfaceClient]):
         adapter sees a normal function-call exchange against `search_tools`.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
-        the profile's `supports_inline_system_prompts` is `False`.
+        the profile's `supports_inline_system_prompts` is `False`, and converts
+        `SpeechPart`s from realtime session history into `UserPromptPart`s /
+        `TextPart`s that any model can consume.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
         """
+        messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
+
         if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
             from .._tool_search import synthesize_local_tool_search_messages
 
@@ -601,48 +680,6 @@ class Model(ABC, Generic[InterfaceClient]):
         ]
         return replace(params, native_tools=supported_natives, function_tools=function_tools)
 
-    @property
-    @abstractmethod
-    def model_name(self) -> str:
-        """The model name."""
-        raise NotImplementedError()
-
-    @property
-    def model_id(self) -> str:
-        """The fully qualified model name in `'provider:model_name'` format."""
-        return f'{self.system}:{self.model_name}'
-
-    @property
-    def label(self) -> str:
-        """Human-friendly display label for the model.
-
-        Handles common patterns:
-        - gpt-5 -> GPT 5
-        - claude-sonnet-4-5 -> Claude Sonnet 4.5
-        - gemini-2.5-pro -> Gemini 2.5 Pro
-        - meta-llama/llama-3-70b -> Llama 3 70b (OpenRouter style)
-        """
-        label = self.model_name
-        # Handle OpenRouter-style names with / (e.g., meta-llama/llama-3-70b)
-        if '/' in label:
-            label = label.split('/')[-1]
-
-        parts = label.split('-')
-        result: list[str] = []
-
-        for i, part in enumerate(parts):
-            if i == 0 and part.lower() == 'gpt':
-                result.append(part.upper())
-            elif part.replace('.', '').isdigit():
-                if result and result[-1].replace('.', '').isdigit():
-                    result[-1] = f'{result[-1]}.{part}'
-                else:
-                    result.append(part)
-            else:
-                result.append(part.capitalize())
-
-        return ' '.join(result)
-
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of native tool types this model class can handle.
@@ -692,23 +729,6 @@ class Model(ABC, Generic[InterfaceClient]):
             resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
 
         return resolved
-
-    @property
-    @abstractmethod
-    def system(self) -> str:
-        """The model provider, ex: openai.
-
-        Use to populate the `gen_ai.system` OpenTelemetry semantic convention attribute,
-        so should use well-known values listed in
-        https://opentelemetry.io/docs/specs/semconv/attributes-registry/gen-ai/#gen-ai-system
-        when applicable.
-        """
-        raise NotImplementedError()
-
-    @property
-    def base_url(self) -> str | None:
-        """The base URL for the provider API, if available."""
-        return None
 
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
         """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
@@ -1618,6 +1638,47 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
                 return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
             elif tool_def.defer:
                 return FinalResultEvent(tool_name=None, tool_call_id=None)
+
+
+def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) -> list[ModelMessage]:
+    """Convert `SpeechPart`s from realtime session history into parts any model can consume.
+
+    User-speaker parts become `UserPromptPart`s carrying the retained audio (when `include_audio` is
+    `True` and audio was retained) or the transcript text; assistant-speaker parts become `TextPart`s
+    carrying the transcript. Parts without usable content are dropped, as are messages left without
+    parts. Returns the original list when nothing changed so the identity check in `_make_request`
+    can skip the redundant `_clean_message_history` pass.
+    """
+    if not any(isinstance(part, SpeechPart) for message in messages for part in message.parts):
+        return messages
+
+    new_messages: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            request_parts: list[ModelRequestPart] = []
+            for part in message.parts:
+                if isinstance(part, SpeechPart):
+                    if include_audio and part.audio is not None:
+                        request_parts.append(UserPromptPart(content=[part.audio]))
+                    elif part.transcript:
+                        request_parts.append(UserPromptPart(content=part.transcript))
+                    # A part with neither retained audio nor transcript has nothing to send.
+                else:
+                    request_parts.append(part)
+            if request_parts:
+                new_messages.append(replace(message, parts=request_parts))
+        else:
+            response_parts: list[ModelResponsePart] = []
+            for part in message.parts:
+                if isinstance(part, SpeechPart):
+                    if part.transcript:
+                        response_parts.append(TextPart(content=part.transcript))
+                    # Assistant audio without a transcript has nothing to send.
+                else:
+                    response_parts.append(part)
+            if response_parts:
+                new_messages.append(replace(message, parts=response_parts))
+    return new_messages
 
 
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:

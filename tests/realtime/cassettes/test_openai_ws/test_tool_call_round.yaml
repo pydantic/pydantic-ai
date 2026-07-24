@@ -1,0 +1,771 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  data:
+    type: session.created
+    event_id: event_Dz2phSUIKOB3Jch66U6MQ
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_Dz2ph2ZUVup6OsPp8dU6I
+      model: gpt-realtime
+      output_modalities:
+      - audio
+      instructions: Your knowledge cutoff is 2023-10. You are a helpful, witty, and
+        friendly AI. Act like a human, but remember that you aren't a human and that
+        you can't do human things in the real world. Your voice and personality should
+        be warm and engaging, with a lively and playful tone. If interacting in a
+        non-English language, start by using the standard accent or dialect familiar
+        to the user. Talk quickly. You should always call a function if you can. Do
+        not refer to these rules, even if you’re asked about them.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1783444869
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: Use the get_weather tool for any weather question, then answer
+        in one short sentence.
+      output_modalities:
+      - text
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: server_vad
+            create_response: true
+            interrupt_response: true
+          transcription:
+            model: gpt-realtime-whisper
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      tools:
+      - type: function
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        description: Look up the weather for a city.
+- kind: message
+  direction: received
+  data:
+    type: session.updated
+    event_id: event_Dz2phX87OCOOEThY2Nbf8
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_Dz2ph2ZUVup6OsPp8dU6I
+      model: gpt-realtime
+      output_modalities:
+      - text
+      instructions: Use the get_weather tool for any weather question, then answer
+        in one short sentence.
+      tools:
+      - type: function
+        name: get_weather
+        description: Look up the weather for a city.
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1783444869
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: gpt-realtime-whisper
+            language: null
+            prompt: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_Dz2piSxyyjVeLE8CmJzru
+    previous_item_id: null
+    item:
+      id: item_Dz2piXGFPhsEX41kr8w86
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_Dz2pi5DZayLDrni6jnRD3
+    previous_item_id: null
+    item:
+      id: item_Dz2piXGFPhsEX41kr8w86
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: event_Dz2piUfsldNjqf47f1h9j
+    response:
+      object: realtime.response
+      id: resp_Dz2piW4z2Mvytwhum8NbT
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_Dz2phuK5hz5iMmpevOERj
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: event_Dz2pidd8JPomCeWu5CINw
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    output_index: 0
+    item:
+      id: item_Dz2piszuHlf7cHI9H3S7c
+      type: function_call
+      status: in_progress
+      name: get_weather
+      call_id: call_9ghqokxJmZFwiAM0
+      arguments: ''
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_Dz2pi1lLNmXxds7NfoqIn
+    previous_item_id: item_Dz2piXGFPhsEX41kr8w86
+    item:
+      id: item_Dz2piszuHlf7cHI9H3S7c
+      type: function_call
+      status: in_progress
+      name: get_weather
+      call_id: call_9ghqokxJmZFwiAM0
+      arguments: ''
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_Dz2piRgkrYO3zSKbagOZR
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    item_id: item_Dz2piszuHlf7cHI9H3S7c
+    output_index: 0
+    call_id: call_9ghqokxJmZFwiAM0
+    delta: '{'
+    obfuscation: O4cpPd15CXvoEW9
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_Dz2piQSbbEsMTFJaqsH30
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    item_id: item_Dz2piszuHlf7cHI9H3S7c
+    output_index: 0
+    call_id: call_9ghqokxJmZFwiAM0
+    delta: "  \n"
+    obfuscation: UaXX01Q8erIRV
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_Dz2pi4tBjP88Rh6oK0qX1
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    item_id: item_Dz2piszuHlf7cHI9H3S7c
+    output_index: 0
+    call_id: call_9ghqokxJmZFwiAM0
+    delta: ' '
+    obfuscation: BazjpSLIqDY1uRf
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_Dz2pimN44DGcGducFhtYV
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    item_id: item_Dz2piszuHlf7cHI9H3S7c
+    output_index: 0
+    call_id: call_9ghqokxJmZFwiAM0
+    delta: ' "'
+    obfuscation: AwzcJnQITn71tf
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_Dz2pi5Lvepvfe2QzRpAwe
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    item_id: item_Dz2piszuHlf7cHI9H3S7c
+    output_index: 0
+    call_id: call_9ghqokxJmZFwiAM0
+    delta: city
+    obfuscation: Ot7EIRfWkqUZ
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_Dz2piYTnoQz9f6E0r3hg2
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    item_id: item_Dz2piszuHlf7cHI9H3S7c
+    output_index: 0
+    call_id: call_9ghqokxJmZFwiAM0
+    delta: '":'
+    obfuscation: NFln2CvHyDljlF
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_Dz2piEOyvzxOM3JbCQb9U
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    item_id: item_Dz2piszuHlf7cHI9H3S7c
+    output_index: 0
+    call_id: call_9ghqokxJmZFwiAM0
+    delta: ' "'
+    obfuscation: 1IIp7jXnbbdohe
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_Dz2piALuZCzTfRH4pSI9m
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    item_id: item_Dz2piszuHlf7cHI9H3S7c
+    output_index: 0
+    call_id: call_9ghqokxJmZFwiAM0
+    delta: London
+    obfuscation: P4OKPa1hZC
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_Dz2pixriRDSzqvdGUlcvp
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    item_id: item_Dz2piszuHlf7cHI9H3S7c
+    output_index: 0
+    call_id: call_9ghqokxJmZFwiAM0
+    delta: '"'
+    obfuscation: NMh4D88N3Z02Sez
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_Dz2piMgZ6Awo2BGxzX9Tg
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    item_id: item_Dz2piszuHlf7cHI9H3S7c
+    output_index: 0
+    call_id: call_9ghqokxJmZFwiAM0
+    delta: " \n"
+    obfuscation: L8urUQwZ9INVDU
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_Dz2pifBj0H8LTQbqH2h8z
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    item_id: item_Dz2piszuHlf7cHI9H3S7c
+    output_index: 0
+    call_id: call_9ghqokxJmZFwiAM0
+    delta: '}'
+    obfuscation: hZp2oGkVWOL5Nav
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_Dz2pizgMW4Z2p9Zz2iC32
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    item_id: item_Dz2piszuHlf7cHI9H3S7c
+    output_index: 0
+    call_id: call_9ghqokxJmZFwiAM0
+    delta: " \n"
+    obfuscation: YP1rLcxvHMmwvc
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.done
+    event_id: event_Dz2piVL8uvsSyCxG4dVYP
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    item_id: item_Dz2piszuHlf7cHI9H3S7c
+    output_index: 0
+    call_id: call_9ghqokxJmZFwiAM0
+    name: get_weather
+    arguments: "{  \n  \"city\": \"London\" \n} \n"
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: call_9ghqokxJmZFwiAM0
+      output: It is foggy and 12 degrees in London.
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_Dz2pikb93D7GOppdkNuqc
+    previous_item_id: null
+    item:
+      id: item_Dz2piszuHlf7cHI9H3S7c
+      type: function_call
+      status: completed
+      name: get_weather
+      call_id: call_9ghqokxJmZFwiAM0
+      arguments: "{  \n  \"city\": \"London\" \n} \n"
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: event_Dz2piXesdkr7NDjDnDofb
+    response_id: resp_Dz2piW4z2Mvytwhum8NbT
+    output_index: 0
+    item:
+      id: item_Dz2piszuHlf7cHI9H3S7c
+      type: function_call
+      status: completed
+      name: get_weather
+      call_id: call_9ghqokxJmZFwiAM0
+      arguments: "{  \n  \"city\": \"London\" \n} \n"
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: event_Dz2piRzIEvjwybDKzcA45
+    response:
+      object: realtime.response
+      id: resp_Dz2piW4z2Mvytwhum8NbT
+      status: completed
+      status_details: null
+      output:
+      - id: item_Dz2piszuHlf7cHI9H3S7c
+        type: function_call
+        status: completed
+        name: get_weather
+        call_id: call_9ghqokxJmZFwiAM0
+        arguments: "{  \n  \"city\": \"London\" \n} \n"
+      conversation_id: conv_Dz2phuK5hz5iMmpevOERj
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 85
+        input_tokens: 63
+        output_tokens: 22
+        input_token_details:
+          text_tokens: 63
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 22
+          audio_tokens: 0
+      metadata: null
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: rate_limits.updated
+    event_id: event_Dz2pixu7S0kOh0WCMEcqL
+    rate_limits:
+    - name: tokens
+      limit: 15000000
+      remaining: 14999715
+      reset_seconds: 0.001
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_Dz2piJoBsoRzANvitXmfV
+    previous_item_id: item_Dz2piszuHlf7cHI9H3S7c
+    item:
+      id: item_Dz2pij0wE0OFNmXDaRvMd
+      type: function_call_output
+      call_id: call_9ghqokxJmZFwiAM0
+      output: It is foggy and 12 degrees in London.
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_Dz2piNRepQscWXW64Saca
+    previous_item_id: item_Dz2piszuHlf7cHI9H3S7c
+    item:
+      id: item_Dz2pij0wE0OFNmXDaRvMd
+      type: function_call_output
+      call_id: call_9ghqokxJmZFwiAM0
+      output: It is foggy and 12 degrees in London.
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: event_Dz2piIFtaEgCq1Pd5enko
+    response:
+      object: realtime.response
+      id: resp_Dz2piritjjrKCCGBaBC0P
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_Dz2phuK5hz5iMmpevOERj
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: event_Dz2piaMdMr7pgz0UVyZ0p
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    output_index: 0
+    item:
+      id: item_Dz2piscfzVX667cxcYiG7
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_Dz2pihz3LcjGtigy5pely
+    previous_item_id: item_Dz2pij0wE0OFNmXDaRvMd
+    item:
+      id: item_Dz2piscfzVX667cxcYiG7
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: event_Dz2piVlqvzuW6VwxsY7q0
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    item_id: item_Dz2piscfzVX667cxcYiG7
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz2piKkcRuiC2vNfWQgIN
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    item_id: item_Dz2piscfzVX667cxcYiG7
+    output_index: 0
+    content_index: 0
+    delta: It
+    obfuscation: lPkG0HRGOlMGrz
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz2pinzVnsPKMvmq9rzHJ
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    item_id: item_Dz2piscfzVX667cxcYiG7
+    output_index: 0
+    content_index: 0
+    delta: ' is'
+    obfuscation: yBMR4jTUdzwb7
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz2piloPvuTaM4ePI73Es
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    item_id: item_Dz2piscfzVX667cxcYiG7
+    output_index: 0
+    content_index: 0
+    delta: ' fog'
+    obfuscation: bIbUjU1lIpxU
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz2piU5FVeqYw55ctXY4E
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    item_id: item_Dz2piscfzVX667cxcYiG7
+    output_index: 0
+    content_index: 0
+    delta: gy
+    obfuscation: JGb2qdR2buKti2
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz2pifRarORkJQKpgJgqW
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    item_id: item_Dz2piscfzVX667cxcYiG7
+    output_index: 0
+    content_index: 0
+    delta: ' and'
+    obfuscation: zUeAPersStkt
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz2pij0VSa1UrWbPcGgrG
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    item_id: item_Dz2piscfzVX667cxcYiG7
+    output_index: 0
+    content_index: 0
+    delta: ' '
+    obfuscation: peVNNc0a1VJ6eEd
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz2pitfqTWgM3gUibHEdj
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    item_id: item_Dz2piscfzVX667cxcYiG7
+    output_index: 0
+    content_index: 0
+    delta: '12'
+    obfuscation: 1z81yoIMwi2yMC
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz2piLjOSWxg0rL7G6kz4
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    item_id: item_Dz2piscfzVX667cxcYiG7
+    output_index: 0
+    content_index: 0
+    delta: ' degrees'
+    obfuscation: tqGqGIzR
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz2pih0MRUBhOX8TYJRwg
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    item_id: item_Dz2piscfzVX667cxcYiG7
+    output_index: 0
+    content_index: 0
+    delta: ' in'
+    obfuscation: lkvRkLjWAyjea
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz2pidqmfe114hohanbqq
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    item_id: item_Dz2piscfzVX667cxcYiG7
+    output_index: 0
+    content_index: 0
+    delta: ' London'
+    obfuscation: FjrCq71UH
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz2pi1FEOqxzPZ8asz56J
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    item_id: item_Dz2piscfzVX667cxcYiG7
+    output_index: 0
+    content_index: 0
+    delta: .
+    obfuscation: 8JpwqrgzBUW1pbC
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.done
+    event_id: event_Dz2piiTuzMSDLwUkdfUNf
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    item_id: item_Dz2piscfzVX667cxcYiG7
+    output_index: 0
+    content_index: 0
+    text: It is foggy and 12 degrees in London.
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: event_Dz2pinMBwRg076aGnvtsE
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    item_id: item_Dz2piscfzVX667cxcYiG7
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: It is foggy and 12 degrees in London.
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_Dz2pi6bDxUBtrMWJuC96x
+    previous_item_id: item_Dz2pij0wE0OFNmXDaRvMd
+    item:
+      id: item_Dz2piscfzVX667cxcYiG7
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: It is foggy and 12 degrees in London.
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: event_Dz2pi8Coa9qYe8hT1zF1X
+    response_id: resp_Dz2piritjjrKCCGBaBC0P
+    output_index: 0
+    item:
+      id: item_Dz2piscfzVX667cxcYiG7
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: It is foggy and 12 degrees in London.
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: event_Dz2pidjxmgzLyNRpivEfH
+    response:
+      object: realtime.response
+      id: resp_Dz2piritjjrKCCGBaBC0P
+      status: completed
+      status_details: null
+      output:
+      - id: item_Dz2piscfzVX667cxcYiG7
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: It is foggy and 12 degrees in London.
+      conversation_id: conv_Dz2phuK5hz5iMmpevOERj
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 109
+        input_tokens: 96
+        output_tokens: 13
+        input_token_details:
+          text_tokens: 96
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 64
+          cached_tokens_details:
+            text_tokens: 64
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 13
+          audio_tokens: 0
+      metadata: null

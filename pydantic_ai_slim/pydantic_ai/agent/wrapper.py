@@ -29,6 +29,7 @@ from .abstract import AbstractAgent, AgentMetadata, AgentModelSettings, AgentRet
 
 if TYPE_CHECKING:
     from ..capabilities import CombinedCapability
+    from ..realtime import AudioRetention, KnownRealtimeModelName, RealtimeModel, RealtimeModelSettings, RealtimeSession
     from .spec import AgentSpec
 
 
@@ -291,6 +292,42 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             spec=spec,
         ) as run:
             yield run
+
+    @asynccontextmanager
+    async def _open_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Open a realtime session on the wrapped agent. See [`Agent.realtime`][pydantic_ai.agent.Agent.realtime]."""
+        async with self.wrapped._open_realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            usage_limits=usage_limits,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            message_history=message_history,
+            audio_retention=audio_retention,
+            retain_images_every_n=retain_images_every_n,
+        ) as session:
+            yield session
 
     @contextmanager
     def override(

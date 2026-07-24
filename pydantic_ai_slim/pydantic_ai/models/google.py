@@ -31,6 +31,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -1048,6 +1049,9 @@ class GoogleModel(Model[Client]):
                                     }
                                 }
                             )
+                    elif isinstance(part, SpeechPart):  # pragma: no cover
+                        # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
+                        pass
                     else:
                         assert_never(part)
 
@@ -1654,6 +1658,9 @@ def _content_model_response(
             part = _attach_signature({'inline_data': inline_data_dict}, item_signature)
         elif isinstance(item, CompactionPart):  # pragma: no cover
             # Compaction parts are not sent back to models that don't support compaction.
+            part = None
+        elif isinstance(item, SpeechPart):  # pragma: no cover
+            # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
             part = None
         else:
             assert_never(item)

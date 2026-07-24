@@ -251,14 +251,7 @@ class Instrumentation(AbstractCapability[Any]):
         if metadata is not None:
             attrs['metadata'] = safe_to_json(serialize_any(metadata)).decode()
 
-        usage_attrs = (
-            {
-                k.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): v
-                for k, v in ctx.usage.opentelemetry_attributes().items()
-            }
-            if settings.use_aggregated_usage_attribute_names
-            else ctx.usage.opentelemetry_attributes()
-        )
+        usage_attrs = settings.aggregated_usage_attributes(ctx.usage)
 
         return {
             **usage_attrs,

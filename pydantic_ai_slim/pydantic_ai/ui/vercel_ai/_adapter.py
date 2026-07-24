@@ -30,6 +30,7 @@ from ...messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -642,6 +643,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 else:
                     # Non-tool retries (e.g., output validation errors) become user text
                     user_ui_parts.append(TextUIPart(text=part.model_response(), state='done'))
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                pass  # Realtime audio parts are not rendered in the UI
             else:
                 assert_never(part)
 
@@ -807,6 +810,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 ui_parts.extend(cls._dump_tool_call_part(part, tool_results, sdk_version))
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 pass  # Compaction parts are not rendered in the UI
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                pass  # Realtime audio parts are not rendered in the UI
             else:
                 assert_never(part)
 

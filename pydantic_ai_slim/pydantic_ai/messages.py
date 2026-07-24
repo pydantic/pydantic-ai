@@ -1740,6 +1740,13 @@ class ModelRequest:
     Appears in [`capture_run_messages`][pydantic_ai.capture_run_messages] output so consumers can detect partial state.
     """
 
+    def __post_init__(self) -> None:
+        for part in self.parts:
+            if isinstance(part, SpeechPart) and part.speaker != 'user':
+                raise ValueError(
+                    f"`SpeechPart` in `ModelRequest.parts` must have `speaker='user'`, got {part.speaker!r}"
+                )
+
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
         """Create a `ModelRequest` with a single user prompt as text."""
@@ -1923,6 +1930,81 @@ class FilePart:
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
         return bool(self.content.data)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class SpeechPart:
+    """Spoken audio exchanged during a realtime session, paired with its transcript.
+
+    This part is a member of both [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] and
+    [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart], distinguished by `speaker`:
+    in `ModelRequest.parts` the speaker is always `'user'`; in `ModelResponse.parts` it is always
+    `'assistant'`. This invariant is enforced at runtime when a message is constructed.
+
+    Standard (non-realtime) models can't consume this part directly; when history containing it is
+    used in an agent run, [`Model.prepare_messages`][pydantic_ai.models.Model.prepare_messages]
+    converts user-speaker parts to [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]s and
+    assistant-speaker parts to [`TextPart`][pydantic_ai.messages.TextPart]s.
+    """
+
+    speaker: Literal['user', 'assistant']
+    """Whether the audio was spoken by the end user or by the model."""
+
+    transcript: str | None = None
+    """The transcript of the audio. `None` if transcription was unavailable."""
+
+    audio: BinaryContent | None = None
+    """The audio data, if retained.
+
+    Audio is only retained when the realtime session is configured to do so
+    (see the `audio_retention` setting), so this is usually `None`.
+    """
+
+    id: str | None = None
+    """The provider item ID, used to correlate the part with provider-side conversation items."""
+
+    provider_name: str | None = None
+    """The name of the provider that generated or transcribed the audio.
+
+    Required to be set when `provider_details` or `id` is set.
+    """
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    part_kind: Literal['speech'] = 'speech'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def content(self) -> str:
+        """The transcript, or an empty string if transcription was unavailable.
+
+        Mirrors [`TextPart.content`][pydantic_ai.messages.TextPart.content] so code that renders
+        message parts generically can treat spoken content like text.
+        """
+        return self.transcript or ''
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        parts: list[_otel_messages.MessagePart] = []
+        if self.transcript is not None:
+            parts.append(
+                _otel_messages.TextPart(
+                    type='text', **({'content': self.transcript} if settings.include_content else {})
+                )
+            )
+        if (audio := self.audio) is not None:
+            parts.append(_convert_binary_to_otel_part(audio.media_type, lambda: audio.base64, settings))
+        return parts
+
+    def has_content(self) -> bool:
+        """Return `True` if the part has a transcript or retained audio."""
+        return bool(self.transcript) or self.audio is not None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -2225,6 +2307,7 @@ def _model_request_part_discriminator(v: Any) -> str | None:
 ModelRequestPart = Annotated[
     Annotated[SystemPromptPart, pydantic.Tag('system-prompt')]
     | Annotated[UserPromptPart, pydantic.Tag('user-prompt')]
+    | Annotated[SpeechPart, pydantic.Tag('speech')]
     | Annotated[ToolSearchReturnPart, pydantic.Tag('tool-search-return')]
     | Annotated[LoadCapabilityReturnPart, pydantic.Tag('capability-load-return')]
     | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
@@ -2272,7 +2355,8 @@ ModelResponsePart = Annotated[
     | Annotated[NativeToolReturnPart, pydantic.Tag('builtin-tool-return')]
     | Annotated[ThinkingPart, pydantic.Tag('thinking')]
     | Annotated[CompactionPart, pydantic.Tag('compaction')]
-    | Annotated[FilePart, pydantic.Tag('file')],
+    | Annotated[FilePart, pydantic.Tag('file')]
+    | Annotated[SpeechPart, pydantic.Tag('speech')],
     pydantic.Discriminator(_model_response_part_discriminator),
 ]
 """A message part returned by a model."""
@@ -2357,6 +2441,13 @@ class ModelResponse:
     - `'interrupted'` — Streaming was explicitly cancelled before the model finished generating.
       Set when a streaming response is cancelled via `StreamedResponse.cancel()`.
     """
+
+    def __post_init__(self) -> None:
+        for part in self.parts:
+            if isinstance(part, SpeechPart) and part.speaker != 'assistant':
+                raise ValueError(
+                    f"`SpeechPart` in `ModelResponse.parts` must have `speaker='assistant'`, got {part.speaker!r}"
+                )
 
     @property
     def text(self) -> str | None:
@@ -2459,21 +2550,7 @@ class ModelResponse:
                     _convert_binary_to_otel_part(part.content.media_type, lambda p=part: p.content.base64, settings)
                 )
             elif isinstance(part, BaseToolCallPart):
-                call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
-                if isinstance(part, NativeToolCallPart):
-                    call_part['builtin'] = True
-                if part.otel_metadata:
-                    if code_arg_name := part.otel_metadata.get('code_arg_name'):
-                        call_part['code_arg_name'] = code_arg_name
-                    if code_arg_language := part.otel_metadata.get('code_arg_language'):
-                        call_part['code_arg_language'] = code_arg_language
-                if settings.include_content and part.args is not None:
-                    if isinstance(part.args, str):
-                        call_part['arguments'] = part.args
-                    else:
-                        call_part['arguments'] = {k: serialize_any(v) for k, v in part.args.items()}
-
-                parts.append(call_part)
+                parts.append(_tool_call_otel_part(part, settings))
             elif isinstance(part, NativeToolReturnPart):
                 return_part = _otel_messages.ToolCallResponsePart(
                     type='tool_call_response',
@@ -2485,12 +2562,32 @@ class ModelResponse:
                     return_part['result'] = serialize_any(part.content)
 
                 parts.append(return_part)
+            elif isinstance(part, SpeechPart):
+                parts.extend(part.otel_message_parts(settings))
             elif isinstance(part, CompactionPart):
                 # Compaction parts don't map to standard OTel message part types
                 pass
         return parts
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _tool_call_otel_part(part: BaseToolCallPart, settings: InstrumentationSettings) -> _otel_messages.ToolCallPart:
+    """Convert a tool-call part to its OTel `ToolCallPart`, including native/code metadata and arguments."""
+    call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
+    if isinstance(part, NativeToolCallPart):
+        call_part['builtin'] = True
+    if part.otel_metadata:
+        if code_arg_name := part.otel_metadata.get('code_arg_name'):
+            call_part['code_arg_name'] = code_arg_name
+        if code_arg_language := part.otel_metadata.get('code_arg_language'):
+            call_part['code_arg_language'] = code_arg_language
+    if settings.include_content and part.args is not None:
+        if isinstance(part.args, str):
+            call_part['arguments'] = part.args
+        else:
+            call_part['arguments'] = {k: serialize_any(v) for k, v in part.args.items()}
+    return call_part
 
 
 ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('kind')]
@@ -3298,8 +3395,57 @@ class ToolCallPartDelta:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False, kw_only=True)
+class SpeechPartDelta:
+    """A partial update (delta) for a `SpeechPart` to append transcript text and/or audio data."""
+
+    transcript_delta: str | None = None
+    """Incremental transcript text to append to the existing transcript, if any."""
+
+    audio_chunk: bytes | None = None
+    """A raw audio chunk (e.g. PCM data), if any.
+
+    Suitable for live playback; only accumulated on the part if it is retaining audio (see
+    [`SpeechPartDelta.apply`][pydantic_ai.messages.SpeechPartDelta.apply]).
+    """
+
+    part_delta_kind: Literal['speech'] = 'speech'
+    """Part delta type identifier, used as a discriminator."""
+
+    def apply(self, part: ModelResponsePart) -> SpeechPart:
+        """Apply this delta to an existing `SpeechPart`.
+
+        `transcript_delta` is appended to the part's transcript (a part with `transcript=None` gets
+        `transcript=transcript_delta`). `audio_chunk` is appended to the part's retained audio data,
+        but only if the part already has `audio` set: a part with `audio=None` is not retaining audio,
+        so the chunk is intentionally not stored — it remains available on the delta itself for live
+        playback.
+
+        Args:
+            part: The existing model response part, which must be a `SpeechPart`.
+
+        Returns:
+            A new `SpeechPart` with the delta applied.
+
+        Raises:
+            ValueError: If `part` is not a `SpeechPart`.
+        """
+        if not isinstance(part, SpeechPart):
+            raise ValueError('Cannot apply SpeechPartDeltas to non-SpeechParts')
+        transcript = part.transcript
+        if self.transcript_delta:
+            transcript = (transcript or '') + self.transcript_delta
+        audio = part.audio
+        if self.audio_chunk and audio is not None:
+            audio = replace(audio, data=audio.data + self.audio_chunk)
+        return replace(part, transcript=transcript, audio=audio)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 ModelResponsePartDelta = Annotated[
-    TextPartDelta | ThinkingPartDelta | ToolCallPartDelta, pydantic.Discriminator('part_delta_kind')
+    TextPartDelta | ThinkingPartDelta | ToolCallPartDelta | SpeechPartDelta,
+    pydantic.Discriminator('part_delta_kind'),
 ]
 """A partial update (delta) for any model response part."""
 
@@ -3319,7 +3465,16 @@ class PartStartEvent:
     """The newly started `ModelResponsePart`."""
 
     previous_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        Literal[
+            'text',
+            'thinking',
+            'tool-call',
+            'builtin-tool-call',
+            'builtin-tool-return',
+            'compaction',
+            'file',
+            'speech',
+        ]
         | None
     ) = None
     """The kind of the previous part, if any.
@@ -3360,7 +3515,16 @@ class PartEndEvent:
     """The complete `ModelResponsePart`."""
 
     next_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        Literal[
+            'text',
+            'thinking',
+            'tool-call',
+            'builtin-tool-call',
+            'builtin-tool-return',
+            'compaction',
+            'file',
+            'speech',
+        ]
         | None
     ) = None
     """The kind of the next part, if any.

@@ -7,12 +7,17 @@ import functools
 import inspect
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    contextmanager,
+)
 from contextvars import ContextVar
 from copy import copy
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeGuard, cast, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer
@@ -59,13 +64,14 @@ from ..capabilities import (
     ToolSearch as ToolSearchCap,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import has_capability_type
+from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.abstract import leaf_capabilities
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
+from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
@@ -83,6 +89,7 @@ from ..tools import (
     SystemPromptFunc,
     Tool,
     ToolDefinition,
+    ToolDenied,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -103,6 +110,7 @@ from .abstract import (
     AbstractAgent,
     AgentMetadata,
     AgentModelSettings,
+    AgentRealtime,
     AgentRetries,
     EventStreamHandler,
     EventStreamProcessor,
@@ -116,12 +124,14 @@ if TYPE_CHECKING:
 
     from pydantic_graph import GraphRunContext
 
+    from ..realtime import AudioRetention, KnownRealtimeModelName, RealtimeModel, RealtimeModelSettings, RealtimeSession
     from ..ui._web import ModelsParam
 
 __all__ = (
     'AbstractAgent',
     'Agent',
     'AgentModelSettings',
+    'AgentRealtime',
     'AgentRetries',
     'AgentRun',
     'AgentRunResult',
@@ -138,6 +148,7 @@ __all__ = (
     'capture_run_messages',
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
+    'ToolDenied',
 )
 
 
@@ -1107,8 +1118,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Resolve the root capability (override > agent default) up front: it's needed both for the
         # capability-supplied model fallback below and for run-time capability assembly further down.
-        override_cap = self._override_root_capability.get()
-        base_capability = self._effective_root_capability()
+        base_capability, base_is_override = self._base_run_capability()
 
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
@@ -1181,7 +1191,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
-        extra_capabilities = [capability.for_agent(self) for capability in extra_capabilities]
+        extra_capabilities = self._bind_run_capabilities(extra_capabilities)
         model_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
         bootstrap_capability: AbstractCapability[AgentDepsT]
         if len(model_layers) > 1:
@@ -1361,132 +1371,51 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         state.metadata = self._get_metadata(initial_ctx, metadata)
         initial_ctx.metadata = state.metadata
 
-        # The capability layers resolved for this run: the base, then the extras. The
-        # Instrumentation capability is prepended (outermost) so its spans wrap everything,
-        # but only if the user hasn't already added one themselves.
-        run_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
-        if instrumentation_cap is not None and not has_capability_type(run_layers, InstrumentationCap):
-            run_layers.insert(0, instrumentation_cap)
+        # Resolve the capability layers and extract their per-run contributions. Shared with
+        # `realtime_session` via `_resolve_run_capabilities` so both wire capabilities up identically;
+        # this call site keeps the graph-only surroundings: the `InstrumentedModel` unwrap and
+        # instrumentation-settings resolution above, the deferred loader (`inject_deferred_loader=True`),
+        # the output toolset below, and the layered `get_model_settings` closure. Keep those in sync
+        # with the realtime call site.
+        resolved_caps = await self._resolve_run_capabilities(
+            initial_ctx,
+            base_capability=base_capability,
+            extra_capabilities=extra_capabilities,
+            instrumentation_cap=instrumentation_cap,
+            inject_deferred_loader=True,
+            base_is_override=base_is_override,
+        )
+        run_capability = resolved_caps.run_capability
+        capabilities_dict = resolved_caps.capabilities
+        cap_instructions = resolved_caps.instructions
+        cap_native_tools = resolved_caps.native_tools
+        cap_model_settings = resolved_caps.model_settings
+        cap_toolsets = resolved_caps.toolsets
 
-        # Per-run capability: resolve `for_run` on the layers directly instead of composing a
-        # `CombinedCapability` first and resolving that (which would gather over the same
-        # children): `override(native_tools=...)` below needs the *resolved* extras — their
-        # native tools may only materialize in `for_run`, e.g. from a capability function's
-        # returned capability — and the composed tree can't give them back. `CombinedCapability`
-        # re-flattens and re-sorts its children both at construction and on the `replace()`
-        # inside its `for_run`, erasing which resolved children formed which layer. Nor can the
-        # extras be re-resolved afterwards to peek at them: `for_run` is documented as called
-        # once per run and may have per-run side effects (e.g. the durable-exec integrations
-        # rely on this for deterministic replay). Composing from the resolved pieces below
-        # yields the same structure as resolving a pre-composed tree, since the same
-        # flatten-and-sort runs on the same resolved children either way. The base capability
-        # is a `CombinedCapability`, so composing it back as a layer here lets its leaves
-        # (which may span outermost and innermost tiers, e.g. `ToolSearch` and
-        # `TemporalDurability`) re-flatten into siblings for the ordering pass.
-        resolved_layers = await _utils.gather(*(cap.for_run(initial_ctx) for cap in run_layers))
-        model_layer_start = len(run_layers) - len(model_layers)
+        # Whether any capability's `for_run` swapped a model-layer contribution during resolution; the
+        # per-step model-selection block below keys off this. The model layers are the tail of the
+        # resolved layers (the `Instrumentation` capability, when injected, sits at the front).
+        resolved_layers = resolved_caps.resolved_layers
+        model_layer_start = len(resolved_layers) - len(model_layers)
         model_layers_unchanged = all(
             resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
         )
-        # The extras are the tail of `run_layers` (instrumentation, if added, is at the front).
-        # Slicing from the front avoids the `[-0:]` full-list pitfall when there are no extras.
-        resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
-        base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
-            initial_ctx,
-            [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
-        )
-        if len(resolved_layers) > 1:
-            run_capability = CombinedCapability(resolved_layers)
-        else:
-            run_capability = resolved_layers[0]
 
-        # Re-extract get_*() from the resolved capability if anything is contributed per-run
-        capabilities_dict = _build_run_capabilities(run_capability)
-        # Inject the loader only if a deferred capability is present AND `for_run` didn't already
-        # return one, mirroring the `has_capability_type` guard used for instrumentation above.
-        # Without it, a `for_run` result that already carries a loader would get double-wrapped
-        # (cf. https://github.com/pydantic/pydantic-ai/issues/5047) — a second loader toolset then errors on the reserved `load_capability` name.
-        if any(
-            capability.defer_loading is True for capability in capabilities_dict.values()
-        ) and not has_capability_type([run_capability], DeferredCapabilityLoader):
-            run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
-            capabilities_dict = _build_run_capabilities(run_capability)
-        # `toolset.for_run(initial_ctx)` below evaluates dynamic-toolset factories, which resolve
-        # against the run's registered capabilities (e.g. a `DynamicCapability`'s contributed
-        # toolset reuses the capability instance `for_run` already resolved).
-        initial_ctx.capabilities = capabilities_dict
-        cap_toolsets: list[AgentToolset[AgentDepsT]] | None
-
-        if run_capability is not base_capability or override_cap is not None:
-            source_cap = run_capability
-        else:
-            source_cap = None
-
-        if source_cap is not None:
-            cap_instructions = _instructions.normalize_instructions(source_cap.get_instructions())
-            cap_native_tools = list(source_cap.get_native_tools())
-            cap_model_settings = source_cap.get_model_settings()
-            cap_ts = source_cap.get_toolset()
-            cap_toolsets = [cap_ts] if cap_ts is not None else []
-        else:
-            cap_instructions = None  # use init-time defaults
-            cap_native_tools = self._cap_native_tools
-            cap_model_settings = self._cap_model_settings
-            cap_toolsets = None
-
-        # Native tool ids are validated per layer, from each layer's *resolved* form, since
-        # contributions from e.g. capability functions only materialize in `for_run`. Two
-        # conflicting definitions sharing a `unique_id` *within* a layer are ambiguous, while
-        # last-wins *across* layers is the intentional override mechanism. The base layer is the
-        # agent's own capabilities (validated at construction as a fail-fast for static
-        # conflicts, and re-checked here to cover dynamic contributions) or their
-        # `override(spec=...)` replacement; instrumentation contributes no native tools.
-        base_native_tools = [
-            tool
-            for cap in resolved_layers[: len(resolved_layers) - len(extra_capabilities)]
-            for tool in cap.get_native_tools()
-        ]
-        _validate_native_tool_ids(
-            base_native_tools,
-            source='override spec capabilities' if override_cap is not None else 'agent capabilities',
-        )
-        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
-            tool for cap in resolved_extras for tool in cap.get_native_tools()
-        ]
-        _validate_native_tool_ids(extra_native_tools, source='run capabilities')
-
-        # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
-        # preserving any additional per-run capability-contributed native tools (e.g. from
-        # `capabilities=[NativeTool(...)]`) on top.
-        if some_native_tools := self._override_native_tools.get():
-            _validate_native_tool_ids(some_native_tools.value, source='override native_tools')
-            cap_native_tools = [*some_native_tools.value, *extra_native_tools]
-
-        # Build model settings resolver using per-run capability
+        # Build model settings resolver using per-run capability. Shared with `realtime_session` via
+        # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
+        # base for a graph run). Resolved per model-request step here; once at connect in a session.
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
-            # Resolve settings in layers, each merged on top of the previous.
-            # Before calling each callable, set run_context.model_settings so it
-            # can see the merged result of all previous layers.
-            merged = run_context.model.settings
-
-            run_context.model_settings = merged
-            resolved_agent = (
-                agent_model_settings(run_context) if callable(agent_model_settings) else agent_model_settings
+            # A capability can select a different model per step, so the base is the step's live
+            # `run_context.model` settings, not a captured initial model. A graph run always uses a
+            # request-response `Model` here; realtime has its own settings path and never reaches this.
+            # (Hoisted to a local first so pyright narrows cleanly after `RunContext.model` widened to
+            # `AbstractModel`; member access on the narrowed attribute directly trips a false positive.)
+            step_model = run_context.model
+            return _layer_model_settings(
+                run_context,
+                (agent_model_settings, cap_model_settings, run_model_settings),
+                base=step_model.settings if isinstance(step_model, models.Model) else None,
             )
-            merged = merge_model_settings(merged, resolved_agent)
-
-            # Capability settings (from custom capabilities that override get_model_settings), cached at init
-            run_context.model_settings = merged
-            cap_settings = cap_model_settings
-            resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings
-            merged = merge_model_settings(merged, resolved_cap)
-
-            run_context.model_settings = merged
-            resolved_run = run_model_settings(run_context) if callable(run_model_settings) else run_model_settings
-            merged = merge_model_settings(merged, resolved_run)
-
-            run_context.model_settings = merged
-            return merged
 
         # Build toolset with per-run capability contributions
         toolset = self._get_toolset(
@@ -2667,6 +2596,28 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         override = self._override_root_capability.get()
         return override.value if override is not None else self._root_capability
 
+    def _base_run_capability(self) -> tuple[CombinedCapability[AgentDepsT], bool]:
+        """The base capability layer for a run, plus whether it came from `override(root_capability=...)`.
+
+        `iter` and `realtime_session` both resolve the base layer through this so the override is honored
+        identically — KEEP the two call sites in sync (a realtime session that ignored the override would
+        silently drop a `with agent.override(root_capability=...):` block).
+        """
+        override_cap = self._override_root_capability.get()
+        return self._effective_root_capability(), override_cap is not None
+
+    def _bind_run_capabilities(
+        self, extra_capabilities: list[AbstractCapability[AgentDepsT]]
+    ) -> list[AbstractCapability[AgentDepsT]]:
+        """Bind per-run capabilities to this agent via `for_agent` before capability resolution.
+
+        `_resolve_run_capabilities` only ever calls `for_run`, so binding the per-run layer via
+        `for_agent` is the caller's responsibility. `iter` and `realtime_session` both MUST call this —
+        skipping it uses a capability that overrides `for_agent` (e.g. the durability capabilities)
+        unbound, a silent divergence. KEEP the two call sites in sync.
+        """
+        return [capability.for_agent(self) for capability in extra_capabilities]
+
     async def _resolve_model_selection(
         self,
         selection: ModelSelection,
@@ -2766,6 +2717,126 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return some_deps.value
         else:
             return deps
+
+    async def _resolve_run_capabilities(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        base_capability: AbstractCapability[AgentDepsT],
+        extra_capabilities: list[AbstractCapability[AgentDepsT]],
+        instrumentation_cap: InstrumentationCap | None,
+        inject_deferred_loader: bool,
+        base_is_override: bool,
+    ) -> _ResolvedRunCapabilities[AgentDepsT]:
+        """Resolve the per-run capability layers and extract their contributions.
+
+        Shared by [`iter`][pydantic_ai.agent.AbstractAgent.iter] / [`run`][pydantic_ai.agent.AbstractAgent.run]
+        and [`realtime_session`][pydantic_ai.agent.Agent.realtime_session] so both wire capabilities up
+        identically: the outermost `Instrumentation` injection, per-layer `for_run` resolution (never
+        composing first — see below), optional deferred-loader injection, and the native-tool /
+        instruction / model-settings / toolset contributions with `override(native_tools=...)` folded
+        in. Each caller keeps its own surrounding logic (instrumentation *settings* resolution,
+        model-settings layering, output toolset, the graph vs. the connection) and cross-references
+        this method so the two stay in sync.
+
+        `ctx` must already carry `metadata` (and, when instrumented, `tracer` / `trace_include_content`),
+        since capability `for_run` hooks observe it. `base_is_override` is whether `base_capability`
+        came from `override(root_capability=...)` (only the graph run supports that today), used solely
+        for the native-tool validation error's `source`.
+        """
+        run_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
+        # Prepend `Instrumentation` (outermost, so its spans wrap everything) unless the user already
+        # added one themselves — mirroring the explicit-capability-wins precedence.
+        if instrumentation_cap is not None and not has_capability_type(run_layers, InstrumentationCap):
+            run_layers.insert(0, instrumentation_cap)
+
+        # Resolve `for_run` per layer instead of composing a `CombinedCapability` first (which would
+        # gather over the same children): the `override(native_tools=...)` merge below needs the
+        # *resolved* extras — their native tools may only materialize in `for_run`, e.g. from a
+        # capability function's returned capability — and the composed tree re-flattens/re-sorts its
+        # children and can't hand them back. Nor can the extras be re-resolved afterwards to peek:
+        # `for_run` is documented as called once per run and may have per-run side effects (the
+        # durable-exec integrations rely on this for deterministic replay). Composing from the resolved
+        # pieces yields the same structure as resolving a pre-composed tree, since the same
+        # flatten-and-sort runs on the same resolved children either way.
+        resolved_layers = await _utils.gather(*(cap.for_run(ctx) for cap in run_layers))
+        # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
+        # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
+        resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
+        base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
+            ctx,
+            [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
+        )
+        run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
+
+        # Re-extract get_*() from the resolved capability if anything is contributed per-run.
+        capabilities = _build_run_capabilities(run_capability)
+        # Inject the loader only if a deferred capability is present AND `for_run` didn't already return
+        # one, or a second loader toolset then errors on the reserved `load_capability` name
+        # (cf. https://github.com/pydantic/pydantic-ai/issues/5047).
+        if inject_deferred_loader and (
+            any(capability.defer_loading is True for capability in capabilities.values())
+            and not has_capability_type([run_capability], DeferredCapabilityLoader)
+        ):
+            run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
+            capabilities = _build_run_capabilities(run_capability)
+
+        # Register the run's capabilities on the context so the `toolset.for_run(ctx)` each caller runs
+        # next evaluates dynamic-toolset factories against them (e.g. a `DynamicCapability`'s contributed
+        # toolset reuses the capability instance `for_run` already resolved).
+        ctx.capabilities = capabilities
+
+        # Only read contributions from the resolved tree when the run actually has capabilities beyond
+        # the plain agent default; otherwise fall back to the init-time snapshots.
+        if run_capability is not base_capability or base_is_override:
+            source_cap: AbstractCapability[AgentDepsT] | None = run_capability
+        else:
+            source_cap = None
+        if source_cap is not None:
+            instructions = _instructions.normalize_instructions(source_cap.get_instructions())
+            native_tools = list(source_cap.get_native_tools())
+            model_settings = source_cap.get_model_settings()
+            cap_toolset = source_cap.get_toolset()
+            toolsets: list[AgentToolset[AgentDepsT]] | None = [cap_toolset] if cap_toolset is not None else []
+        else:
+            instructions = None  # use init-time defaults
+            native_tools = self._cap_native_tools
+            model_settings = self._cap_model_settings
+            toolsets = None
+
+        # Native tool ids are validated per layer, from each layer's *resolved* form (contributions
+        # from e.g. capability functions only materialize in `for_run`). Conflicting definitions
+        # sharing a `unique_id` *within* a layer are ambiguous; last-wins *across* layers is the
+        # intentional override mechanism. Instrumentation contributes no native tools.
+        base_native_tools = [
+            tool
+            for cap in resolved_layers[: len(resolved_layers) - len(extra_capabilities)]
+            for tool in cap.get_native_tools()
+        ]
+        _validate_native_tool_ids(
+            base_native_tools,
+            source='override spec capabilities' if base_is_override else 'agent capabilities',
+        )
+        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
+            tool for cap in resolved_extras for tool in cap.get_native_tools()
+        ]
+        _validate_native_tool_ids(extra_native_tools, source='run capabilities')
+
+        # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
+        # preserving any additional per-run capability-contributed native tools on top.
+        if some_native_tools := self._override_native_tools.get():
+            _validate_native_tool_ids(some_native_tools.value, source='override native_tools')
+            native_tools = [*some_native_tools.value, *extra_native_tools]
+
+        return _ResolvedRunCapabilities(
+            run_capability=run_capability,
+            capabilities=capabilities,
+            instructions=instructions,
+            native_tools=native_tools,
+            model_settings=model_settings,
+            toolsets=toolsets,
+            resolved_layers=resolved_layers,
+        )
 
     def _get_instructions(
         self,
@@ -2943,6 +3014,222 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema = self._output_schema
 
         return schema
+
+    @asynccontextmanager
+    async def _open_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
+
+        Opens the realtime session and drives the agent's tools. Users go through
+        [`agent.realtime(model).session()`][pydantic_ai.agent.AbstractAgent.realtime]; see
+        [`realtime`][pydantic_ai.agent.AbstractAgent.realtime] for the parameter reference.
+        """
+        from ..realtime import RealtimeModel, RealtimeSession, infer_realtime_model
+
+        if not isinstance(model, RealtimeModel):
+            model = infer_realtime_model(model)
+
+        deps = self._get_deps(deps)
+        run_context = RunContext[AgentDepsT](
+            deps=deps,
+            agent=self,
+            model=model,
+            usage=usage if usage is not None else _usage.RunUsage(),
+            model_settings=None,
+            conversation_id=conversation_id,
+            # Seed `ctx.messages` from `message_history` like `iter` does, so dynamic `@agent.instructions`
+            # functions and capability `for_run` hooks see the prior conversation. KEEP IN SYNC with `iter`.
+            messages=list(message_history) if message_history else [],
+            # A realtime session has no run identity yet (`run_id` stays unset); it gains one once
+            # exchange-level hooks land and each exchange becomes an addressable unit.
+            max_retries=self._max_tool_retries,
+        )
+
+        # Instrumentation: inject an `Instrumentation` capability (outermost) so tool spans flow through
+        # `ToolManager.handle_call`'s `wrap_tool_execute` hook — the single, canonical source of tool
+        # spans — exactly as `run`/`iter` do (via `_resolve_run_capabilities` below). A realtime model is
+        # a `RealtimeModel`, never an `InstrumentedModel`, so there's no wrapped model to unwrap; the
+        # settings come straight from `_resolve_instrumentation_settings()`. The helper skips injection if
+        # the user already supplied an `Instrumentation` capability (agent- or call-level).
+        extra_capabilities = self._bind_run_capabilities(wrap_capability_funcs(capabilities))
+        instrumentation_settings = self._resolve_instrumentation_settings()
+        instrumentation_cap = (
+            InstrumentationCap(settings=instrumentation_settings) if instrumentation_settings is not None else None
+        )
+
+        # The session-level `realtime` span and per-response `chat` spans are hand-managed by
+        # `RealtimeSession` (there are no realtime capability hooks yet to hang them on — those move onto
+        # exchange-level capability hooks when they land). Until then, drive them from the settings that
+        # will actually win: an explicit `Instrumentation` capability's (agent- or call-level) over the
+        # `instrument=`-derived ones, matching the precedence `_resolve_run_capabilities` applies to the
+        # tool spans.
+        explicit_instrumentation = find_capability(
+            [self._effective_root_capability(), *extra_capabilities], InstrumentationCap
+        )
+        session_instrumentation_settings = (
+            explicit_instrumentation.settings if explicit_instrumentation is not None else instrumentation_settings
+        )
+        # Mirror `iter`'s `RunContext`: expose the resolved tracer (a `NoOpTracer` when uninstrumented)
+        # and content-tracing flag, and resolve metadata before `for_run` so capability/toolset hooks see
+        # it (same ordering as the graph run).
+        run_context.tracer = (
+            session_instrumentation_settings.tracer if session_instrumentation_settings is not None else NoOpTracer()
+        )
+        run_context.trace_include_content = (
+            session_instrumentation_settings is not None and session_instrumentation_settings.include_content
+        )
+        if session_instrumentation_settings is not None:
+            run_context.instrumentation_version = session_instrumentation_settings.version
+        run_context.metadata = self._get_metadata(run_context, metadata)
+
+        # Resolve the capability layers and extract their contributions, exactly as `run`/`iter` do via
+        # the shared helpers (`_base_run_capability` honors `override(root_capability=...)` the same way).
+        # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, no deferred loader
+        # (`inject_deferred_loader=False`), once-only model settings (below), and the `_keep_native` /
+        # `supported_native_tools` gate (below). Keep this in sync with the `iter` call site.
+        base_capability, base_is_override = self._base_run_capability()
+        resolved_caps = await self._resolve_run_capabilities(
+            run_context,
+            base_capability=base_capability,
+            extra_capabilities=extra_capabilities,
+            instrumentation_cap=instrumentation_cap,
+            inject_deferred_loader=False,
+            base_is_override=base_is_override,
+        )
+        run_capability = resolved_caps.run_capability
+        # `_resolve_run_capabilities` already registered `run_context.capabilities` for the toolset/connect
+        # `for_run` below, exactly as the graph run relies on.
+
+        # Regular agent and capability model settings intentionally do not apply to realtime sessions.
+        # A future capability hook dedicated to realtime settings can add that behavior deliberately.
+        effective_model_settings: RealtimeModelSettings | None = model.settings.copy() if model.settings else None
+        if model_settings:
+            if effective_model_settings is None:
+                effective_model_settings = model_settings.copy()
+            else:
+                effective_model_settings.update(model_settings)
+
+        # Native (provider built-in) tools, e.g. via `capabilities=[NativeTool(WebSearchTool())]`. Only
+        # concrete tools are forwarded; dynamic native-tool functions aren't resolved for realtime. The
+        # auto-injected optional `ToolSearchTool` is dropped (mirroring the graph) — there's no
+        # tool-search corpus and realtime providers don't support it. The helper already folded in
+        # `override(native_tools=...)` and any per-call capability native tools.
+        def _keep_native(tool: AgentNativeTool[AgentDepsT]) -> TypeGuard[AbstractNativeTool]:
+            return isinstance(tool, AbstractNativeTool) and not (isinstance(tool, ToolSearchTool) and tool.optional)
+
+        native_tools = [t for t in resolved_caps.native_tools if _keep_native(t)]
+
+        # Validate the full native-tool set (capability-contributed and `override(native_tools=...)`)
+        # against the model's declared support up front — mirroring the classic model's
+        # `supported_native_tools` check — so an unsupported tool fails with a clear error here, before
+        # connecting, rather than mid-session. This is the signal a caller or capability needs to fall
+        # back (e.g. to a local tool); the session itself does not fall back automatically.
+        model_profile = model.profile
+        supported_native_tools = model_profile.get('supported_native_tools', frozenset())
+        if unsupported_native_tools := [t for t in native_tools if not isinstance(t, tuple(supported_native_tools))]:
+            unsupported = ', '.join(sorted(type(t).__name__ for t in unsupported_native_tools))
+            supported = ', '.join(sorted(t.__name__ for t in supported_native_tools)) or 'none'
+            raise exceptions.UserError(
+                f'The {model.model_name!r} realtime model does not support the {unsupported} native tool(s). '
+                f'Supported native tools: {supported}.'
+            )
+
+        toolset = self._get_toolset(
+            output_toolset=None,
+            additional_toolsets=toolsets,
+            cap_toolsets=resolved_caps.toolsets,
+            run_capability=run_capability,
+        )
+        toolset = await toolset.for_run(run_context)
+        async with toolset:
+            # A dedicated usage for tool execution keeps the session the single authority for
+            # `session.usage.tool_calls` (counted as `ToolCall`s stream in); token usage still lands
+            # on the session via provider `Usage` events.
+            tool_context = dataclasses.replace(run_context, usage=_usage.RunUsage())
+            tool_manager = await ToolManager[AgentDepsT](
+                toolset, root_capability=run_capability, default_max_retries=self._max_tool_retries
+            ).for_run_step(tool_context)
+            tool_defs = tool_manager.tool_defs
+
+            # Evaluate literal + dynamic instructions once, then fold in toolset-contributed
+            # instructions, mirroring the run/iter graph. Capability-contributed instructions come from
+            # the resolved capabilities (like `iter`), not just the init-time snapshot.
+            literal, instruction_functions = self._get_instructions(
+                additional_instructions=instructions, cap_instructions=resolved_caps.instructions
+            )
+            # Build `InstructionPart`s (static literal first, then dynamic functions, then dynamic toolset
+            # instructions) and join with the canonical `InstructionPart.join` — same double-newline
+            # separator and static-before-dynamic ordering as the graph run. KEEP IN SYNC with the graph's
+            # `_get_instructions` / `ModelRequestNode`.
+            instruction_parts: list[_messages.InstructionPart] = []
+            if literal:
+                instruction_parts.append(_messages.InstructionPart(content=literal, dynamic=False))
+            for fn in instruction_functions:
+                if text := await fn.run(run_context):
+                    instruction_parts.append(_messages.InstructionPart(content=text, dynamic=True))
+            instruction_parts.extend(
+                _instructions.normalize_toolset_instructions(await tool_manager.toolset.get_instructions(run_context))
+            )
+            resolved_instructions = _messages.InstructionPart.join(instruction_parts)
+            request_messages = [
+                *(message_history or ()),
+                _messages.ModelRequest(parts=[], instructions=resolved_instructions or None),
+            ]
+            model_request_parameters = models.ModelRequestParameters(
+                function_tools=tool_defs,
+                native_tools=native_tools,
+            )
+
+            if message_history and not model_profile.get('supports_session_seeding', False):
+                raise exceptions.UserError(
+                    f'The {model.model_name!r} realtime model does not support seeding a session with '
+                    '`message_history`.'
+                )
+
+            async with model.connect(
+                messages=request_messages,
+                model_settings=effective_model_settings,
+                model_request_parameters=model_request_parameters,
+            ) as connection:
+                session = RealtimeSession(
+                    connection,
+                    tool_manager,
+                    instrumentation=session_instrumentation_settings,
+                    model_name=model.model_name,
+                    provider_name=model.system,
+                    provider_url=model.base_url,
+                    agent_name=self.name,
+                    usage=run_context.usage,
+                    usage_limits=usage_limits,
+                    audio_retention=audio_retention,
+                    retain_images_every_n=retain_images_every_n,
+                    message_history=message_history,
+                    profile=model_profile,
+                    conversation_id=conversation_id,
+                    instructions=resolved_instructions or None,
+                    metadata=run_context.metadata,
+                    agent_description=(
+                        self.render_description(deps) if session_instrumentation_settings is not None else None
+                    ),
+                    output_modality=(effective_model_settings or {}).get('output_modality', 'audio'),
+                )
+                async with session:
+                    yield session
 
     async def __aenter__(self) -> Self:
         """Enter the agent context.
@@ -3190,6 +3477,51 @@ def _validate_native_tool_ids(native_tools: Sequence[AgentNativeTool[Any]], *, s
                 f'Native tool id {tool.unique_id!r} maps to conflicting definitions in {source}. '
                 'Native tool ids must be unique within a capability layer.'
             )
+
+
+@dataclasses.dataclass
+class _ResolvedRunCapabilities(Generic[AgentDepsT]):
+    """The per-run capability state shared by `run`/`iter` and `realtime_session`.
+
+    Produced by [`Agent._resolve_run_capabilities`][]: the resolved capability tree plus the
+    contributions extracted from it (instructions, native tools, model settings, toolsets), so both a
+    graph run and a realtime session wire capabilities up identically. See the cross-references on the
+    two call sites for the surrounding logic each keeps to itself.
+    """
+
+    run_capability: AbstractCapability[AgentDepsT]
+    capabilities: dict[str, AbstractCapability[AgentDepsT]]
+    instructions: list[str | SystemPromptFunc[AgentDepsT]] | None
+    native_tools: list[AgentNativeTool[AgentDepsT]]
+    model_settings: AgentModelSettings[AgentDepsT] | None
+    toolsets: list[AgentToolset[AgentDepsT]] | None
+    resolved_layers: list[AbstractCapability[AgentDepsT]]
+    """Each run layer after `for_run`, in order (instrumentation first when injected). The graph run
+    compares the model-layer slice against its pre-resolution `model_layers` to detect whether any
+    capability changed the model contribution during resolution (`model_layers_unchanged`)."""
+
+
+def _layer_model_settings(
+    run_context: RunContext[AgentDepsT],
+    layers: Sequence[AgentModelSettings[AgentDepsT] | None],
+    *,
+    base: ModelSettings | None = None,
+) -> ModelSettings | None:
+    """Merge model-settings layers left-to-right, stamping `run_context.model_settings` before each.
+
+    Each layer is a static `ModelSettings`, a callable resolved against the run context, or `None`.
+    Stamping the merged-so-far onto `run_context.model_settings` before a callable layer runs lets it
+    observe the previous layers — the agent -> capability -> run order both `iter` (per model-request
+    step) and `realtime_session` (once, at connect) rely on. `base` is the model's own settings for a
+    graph run; a realtime model has none, so it defaults to `None`.
+    """
+    merged = base
+    run_context.model_settings = merged
+    for layer in layers:
+        resolved = layer(run_context) if callable(layer) else layer
+        merged = merge_model_settings(merged, resolved)
+        run_context.model_settings = merged
+    return merged
 
 
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:

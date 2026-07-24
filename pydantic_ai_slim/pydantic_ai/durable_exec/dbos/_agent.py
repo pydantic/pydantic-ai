@@ -47,6 +47,13 @@ from ._utils import StepConfig
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
+    from pydantic_ai.realtime import (
+        AudioRetention,
+        KnownRealtimeModelName,
+        RealtimeModel,
+        RealtimeModelSettings,
+        RealtimeSession,
+    )
 
 DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """The mode for executing tool calls in DBOS durable workflows. This is a subset of the ParallelExecutionMode because 'parallel' cannot guarantee deterministic ordering.
@@ -1124,6 +1131,52 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 spec=spec,
             ) as run:
                 yield run
+
+    @asynccontextmanager
+    async def _open_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Open a realtime speech-to-speech session; see [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] for the parameters.
+
+        A realtime session runs a long-lived, non-deterministic connection, so it cannot be opened
+        inside a DBOS workflow; calling it there raises a `UserError`. Outside a workflow it delegates
+        to the wrapped agent unchanged.
+        """
+        if DBOS.workflow_id is not None:
+            raise UserError(
+                '`agent.realtime(...).session()` cannot be used inside a DBOS workflow, as it runs a '
+                'long-lived, non-deterministic connection. Use it outside a workflow instead.'
+            )
+        async with super()._open_realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            usage_limits=usage_limits,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            message_history=message_history,
+            audio_retention=audio_retention,
+            retain_images_every_n=retain_images_every_n,
+        ) as session:
+            yield session
 
     @contextmanager
     def override(

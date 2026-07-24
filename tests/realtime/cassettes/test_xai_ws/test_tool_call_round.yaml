@@ -1,0 +1,704 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  data:
+    type: session.created
+    event_id: f69b6784-2244-4285-8536-5aa9374630fa
+    session:
+      id: 551667b1-edf5-48a0-bd14-93cbd680906c
+      object: realtime.session
+      model: grok-voice-latest
+      instructions: ''
+      voice: ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+- kind: message
+  direction: sent
+  data:
+    type: session.update
+    session:
+      instructions: Use the get_weather tool for any weather question, then answer
+        in one short sentence.
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      tools:
+      - type: function
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        description: Look up the weather for a city.
+- kind: message
+  direction: received
+  data:
+    type: conversation.created
+    event_id: 15e9356b-379e-42ee-a8d0-d8c5d8105121
+    conversation:
+      id: 551667b1-edf5-48a0-bd14-93cbd680906c
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: ping
+    event_id: d3e4848e-7735-485d-aeb0-cdd9fe698d76
+    timestamp: 1783466217066
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    session:
+      instructions: Use the get_weather tool for any weather question, then answer
+        in one short sentence.
+      voice: human_Ara
+      enable_noise_suppression: true
+      enable_echo_detection_filtering: false
+      echo_detection_threshold_ms: 3000
+      echo_detection_match_types:
+      - exact
+      - partial
+      - char_overlap
+      asr_validation_ignore_list:
+      - ah
+      - er
+      - hmm
+      - mhm
+      - mmm
+      - oh
+      - uh
+      - um
+      asr_validation_backchannel_ignore_list:
+      - i see
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      xvad_settings: <scrubbed>
+      asr_classifier: <scrubbed>
+      response_patient_starter_config: <scrubbed>
+      model: grok-voice-latest
+      tools:
+      - type: function
+        function:
+          name: get_weather
+          description: Look up the weather for a city.
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      keep_context: false
+      enable_phonetic_spelling: false
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      is_kids_mode: false
+      input_audio_transcription: null
+    type: session.updated
+    event_id: fc7809a9-f7be-4023-8fb0-a69821719ff6
+    previous_item_id: null
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: b4200a03-1b34-4328-8091-5639ba9ac695
+    item:
+      id: 50993d4c-8b18-42f0-a54e-dc847687bec1
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: f36cf5f4-63c4-4b5a-9cba-4e4dbbc88657
+    response:
+      id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+      object: realtime.response
+      output: []
+      status: in_progress
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: 5d7c8102-9ad1-476b-bf3d-42acc715d42c
+    item:
+      id: c0e98b2d-ce65-4a3b-861d-6b1f3dba5019
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: 69d4d1d3-bc94-4891-aef4-79730ae11aab
+    item:
+      id: c0e98b2d-ce65-4a3b-861d-6b1f3dba5019
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    previous_item_id: 50993d4c-8b18-42f0-a54e-dc847687bec1
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: 62cb8a4d-68f4-46fc-b2ea-1730ca68a246
+    item_id: c0e98b2d-ce65-4a3b-861d-6b1f3dba5019
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: e6873010-7269-45a3-bfb3-05983ab1a32b
+    item_id: c0e98b2d-ce65-4a3b-861d-6b1f3dba5019
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    content_index: 0
+    output_index: 0
+    rid: caa890e0-65dc-4169-b518-be99647b66f7
+    latency: '0.62'
+    audio_duration_ms: 560
+    ts: 1783466217880
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: caa890e0-65dc-4169-b518-be99647b66f7
+    item_id: c0e98b2d-ce65-4a3b-861d-6b1f3dba5019
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    delta: I'll check the weather for London.
+    content_index: 0
+    output_index: 0
+    rid: caa890e0-65dc-4169-b518-be99647b66f7
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 1883501d-7ced-4253-b889-61735b026400
+    item_id: c0e98b2d-ce65-4a3b-861d-6b1f3dba5019
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    delta: 2gN0AyYD1gJpAuEBXAHfAG4A8P9p/wj/uv5z/iv+4v3L
+    content_index: 0
+    output_index: 0
+    rid: caa890e0-65dc-4169-b518-be99647b66f7
+    audio_duration_ms: 520
+    ts: 1783466218025
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 0f8e4b2a-b175-4ed3-beb3-275fdeec6a65
+    item_id: c0e98b2d-ce65-4a3b-861d-6b1f3dba5019
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    delta: ev9e/z7/IP/+/uP+0v7C/rj+rv6Y/n7+Xv5E/jH+HP4N
+    content_index: 0
+    output_index: 0
+    rid: caa890e0-65dc-4169-b518-be99647b66f7
+    audio_duration_ms: 250
+    ts: 1783466218101
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: fca0ed1f-a353-4e29-b075-169b6f8f95d3
+    item_id: c0e98b2d-ce65-4a3b-861d-6b1f3dba5019
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    delta: of+z/8//8P8jAGUApgDIALUAhQBbAEkAVQBtAJYAzwAO
+    content_index: 0
+    output_index: 0
+    rid: caa890e0-65dc-4169-b518-be99647b66f7
+    audio_duration_ms: 160
+    ts: 1783466218102
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 6dfeb3ed-9eae-40aa-9737-85ea1c3689fe
+    item_id: c0e98b2d-ce65-4a3b-861d-6b1f3dba5019
+    transcript: I'll check the weather for London.
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: 62f68b5b-2772-40d9-85d5-3df4d1ccbd52
+    item_id: c0e98b2d-ce65-4a3b-861d-6b1f3dba5019
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.done
+    event_id: 10d0cfdb-5217-4c8e-ad77-1105e2f44b81
+    item_id: c0e98b2d-ce65-4a3b-861d-6b1f3dba5019
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: ae1362a2-2446-41e6-94b8-fd8d37d90e2a
+    item:
+      id: c0e98b2d-ce65-4a3b-861d-6b1f3dba5019
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: 849f3e22-4f4d-4b24-adcb-10f27821b7e9
+    item:
+      id: 46971a97-1736-4b14-930b-c07d10ec3e74
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      role: user
+      call_id: call-bb3d504c-4e18-4078-8ed3-47d81ceb26a1-0
+      name: get_weather
+      arguments: ''
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: 1181ca2e-29d5-4e90-b153-f5159045c4b2
+    item:
+      id: 46971a97-1736-4b14-930b-c07d10ec3e74
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      role: tool
+      call_id: call-bb3d504c-4e18-4078-8ed3-47d81ceb26a1-0
+      name: get_weather
+      arguments: ''
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: e4285232-2116-467a-bcc6-70cc75d2057f
+    item_id: 46971a97-1736-4b14-930b-c07d10ec3e74
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    delta: '{"city":"London"}'
+    call_id: call-bb3d504c-4e18-4078-8ed3-47d81ceb26a1-0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.done
+    event_id: 4278eaa8-8092-454a-b897-5f9174f56689
+    item_id: 46971a97-1736-4b14-930b-c07d10ec3e74
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    output_index: 0
+    call_id: call-bb3d504c-4e18-4078-8ed3-47d81ceb26a1-0
+    name: get_weather
+    arguments: '{"city":"London"}'
+    previous_item_id: null
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: call-bb3d504c-4e18-4078-8ed3-47d81ceb26a1-0
+      output: It is foggy and 12 degrees in London.
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: 23731f51-07b2-4b06-8dfe-80ca20b942d6
+    item:
+      id: 46971a97-1736-4b14-930b-c07d10ec3e74
+      object: realtime.item
+      type: function_call
+      status: completed
+      role: user
+      call_id: call-bb3d504c-4e18-4078-8ed3-47d81ceb26a1-0
+      name: get_weather
+      arguments: '{"city":"London"}'
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: 0942aa31-e35e-4f69-a2f4-e07b604c0ca0
+    response:
+      id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+      object: realtime.response
+      output:
+      - id: c0e98b2d-ce65-4a3b-861d-6b1f3dba5019
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: I'll check the weather for London.
+      - id: 46971a97-1736-4b14-930b-c07d10ec3e74
+        object: realtime.item
+        type: function_call
+        status: completed
+        role: user
+        call_id: call-bb3d504c-4e18-4078-8ed3-47d81ceb26a1-0
+        name: get_weather
+        arguments: '{"city":"London"}'
+      status: completed
+      status_details: unimplemented
+      usage: {}
+    response_id: c04cf7c2-8ced-4fe1-83b8-e3c48ae55c68
+    usage:
+      input_tokens: 7
+      input_token_details:
+        text_tokens: 7
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 82
+      output_token_details:
+        text_tokens: 7
+        audio_tokens: 75
+        grok_tokens: 0
+      total_tokens: 89
+      output_audio_seconds: 1.4898333333333331
+    previous_item_id: null
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: 00eb8f29-4e47-4302-9ff2-15c816b17eb5
+    item:
+      id: b19fed7f-be10-4e3b-9eb4-1686d0b2ddc1
+      object: realtime.item
+      type: function_call_output
+      status: completed
+      role: tool
+      call_id: call-bb3d504c-4e18-4078-8ed3-47d81ceb26a1-0
+      output: It is foggy and 12 degrees in London.
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: 7f6d4e14-4ab1-4f34-8c68-e492d769aa4d
+    response:
+      id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+      object: realtime.response
+      output: []
+      status: in_progress
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: cf02ee1c-0e9d-4b9f-8ed1-5f45f72faf45
+    item:
+      id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+    response_id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: 3c5b8365-9ea5-4492-9db2-08ee4a0ea398
+    item:
+      id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    previous_item_id: b19fed7f-be10-4e3b-9eb4-1686d0b2ddc1
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: a6b2fd9d-3eff-43b4-b4ce-39ffea5bd277
+    item_id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 4ba68a26-71c1-4d4d-bea3-064ed9f49a37
+    item_id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+    response_id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+    delta: AQABAAEAAQABAAEAAAABAAEAAQABAAEAAQABAAEAAQAB
+    content_index: 0
+    output_index: 0
+    rid: 13e4f673-40b4-456a-8e46-65d924f1c200
+    latency: '0.61'
+    audio_duration_ms: 560
+    ts: 1783466219518
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 13e4f673-40b4-456a-8e46-65d924f1c200
+    item_id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+    response_id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+    delta: It is foggy and 12 degrees in
+    content_index: 0
+    output_index: 0
+    rid: 13e4f673-40b4-456a-8e46-65d924f1c200
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 29e5e98c-2454-4bfa-a114-a5c652fd7d4b
+    item_id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+    response_id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+    delta: B/9+/2wAdwFfAhgDpAPoA7UDBAP+AdEApv+I/nb9dPyE
+    content_index: 0
+    output_index: 0
+    rid: 13e4f673-40b4-456a-8e46-65d924f1c200
+    audio_duration_ms: 520
+    ts: 1783466219664
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 74ffd696-6814-43e9-810b-520b719e8b76
+    item_id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+    response_id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+    delta: ' London.'
+    content_index: 0
+    output_index: 0
+    rid: 74ffd696-6814-43e9-810b-520b719e8b76
+    start_time: 1.94
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: cae08ec9-02f7-4042-a50d-cc2366eee684
+    item_id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+    response_id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+    delta: qRA5EO4PtQ9fD88OKQ6dDRkNcAykC9UKFApcCYgIkQem
+    content_index: 0
+    output_index: 0
+    rid: 13e4f673-40b4-456a-8e46-65d924f1c200
+    audio_duration_ms: 500
+    ts: 1783466219817
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 8877ad71-24e6-4c6a-b549-031411ad8c32
+    item_id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+    response_id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+    delta: +v///+H/7P8GADEAMAAnABoAFQAHAO3/0v/O/+L/8P/c
+    content_index: 0
+    output_index: 0
+    rid: 74ffd696-6814-43e9-810b-520b719e8b76
+    audio_duration_ms: 630
+    ts: 1783466220015
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 2d38cc2e-fd53-4347-bad3-e59d94b067b7
+    item_id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+    response_id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+    delta: /P/3/+//7v/y//z/DQATAAMAAAD9//3/+f/6/xkAGwD3
+    content_index: 0
+    output_index: 0
+    rid: 74ffd696-6814-43e9-810b-520b719e8b76
+    audio_duration_ms: 320
+    ts: 1783466220016
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 344cd201-3ac9-4796-9bf4-f1630f862dd6
+    item_id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+    transcript: It is foggy and 12 degrees in London.
+    response_id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: 33fc3bcf-06bf-40ef-ae07-a38ede133dc2
+    item_id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+    response_id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.done
+    event_id: a4ca8a3d-429b-45a5-a9c1-5035eb007f4b
+    item_id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+    response_id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: 52ae826c-76b1-4f10-a0fd-452b745571b6
+    item:
+      id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+    response_id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: 16f29135-8069-4cb6-b495-8f1f1b1f7953
+    response:
+      id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+      object: realtime.response
+      output:
+      - id: c2b0e80c-54d2-4325-834d-f1cb0d339c70
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: It is foggy and 12 degrees in London.
+      status: completed
+      status_details: unimplemented
+      usage: {}
+    response_id: d2136377-41a0-4b61-a0c4-5c06f895be7c
+    usage:
+      input_tokens: 0
+      input_token_details:
+        text_tokens: 0
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 137
+      output_token_details:
+        text_tokens: 10
+        audio_tokens: 127
+        grok_tokens: 0
+      total_tokens: 137
+      output_audio_seconds: 2.5295
+    previous_item_id: null

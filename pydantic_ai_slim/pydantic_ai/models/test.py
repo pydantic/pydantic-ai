@@ -26,6 +26,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -370,6 +371,9 @@ class TestStreamedResponse(StreamedResponse):
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate CompactionPart on TestModel.
                 assert False, "This should be unreachable — we don't generate CompactionPart on TestModel."
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since `SpeechPart`s are converted in `Model.prepare_messages`.
+                assert False, 'This should be unreachable — `SpeechPart`s are converted in `Model.prepare_messages`.'
             else:
                 assert_never(part)
 

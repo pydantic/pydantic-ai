@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
+from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability
@@ -53,9 +54,14 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
             return request_context
         if ctx.agent is None:
             return request_context  # pragma: no cover — ctx.agent is always set during an agent run
+        # `ctx.model` is an `AbstractModel`, which is a regular `Model` on every path that makes
+        # model requests; fall back to the agent's configured model otherwise. The `cast` only
+        # pins `Model`'s client type parameter, which `isinstance` can't recover.
+        ctx_model = ctx.model
+        model = cast('Model[Any]', ctx_model) if isinstance(ctx_model, Model) else None
         sys_parts = await ctx.agent.system_prompt_parts(
             deps=ctx.deps,
-            model=ctx.model,
+            model=model,
             message_history=messages,
             prompt=ctx.prompt,
             usage=ctx.usage,

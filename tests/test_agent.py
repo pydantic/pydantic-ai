@@ -64,7 +64,7 @@ from pydantic_ai._output import (
     PromptedOutput,
     TextOutput,
 )
-from pydantic_ai.agent import AgentRunResult, WrapperAgent
+from pydantic_ai.agent import AbstractAgent, AgentRunResult, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Hooks,
@@ -10251,6 +10251,16 @@ async def test_wrapper_agent():
     assert run.result.output == snapshot(Foo(a=0, b='a'))
     assert test_model.last_model_request_parameters is not None
     assert [t.name for t in test_model.last_model_request_parameters.function_tools] == snapshot(['bar'])
+
+
+async def test_abstract_agent_system_prompt_parts_default_is_empty():
+    """A custom `AbstractAgent` subclass that doesn't resolve system prompts inherits an empty default.
+
+    `Agent` and `WrapperAgent` both override `system_prompt_parts`, so the base default is only reached
+    by a third-party subclass; call it directly on an agent to pin that documented behavior.
+    """
+    agent = Agent('test')
+    assert await AbstractAgent.system_prompt_parts(agent) == []
 
 
 async def test_thinking_only_response_retry():

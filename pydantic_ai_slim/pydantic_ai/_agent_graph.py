@@ -1820,6 +1820,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.CompactionPart):
                         if part.content:
                             compaction_text += part.content
+                    elif isinstance(part, _messages.SpeechPart):  # pragma: no cover
+                        # No standard model produces realtime audio parts.
+                        pass
                     else:
                         assert_never(part)
 

@@ -44,6 +44,7 @@ from pydantic_ai import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -1163,6 +1164,9 @@ class BedrockConverseModel(Model[BaseClient]):
                             if supports_tool_result_status:
                                 error_result['status'] = 'error'
                             bedrock_messages.append({'role': 'user', 'content': [{'toolResult': error_result}]})
+                    elif isinstance(part, SpeechPart):  # pragma: no cover
+                        # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
+                        pass
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
