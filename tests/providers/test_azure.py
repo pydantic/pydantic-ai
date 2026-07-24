@@ -78,6 +78,18 @@ def test_azure_provider_api_key_required_when_absent():
         _ = provider.api_key
 
 
+def test_azure_provider_voice_live_api_key_required_when_absent():
+    """`AzureProvider.voice_live_api_key` raises when no key is available (e.g. an Entra-only client)."""
+    provider = AzureProvider(
+        api_version='2024-12-01-preview',
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_key='1234567890',
+    )
+    provider._voice_live_api_key = None  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match='Voice Live requires API-key authentication'):
+        _ = provider.voice_live_api_key
+
+
 def test_azure_provider_with_http_client():
     import httpx
 
