@@ -91,6 +91,7 @@ from ._openai_protocol import (
     ServerVAD,
     expect_event,
     loads_obj,
+    map_connect_errors,
     map_event,
     realtime_websocket_url,
     resolve_base_turn_detection,
@@ -795,11 +796,15 @@ class OpenAIRealtimeModel(RealtimeModel):
             return ws
 
         try:
-            ws = await dial()
-            # Seed prior conversation once, after the initial handshake. Reconnects deliberately don't
-            # re-seed: server state is lost on drop and a `ReconnectedEvent` starts a fresh turn.
-            for item in await seed_items(messages, profile=self.profile, provider_name=self.system):
-                await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
+            # Map a rejected config or WebSocket upgrade to the same typed exceptions a regular request
+            # raises. The reconnect loop dials outside this manager, so it keeps treating a drop as
+            # retryable rather than fatal.
+            with map_connect_errors(self.model):
+                ws = await dial()
+                # Seed prior conversation once, after the initial handshake. Reconnects deliberately don't
+                # re-seed: server state is lost on drop and a `ReconnectedEvent` starts a fresh turn.
+                for item in await seed_items(messages, profile=self.profile, provider_name=self.system):
+                    await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             yield OpenAIRealtimeConnection(
                 ws,
                 dial=dial,

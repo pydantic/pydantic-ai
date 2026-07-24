@@ -64,6 +64,7 @@ from ._base import (
 )
 from ._openai_protocol import (
     expect_event,
+    map_connect_errors,
     map_conversation_event,
     map_event as _map_openai_event,
     realtime_websocket_url,
@@ -352,11 +353,15 @@ class XaiRealtimeModel(RealtimeModel):
             return ws
 
         try:
-            ws = await dial()
-            # Seed prior conversation once, after the initial handshake. Reconnects don't re-seed:
-            # xAI restores the server-side conversation and replays its item lifecycle events instead.
-            for item in await seed_items(messages, profile=self.profile, provider_name=self.system):
-                await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
+            # Map a rejected config or WebSocket upgrade to the same typed exceptions a regular request
+            # raises. The reconnect loop dials outside this manager, so it keeps treating a drop as
+            # retryable rather than fatal.
+            with map_connect_errors(self.model):
+                ws = await dial()
+                # Seed prior conversation once, after the initial handshake. Reconnects don't re-seed:
+                # xAI restores the server-side conversation and replays its item lifecycle events instead.
+                for item in await seed_items(messages, profile=self.profile, provider_name=self.system):
+                    await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             connection = XaiRealtimeConnection(
                 ws,
                 dial=dial,

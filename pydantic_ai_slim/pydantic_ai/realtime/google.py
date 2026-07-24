@@ -38,7 +38,7 @@ except ImportError as _import_error:
 
 from .._instrumentation import get_instructions
 from .._utils import generate_tool_call_id
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -843,7 +843,20 @@ class GoogleRealtimeModel(RealtimeModel):
             return session
 
         try:
-            session = await dial(None)
+            # A rejected config (unsupported `voice`, unknown model) closes the WebSocket, which the SDK
+            # surfaces as an `APIError`. Map it to the same typed exceptions a regular request raises,
+            # mirroring `GoogleModel`. Reconnects dial from the receive loop, which keeps handling the
+            # `APIError` as a retryable drop.
+            try:
+                session = await dial(None)
+            except genai_errors.APIError as e:
+                if (status_code := e.code) >= 400:
+                    raise ModelHTTPError(
+                        status_code=status_code,
+                        model_name=self.model,
+                        body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+                    ) from e
+                raise ModelAPIError(model_name=self.model, message=str(e)) from e  # pragma: no cover
             # Seed prior conversation once, after the initial connect, as inactive context turns (no
             # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
             # resumption restores server state, and a `ReconnectedEvent` starts a fresh turn.

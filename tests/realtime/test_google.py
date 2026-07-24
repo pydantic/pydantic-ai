@@ -17,7 +17,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     CachePoint,
@@ -1000,6 +1000,34 @@ async def test_connect_streams_events() -> None:
         TurnCompleteEvent(interrupted=False),
     ]
     assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
+
+
+async def test_connect_maps_rejected_config_to_model_http_error() -> None:
+    # A rejected session config (here an unsupported voice) closes the WebSocket, which the SDK raises as
+    # an `APIError` carrying the close code and reason. `connect` maps it to `ModelHTTPError` like a
+    # regular `GoogleModel` request, rather than leaking the raw SDK error, so users can handle realtime
+    # and non-realtime failures uniformly.
+    reason = 'No matching speaker voice found for name: alloy'
+
+    class _RejectingConnect:
+        async def __aenter__(self) -> Any:
+            raise genai_errors.APIError(1007, reason, None)
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover - never entered
+            return False
+
+    class _Live:
+        def connect(self, *, model: str, config: Any) -> _RejectingConnect:
+            return _RejectingConnect()
+
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})()})())
+    model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover - connect raises before yielding
+    assert exc_info.value.status_code == 1007
+    assert exc_info.value.model_name == 'gemini-2.5-flash-native-audio-latest'
+    assert exc_info.value.body == reason
 
 
 async def test_connect_continues_after_empty_server_turn() -> None:

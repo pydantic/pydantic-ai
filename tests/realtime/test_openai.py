@@ -17,7 +17,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -867,13 +867,48 @@ async def test_connect_skips_unrelated_events_during_handshake(monkeypatch: pyte
 
 @pytest.mark.anyio
 async def test_connect_surfaces_handshake_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    error = json.dumps({'type': 'error', 'error': {'message': 'invalid model'}})
-    ws = FakeWebSocket([error])
+    # A rejected session config (here an unsupported voice) arrives as an `error` event over the open
+    # WebSocket — no HTTP status — so it surfaces as a `ModelAPIError` carrying the provider's message,
+    # like a non-status provider error from a regular request, rather than a raw protocol error.
+    error = json.dumps(
+        {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': "Invalid value: 'Puck'."}}
+    )
+    ws = FakeWebSocket([_created(), error])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
-    with pytest.raises(RuntimeError, match='invalid model'):
+    with pytest.raises(ModelAPIError, match=re.escape("Invalid value: 'Puck'.")) as exc_info:
         async with _connect(model, 'x'):
             pass  # pragma: no cover
+    assert exc_info.value.model_name == 'gpt-realtime'
+    assert not isinstance(exc_info.value, ModelHTTPError)  # no HTTP status on a WebSocket error event
+
+
+@pytest.mark.anyio
+async def test_connect_surfaces_http_upgrade_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A rejected WebSocket upgrade (bad key → 401, unknown model → 404) carries a real HTTP status, so
+    # it surfaces as `ModelHTTPError`, exactly like a regular request would.
+    from websockets.datastructures import Headers
+    from websockets.exceptions import InvalidStatus
+    from websockets.http11 import Response
+
+    class _RejectingConnect:
+        def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> Any:
+            return self
+
+        async def __aenter__(self) -> Any:
+            raise InvalidStatus(Response(404, 'Not Found', Headers(), body=b'unknown model'))
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover — never entered
+            return False
+
+    monkeypatch.setattr(rt_openai.websockets, 'connect', _RejectingConnect())
+    model = OpenAIRealtimeModel('gpt-realtime')
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.model_name == 'gpt-realtime'
+    assert exc_info.value.body == 'unknown model'
 
 
 class HangingWebSocket(FakeWebSocket):

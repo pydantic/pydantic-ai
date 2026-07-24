@@ -17,7 +17,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -447,6 +447,20 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
     assert update['type'] == 'session.update'
     assert update['session']['instructions'] == 'Be nice'
     assert update['session']['voice'] == 'eve'
+
+
+@pytest.mark.anyio
+async def test_connect_surfaces_handshake_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # xAI shares the OpenAI-protocol handshake, so a rejected config surfaces as a `ModelAPIError`
+    # carrying the provider's message (not a raw protocol error), same as the OpenAI provider.
+    error = json.dumps({'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'bad voice'}})
+    ws = FakeWebSocket([_created(), error])
+    monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(ws))
+    model = XaiRealtimeModel('grok-voice-latest', provider=XaiProvider(api_key='k'))
+    with pytest.raises(ModelAPIError, match='bad voice') as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover - connect raises before yielding
+    assert exc_info.value.model_name == 'grok-voice-latest'
 
 
 @pytest.mark.anyio

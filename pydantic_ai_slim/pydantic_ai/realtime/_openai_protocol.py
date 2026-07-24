@@ -20,10 +20,12 @@ import base64
 import hashlib
 import json
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 
+import websockets
 from openai.types.realtime import (
     ConversationCreatedEvent,
     ConversationItem,
@@ -49,7 +51,7 @@ from openai.types.realtime import (
 from typing_extensions import assert_never
 
 from .._utils import is_str_dict
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
     CompactionPart,
@@ -622,7 +624,48 @@ def _error_message(error: RealtimeError | object) -> str:
     """Extract a human-readable message from an OpenAI `error` payload."""
     if isinstance(error, RealtimeError):
         return error.message or json.dumps(error.model_dump(exclude_none=True))
+    if is_str_dict(error) and isinstance(message := error.get('message'), str):
+        return message
     return str(error)
+
+
+class RealtimeHandshakeError(Exception):
+    """An `error` event received while establishing an OpenAI-protocol realtime session.
+
+    Raised by [`expect_event`][pydantic_ai.realtime._openai_protocol.expect_event] and mapped to a
+    [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] by
+    [`map_connect_errors`][pydantic_ai.realtime._openai_protocol.map_connect_errors], so a rejected
+    session config (e.g. an unsupported `voice`) surfaces as the same typed exception a regular request
+    would raise instead of a bare protocol error.
+    """
+
+    def __init__(self, error: object) -> None:
+        self.error = error
+        super().__init__(_error_message(error))
+
+
+@contextmanager
+def map_connect_errors(model_name: str) -> Generator[None]:
+    """Map realtime handshake failures to the typed exceptions the regular models raise.
+
+    Wrap the initial dial so a rejected session config or WebSocket upgrade surfaces as a
+    [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] /
+    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] carrying the model name, mirroring
+    [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. Reconnects dial outside this
+    manager so the reconnect loop keeps treating a drop as retryable.
+    """
+    try:
+        yield
+    except RealtimeHandshakeError as e:
+        # The `error` event carries no HTTP status (it arrives over the open WebSocket), so a rejected
+        # config maps to `ModelAPIError`, like a regular non-status provider error.
+        raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except websockets.InvalidStatus as e:
+        # The WebSocket upgrade itself was rejected (bad key → 401, unknown model → 404); this carries a
+        # real HTTP status, so it maps to `ModelHTTPError` exactly like a regular request.
+        response = e.response
+        body = response.body.decode(errors='replace') if response.body else response.reason_phrase
+        raise ModelHTTPError(status_code=response.status_code, model_name=model_name, body=body) from e
 
 
 @dataclass
@@ -756,6 +799,6 @@ async def expect_event(
         if event_type == expected_type:
             return data
         if event_type == 'error':
-            raise RuntimeError(f'OpenAI realtime error during handshake: {_error_message(data.get("error"))}')
+            raise RealtimeHandshakeError(data.get('error'))
         if on_unexpected is not None:
             on_unexpected(data)
