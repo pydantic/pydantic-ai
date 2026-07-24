@@ -127,6 +127,11 @@ def test_scrub_ephemeral_secret_redacts_client_secret() -> None:
     # A non-secret JSON body is returned unchanged.
     other = {'body': {'string': b'{"foo": "bar"}'}}
     assert _scrub_ephemeral_secret(other)['body']['string'] == b'{"foo": "bar"}'
+    # The defensive guards pass non-body, empty, non-JSON, and non-object bodies through untouched.
+    assert _scrub_ephemeral_secret({}) == {}
+    assert _scrub_ephemeral_secret({'body': {'string': b''}})['body']['string'] == b''
+    assert _scrub_ephemeral_secret({'body': {'string': b'not json'}})['body']['string'] == b'not json'
+    assert _scrub_ephemeral_secret({'body': {'string': b'[1, 2]'}})['body']['string'] == b'[1, 2]'
 
 
 # --- client secret minting --------------------------------------------------------------------------
@@ -144,8 +149,8 @@ async def test_create_client_secret(openai_api_key: str, request: pytest.Fixture
     assert secret.value
     assert secret.expires_at.tzinfo is not None
     # The secret expires shortly after recording, so only a live response can remain future-dated.
-    if request.config.getoption('record_mode') == 'rewrite':  # pragma: no cover - only while recording
-        assert secret.expires_at > datetime.now(timezone.utc)
+    recording = request.config.getoption('record_mode') == 'rewrite'
+    assert not recording or secret.expires_at > datetime.now(timezone.utc)
 
 
 async def test_create_client_secret_missing_value() -> None:

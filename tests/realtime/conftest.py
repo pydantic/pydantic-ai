@@ -39,15 +39,15 @@ def _scrub_ephemeral_secret(response: dict[str, Any]) -> dict[str, Any]:
     """
     try:
         raw = response['body']['string']
-    except (KeyError, TypeError):  # pragma: no cover - non-body responses
+    except (KeyError, TypeError):  # non-body responses
         return response
-    if not raw:  # pragma: no cover - empty body
+    if not raw:  # empty body
         return response
     try:
         data = json.loads(raw)
-    except (ValueError, TypeError):  # pragma: no cover - non-JSON body
+    except (ValueError, TypeError):  # non-JSON body
         return response
-    if not isinstance(data, dict):  # pragma: no cover - non-object JSON body
+    if not isinstance(data, dict):  # non-object JSON body
         return response
     body_data = cast('dict[str, Any]', data)
     value = body_data.get('value')
