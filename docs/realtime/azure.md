@@ -15,7 +15,7 @@ pip install "pydantic-ai-slim[realtime,openai]"
 Azure exposes the GA protocol at `/openai/v1/realtime`. Set `AZURE_OPENAI_ENDPOINT` and
 `AZURE_OPENAI_API_KEY`, then use the `azure:` prefix:
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
 
 agent = Agent(instructions='You are a helpful voice assistant.')
@@ -33,7 +33,7 @@ protocol lives under the [v1 GA API](https://learn.microsoft.com/en-us/azure/ai-
 so no `api_version` is involved (with a bare resource endpoint, `AzureProvider` would require the
 `api_version` its general-purpose SDK client needs):
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai.providers.azure import AzureProvider
 from pydantic_ai.realtime.azure import AzureRealtimeModel
 
@@ -84,7 +84,7 @@ realtime WebSocket session and the WebRTC signaling — with a bearer token for 
 plane (scope `https://ai.azure.com/.default`), which requires the **Cognitive Services User** role on
 the resource:
 
-```python {test="skip" lint="skip"}
+```python {test="skip"}
 from azure.identity import DefaultAzureCredential
 
 from pydantic_ai.providers.azure import AzureProvider

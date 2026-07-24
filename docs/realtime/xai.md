@@ -23,7 +23,7 @@ needs the API key.
 [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] supports the shared
 [`TurnDetection`][pydantic_ai.realtime.TurnDetection] configuration:
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai.realtime import TurnDetection
 from pydantic_ai.realtime.xai import XaiRealtimeModel, XaiRealtimeModelSettings
 

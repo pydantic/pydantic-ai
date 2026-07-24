@@ -24,9 +24,13 @@ OpenAI-compatible endpoints exposing a realtime API work too.
 [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] extends
 shared settings with noise reduction, output speed, precise turn detection, and truncation:
 
-```python {test="skip" lint="skip"}
+```python
 from pydantic_ai.realtime import TurnDetection
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings, SemanticVAD
+from pydantic_ai.realtime.openai import (
+    OpenAIRealtimeModel,
+    OpenAIRealtimeModelSettings,
+    SemanticVAD,
+)
 
 settings = OpenAIRealtimeModelSettings(
     max_tokens=2_000,
@@ -66,14 +70,22 @@ binding the agent's session configuration (instructions, tools, voice, VAD) serv
   [`RealtimeClientSecret`][pydantic_ai.realtime.RealtimeClientSecret] (ephemeral token) for a browser
   that negotiates the WebRTC call itself, when you don't relay the SDP through your backend.
 
-```python {test="skip" lint="skip"}
+```python
+from pydantic_ai import Agent
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+agent = Agent(instructions='You are a helpful voice assistant.')
+realtime = agent.realtime(OpenAIRealtimeModel('gpt-realtime'))
+
+
 # In your `POST /offer` handler, `sdp_offer` is the browser's SDP offer (the request body):
-realtime = agent.realtime(model)
-answer = await realtime.answer_webrtc_offer(sdp_offer)
-# Return `answer.sdp` to the browser, then run the agent over the sideband:
-async with realtime.session(provider_session=answer.session) as session:
-    async for event in session:
-        ...
+async def handle_offer(sdp_offer: str) -> str:
+    answer = await realtime.answer_webrtc_offer(sdp_offer)
+    # Return `answer.sdp` to the browser, then run the agent over the sideband:
+    async with realtime.session(provider_session=answer.session) as session:
+        async for event in session:
+            ...
+    return answer.sdp
 ```
 
 ## Reasoning
@@ -90,11 +102,18 @@ Gemini's native-audio Live models. The GA `gpt-realtime` is a standard speech-to
 reasoning, so a `thinking` setting is ignored with a warning rather than sent (the API would otherwise
 reject it).
 
-```python {test="skip" lint="skip"}
-async with agent.realtime(
-    OpenAIRealtimeModel('gpt-realtime-2.1', settings=OpenAIRealtimeModelSettings(thinking='low')),
-).session() as session:
-    ...
+```python
+from pydantic_ai import Agent
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
+
+agent = Agent()
+
+
+async def main():
+    async with agent.realtime(
+        OpenAIRealtimeModel('gpt-realtime-2.1', settings=OpenAIRealtimeModelSettings(thinking='low')),
+    ).session() as session:
+        await session.send('Think briefly, then say hello.')
 ```
 
 On OpenAI the effort maps to `reasoning.effort`. OpenAI realtime does not accept a disabled effort,
