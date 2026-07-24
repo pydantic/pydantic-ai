@@ -1476,10 +1476,18 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             )
 
             if examples:
+                prepared_examples: list[Any] = []
+                if processor.outer_typed_dict_key:
+                    for example in examples:
+                        if not _utils.is_str_dict(example) or processor.outer_typed_dict_key not in example:
+                            example = {processor.outer_typed_dict_key: example}
+                        prepared_examples.append(example)
+                else:
+                    prepared_examples = examples
+                examples = [processor.validator.validate_python(example) for example in prepared_examples]
                 examples = _process_examples(
                     examples,
                     single_arg_name=processor.single_arg_name,
-                    outer_typed_dict_key=processor.outer_typed_dict_key,
                 )
 
             object_def = processor.object_def

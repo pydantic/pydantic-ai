@@ -291,16 +291,13 @@ def _validate_timeout(timeout: float | None) -> None:
 def _process_examples(
     examples: list[Any],
     single_arg_name: str | None = None,
-    outer_typed_dict_key: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Process tool examples by flattening, serializing, and optionally wrapping them."""
+    """Process validated tool examples by flattening and serializing them."""
     processed_examples: list[dict[str, Any]] = []
     for example in examples:
         if single_arg_name and isinstance(example, dict) and single_arg_name in example:
             example = cast(dict[str, Any], example)[single_arg_name]
         processed_example: Any = to_jsonable_python(example)
-        if outer_typed_dict_key:
-            processed_example = {outer_typed_dict_key: processed_example}
         if not _utils.is_str_dict(processed_example):
             raise UserError('Tool examples must be JSON objects.')
         processed_examples.append(processed_example)
@@ -524,6 +521,7 @@ class Tool(Generic[ToolAgentDepsT]):
     def tool_def(self) -> ToolDefinition:
         examples = self.examples
         if examples:
+            examples = [self.function_schema.validator.validate_python(example) for example in examples]
             examples = _process_examples(examples, single_arg_name=self.function_schema.single_arg_name)
 
         return ToolDefinition(
@@ -631,13 +629,16 @@ class ToolDefinition:
     examples: list[dict[str, Any]] | None = None
     """Example inputs demonstrating correct tool usage patterns.
 
-    Each example should validate against the tool's `parameters_json_schema`.
+    Each example must validate against the tool's `parameters_json_schema`.
 
     Supported by:
 
     * [Anthropic](https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools#providing-tool-use-examples)
 
     For models without native support, examples are appended to the tool description.
+
+    When constructing a `ToolDefinition` directly, including through [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema],
+    the caller is responsible for ensuring that the examples match the schema.
     """
 
     metadata: dict[str, Any] | None = None
