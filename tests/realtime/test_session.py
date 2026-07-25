@@ -3681,16 +3681,15 @@ async def test_agent_realtime_session_native_tools_from_capability() -> None:
 
 
 async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
-    # A native tool the model doesn't support (per its `supported_native_tools` profile) fails up front
-    # with the uniform error, before connecting — even when contributed by a capability. This is the
-    # signal a caller/capability needs to fall back; the session doesn't fall back automatically.
+    # A native tool the model doesn't support (per its `supported_native_tools` profile) with no local
+    # fallback fails up front, before connecting — even when contributed by a capability. This runs the
+    # same native ↔ local-tool swap the classic agent-run path applies, so the error points at `local=`.
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection([])
     model = FakeRealtimeModel(conn, profile=_profile(supported_native_tools=frozenset()))
     with pytest.raises(
         UserError,
-        match=r"'fake-realtime' realtime model does not support the WebSearchTool native tool\(s\)\. "
-        r'Supported native tools: none\.',
+        match=r"not supported by this model.*WebSearch\(local='duckduckgo'\)",
     ):
         async with agent.realtime(model, capabilities=[NativeTool(WebSearchTool())]).session():
             pass  # pragma: no cover - validation raises before yielding

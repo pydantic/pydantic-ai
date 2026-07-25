@@ -17,13 +17,14 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai._instrumentation import get_instructions
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import NativeTool, WebSearch
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import FunctionToolResultEvent, ModelMessage, ToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.realtime import (
+    RealtimeEvent,
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
@@ -33,6 +34,7 @@ from pydantic_ai.realtime.codec import (
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
+    ToolCall,
 )
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
@@ -42,13 +44,18 @@ pytestmark = pytest.mark.anyio
 
 
 class _Connection(RealtimeConnection):
-    """Yields a single `TurnCompleteEvent` so the session drains immediately."""
+    """Replays a fixed list of events (a lone `TurnCompleteEvent` by default) so the session drains."""
+
+    def __init__(self, events: Sequence[RealtimeCodecEvent] = (TurnCompleteEvent(),)) -> None:
+        self._events = events
+        self.sent: list[RealtimeInput] = []
 
     async def send(self, content: RealtimeInput) -> None:
-        pass
+        self.sent.append(content)
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-        yield TurnCompleteEvent()
+        for event in self._events:
+            yield event
 
 
 class _RecordingModel(RealtimeModel):
@@ -59,9 +66,11 @@ class _RecordingModel(RealtimeModel):
         *,
         settings: RealtimeModelSettings | None = None,
         supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(),
+        connection_events: Sequence[RealtimeCodecEvent] = (TurnCompleteEvent(),),
     ) -> None:
         self.settings = settings
         self._supported = supported_native_tools
+        self._connection_events = connection_events
         self.instructions: str | None = None
         self.tools: list[ToolDefinition] | None = None
         self.native_tools: list[AbstractNativeTool] | None = None
@@ -98,13 +107,15 @@ class _RecordingModel(RealtimeModel):
         self.tools = model_request_parameters.function_tools
         self.native_tools = model_request_parameters.native_tools
         self.model_settings = model_settings
-        yield _Connection()
+        yield _Connection(self._connection_events)
 
 
-async def _drain(agent: Agent[None, str], model: _RecordingModel, **kwargs: object) -> None:
+async def _drain(agent: Agent[None, str], model: _RecordingModel, **kwargs: object) -> list[RealtimeEvent]:
+    events: list[RealtimeEvent] = []
     async with agent.realtime(model, **kwargs).session() as session:  # type: ignore[arg-type]
-        async for _ in session:  # pragma: no branch - the single event ends the stream
-            pass
+        async for event in session:  # pragma: no branch - the fixed events end the stream
+            events.append(event)
+    return events
 
 
 async def test_capability_instructions_reach_session() -> None:
@@ -232,9 +243,69 @@ async def test_capability_native_tool_without_override_reaches_session() -> None
 
 
 async def test_unsupported_capability_native_tool_raises_before_connect() -> None:
-    """A capability native tool the model doesn't support fails up front, before connecting."""
+    """An unsupported native tool with no local fallback fails up front, before connecting.
+
+    This runs the same native ↔ local-tool swap the classic agent-run path applies. With no local
+    fallback configured, the swap raises the shared `UserError` that points the user at `local=...`.
+    """
     agent = Agent()
     model = _RecordingModel(supported_native_tools=frozenset())  # supports nothing
-    with pytest.raises(UserError, match='does not support'):
+    with pytest.raises(UserError, match=r"not supported by this model.*WebSearch\(local='duckduckgo'\)"):
         await _drain(agent, model, capabilities=[NativeTool(WebSearchTool())])
     assert model.native_tools is None  # never connected
+
+
+async def test_unsupported_native_tool_falls_back_to_local() -> None:
+    """An unsupported native tool with a configured local fallback swaps to the local tool, not raise.
+
+    Mirrors the classic path: the native tool is dropped (the model supports none) and the local
+    DuckDuckGo function tool stays, so the session connects with no native tools.
+    """
+    agent = Agent()
+    model = _RecordingModel(supported_native_tools=frozenset())  # supports nothing
+    await _drain(agent, model, capabilities=[WebSearch(local='duckduckgo')])
+    assert model.native_tools == []  # native dropped, connected without it
+    assert model.tools is not None
+    assert any(t.name == 'duckduckgo_search' for t in model.tools)  # local fallback kept
+
+
+async def test_supported_native_tool_drops_local_fallback() -> None:
+    """When the native tool IS supported, the redundant local fallback is dropped, like the classic path."""
+    agent = Agent()
+    model = _RecordingModel(supported_native_tools=frozenset({WebSearchTool}))
+    await _drain(agent, model, capabilities=[WebSearch(local='duckduckgo')])
+    assert model.native_tools is not None
+    assert any(isinstance(t, WebSearchTool) for t in model.native_tools)  # native kept
+    assert model.tools is not None
+    assert not any(t.name == 'duckduckgo_search' for t in model.tools)  # redundant local dropped
+
+
+async def test_local_fallback_tool_is_dispatched_through_tool_manager() -> None:
+    """The swapped-in local fallback is a real function tool the session dispatches via the `ToolManager`.
+
+    Drives a tool call for the local fallback through the session and asserts it executed and returned,
+    proving the fallback isn't just present on the wire but wired into tool dispatch. Uses a plain
+    recording callable as the local tool so the test stays network-free (the DuckDuckGo fallback used
+    by the other cases would hit the network when invoked).
+    """
+    invoked: list[str] = []
+
+    def local_search(query: str) -> str:
+        invoked.append(query)
+        return f'result for {query}'
+
+    agent = Agent()
+    model = _RecordingModel(
+        supported_native_tools=frozenset(),  # unsupported → fall back to local
+        connection_events=[
+            ToolCall(tool_call_id='tc_1', tool_name='local_search', args='{"query": "hello"}'),
+            TurnCompleteEvent(),
+        ],
+    )
+    events = await _drain(agent, model, capabilities=[WebSearch(native=WebSearchTool(), local=local_search)])
+
+    assert invoked == ['hello']  # the local callable ran, via the ToolManager
+    result_event = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    result_part = result_event.part
+    assert isinstance(result_part, ToolReturnPart)
+    assert (result_part.tool_name, result_part.content) == ('local_search', 'result for hello')

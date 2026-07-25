@@ -3100,8 +3100,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Resolve the capability layers and extract their contributions, exactly as `run`/`iter` do via
         # the shared helpers (`_base_run_capability` honors `override(root_capability=...)` the same way).
         # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, no deferred loader
-        # (`inject_deferred_loader=False`), once-only model settings (below), and the `_keep_native` /
-        # `supported_native_tools` gate (below). Keep this in sync with the `iter` call site.
+        # (`inject_deferred_loader=False`), once-only model settings (below), and the `_keep_native` drop
+        # plus the shared native ↔ local-tool swap (below). Keep this in sync with the `iter` call site.
         base_capability, base_is_override = self._base_run_capability()
         resolved_caps = await self._resolve_run_capabilities(
             run_context,
@@ -3133,21 +3133,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return isinstance(tool, AbstractNativeTool) and not (isinstance(tool, ToolSearchTool) and tool.optional)
 
         native_tools = [t for t in resolved_caps.native_tools if _keep_native(t)]
-
-        # Validate the full native-tool set (capability-contributed and `override(native_tools=...)`)
-        # against the model's declared support up front — mirroring the classic model's
-        # `supported_native_tools` check — so an unsupported tool fails with a clear error here, before
-        # connecting, rather than mid-session. This is the signal a caller or capability needs to fall
-        # back (e.g. to a local tool); the session itself does not fall back automatically.
         model_profile = model.profile
-        supported_native_tools = model_profile.get('supported_native_tools', frozenset())
-        if unsupported_native_tools := [t for t in native_tools if not isinstance(t, tuple(supported_native_tools))]:
-            unsupported = ', '.join(sorted(type(t).__name__ for t in unsupported_native_tools))
-            supported = ', '.join(sorted(t.__name__ for t in supported_native_tools)) or 'none'
-            raise exceptions.UserError(
-                f'The {model.model_name!r} realtime model does not support the {unsupported} native tool(s). '
-                f'Supported native tools: {supported}.'
-            )
 
         toolset = self._get_toolset(
             output_toolset=None,
@@ -3193,6 +3179,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_request_parameters = models.ModelRequestParameters(
                 function_tools=tool_defs,
                 native_tools=native_tools,
+            )
+            # Run the same native ↔ local-tool fallback swap the classic agent-run path applies (via
+            # `Model._resolve_native_tool_swap`): drop an unsupported native tool when a local fallback
+            # (stamped `unless_native=...` by the capability's toolset) is present, drop the redundant
+            # local tool when the native tool IS supported, and raise the shared `UserError` (suggesting
+            # `local=...`) only when unsupported with no local fallback. Realtime models genuinely default
+            # to supporting no native tools, so the default here is `frozenset()`, not `SUPPORTED_NATIVE_TOOLS`.
+            model_request_parameters = models.resolve_native_tool_swap(
+                model_request_parameters, model_profile.get('supported_native_tools', frozenset())
             )
 
             if message_history and not model_profile.get('supports_session_seeding', False):

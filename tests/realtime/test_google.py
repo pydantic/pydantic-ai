@@ -174,13 +174,13 @@ def test_native_tool_code_execution_maps_to_code_execution() -> None:
 
 
 async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
-    # A native tool outside Gemini's `supported_native_tools` fails up front with the uniform error,
-    # before the Live session connects — the rejection lives in `Agent.realtime_session`, not the mapping.
+    # A native tool outside Gemini's `supported_native_tools`, with no local fallback, fails up front
+    # before the Live session connects — via the same native ↔ local-tool swap the classic agent-run
+    # path applies, so the error points at `local=`.
     agent: Agent[None, str] = Agent()
     with pytest.raises(
         UserError,
-        match=r'does not support the ImageGenerationTool native tool\(s\)\. '
-        r'Supported native tools: CodeExecutionTool, WebFetchTool, WebSearchTool\.',
+        match=r"'ImageGenerationTool'\] not supported by this model.*ImageGeneration\(local=my_func\)",
     ):
         async with agent.realtime(GoogleRealtimeModel(), capabilities=[NativeTool(ImageGenerationTool())]).session():
             pass  # pragma: no cover - validation raises before yielding

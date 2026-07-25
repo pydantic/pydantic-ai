@@ -2496,12 +2496,13 @@ async def test_connection_iter_skips_unmapped_events(monkeypatch: pytest.MonkeyP
 
 
 async def test_agent_realtime_session_rejects_native_tools() -> None:
-    # OpenAI realtime supports no native tools, so any native tool fails up front with the uniform
-    # error, before dialing — the check lives in `Agent.realtime_session`, keyed on the model profile.
+    # OpenAI realtime supports no native tools, so a native tool with no local fallback fails up front,
+    # before dialing — via the same native ↔ local-tool swap the classic agent-run path applies, so the
+    # error points at `local=`.
     agent: Agent[None, str] = Agent()
     with pytest.raises(
         UserError,
-        match=r'does not support the WebSearchTool native tool\(s\)\. Supported native tools: none\.',
+        match=r"not supported by this model.*WebSearch\(local='duckduckgo'\)",
     ):
         async with agent.realtime(
             OpenAIRealtimeModel('gpt-realtime'), capabilities=[NativeTool(WebSearchTool())]

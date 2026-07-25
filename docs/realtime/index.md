@@ -363,10 +363,12 @@ parts a classic run would produce, so it survives the handoff to
 Gemini Live supports `WebSearch` / `WebFetch` (web search and URL context) and code execution (add
 [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] via
 [`NativeTool`][pydantic_ai.capabilities.NativeTool]). The OpenAI and xAI realtime providers support no
-native tools. Each model declares the tools it runs server-side in its
-[`supported_native_tools`][pydantic_ai.realtime.RealtimeModelProfile.supported_native_tools] profile;
-passing an unsupported one raises a [`UserError`][pydantic_ai.exceptions.UserError] naming what the
-model does support, before the session connects.
+native tools — including no native web search — so `WebSearch` there requires a local fallback (e.g.
+`WebSearch(local='duckduckgo')`). Each model declares the tools it runs server-side in its
+[`supported_native_tools`][pydantic_ai.realtime.RealtimeModelProfile.supported_native_tools] profile.
+Just like a classic run, passing an unsupported native tool with a configured local fallback swaps it
+for that local tool before the session connects; without a fallback it raises a
+[`UserError`][pydantic_ai.exceptions.UserError] pointing you at the `local=` option.
 
 !!! warning "`WebFetch` (URL context) isn't supported natively on native-audio models"
     Gemini's native-audio Live models support `WebSearch` (Grounding with Google Search)
