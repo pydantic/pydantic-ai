@@ -366,11 +366,11 @@ class ModelHTTPError(ModelAPIError):
 
     @property
     def retry_after(self) -> float | None:
-        """Seconds to wait before retrying, parsed from the ``Retry-After`` response header.
+        """Seconds to wait before retrying, parsed from the `Retry-After` response header.
 
-        Returns ``None`` when the header is absent or cannot be parsed.  The header value
+        Returns `None` when the header is absent or cannot be parsed. The header value
         is interpreted first as an integer number of seconds, then as an
-        `HTTP-date <https://httpwg.org/specs/rfc9110.html#http.date>`_ string.
+        [HTTP-date](https://httpwg.org/specs/rfc9110.html#http.date) string.
         """
         if self.headers is None:
             return None
