@@ -342,19 +342,19 @@ async def test_session_and_chat_spans_carry_request_config() -> None:
         assert attributes is not None
         # `model_request_parameters` is serialized whole, so the session's configured native tools are
         # inspectable — the reason for surfacing it (e.g. to see which native tools the API was given).
-        params = json.loads(attributes['model_request_parameters'])
+        params = json.loads(str(attributes['model_request_parameters']))
         assert [t['kind'] for t in params['native_tools']] == ['web_search']
         assert [t['name'] for t in params['function_tools']] == ['get_weather']
         # The realtime settings vocabulary (voice, ...) is serialized as-is: it has no OTel-spec home.
-        assert json.loads(attributes['model_settings']) == {'voice': 'alloy', 'max_tokens': 4096}
+        assert json.loads(str(attributes['model_settings'])) == {'voice': 'alloy', 'max_tokens': 4096}
         # Function/output tools are also emitted as `gen_ai.tool.definitions`, like the classic `chat` span.
-        assert json.loads(attributes['gen_ai.tool.definitions']) == [
+        assert json.loads(str(attributes['gen_ai.tool.definitions'])) == [
             {'type': 'function', 'name': 'get_weather', 'parameters': {'type': 'object', 'properties': {}}}
         ]
         # `max_tokens` is the one realtime setting with an OTel-spec `gen_ai.request.*` home.
         assert attributes['gen_ai.request.max_tokens'] == 4096
         # `model_request_parameters` is declared an object so Logfire renders it richly (not a raw string).
-        assert json.loads(attributes['logfire.json_schema'])['properties']['model_request_parameters'] == {
+        assert json.loads(str(attributes['logfire.json_schema']))['properties']['model_request_parameters'] == {
             'type': 'object'
         }
 
@@ -421,7 +421,8 @@ async def test_session_span_records_lifecycle_spans() -> None:
     # They nest under the session span, not the `chat` span.
     assert session_span.context is not None
     for name in ('user speech started', 'turn complete'):
-        assert spans[name].parent is not None and spans[name].parent.span_id == session_span.context.span_id
+        parent = spans[name].parent
+        assert parent is not None and parent.span_id == session_span.context.span_id
 
 
 async def test_session_span_turn_complete_omits_interrupted_when_false() -> None:
