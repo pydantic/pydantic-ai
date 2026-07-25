@@ -281,6 +281,15 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     keyword algorithm; and on providers that DO support it, only the native tool reaches
     the wire (no redundant `search_tools` slot that could confuse the model)."""
 
+    max_retries: int = 1
+    """Maximum number of retries for the internal `search_tools` function tool.
+
+    Defaults to 1 to preserve the intended behavior of not retrying on empty results.
+    Raise it to let the model recover from malformed arguments (e.g. a bare string instead
+    of a list) by feeding the validation error back, mirroring
+    [`Tool.max_retries`][pydantic_ai.tools.Tool.max_retries].
+    """
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
@@ -384,7 +393,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         return _SearchTool(
             toolset=self,
             tool_def=search_tool_def,
-            max_retries=1,
+            max_retries=self.max_retries,
             args_validator=args_validator,
             corpus=corpus,
         )

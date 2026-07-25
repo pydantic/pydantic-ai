@@ -610,6 +610,30 @@ async def test_search_tool_def_description_and_schema():
     )
 
 
+async def test_tool_search_toolset_default_max_retries():
+    """The internal `search_tools` tool defaults to `max_retries=1` (backwards compat)."""
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    assert search_tool.max_retries == 1
+
+
+async def test_tool_search_toolset_custom_max_retries():
+    """A custom `max_retries` propagates to the internal `search_tools` tool."""
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset, max_retries=3)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    assert search_tool.max_retries == 3
+
+
 async def test_tool_search_toolset_search_returns_matching_tools():
     """Test that search_tools returns matching deferred tools."""
     toolset = _create_function_toolset()
