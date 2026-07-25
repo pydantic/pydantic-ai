@@ -1,8 +1,8 @@
 """Realtime camera + voice assistant — talk to a realtime model and show it your camera.
 
-The browser streams microphone audio (PCM16, 16kHz) and ~1 fps JPEG camera frames into a Gemini,
-OpenAI, or Azure OpenAI realtime session and plays the model's audio back: point your camera at
-something and ask about it. xAI realtime is not supported because it has no image input.
+The browser streams microphone audio (PCM16, 16kHz) and low-rate JPEG camera frames (~1 every 2s) into
+a Gemini, OpenAI, or Azure OpenAI realtime session and plays the model's audio back: point your camera
+at something and ask about it. xAI realtime is not supported because it has no image input.
 The assistant can also ground answers with web search and redraw a hand-drawn sketch into a clean
 diagram (see the tool and capability notes below).
 
@@ -44,21 +44,21 @@ Vertex's `v1beta1` API yet, so it's not the default.
 The app is instrumented with Logfire: set `LOGFIRE_TOKEN` (e.g. in the same `.env`) to see the
 realtime session, model turns, and tool calls as traces; without a token nothing is sent.
 
-Web search (the `WebSearch` capability — Grounding with Google Search) is **on by default** so the
-assistant can answer with current facts and cite its sources as chips in the UI; set
-`CAMERA_WEB_SEARCH=false` to disable (or if your model/region doesn't support grounding).
+Web search (the `WebSearch` capability) is **on by default** so the assistant can answer with current
+facts and cite its sources as chips in the UI. It's enabled per session only when the selected model
+supports web search natively (checked through the model's profile), so it stays available alongside the
+drawing tool on a model that supports both (e.g. Gemini 3.1) and simply drops on a model that doesn't
+(e.g. an OpenAI realtime model). Set `CAMERA_WEB_SEARCH=false` to turn it off entirely.
 
 **Redraw a sketch.** Show the camera a hand-drawn diagram (a system design, flow chart, wireframe)
 and ask the assistant to clean it up: it calls the `redraw_diagram` tool with a detailed text
 description of what it drew (the realtime model already has the live camera in context, so it
 describes the diagram rather than re-sending a photo — which keeps the tool fast and captures the
-moment the user meant). A separate drawing agent (Gemini by default — same `GOOGLE_API_KEY`) turns
+moment the user meant). A separate drawing agent (Claude Sonnet 5 through the gateway by default) turns
 that description into a clean, self-contained HTML diagram; the browser renders it in an overlay and
 can export it to PNG client-side. Set `CAMERA_DRAW=false` to disable, or `CAMERA_DRAW_MODEL` to any
-`provider:model`. Because Gemini Live can't combine function calling with Google Search
-grounding in one session, enabling the drawing tool turns web search off. Proactive audio lets a
-Gemini native-audio model decide when to speak and stay silent; affective dialog enables
-emotion-aware delivery. Both settings are Gemini native-audio only.
+`provider:model`. Proactive audio lets a Gemini native-audio model decide when to speak and stay
+silent; affective dialog enables emotion-aware delivery. Both settings are Gemini native-audio only.
 """
 
 from __future__ import annotations
@@ -84,6 +84,7 @@ from pydantic_ai import Agent, BinaryContent, RunContext
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import NativeToolReturnPart
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 from pydantic_ai.realtime import (
     InputSpeechStartEvent,
@@ -145,17 +146,16 @@ PROACTIVE = _truthy(os.environ.get('CAMERA_PROACTIVE'))
 AFFECTIVE = _truthy(os.environ.get('CAMERA_AFFECTIVE'))
 # Sketch-to-diagram: a `redraw_diagram` tool passes the realtime model's text description of the
 # sketch to a separate drawing agent that renders it as clean HTML. On by default; the drawing model
-# defaults to Gemini (same `GOOGLE_API_KEY` as the live session — no extra key). `CAMERA_DRAW_MODEL`
-# takes any `provider:model` string to use a different model.
+# defaults to Claude Sonnet 5 through the Pydantic AI Gateway (`PYDANTIC_AI_GATEWAY_API_KEY`), which is
+# strong at self-contained HTML. `CAMERA_DRAW_MODEL` takes any `provider:model` string to use another
+# model (e.g. `google:gemini-3.5-flash` to reuse the live session's `GOOGLE_API_KEY`).
 DRAW = _truthy(os.environ.get('CAMERA_DRAW', 'true'))
-DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'google:gemini-3.5-flash')
-# Grounding with Google Search (a native tool) — on by default; the native-audio Live models
-# support it. Set `CAMERA_WEB_SEARCH=false` to disable, or if your model/region doesn't support it.
-# (We don't also add `WebFetch` here: Gemini 2.5 / native-audio can't combine Google Search grounding
-# with function calling in one session, so a fetch tool alongside grounding wouldn't be callable.)
-# That same limitation means the `redraw_diagram` tool and grounding are mutually exclusive, so the
-# drawing tool forces web search off.
-WEB_SEARCH = not DRAW and _truthy(os.environ.get('CAMERA_WEB_SEARCH', 'true'))
+DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'gateway/anthropic:claude-sonnet-5')
+# Web search (the `WebSearch` capability) — on by default. It's only enabled for a session when the
+# selected model supports web search natively, checked per connection through the model's profile (see
+# `_web_search_supported`), so it and the drawing tool can be active together on a model that supports
+# both (e.g. Gemini 3.1). Set `CAMERA_WEB_SEARCH=false` to turn it off entirely.
+WEB_SEARCH = _truthy(os.environ.get('CAMERA_WEB_SEARCH', 'true'))
 WATCH_PROMPT = os.environ.get(
     'CAMERA_WATCH_PROMPT',
     "Look at the current camera view. In a few words, say what's changed since you last spoke; "
@@ -163,30 +163,38 @@ WATCH_PROMPT = os.environ.get(
 )
 _INDEX_PATH = Path(__file__).parent / 'index.html'
 
-INSTRUCTIONS = (
-    'You are a friendly, concise voice assistant. The user is talking to you and may show you things '
-    'through their camera — when relevant, describe and reason about what you can see. Keep replies '
-    'short and natural, like a conversation.'
-    + (
-        ' Search the web when a question needs current or external facts.'
-        if WEB_SEARCH
-        else ''
+
+def _instructions(*, web_search: bool) -> str:
+    """The assistant's instructions, built per connection.
+
+    The web-search guidance is included only when web search is actually enabled for the selected model
+    (see `_web_search_supported`), so the model isn't told about a tool it doesn't have.
+    """
+    return (
+        'You are a friendly, concise voice assistant. The user is talking to you and may show you things '
+        'through their camera — when relevant, describe and reason about what you can see. Keep replies '
+        'short and natural, like a conversation.'
+        + (
+            ' Search the web when a question needs current or external facts.'
+            if web_search
+            else ''
+        )
+        + (
+            ' You can redraw a hand-drawn sketch the user shows you — a diagram, system design, flow '
+            'chart, or wireframe — into a clean version with the `redraw_diagram` tool. Do NOT call it '
+            'the moment you see a drawing. First make sure you understand what they actually want: if '
+            "they haven't said, ask one short question — keep it faithful but tidier, turn it into a "
+            'flowchart, restructure it, add or label something? Once their intent is clear, FIRST tell '
+            "them out loud that you're about to redraw it and that it takes a few moments (around 30 "
+            "seconds) — don't leave them waiting in silence — THEN call the tool. The drawing tool "
+            'cannot see the camera, so pass it a thorough text description as `instructions`: every box '
+            'and its label, every arrow and what it connects, groupings, and the overall layout, plus '
+            'what the user asked you to change. Be specific — it can only draw what you describe. Once '
+            'the diagram appears, briefly describe what you drew.'
+            if DRAW
+            else ''
+        )
     )
-    + (
-        ' You can redraw a hand-drawn sketch the user shows you — a diagram, system design, flow '
-        'chart, or wireframe — into a clean version with the `redraw_diagram` tool. Do NOT call it '
-        'the moment you see a drawing. First make sure you understand what they actually want: if '
-        "they haven't said, ask one short question — keep it faithful but tidier, turn it into a "
-        'flowchart, restructure it, add or label something? Once their intent is clear, call the '
-        'tool. The drawing tool cannot see the camera, so pass it a thorough text description as '
-        '`instructions`: every box and its label, every arrow and what it connects, groupings, and '
-        'the overall layout, plus what the user asked you to change. Be specific — it can only draw '
-        "what you describe. It takes a moment, so say you're on it, then briefly describe what you "
-        'drew once it appears.'
-        if DRAW
-        else ''
-    )
-)
 
 
 @dataclass
@@ -200,12 +208,6 @@ class CameraDeps:
     emit: Callable[[dict[str, object]], Awaitable[None]]
 
 
-agent = Agent(
-    name='camera_assistant',  # named so Logfire tells this run apart from the drawing agent's
-    instructions=INSTRUCTIONS,
-    deps_type=CameraDeps,
-    capabilities=[WebSearch()] if WEB_SEARCH else [],
-)
 app = FastAPI()
 logfire.instrument_fastapi(app)
 
@@ -237,42 +239,66 @@ def _extract_html(text: str) -> str:
     return (match.group(1) if match else text).strip()
 
 
-if DRAW:
+async def redraw_diagram(ctx: RunContext[CameraDeps], instructions: str) -> str:
+    """Redraw a sketch the user is showing the camera as a clean diagram on their screen.
 
-    @agent.tool
-    async def redraw_diagram(ctx: RunContext[CameraDeps], instructions: str) -> str:
-        """Redraw a sketch the user is showing the camera as a clean diagram on their screen.
+    Use this for a hand-drawn diagram, system design, flow chart, or wireframe when the user asks
+    to clean it up, redraw, digitize, or "make a proper version" of what they're holding up.
 
-        Use this for a hand-drawn diagram, system design, flow chart, or wireframe when the user asks
-        to clean it up, redraw, digitize, or "make a proper version" of what they're holding up.
+    The drawing tool cannot see the camera, so describe the sketch in full here — it draws only
+    what you describe.
 
-        The drawing tool cannot see the camera, so describe the sketch in full here — it draws only
-        what you describe.
-
-        Args:
-            ctx: The context.
-            instructions: A thorough text description of the diagram to draw: every box and its
-                label, every arrow and what it connects, groupings, overall layout, and any changes
-                the user asked for (e.g. "clean up this microservices diagram and label the queues").
-        """
-        await ctx.deps.emit({'type': 'drawing_started', 'request': instructions})
-        try:
-            result = await _draw_agent().run(
-                DRAW_PROMPT.format(instructions=instructions)
-            )
-        except anyio.get_cancelled_exc_class():
-            # The realtime model cancelled this call mid-draw — e.g. the user barged in, so the provider
-            # abandoned the turn (a `ToolCallCancelled`, which the session maps to task cancellation).
-            # Cancellation is a `BaseException`, so it skips the `except Exception` below; clear the
-            # browser's loading overlay (shielded, since we're unwinding a cancellation) before re-raising.
-            with anyio.CancelScope(shield=True):
-                await ctx.deps.emit({'type': 'drawing_error'})
-            raise
-        except Exception as exc:
+    Args:
+        ctx: The context.
+        instructions: A thorough text description of the diagram to draw: every box and its
+            label, every arrow and what it connects, groupings, overall layout, and any changes
+            the user asked for (e.g. "clean up this microservices diagram and label the queues").
+    """
+    await ctx.deps.emit({'type': 'drawing_started', 'request': instructions})
+    try:
+        result = await _draw_agent().run(DRAW_PROMPT.format(instructions=instructions))
+    except anyio.get_cancelled_exc_class():
+        # The realtime model cancelled this call mid-draw — e.g. the user barged in, so the provider
+        # abandoned the turn (a `ToolCallCancelled`, which the session maps to task cancellation).
+        # Cancellation is a `BaseException`, so it skips the `except Exception` below; clear the
+        # browser's loading overlay (shielded, since we're unwinding a cancellation) before re-raising.
+        with anyio.CancelScope(shield=True):
             await ctx.deps.emit({'type': 'drawing_error'})
-            return f'The redraw failed: {exc}'
-        await ctx.deps.emit({'type': 'drawing', 'html': _extract_html(result.output)})
-        return 'Done — the cleaned-up diagram is on their screen now. Briefly tell them what you drew.'
+        raise
+    except Exception as exc:
+        await ctx.deps.emit({'type': 'drawing_error'})
+        return f'The redraw failed: {exc}'
+    await ctx.deps.emit({'type': 'drawing', 'html': _extract_html(result.output)})
+    return 'Done — the cleaned-up diagram is on their screen now. Briefly tell them what you drew.'
+
+
+def _web_search_supported(model: RealtimeModel) -> bool:
+    """Whether `model` supports web search natively, read from its realtime profile.
+
+    Web search is enabled per connection only when this is true, so switching the model in the UI to one
+    without native web search (e.g. an OpenAI realtime model) simply drops the capability instead of
+    failing the session.
+    """
+    return WebSearchTool in model.profile.get('supported_native_tools', frozenset())
+
+
+def _build_agent(*, web_search: bool) -> Agent[CameraDeps, str]:
+    """Build the camera assistant for one connection.
+
+    The agent is per connection because whether web search is available depends on the selected model
+    (see `_web_search_supported`), so its capabilities and instructions vary. The `redraw_diagram` tool
+    is registered whenever drawing is enabled, independently of web search — the two can be active at once.
+    """
+    agent = Agent(
+        # Named so Logfire tells this run apart from the drawing agent's.
+        name='camera_assistant',
+        instructions=_instructions(web_search=web_search),
+        deps_type=CameraDeps,
+        capabilities=[WebSearch()] if web_search else [],
+    )
+    if DRAW:
+        agent.tool(redraw_diagram)
+    return agent
 
 
 @app.get('/')
@@ -516,6 +542,10 @@ async def ws(socket: WebSocket) -> None:
         logfire.exception('Could not build realtime model')
         await emit({'type': 'error', 'message': str(exc)})
         return
+
+    # Enable web search only when the selected model supports it natively, so it and the drawing tool can
+    # both be active on a model that supports both (e.g. Gemini 3.1) without failing on one that doesn't.
+    agent = _build_agent(web_search=WEB_SEARCH and _web_search_supported(model))
 
     try:
         async with agent.realtime(model, deps=deps).session() as session:
