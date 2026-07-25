@@ -915,7 +915,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         input_transcription_enabled: bool = True,
     ) -> None:
         self._session = session
-        self._profile = profile or DEFAULT_REALTIME_PROFILE
+        self._profile = profile if profile is not None else DEFAULT_REALTIME_PROFILE
         self._input_transcription_enabled = input_transcription_enabled
         # Provider name stamped onto native-tool history parts (grounding / code execution), matching the
         # classic `GoogleModel` (`NativeToolCallPart.provider_name`), so a turn's history is provider-tagged
