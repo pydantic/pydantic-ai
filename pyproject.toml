@@ -168,8 +168,8 @@ dev = [
     "brotli>=1.2.0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
-    # `fastmcp` package alongside.
-    "fastmcp>=3.3.0",
+    # `fastmcp` package alongside. FastMCP 4 uses MCP SDK v2, which is not yet supported (#6661).
+    "fastmcp>=3.3.0,<4",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
 docs = [
