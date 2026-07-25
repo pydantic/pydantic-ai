@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -20,8 +20,15 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
-    from mcp import CreateMessageResult
-    from mcp.types import TextContent
+    if TYPE_CHECKING:
+        from mcp import CreateMessageResult
+        from mcp.types import TextContent
+    else:
+        try:
+            from mcp import CreateMessageResult
+            from mcp.types import TextContent
+        except ImportError:
+            from mcp_types import CreateMessageResult, TextContent
 
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 

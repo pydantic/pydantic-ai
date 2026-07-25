@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import functools
 import json
 import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import AsyncMock
 
 import anyio
@@ -26,7 +28,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
-from pydantic_ai.exceptions import ModelRetry, ToolFailed
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -40,23 +42,38 @@ with try_import() as imports_successful:
         StreamableHttpTransport,
     )
     from fastmcp.exceptions import ToolError
+
+    if TYPE_CHECKING:
+        from mcp.shared.exceptions import McpError
+    else:
+        from fastmcp.exceptions import McpError
     from fastmcp.prompts import Message
     from fastmcp.server import FastMCP
-    from fastmcp.server.tasks import TaskConfig
-    from mcp import types as mcp_types
-    from mcp.shared.exceptions import McpError
-    from mcp.types import (
-        Annotations,
-        AudioContent,
-        BlobResourceContents,
-        EmbeddedResource,
-        ImageContent,
-        ResourceLink,
-        TextContent as McpTextContent,
-        TextResourceContents,
-    )
+
+    try:
+        from fastmcp.server.tasks import TaskConfig
+    except ImportError:
+        from fastmcp.utilities.tasks import TaskConfig
+    if TYPE_CHECKING:
+        TasksExtension: Any
+        from mcp import types as mcp_types
+    else:
+        try:
+            from mcp import types as mcp_types
+        except ImportError:
+            import mcp_types
+
+    Annotations = mcp_types.Annotations
+    AudioContent = mcp_types.AudioContent
+    BlobResourceContents = mcp_types.BlobResourceContents
+    EmbeddedResource = mcp_types.EmbeddedResource
+    ImageContent = mcp_types.ImageContent
+    ResourceLink = mcp_types.ResourceLink
+    McpTextContent = mcp_types.TextContent
+    TextResourceContents = mcp_types.TextResourceContents
     from pydantic import AnyUrl
 
+    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
     from pydantic_ai.mcp import (
         MCPError,
         MCPToolset,
@@ -72,11 +89,40 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.messages import TextContent
 
+    if not TYPE_CHECKING:
+        try:
+            from fastmcp_tasks import TasksExtension
+        except ImportError:
+            TasksExtension = None
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fastmcp not installed'),
     pytest.mark.anyio,
 ]
+
+MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2(mcp_types)
+xfail_missing_task_metadata = pytest.mark.xfail(
+    MCP_SDK_V2,
+    reason='FastMCP 4 does not expose legacy per-tool task metadata',
+    strict=True,
+)
+
+
+def make_mcp_error(code: int, message: str) -> McpError:
+    """Construct an MCP protocol error with either SDK generation."""
+    try:
+        return McpError(mcp_types.ErrorData(code=code, message=message))
+    except TypeError:
+        return cast(Callable[..., McpError], McpError)(code=code, message=message)
+
+
+def wrap_server_notification(notification: Any) -> Any:
+    """Wrap a notification in the SDK v1 root model; SDK v2 uses the value directly."""
+    server_notification = mcp_types.ServerNotification
+    if isinstance(server_notification, type):
+        return server_notification(root=notification)
+    return notification
 
 
 # Construction tests don't need a server and don't take async fixtures.
@@ -99,6 +145,11 @@ class TestMCPToolsetConstruction:
 
     def test_http_client_kwarg_uses_factory(self):
         client = httpx.AsyncClient()
+        if MCP_SDK_V2:
+            with pytest.raises(ValueError, match=r'`http_client`.*`httpx2`'):
+                MCPToolset('https://example.com/mcp', http_client=client)
+            return
+
         toolset = MCPToolset('https://example.com/mcp', http_client=client)
         assert isinstance(toolset.client.transport, StreamableHttpTransport)
         assert toolset.client.transport.httpx_client_factory is not None
@@ -110,12 +161,24 @@ class TestMCPToolsetConstruction:
 
     def test_sse_url_with_http_client_uses_factory(self):
         client = httpx.AsyncClient()
+        if MCP_SDK_V2:
+            with pytest.raises(ValueError, match=r'`http_client`.*`httpx2`'):
+                MCPToolset('https://example.com/sse', http_client=client)
+            return
+
         toolset = MCPToolset('https://example.com/sse', http_client=client)
         assert isinstance(toolset.client.transport, SSETransport)
         assert toolset.client.transport.httpx_client_factory is not None
         assert toolset.client.transport.httpx_client_factory() is client
         factory = _make_httpx_client_factory(client)
         assert factory(follow_redirects=True) is client
+
+    def test_httpx_auth_rejected_by_modern_transport(self):
+        if not MCP_SDK_V2:
+            pytest.skip('FastMCP 3 transports use httpx')
+
+        with pytest.raises(ValueError, match=r'`auth`.*`httpx2`'):
+            MCPToolset('https://example.com/mcp', auth=httpx.BasicAuth('user', 'password'))
 
     def test_http_kwargs_with_non_url_input_raises(self):
         """HTTP-only kwargs (headers/auth/verify/http_client) must error out when the connection
@@ -284,13 +347,13 @@ async def fastmcp_server() -> FastMCP[None]:
         encoded = base64.b64encode(b'fake_blob_bytes').decode('utf-8')
         return EmbeddedResource(
             type='resource',
-            resource=BlobResourceContents(uri=AnyUrl('resource://blob.bin'), blob=encoded),
+            resource=BlobResourceContents(uri=cast(AnyUrl, 'resource://blob.bin'), blob=encoded),
         )
 
     @server.tool()
     async def resource_link_tool() -> ResourceLink:
         """A tool that returns a resource link."""
-        return ResourceLink(type='resource_link', uri=AnyUrl('resource://greeting.txt'), name='greeting')
+        return ResourceLink(type='resource_link', uri=cast(AnyUrl, 'resource://greeting.txt'), name='greeting')
 
     @server.resource('resource://greeting.txt')
     async def greeting() -> str:
@@ -369,7 +432,7 @@ def _register_prompts(server: FastMCP[None]) -> None:
                 content=EmbeddedResource(
                     type='resource',
                     resource=TextResourceContents(
-                        uri=AnyUrl('resource://product_name.txt'),
+                        uri=cast(AnyUrl, 'resource://product_name.txt'),
                         text='Pydantic AI',
                         mimeType='text/plain',
                     ),
@@ -578,7 +641,7 @@ class TestMCPToolsetIntegration:
         'leaf_factory',
         [
             pytest.param(lambda: ToolError('grouped tool error'), id='tool-error'),
-            pytest.param(lambda: McpError(mcp_types.ErrorData(code=400, message='grouped tool error')), id='mcp-error'),
+            pytest.param(lambda: make_mcp_error(400, 'grouped tool error'), id='mcp-error'),
         ],
     )
     async def test_call_tool_unwraps_real_exception_group_to_model_retry(
@@ -613,7 +676,7 @@ class TestMCPToolsetIntegration:
         [
             pytest.param(lambda: ToolError('grouped tool error'), ToolFailed, id='tool-error'),
             pytest.param(
-                lambda: McpError(mcp_types.ErrorData(code=400, message='grouped protocol error')),
+                lambda: make_mcp_error(400, 'grouped protocol error'),
                 ModelRetry,
                 id='mcp-error',
             ),
@@ -841,8 +904,8 @@ class TestMCPToolsetIntegration:
         toolset._cached_prompts = []  # pyright: ignore[reportPrivateUsage]
 
         await handler(
-            mcp_types.ServerNotification(
-                root=mcp_types.PromptListChangedNotification(method='notifications/prompts/list_changed')
+            wrap_server_notification(
+                mcp_types.PromptListChangedNotification(method='notifications/prompts/list_changed')
             )
         )
         assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
@@ -860,9 +923,7 @@ class TestMCPToolsetIntegration:
     async def test_list_prompts_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
-            toolset.client.list_prompts = AsyncMock(
-                side_effect=McpError(mcp_types.ErrorData(code=-32603, message='boom'))
-            )
+            toolset.client.list_prompts = AsyncMock(side_effect=make_mcp_error(-32603, 'boom'))
             with pytest.raises(MCPError, match='boom'):
                 await toolset.list_prompts()
 
@@ -966,7 +1027,7 @@ class TestMCPToolsetIntegration:
                             role='user',
                             content=ResourceLink(
                                 type='resource_link',
-                                uri=AnyUrl('resource://kiwi.jpg'),
+                                uri=cast(AnyUrl, 'resource://kiwi.jpg'),
                                 name='kiwi-image',
                                 title='Kiwi Image',
                                 description='A photo of a kiwi fruit',
@@ -1010,8 +1071,8 @@ class TestMCPToolsetIntegration:
         toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
         # `LoggingMessageNotification` is unrelated to any cache.
         await handler(
-            mcp_types.ServerNotification(
-                root=mcp_types.LoggingMessageNotification(
+            wrap_server_notification(
+                mcp_types.LoggingMessageNotification(
                     method='notifications/message',
                     params=mcp_types.LoggingMessageNotificationParams(level='info', data='hi'),
                 )
@@ -1038,16 +1099,14 @@ class TestMCPToolsetIntegration:
         toolset._cached_resources = []  # pyright: ignore[reportPrivateUsage]
 
         await handler(
-            mcp_types.ServerNotification(
-                root=mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
-            )
+            wrap_server_notification(mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed'))
         )
         assert toolset._cached_tools is None  # pyright: ignore[reportPrivateUsage]
 
         toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
         await handler(
-            mcp_types.ServerNotification(
-                root=mcp_types.ResourceListChangedNotification(method='notifications/resources/list_changed')
+            wrap_server_notification(
+                mcp_types.ResourceListChangedNotification(method='notifications/resources/list_changed')
             )
         )
         assert toolset._cached_resources is None  # pyright: ignore[reportPrivateUsage]
@@ -1062,8 +1121,8 @@ class TestMCPToolsetIntegration:
 
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=user_handler)
-        notification = mcp_types.ServerNotification(
-            root=mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
+        notification = wrap_server_notification(
+            mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
         )
         await handler(notification)
         assert seen == [notification]
@@ -1096,10 +1155,22 @@ class TestMCPToolsetIntegration:
         assert result == 'resource://greeting.txt'
 
     async def test_log_level_is_set_after_aenter(self, fastmcp_server: FastMCP[None]):
-        toolset = MCPToolset(fastmcp_server, log_level='warning')
+        if MCP_SDK_V2:
+            client = cast(Any, Client)(fastmcp_server, mode='legacy')
+            toolset = MCPToolset(client, log_level='warning')
+        else:
+            toolset = MCPToolset(fastmcp_server, log_level='warning')
         async with toolset:
-            # Server received the logging/setLevel call without raising.
             assert toolset.is_running
+
+    async def test_log_level_is_rejected_by_modern_session(self, fastmcp_server: FastMCP[None]):
+        if not MCP_SDK_V2:
+            pytest.skip('MCP SDK v1 only supports legacy sessions')
+
+        toolset = MCPToolset(fastmcp_server, log_level='warning')
+        with pytest.raises(UserError, match='`log_level` is not supported by modern MCP sessions'):
+            async with toolset:
+                pass
 
     async def test_label_falls_back_to_repr(self):
         toolset = MCPToolset('https://example.com/mcp')
@@ -1283,39 +1354,27 @@ class TestResourceMethodErrorPaths:
         """Server errors from `list_resources` are wrapped in `MCPError`."""
         from unittest.mock import AsyncMock
 
-        from mcp.shared.exceptions import McpError
-
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
-            toolset.client.list_resources = AsyncMock(
-                side_effect=McpError(mcp_types.ErrorData(code=-32603, message='boom'))
-            )
+            toolset.client.list_resources = AsyncMock(side_effect=make_mcp_error(-32603, 'boom'))
             with pytest.raises(MCPError, match='boom'):
                 await toolset.list_resources()
 
     async def test_list_resource_templates_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
         from unittest.mock import AsyncMock
 
-        from mcp.shared.exceptions import McpError
-
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
-            toolset.client.list_resource_templates = AsyncMock(
-                side_effect=McpError(mcp_types.ErrorData(code=-32603, message='boom'))
-            )
+            toolset.client.list_resource_templates = AsyncMock(side_effect=make_mcp_error(-32603, 'boom'))
             with pytest.raises(MCPError, match='boom'):
                 await toolset.list_resource_templates()
 
     async def test_read_resource_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
         from unittest.mock import AsyncMock
 
-        from mcp.shared.exceptions import McpError
-
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
-            toolset.client.read_resource = AsyncMock(
-                side_effect=McpError(mcp_types.ErrorData(code=-32002, message='not found'))
-            )
+            toolset.client.read_resource = AsyncMock(side_effect=make_mcp_error(-32002, 'not found'))
             with pytest.raises(MCPError, match='not found'):
                 await toolset.read_resource('resource://missing')
 
@@ -1468,14 +1527,13 @@ def test_construction_does_not_emit_warnings(recwarn: Any) -> None:
 
 
 class TestMCPToolsetBackgroundTasks:
-    """SEP-1686 task-augmented execution. `MCPToolset` reads each tool's server-declared
-    `execution.taskSupport` and routes the call accordingly:
-    `'required'` and `'optional'` go through `client.call_tool(task=True)` -> `tool_task.result()`,
-    while `'forbidden'`/absent stay on the regular sync path."""
+    """SEP-1686 task-augmented execution across the legacy and modern FastMCP APIs."""
 
     @pytest.fixture
     async def task_server(self) -> FastMCP[None]:
         server: FastMCP[None] = FastMCP('task_server')
+        if TasksExtension is not None:
+            getattr(server, 'add_extension')(TasksExtension())
 
         @server.tool(task=TaskConfig(mode='required'))
         async def task_required_tool() -> str:
@@ -1496,6 +1554,7 @@ class TestMCPToolsetBackgroundTasks:
 
         return server
 
+    @xfail_missing_task_metadata
     async def test_get_tools_exposes_task_metadata(
         self, task_server: FastMCP[None], run_context: RunContext[None]
     ) -> None:
@@ -1508,6 +1567,7 @@ class TestMCPToolsetBackgroundTasks:
         assert (tools['task_optional_tool'].tool_def.metadata or {}).get('task') is True
         assert (tools['plain_tool'].tool_def.metadata or {}).get('task') is False
 
+    @xfail_missing_task_metadata
     async def test_required_tool_routes_through_task_path(
         self, task_server: FastMCP[None], run_context: RunContext[None]
     ) -> None:
@@ -1516,9 +1576,11 @@ class TestMCPToolsetBackgroundTasks:
         toolset = MCPToolset(task_server)
         async with toolset:
             tools = await toolset.get_tools(run_context)
+            assert (tools['task_required_tool'].tool_def.metadata or {}).get('task') is True
             result = await toolset.call_tool('task_required_tool', {}, run_context, tools['task_required_tool'])
         assert result == 'task_required_completed'
 
+    @xfail_missing_task_metadata
     async def test_optional_tool_routes_through_task_path(
         self, task_server: FastMCP[None], run_context: RunContext[None]
     ) -> None:
@@ -1527,6 +1589,7 @@ class TestMCPToolsetBackgroundTasks:
         toolset = MCPToolset(task_server)
         async with toolset:
             tools = await toolset.get_tools(run_context)
+            assert (tools['task_optional_tool'].tool_def.metadata or {}).get('task') is True
             result = await toolset.call_tool('task_optional_tool', {}, run_context, tools['task_optional_tool'])
         assert result == 'task_optional_completed'
 
@@ -1549,6 +1612,30 @@ class TestMCPToolsetBackgroundTasks:
             result = await toolset.direct_call_tool('task_required_tool', {}, use_task=True)
         assert result == 'task_required_completed'
 
+    async def test_prebuilt_modern_client_without_task_extension_errors(self, task_server: FastMCP[None]) -> None:
+        if not MCP_SDK_V2:
+            pytest.skip('FastMCP 3 registers tasks directly on the client')
+
+        client = Client(task_server)
+        session_kwargs = cast(dict[str, Any], getattr(client, '_session_kwargs'))
+        cast(dict[str, Any], session_kwargs['extensions']).pop('io.modelcontextprotocol/tasks')
+        cast(dict[str, Any], session_kwargs['result_claims']).pop('io.modelcontextprotocol/tasks')
+        toolset = MCPToolset(client)
+        async with toolset:
+            with pytest.raises(UserError, match=r'pre-built FastMCP 4 client.*task extension'):
+                await toolset.direct_call_tool('task_required_tool', {}, use_task=True)
+
+    async def test_modern_client_in_legacy_mode_rejects_tasks(self, task_server: FastMCP[None]) -> None:
+        if not MCP_SDK_V2:
+            pytest.skip('FastMCP 3 uses the legacy task API')
+
+        client = cast(Any, Client)(task_server, mode='legacy')
+        toolset = MCPToolset(client)
+        async with toolset:
+            with pytest.raises(UserError, match='not supported by FastMCP 4 clients using legacy protocol mode'):
+                await toolset.direct_call_tool('task_required_tool', {}, use_task=True)
+
+    @xfail_missing_task_metadata
     async def test_process_tool_call_receives_use_task_partial(
         self, task_server: FastMCP[None], run_context: RunContext[None]
     ) -> None:
@@ -1556,6 +1643,9 @@ class TestMCPToolsetBackgroundTasks:
         so a custom wrapper doesn't need to know about the task path to preserve it."""
 
         async def passthrough(ctx: RunContext[Any], call_tool: Any, name: str, args: dict[str, Any]) -> Any:
+            assert isinstance(call_tool, functools.partial)
+            assert call_tool.keywords['use_task'] is True
+            call_tool = cast(Callable[..., Awaitable[Any]], call_tool)
             return await call_tool(name, args)
 
         toolset = MCPToolset(task_server, process_tool_call=passthrough)

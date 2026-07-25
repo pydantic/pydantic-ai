@@ -2,27 +2,34 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Sequence
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from typing_extensions import assert_never
 
 from . import exceptions, messages
+from ._mcp_compat import get_mcp_field
 
-try:
+if TYPE_CHECKING:
     from mcp import types as mcp_types
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `mcp` package to use the MCP server, '
-        'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
-    ) from _import_error
+else:
+    try:
+        from mcp import types as mcp_types
+    except ImportError:
+        try:
+            import mcp_types
+        except ImportError as _import_error:
+            raise ImportError(
+                'Please install the `mcp` package to use the MCP server, '
+                'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
+            ) from _import_error
 
 
 def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[messages.ModelMessage]:
     """Convert from MCP create message request parameters to pydantic-ai messages."""
     pai_messages: list[messages.ModelMessage] = []
     request_parts: list[messages.ModelRequestPart] = []
-    if params.systemPrompt:
-        request_parts.append(messages.SystemPromptPart(content=params.systemPrompt))
+    if system_prompt := get_mcp_field(params, 'systemPrompt', 'system_prompt'):
+        request_parts.append(messages.SystemPromptPart(content=cast(str, system_prompt)))
     response_parts: list[messages.ModelResponsePart] = []
     for msg in params.messages:
         content = msg.content
@@ -37,7 +44,10 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
                 user_part_content: str | Sequence[messages.UserContent] = content.text
             elif isinstance(content, (mcp_types.ImageContent, mcp_types.AudioContent)):
                 user_part_content = [
-                    messages.BinaryContent(data=base64.b64decode(content.data), media_type=content.mimeType)
+                    messages.BinaryContent(
+                        data=base64.b64decode(content.data),
+                        media_type=cast(str, get_mcp_field(content, 'mimeType', 'mime_type')),
+                    )
                 ]
             elif isinstance(content, list):
                 raise NotImplementedError('list content type is not yet supported')
