@@ -7,7 +7,7 @@ import re
 import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
-from contextlib import AbstractAsyncContextManager, contextmanager
+from contextlib import AbstractAsyncContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -102,7 +102,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandbox import Sandbox
+from pydantic_ai.sandboxes import Sandbox
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
@@ -2689,8 +2689,8 @@ async def test_temporal_agent_run_in_workflow_with_sandbox(allow_model_requests:
 class SandboxContributingCapability(AbstractCapability[Any]):
     """Capability whose contributed sandbox would be entered as workflow code inside Temporal."""
 
-    def get_sandbox(self, ctx: RunContext[Any]) -> AbstractAsyncContextManager[Sandbox] | None:
-        return None  # pragma: no cover
+    def serve_sandbox(self) -> AbstractAsyncContextManager[Sandbox]:
+        return nullcontext(cast(Sandbox, WorkflowFakeSandbox()))  # pragma: no cover
 
 
 sandbox_capability_agent = Agent(model, name='sandbox_capability_agent', capabilities=[SandboxContributingCapability()])
@@ -2717,7 +2717,7 @@ async def test_temporal_agent_run_in_workflow_with_sandbox_capability(allow_mode
         with workflow_raises(
             UserError,
             snapshot(
-                'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run inside a Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. Create the sandbox in an activity and pass a serializable reference on `deps` instead.'
+                'A capability that contributes a sandbox (overrides `serve_sandbox`) cannot run inside a Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. Create the sandbox in an activity and pass a serializable reference on `deps` instead.'
             ),
         ):
             await client.execute_workflow(

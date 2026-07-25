@@ -32,7 +32,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
-from pydantic_ai.sandbox import Sandbox
+from pydantic_ai.sandboxes import Sandbox
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
@@ -440,11 +440,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed to tools
                 and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
                 The caller owns its lifecycle (create it before the run, tear it down after), and it wins over any
                 sandbox a capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
+                [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox].
         """
         if deferred_tool_results is None:
             deferred_tool_results = self.deferred_tool_results
@@ -543,11 +543,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed to tools
                 and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
                 The caller owns its lifecycle (create it before the run, tear it down after), and it wins over any
                 sandbox a capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
+                [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox].
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
         """
@@ -625,11 +625,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed to tools
                 and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
                 The caller owns its lifecycle (create it before the run, tear it down after), and it wins over any
                 sandbox a capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
+                [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox].
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
             manage_system_prompt: Who owns the system prompt. See

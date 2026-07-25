@@ -2,14 +2,14 @@
 
 Sandboxes give agents a workspace for running commands and working with files. Attach one to an agent run, then access it from tools and capabilities through the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] field. The environment behind that interface might be a subprocess jail, a container, a microVM, or a remote worker.
 
-Pydantic AI defines the **concept, not an implementation**: [`Sandbox`][pydantic_ai.sandbox.Sandbox] is a [structural protocol](https://typing.python.org/en/latest/spec/protocol.html), so any object with the right surface conforms — no base class, no registration, no dependency on any particular sandboxing library. Wire up a Docker container or a cloud sandbox SDK — or start with the shipped, isolation-free [`LocalSandbox`][pydantic_ai.local_sandbox.LocalSandbox] ([below](#a-minimal-local-implementation)).
+Pydantic AI defines the **concept, not an implementation**: [`Sandbox`][pydantic_ai.sandboxes.Sandbox] is a [structural protocol](https://typing.python.org/en/latest/spec/protocol.html), so any object with the right surface conforms — no base class, no registration, no dependency on any particular sandboxing library. Wire up a Docker container or a cloud sandbox SDK — or start with the shipped, isolation-free [`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] ([below](#a-minimal-local-implementation)).
 
 ## The protocol
 
 A sandbox exposes two things: **command execution** and **file access**.
 
 ```python
-from pydantic_ai.sandbox import Sandbox
+from pydantic_ai.sandboxes import Sandbox
 
 
 async def analyze(sandbox: Sandbox) -> str:
@@ -23,20 +23,20 @@ async def analyze(sandbox: Sandbox) -> str:
 
 | Member | What it does |
 |---|---|
-| [`run(command, ...)`][pydantic_ai.sandbox.Sandbox.run] | Execute an argv sequence (or, with `shell=True`, a shell string — a mismatch raises `TypeError`) and wait for the [result][pydantic_ai.sandbox.SandboxResult]. |
-| [`start(command, ...)`][pydantic_ai.sandbox.Sandbox.start] | Start a command and return a [`SandboxProcess`][pydantic_ai.sandbox.SandboxProcess] with `wait()`, `stream()`, and `kill()`. |
-| [`fs`][pydantic_ai.sandbox.Sandbox.fs] | A [`SandboxFilesystem`][pydantic_ai.sandbox.SandboxFilesystem]: `read_bytes`/`write_bytes`, `read_text`/`write_text`, `stat`, `list_dir`, `make_dir`, `remove`, `exists`. |
-| [`working_dir()`][pydantic_ai.sandbox.Sandbox.working_dir] / [`resolve(path)`][pydantic_ai.sandbox.Sandbox.resolve] | The default working directory, and a helper to make model-supplied relative paths absolute. |
-| [`provider`][pydantic_ai.sandbox.Sandbox.provider] / [`sandbox_id`][pydantic_ai.sandbox.Sandbox.sandbox_id] | Identity for logs and serialized references. |
+| [`run(command, ...)`][pydantic_ai.sandboxes.Sandbox.run] | Execute an argv sequence (or, with `shell=True`, a shell string — a mismatch raises `TypeError`) and wait for the [result][pydantic_ai.sandboxes.SandboxResult]. |
+| [`start(command, ...)`][pydantic_ai.sandboxes.Sandbox.start] | Start a command and return a [`SandboxProcess`][pydantic_ai.sandboxes.SandboxProcess] with `wait()`, `stream()`, and `kill()`. |
+| [`fs`][pydantic_ai.sandboxes.Sandbox.fs] | A [`SandboxFilesystem`][pydantic_ai.sandboxes.SandboxFilesystem]: `read_bytes`/`write_bytes`, `read_text`/`write_text`, `stat`, `list_dir`, `make_dir`, `remove`, `exists`. |
+| [`working_dir()`][pydantic_ai.sandboxes.Sandbox.working_dir] / [`resolve(path)`][pydantic_ai.sandboxes.Sandbox.resolve] | The default working directory, and a helper to make model-supplied relative paths absolute. |
+| [`provider`][pydantic_ai.sandboxes.Sandbox.provider] / [`sandbox_id`][pydantic_ai.sandboxes.Sandbox.sandbox_id] | Identity for logs and serialized references. |
 
-Three contracts to know when writing code against the protocol (implementers: see the [API reference][pydantic_ai.sandbox] for the full set):
+Three contracts to know when writing code against the protocol (implementers: see the [API reference][pydantic_ai.sandboxes] for the full set):
 
 - **Optional operations raise `NotImplementedError`.** Not every backend can stream output, kill a process, or bound retained output (`output_limit=`). Treat `NotImplementedError` as "use the fallback": `wait()` instead of `stream()`, `timeout=` instead of `kill()`.
 - **`timeout=` is a kill guarantee** — the command is terminated and an exception deriving from `TimeoutError` is raised. Merely cancelling the awaiting task is *not* guaranteed to stop the remote command.
 - **Results are honest.** A non-zero `exit_code` is a normal result, not an exception; check it.
 
 !!! warning "A sandbox protocol is not a security boundary"
-    Isolation comes from the environment the implementation provides (the container, the VM, the jail) — not from this interface. In particular [`resolve()`][pydantic_ai.sandbox.Sandbox.resolve] is a textual path convenience: `..` can escape the base directory and symlinks are not inspected. If you need path confinement, enforce it in the sandbox itself.
+    Isolation comes from the environment the implementation provides (the container, the VM, the jail) — not from this interface. In particular [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] is a textual path convenience: `..` can escape the base directory and symlinks are not inspected. If you need path confinement, enforce it in the sandbox itself.
 
 ## Attaching a sandbox to a run
 
@@ -70,7 +70,7 @@ async def main() -> None:
 
 Because the caller owns the sandbox, sharing one across several runs (state persists between conversations) is just passing the same handle to each run.
 
-**2. From a capability** — a capability's [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] hook returns the sandbox *as an async context manager*, and the run enters it when the run starts and exits it when the run ends — exactly like a capability [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset], whose enter/exit the run also owns. Teardown is guaranteed by the run (even when the run fails to start), and `ctx.sandbox` is live everywhere except run assembly — `for_run` on capabilities and toolsets, and initial metadata factories, which all resolve before the contribution is entered:
+**2. From a capability** — a sandbox-supplying capability overrides [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox]. Capabilities that only use the sandbox do not override this method; they read the live sandbox from `ctx.sandbox`. Serve a **per-run sandbox** *as an async context manager*: the run enters it when it starts and exits it when it ends — exactly like a capability [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset], whose enter/exit the run also owns. Teardown is guaranteed by the run (even when the run fails to start), and `ctx.sandbox` is live everywhere except run assembly — `for_run` on capabilities and toolsets, and initial metadata factories, which all resolve before the sandbox is entered:
 
 ```python {title="sandbox_capability.py"}
 from contextlib import AbstractAsyncContextManager
@@ -79,14 +79,13 @@ from typing import Any
 
 from my_sandboxes import make_docker_sandbox  # your sandbox library
 
-from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.sandbox import Sandbox
+from pydantic_ai.sandboxes import Sandbox
 
 
 @dataclass
 class MySandboxCapability(AbstractCapability[Any]):
-    def get_sandbox(self, ctx: RunContext[Any]) -> AbstractAsyncContextManager[Sandbox] | None:
+    def serve_sandbox(self) -> AbstractAsyncContextManager[Sandbox]:
         # A fresh sandbox per run: entered when the run starts, exited when it ends.
         return make_docker_sandbox()
 ```
@@ -99,9 +98,9 @@ from sandbox_capability import MySandboxCapability
 agent = Agent('anthropic:claude-sonnet-5', capabilities=[MySandboxCapability()])
 ```
 
-For a **warm sandbox shared across runs**, return `contextlib.nullcontext(sandbox)` — its no-op exit leaves the sandbox running between conversations.
+For a **warm sandbox shared across runs**, serve the sandbox itself — a bare [`Sandbox`][pydantic_ai.sandboxes.Sandbox] is attached as-is and never entered or exited, so it keeps running between conversations. A sandbox that is itself an async context manager is entered, so serve `contextlib.nullcontext(sandbox)` to keep that one warm.
 
-A sandbox passed to the run method **wins** over anything a capability would contribute — the hook is then never called, exactly like run-level `model_settings` beating capability settings. Among capabilities, the one **latest in the resolved chain** wins (with no [ordering constraints][pydantic_ai.capabilities.CapabilityOrdering] in play, that's the last one registered); earlier capabilities are only consulted if it returns `None`, and losers never build a context manager. Deferred capabilities are never consulted: the run's sandbox is resolved once, before the first model request.
+A sandbox passed to the run method **wins** over anything a capability would serve — the hook is then never called, exactly like run-level `model_settings` beating capability settings. Among sandbox suppliers, the one **latest in the resolved chain** wins (with no [ordering constraints][pydantic_ai.capabilities.CapabilityOrdering] in play, that's the last one registered), and losing suppliers never build a sandbox. Deferred capabilities are never consulted: the run's sandbox is resolved once, before the first model request.
 
 ## Durable execution
 
@@ -150,7 +149,7 @@ Re-opening by `sandbox_id` inside each tool call is exactly why the protocol req
 
 ## A minimal local implementation
 
-Pydantic AI ships one batteries-included implementation, [`LocalSandbox`][pydantic_ai.local_sandbox.LocalSandbox]: host subprocesses and the host filesystem behind the protocol surface. It **isolates nothing** — use it for trusted workloads, tests, and development, and swap in a real sandbox for anything else. POSIX only; construction raises `NotImplementedError` elsewhere:
+Pydantic AI ships one batteries-included implementation, [`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox]: host subprocesses and the host filesystem behind the protocol surface. It **isolates nothing** — use it for trusted workloads, tests, and development, and swap in a real sandbox for anything else. POSIX only; construction raises `NotImplementedError` elsewhere:
 
 ```python
 from pydantic_ai import Agent, LocalSandbox, RunContext, UserError
@@ -172,12 +171,12 @@ async def main() -> None:
         await agent.run('Write fizzbuzz to fizzbuzz.py and run it.', sandbox=sandbox)
 ```
 
-It is also the reference for implementing the protocol yourself: the floor is deliberately small — [its source][pydantic_ai.local_sandbox.LocalSandbox] is one page over `asyncio.subprocess` and `pathlib`, and most of that page is spent honoring the contracts rather than filling in the surface: the process-group kill behind the `timeout=` guarantee, `env=` overlaying the host environment instead of replacing it, `TypeError` on command/shell mismatches, and honest `NotImplementedError`s for what it can't do. Implement the same surface over whatever backend you have, and let the type checker verify conformance — a single assignment is the whole "registration" story:
+It is also the reference for implementing the protocol yourself: the floor is deliberately small — [its source][pydantic_ai.sandboxes.LocalSandbox] is one page over `asyncio.subprocess` and `pathlib`, and most of that page is spent honoring the contracts rather than filling in the surface: the process-group kill behind the `timeout=` guarantee, `env=` overlaying the host environment instead of replacing it, `TypeError` on command/shell mismatches, and honest `NotImplementedError`s for what it can't do. Implement the same surface over whatever backend you have, and let the type checker verify conformance — a single assignment is the whole "registration" story:
 
 ```python
 from my_sandboxes import DockerSandbox  # any object with the right surface
 
-from pydantic_ai.sandbox import Sandbox
+from pydantic_ai.sandboxes import Sandbox
 
 sandbox: Sandbox = DockerSandbox(image='python:3.13')  # type-checked structurally
 ```

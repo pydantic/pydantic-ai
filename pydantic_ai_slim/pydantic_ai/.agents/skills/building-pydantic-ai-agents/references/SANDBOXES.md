@@ -1,6 +1,6 @@
 # Sandboxes
 
-Use a sandbox when tools need an execution environment for commands or files. Pydantic AI attaches a sandbox to a run through the structural [`Sandbox`][pydantic_ai.sandbox.Sandbox] protocol; it does not decide which command or file tools the model may call.
+Use a sandbox when tools need an execution environment for commands or files. Pydantic AI attaches a sandbox to a run through the structural [`Sandbox`][pydantic_ai.sandboxes.Sandbox] protocol; it does not decide which command or file tools the model may call.
 
 ## Attach and expose
 
@@ -31,8 +31,8 @@ async def main() -> None:
 ## Ownership and precedence
 
 - The caller of `run(sandbox=...)` owns the sandbox: create it before the run, tear it down after (typically an `async with` around the run). It wins over any capability contribution.
-- A capability contributes by returning an async context manager from `get_sandbox` (sync hook): the run enters it at run start and exits it at run end, like a capability toolset. Return a fresh context manager for a per-run sandbox, or `contextlib.nullcontext(sandbox)` for a warm sandbox shared across runs.
-- Among capabilities, the latest in the resolved chain wins; earlier ones are only consulted when it returns `None`, and deferred capabilities are never consulted.
+- A sandbox-supplying capability overrides `serve_sandbox` and returns an async context manager: the run enters it at run start and exits it at run end, like a capability toolset. Capabilities that only use the sandbox do not override this method. Return a fresh context manager for a per-run sandbox, or the sandbox itself for a warm sandbox shared across runs.
+- Among sandbox suppliers, the latest in the resolved chain wins, and deferred capabilities are never consulted.
 - The handle is available on `ctx.sandbox` for the whole run (capability-contributed: everywhere except `for_run` and initial metadata factories).
 
 ## Durable execution

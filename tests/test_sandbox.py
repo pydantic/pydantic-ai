@@ -1,5 +1,5 @@
 """Tests for the sandbox concept: the `Sandbox` protocol and the read-only `RunContext.sandbox`
-field, populated from the `sandbox=` run argument or a capability's `get_sandbox` contribution."""
+field, populated from the `sandbox=` run argument or a capability's `serve_sandbox` contribution."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandbox import Sandbox
+from pydantic_ai.sandboxes import Sandbox
 from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RunUsage
 
@@ -276,12 +276,12 @@ async def test_sandbox_available_during_streamed_run():
 
 @dataclass
 class SandboxCapability(AbstractCapability[Any]):
-    """Canonical contributor: a fresh sandbox per run, entered and exited by the run itself."""
+    """Canonical supplier: a fresh sandbox per run, entered and exited by the run itself."""
 
     name: str = 'cap'
     events: list[str] = field(default_factory=lambda: [])
 
-    def get_sandbox(self, ctx: RunContext[Any]) -> AbstractAsyncContextManager[Sandbox] | None:
+    def serve_sandbox(self) -> AbstractAsyncContextManager[Sandbox]:
         self.events.append(f'{self.name}:offered')
 
         @asynccontextmanager
@@ -337,19 +337,15 @@ async def test_last_capability_in_chain_wins_and_losers_are_never_consulted():
     assert first.events == []
 
 
-async def test_capability_returning_none_falls_back_to_earlier_capability():
+async def test_capability_without_sandbox_does_not_mask_supplier():
     @dataclass
-    class Abstaining(SandboxCapability):
-        def get_sandbox(self, ctx: RunContext[Any]) -> AbstractAsyncContextManager[Sandbox] | None:
-            self.events.append(f'{self.name}:offered-none')
-            return None
+    class NonSupplier(AbstractCapability[Any]):
+        pass
 
     contributor = SandboxCapability(name='contributor')
-    abstainer = Abstaining(name='abstainer')
     seen: list[str] = []
-    await make_probe_agent(seen, capabilities=[contributor, abstainer]).run('go')
+    await make_probe_agent(seen, capabilities=[contributor, NonSupplier()]).run('go')
     assert seen == ['contributor']
-    assert abstainer.events == ['abstainer:offered-none']
 
 
 async def test_warm_sandbox_shared_across_runs():
@@ -357,7 +353,7 @@ async def test_warm_sandbox_shared_across_runs():
 
     @dataclass
     class WarmSandboxCapability(AbstractCapability[Any]):
-        def get_sandbox(self, ctx: RunContext[Any]) -> AbstractAsyncContextManager[Sandbox] | None:
+        def serve_sandbox(self) -> AbstractAsyncContextManager[Sandbox]:
             return nullcontext(warm)
 
     observed: list[Any] = []
@@ -373,6 +369,20 @@ async def test_warm_sandbox_shared_across_runs():
     assert observed == [warm, warm]
 
 
+async def test_bare_sandbox_is_used_without_being_entered():
+    """A capability may serve a bare `Sandbox`; the run then never brackets its lifecycle."""
+    warm = FakeSandbox('bare')
+
+    @dataclass
+    class BareSandboxCapability(AbstractCapability[Any]):
+        def serve_sandbox(self) -> Sandbox:
+            return warm
+
+    seen: list[str] = []
+    await make_probe_agent(seen, capabilities=[BareSandboxCapability()]).run('go')
+    assert seen == ['bare']
+
+
 async def test_deferred_capability_never_contributes():
     cap = SandboxCapability(name='deferred')
     cap.id = 'deferred-sandbox'
@@ -383,7 +393,7 @@ async def test_deferred_capability_never_contributes():
     assert cap.events == []
 
 
-async def test_wrapper_capability_forwards_get_sandbox():
+async def test_wrapper_capability_forwards_serve_sandbox():
     inner = SandboxCapability(name='inner')
     seen: list[str] = []
     await make_probe_agent(seen, capabilities=[WrapperCapability(wrapped=inner)]).run('go')

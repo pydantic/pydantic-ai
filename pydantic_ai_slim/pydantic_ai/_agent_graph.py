@@ -69,7 +69,7 @@ from .tools import (
 if TYPE_CHECKING:
     from .agent import Agent
     from .models.instrumented import InstrumentationSettings
-    from .sandbox import Sandbox
+    from .sandboxes import Sandbox
 
 __all__ = (
     'GraphAgentState',
@@ -372,7 +372,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     discovered_tool_names: set[str]
 
     # Set once before the graph starts — from the `sandbox=` run argument or a capability's
-    # `get_sandbox` contribution — and never changes during the run.
+    # `serve_sandbox` contribution — and never changes during the run.
     sandbox: Sandbox | None
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)

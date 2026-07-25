@@ -32,7 +32,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.run import AgentRunResultEvent
-from pydantic_ai.sandbox import Sandbox
+from pydantic_ai.sandboxes import Sandbox
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -459,7 +459,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed as the readonly
                 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
                 before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
                 arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.
@@ -473,7 +473,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
             )
         self._reject_unsupported_runtime_toolsets(toolsets)
-        # A `get_sandbox` contribution would be entered as replayed workflow code, which is not
+        # A `serve_sandbox` contribution would be entered as replayed workflow code, which is not
         # replay-safe. Checked statically over the bound chain and per-run capabilities; a
         # contributor produced at run time by a dynamic capability function cannot be caught here.
         if contributes_sandbox(self.wrapped.root_capability) or any(
@@ -482,7 +482,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             for capability in capabilities or ()
         ):
             raise UserError(
-                'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run in a DBOS durable '
+                'A capability that contributes a sandbox (overrides `serve_sandbox`) cannot run in a DBOS durable '
                 'workflow: the sandbox would be entered in workflow code, which is replayed during recovery. '
                 'Pass a serializable reference on `deps` and re-open the sandbox inside a DBOS step instead.'
             )
@@ -627,7 +627,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed as the readonly
                 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
                 before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
                 arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.
@@ -641,7 +641,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
             )
         self._reject_unsupported_runtime_toolsets(toolsets)
-        # A `get_sandbox` contribution would be entered as replayed workflow code, which is not
+        # A `serve_sandbox` contribution would be entered as replayed workflow code, which is not
         # replay-safe. Checked statically over the bound chain and per-run capabilities; a
         # contributor produced at run time by a dynamic capability function cannot be caught here.
         if contributes_sandbox(self.wrapped.root_capability) or any(
@@ -650,7 +650,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             for capability in capabilities or ()
         ):
             raise UserError(
-                'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run in a DBOS durable '
+                'A capability that contributes a sandbox (overrides `serve_sandbox`) cannot run in a DBOS durable '
                 'workflow: the sandbox would be entered in workflow code, which is replayed during recovery. '
                 'Pass a serializable reference on `deps` and re-open the sandbox inside a DBOS step instead.'
             )
@@ -794,7 +794,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed as the readonly
                 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
                 before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
                 arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.
@@ -961,7 +961,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed as the readonly
                 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
                 before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
                 arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.
@@ -1140,7 +1140,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed as the readonly
                 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
                 before the run and tear it down after. Not supported for DBOS durable runs (`run`/`run_sync`), whose
                 arguments are pickled as workflow inputs: pass a serializable reference on `deps` instead.

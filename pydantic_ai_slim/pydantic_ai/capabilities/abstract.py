@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
-    from pydantic_ai.sandbox import Sandbox
+    from pydantic_ai.sandboxes import Sandbox
     from pydantic_graph import End
 
 # --- Handler type aliases for use in hook method signatures ---
@@ -421,24 +421,32 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def get_sandbox(self, ctx: RunContext[AgentDepsT]) -> AbstractAsyncContextManager[Sandbox] | None:
-        """Return a [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, as an async context manager, or `None`.
+    def serve_sandbox(self) -> AbstractAsyncContextManager[Sandbox] | Sandbox | None:
+        """Serve a [`Sandbox`][pydantic_ai.sandboxes.Sandbox] for this run.
 
         Consulted once per run, only when no `sandbox=` was passed to the run method (the run
-        argument wins and this hook is then never called). Among capabilities, the one latest
-        in the resolved chain wins; earlier ones are only consulted if it returns `None`, and
+        argument wins and this hook is then never called). Among capabilities, the supplier latest
+        in the resolved chain wins; capabilities that do not override this method do not contribute, and
         [deferred][pydantic_ai.capabilities.AbstractCapability.defer_loading] capabilities are
-        never consulted. The run enters the returned context manager when the run starts and
-        exits it when the run ends — exactly like a capability
-        [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset] — so
-        [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox] is live from `before_run`
+        never consulted.
+
+        Serve a per-run sandbox as an async context manager (e.g. the result of an
+        `@asynccontextmanager` factory, or a sandbox object that manages its own lifecycle as
+        one). The run enters it when the run starts and exits it when the run ends — exactly
+        like a capability [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset] —
+        so [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox] is live from `before_run`
         through `after_run`/`on_run_error`, and teardown is guaranteed even when the run
         fails to start.
 
-        Return a per-run sandbox as a fresh context manager (e.g. the result of an
-        `@asynccontextmanager` factory, or a sandbox object that manages its own lifecycle as
-        an async context manager). Return a warm sandbox shared across runs as
-        `contextlib.nullcontext(sandbox)` — its no-op exit leaves the sandbox running.
+        Serve a warm sandbox shared across runs as the sandbox itself: it is attached to the run
+        as-is and never entered or exited, so it keeps running and its lifecycle stays with the
+        capability. A sandbox that is itself an async context manager is entered, so serve it as
+        `contextlib.nullcontext(sandbox)` to keep it warm.
+
+        Only override this method when the capability supplies a sandbox, and use the non-optional
+        return type in the override. The inherited implementation returns `None`, meaning the
+        capability is not a sandbox supplier. A capability that only consumes `ctx.sandbox` should
+        not override this method.
         """
         return None
 

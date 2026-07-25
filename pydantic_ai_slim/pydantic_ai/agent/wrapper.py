@@ -15,7 +15,7 @@ from .._json_schema import JsonSchema
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun
-from ..sandbox import Sandbox
+from ..sandboxes import Sandbox
 from ..settings import ModelSettings
 from ..template import TemplateStr
 from ..tools import (
@@ -272,11 +272,11 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed to tools
                 and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
                 The caller owns its lifecycle (create it before the run, tear it down after), and it wins over any
                 sandbox a capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
+                [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox].
             spec: Optional agent spec to apply for this run.
 
         Returns:

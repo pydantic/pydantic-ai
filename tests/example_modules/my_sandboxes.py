@@ -1,6 +1,6 @@
 """A fictional third-party sandbox library imported by the examples in `docs/sandbox.md`.
 
-`DockerSandbox` conforms to the `pydantic_ai.sandbox.Sandbox` protocol structurally (pinned
+`DockerSandbox` conforms to the `pydantic_ai.sandboxes.Sandbox` protocol structurally (pinned
 at the bottom), but nothing here runs real containers: commands succeed with empty output and
 the "filesystem" is an in-memory dict.
 """
@@ -14,7 +14,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pydantic_ai.sandbox import Sandbox, SandboxProcess
+    from pydantic_ai.sandboxes import Sandbox, SandboxProcess
 
 
 @dataclass(frozen=True)

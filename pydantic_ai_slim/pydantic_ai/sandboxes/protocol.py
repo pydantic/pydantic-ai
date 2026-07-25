@@ -1,8 +1,8 @@
-"""A structural protocol for sandboxes: isolated execution environments attached to an agent run.
+"""Structural protocols for execution environments attached to an agent run.
 
 A *sandbox* is an environment — a subprocess jail, a container, a microVM, a remote worker —
 that an agent run can execute commands in and read/write files of. Pydantic AI defines the
-protocol only: any object that structurally satisfies [`Sandbox`][pydantic_ai.sandbox.Sandbox]
+protocol only: any object that structurally satisfies [`Sandbox`][pydantic_ai.sandboxes.Sandbox]
 can be attached to a run via the `sandbox=` argument to the run methods. Tools and
 capabilities then reach it through the read-only
 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] field.
@@ -20,9 +20,9 @@ in this module silently breaks every existing implementation. New operations mus
 concrete types or as new, separate protocols, never as members of these.
 
 Every type in this module — including the plain data carriers
-[`SandboxResult`][pydantic_ai.sandbox.SandboxResult],
-[`SandboxOutputChunk`][pydantic_ai.sandbox.SandboxOutputChunk], and
-[`SandboxFileEntry`][pydantic_ai.sandbox.SandboxFileEntry] — is a protocol rather than a
+[`SandboxResult`][pydantic_ai.sandboxes.SandboxResult],
+[`SandboxOutputChunk`][pydantic_ai.sandboxes.SandboxOutputChunk], and
+[`SandboxFileEntry`][pydantic_ai.sandboxes.SandboxFileEntry] — is a protocol rather than a
 concrete class for the same reason: a sandbox library's existing native types conform as-is,
 with no pydantic-ai dependency or adapter layer. The carriers declare their members as
 *read-only properties* deliberately: a bare annotated protocol member demands a settable
@@ -48,7 +48,7 @@ Contracts every implementation must honor:
   joined by guesswork. Since `str` is itself a `Sequence[str]`, the type checker cannot catch
   the mismatch; this runtime rejection is what keeps it from becoming an injection vector.
 - **The protocol is not a security boundary.** Isolation comes from the environment the
-  implementation provides; [`resolve`][pydantic_ai.sandbox.Sandbox.resolve] is a textual
+  implementation provides; [`resolve`][pydantic_ai.sandboxes.Sandbox.resolve] is a textual
   convenience that does not confine paths.
 """
 
@@ -114,7 +114,7 @@ class SandboxResult(Protocol):
 class SandboxOutputChunk(Protocol):
     """A chunk of live output from a started process.
 
-    Structural, like [`SandboxResult`][pydantic_ai.sandbox.SandboxResult]: implementations
+    Structural, like [`SandboxResult`][pydantic_ai.sandboxes.SandboxResult]: implementations
     yield their native chunk types.
     """
 
@@ -132,7 +132,7 @@ class SandboxOutputChunk(Protocol):
 class SandboxFileEntry(Protocol):
     """Metadata about a file or directory inside the sandbox.
 
-    Structural, like [`SandboxResult`][pydantic_ai.sandbox.SandboxResult]: implementations
+    Structural, like [`SandboxResult`][pydantic_ai.sandboxes.SandboxResult]: implementations
     return their native entry types.
     """
 
@@ -160,7 +160,7 @@ class SandboxFileEntry(Protocol):
 class SandboxProcess(Protocol):
     """A started command inside a sandbox.
 
-    Returned by [`Sandbox.start`][pydantic_ai.sandbox.Sandbox.start]. `wait()` must be safe to
+    Returned by [`Sandbox.start`][pydantic_ai.sandboxes.Sandbox.start]. `wait()` must be safe to
     call more than once (and concurrently), returning the same result each time.
     """
 
@@ -198,7 +198,7 @@ class SandboxFilesystem(Protocol):
     """File access inside a sandbox.
 
     All paths are absolute POSIX paths; use
-    [`Sandbox.resolve`][pydantic_ai.sandbox.Sandbox.resolve] to turn model-supplied relative
+    [`Sandbox.resolve`][pydantic_ai.sandboxes.Sandbox.resolve] to turn model-supplied relative
     paths into absolute ones first.
     """
 
@@ -244,7 +244,7 @@ class Sandbox(Protocol):
     """An isolated execution environment attached to an agent run.
 
     Structural protocol: any object with these members conforms — no registration or base
-    class required. See the [module docstring][pydantic_ai.sandbox] for the contracts
+    class required. See the [module doc string][pydantic_ai.sandboxes] for the contracts
     implementations must honor, and the [sandbox documentation](../sandbox.md) for lifecycle
     rules: this protocol deliberately contains no create/destroy/connect surface, because the
     supplier of a sandbox always owns its lifecycle.
@@ -298,7 +298,7 @@ class Sandbox(Protocol):
             command: An argv sequence, or a shell string with `shell=True`.
             shell: Whether to interpret `command` with the sandbox's shell.
             cwd: Absolute working directory for the command; defaults to the sandbox's
-                [`working_dir`][pydantic_ai.sandbox.Sandbox.working_dir].
+                [`working_dir`][pydantic_ai.sandboxes.Sandbox.working_dir].
             env: Extra environment variables for the command.
             timeout: Deadline in seconds. On expiry the command is killed and an exception
                 deriving from `TimeoutError` is raised.
@@ -321,9 +321,9 @@ class Sandbox(Protocol):
     ) -> SandboxProcess:
         """Start a command without waiting, returning a handle to the running process.
 
-        Prefer `start()` + [`stream()`][pydantic_ai.sandbox.SandboxProcess.stream] +
-        [`wait()`][pydantic_ai.sandbox.SandboxProcess.wait] over
-        [`run()`][pydantic_ai.sandbox.Sandbox.run] when output produced before a timeout or
+        Prefer `start()` + [`stream()`][pydantic_ai.sandboxes.SandboxProcess.stream] +
+        [`wait()`][pydantic_ai.sandboxes.SandboxProcess.wait] over
+        [`run()`][pydantic_ai.sandboxes.Sandbox.run] when output produced before a timeout or
         kill matters. Arguments as for `run()`.
         """
         ...
@@ -335,7 +335,7 @@ class Sandbox(Protocol):
     async def resolve(self, path: str, *, base: str | None = None) -> str:
         """Resolve a possibly-relative path to an absolute POSIX path.
 
-        Joins `path` onto `base` (default: [`working_dir`][pydantic_ai.sandbox.Sandbox.working_dir])
+        Joins `path` onto `base` (default: [`working_dir`][pydantic_ai.sandboxes.Sandbox.working_dir])
         and normalizes it textually. This is a spelling convenience for model-supplied paths,
         **not** a confinement mechanism: `..` segments can escape `base` and symlinks are not
         inspected. Isolation is the sandbox's job, not this method's.

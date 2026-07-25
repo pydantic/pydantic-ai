@@ -68,7 +68,7 @@ from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
-from ..sandbox import Sandbox
+from ..sandboxes import Sandbox
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -1093,11 +1093,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed to tools
                 and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
                 The caller owns its lifecycle (create it before the run, tear it down after), and it wins over any
                 sandbox a capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
+                [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox].
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1647,14 +1647,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
             if capability_owns_current_model:
                 await enter_model(model_used)
-            # A capability-contributed sandbox is resolved once per run and bracketed by the
-            # run's own exit stack — mirroring capability toolsets, whose enter/exit the run
-            # also owns. Entered before the graph run, so it exits after toolset `__aexit__`
-            # and `after_run`/`on_run_error`: `ctx.sandbox` is live for the whole run and
-            # teardown is guaranteed even when the run fails to start. Skipped entirely when
-            # the caller passed `sandbox=` — the caller then owns the lifecycle.
-            if sandbox is None and (sandbox_cm := run_capability.get_sandbox(initial_ctx)) is not None:
-                graph_deps.sandbox = await stack.enter_async_context(sandbox_cm)
+            # A capability-served sandbox is resolved once per run. A context manager is
+            # bracketed by the run's own exit stack — mirroring capability toolsets, whose
+            # enter/exit the run also owns. Entered before the graph run, so it exits after
+            # toolset `__aexit__` and `after_run`/`on_run_error`: `ctx.sandbox` is live for the
+            # whole run and teardown is guaranteed even when the run fails to start. A bare
+            # `Sandbox` is attached as-is; its lifecycle stays with the capability. Skipped
+            # entirely when the caller passed `sandbox=` — the caller then owns the lifecycle.
+            if sandbox is None and (served_sandbox := run_capability.serve_sandbox()) is not None:
+                graph_deps.sandbox = (
+                    await stack.enter_async_context(served_sandbox)
+                    if isinstance(served_sandbox, AbstractAsyncContextManager)
+                    else served_sandbox
+                )
             graph_run = await stack.enter_async_context(
                 graph.iter(
                     inputs=user_prompt_node,

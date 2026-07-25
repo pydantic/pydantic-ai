@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
     from .models import Model
-    from .sandbox import Sandbox
+    from .sandboxes import Sandbox
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
@@ -117,14 +117,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
     and during agent construction.
     """
     sandbox: Sandbox | None = None
-    """The [`Sandbox`][pydantic_ai.sandbox.Sandbox] attached to this run, if any.
+    """The [`Sandbox`][pydantic_ai.sandboxes.Sandbox] attached to this run, if any.
 
     Set once per run — from the `sandbox=` run argument (caller-owned, available from the
     earliest hooks on) or from a capability's
-    [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] contribution
-    (entered and exited by the run itself, available everywhere except run assembly:
-    `for_run` on capabilities and toolsets, and initial metadata factories). Treat it as
-    read-only.
+    [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox] contribution
+    (available everywhere except run assembly: `for_run` on capabilities and toolsets, and
+    initial metadata factories). Treat it as read-only.
 
     Not available in `TemporalRunContext` — a live sandbox handle is not serializable across
     Temporal activity boundaries; see the [sandbox docs](../sandbox.md#durable-execution) for

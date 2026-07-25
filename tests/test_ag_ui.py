@@ -74,7 +74,7 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT
-from pydantic_ai.sandbox import Sandbox
+from pydantic_ai.sandboxes import Sandbox
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,

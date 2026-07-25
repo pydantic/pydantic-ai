@@ -11,7 +11,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
-    from pydantic_ai.sandbox import Sandbox
+    from pydantic_ai.sandboxes import Sandbox
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""

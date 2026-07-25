@@ -1,6 +1,6 @@
-"""A minimal local implementation of the [sandbox protocol][pydantic_ai.sandbox.Sandbox].
+"""A minimal local implementation of the [sandbox protocol][pydantic_ai.sandboxes.Sandbox].
 
-[`LocalSandbox`][pydantic_ai.local_sandbox.LocalSandbox] runs commands as plain host
+[`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] runs commands as plain host
 subprocesses and touches the real filesystem through `pathlib` — it **isolates nothing**.
 It exists so the sandbox concept works out of the box for trusted workloads, tests, and
 development, and doubles as the reference for implementing the protocol: the whole thing
@@ -50,10 +50,10 @@ from typing import TYPE_CHECKING, NoReturn
 
 from typing_extensions import Self
 
-from .sandbox import SandboxCommand
+from .protocol import SandboxCommand
 
 if TYPE_CHECKING:
-    from .sandbox import Sandbox
+    from .protocol import Sandbox
 
 __all__ = ('LocalSandbox',)
 
@@ -136,7 +136,7 @@ class _LocalFilesystem:
 
 
 class LocalSandbox:
-    """[`Sandbox`][pydantic_ai.sandbox.Sandbox] over host subprocesses and the host filesystem. Isolates nothing.
+    """[`Sandbox`][pydantic_ai.sandboxes.Sandbox] over host subprocesses and the host filesystem. Isolates nothing.
 
     Implements the protocol *structurally* — deliberately no base class, like any
     third-party implementation. Conformance is pinned by the type-checked assignment at

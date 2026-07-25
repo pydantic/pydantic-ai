@@ -35,7 +35,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.run import AgentRunResultEvent
-from pydantic_ai.sandbox import Sandbox
+from pydantic_ai.sandboxes import Sandbox
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -450,7 +450,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed as the readonly
                 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
                 before the run and tear it down after. Not supported inside a Temporal workflow: pass a serializable
                 reference on `deps` and re-open the sandbox inside your tools instead.
@@ -470,7 +470,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'exist in workflow code where I/O is forbidden and cannot cross into activities. Pass a '
                     'serializable reference on `deps` instead and re-open the sandbox inside your tools.'
                 )
-            # A `get_sandbox` contribution would be entered as workflow code, where the I/O of
+            # A `serve_sandbox` contribution would be entered as workflow code, where the I/O of
             # creating or connecting to a sandbox is forbidden. Checked statically over the bound
             # capability chain and any per-run capabilities; a contributor produced at run time by
             # a dynamic capability function cannot be caught here and fails inside the workflow
@@ -481,7 +481,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 for capability in capabilities or ()
             ):
                 raise UserError(
-                    'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run inside a '
+                    'A capability that contributes a sandbox (overrides `serve_sandbox`) cannot run inside a '
                     'Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. '
                     'Create the sandbox in an activity and pass a serializable reference on `deps` instead.'
                 )
@@ -624,7 +624,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed as the readonly
                 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
                 before the run and tear it down after. Not supported inside a Temporal workflow: pass a serializable
                 reference on `deps` and re-open the sandbox inside your tools instead.
@@ -771,7 +771,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed as the readonly
                 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
                 before the run and tear it down after. Not supported inside a Temporal workflow: pass a serializable
                 reference on `deps` and re-open the sandbox inside your tools instead.
@@ -938,7 +938,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed as the readonly
                 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
                 before the run and tear it down after. Not supported inside a Temporal workflow: pass a serializable
                 reference on `deps` and re-open the sandbox inside your tools instead.
@@ -1140,7 +1140,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed as the readonly
                 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
                 before the run and tear it down after. Not supported inside a Temporal workflow: pass a serializable
                 reference on `deps` and re-open the sandbox inside your tools instead.
