@@ -209,7 +209,7 @@ caller's own HTTP client.  A convenience property
 returns the number of seconds to wait as a `float`, handling both the integer
 delta-seconds and HTTP-date formats:
 
-```python {title="handle_rate_limit.py" test="skip"}
+```python {title="handle_rate_limit.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
 

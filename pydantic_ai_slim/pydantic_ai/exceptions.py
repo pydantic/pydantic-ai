@@ -358,10 +358,10 @@ class ModelHTTPError(ModelAPIError):
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         super().__init__(model_name=model_name, message=message)
 
-    def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:
+    def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:  # pyright: ignore[reportIncompatibleMethodOverride]
         return self.__class__, (self.status_code, self.model_name, self.body), {'headers': self.headers}
 
-    def __setstate__(self, state: dict[str, Any]) -> None:
+    def __setstate__(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         self.headers = state.get('headers')
 
     @property

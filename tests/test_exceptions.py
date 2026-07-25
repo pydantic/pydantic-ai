@@ -334,7 +334,7 @@ def test_model_http_error_headers_provider_openai():
     import httpx
     import openai
 
-    from pydantic_ai.models.openai import _map_api_errors
+    from pydantic_ai.models.openai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
 
     req = httpx.Request('POST', 'https://api.openai.com/v1/chat/completions')
     resp = httpx.Response(429, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, request=req)
@@ -357,7 +357,7 @@ def test_model_http_error_headers_provider_anthropic():
     anthropic = pytest.importorskip('anthropic', reason='anthropic extra not installed')
     import httpx
 
-    from pydantic_ai.models.anthropic import _map_api_errors
+    from pydantic_ai.models.anthropic import _map_api_errors  # pyright: ignore[reportPrivateUsage]
 
     req = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
     resp = httpx.Response(
@@ -383,9 +383,9 @@ def test_model_http_error_headers_provider_bedrock():
     pytest.importorskip('botocore', reason='botocore (bedrock extra) not installed')
     from botocore.exceptions import ClientError
 
-    from pydantic_ai.models.bedrock import _map_api_errors
+    from pydantic_ai.models.bedrock import _map_api_errors  # pyright: ignore[reportPrivateUsage]
 
-    error_response = {
+    error_response: Any = {
         'Error': {'Code': 'ThrottlingException', 'Message': 'Too many requests'},
         'ResponseMetadata': {
             'HTTPStatusCode': 429,
@@ -409,11 +409,11 @@ def test_model_http_error_headers_provider_xai_no_headers():
     """xAI errors are gRPC-based: no HTTP response headers, so ModelHTTPError.headers is None."""
     grpc = pytest.importorskip('grpc', reason='grpcio (xai extra) not installed')
 
-    from pydantic_ai.models.xai import _map_api_errors
+    from pydantic_ai.models.xai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
 
     class _FakeRpcError(grpc.RpcError):
-        def code(self) -> grpc.StatusCode:
-            return grpc.StatusCode.RESOURCE_EXHAUSTED
+        def code(self) -> Any:  # grpc.StatusCode only known at runtime
+            return grpc.StatusCode.RESOURCE_EXHAUSTED  # pyright: ignore[reportUnknownMemberType]
 
         def details(self) -> str:
             return 'quota exceeded'
