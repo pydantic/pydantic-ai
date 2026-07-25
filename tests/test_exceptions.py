@@ -349,14 +349,30 @@ def test_model_http_error_retry_after_overflow():
     assert exc.retry_after is None
 
 
+def test_model_http_error_retry_after_http_date_asctime():
+    """retry_after handles the asctime HTTP-date format (RFC 9110 §5.6.7 obs-date).
+
+    Python's parsedate_to_datetime returns a *naive* datetime for the asctime
+    format because the string carries no timezone. Without the fix the subtraction
+    from an aware datetime.now(UTC) raises TypeError which is caught and silently
+    returns None — a false negative. The fix normalises the naive datetime to UTC
+    before computing the wait, so a future asctime date yields a positive float.
+    """
+    # Far-future date so the wait is always positive regardless of when the test runs.
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': 'Sun Nov  6 08:49:37 2099'})
+    result = exc.retry_after
+    assert result is not None
+    assert result > 0
+
+
 def test_model_http_error_headers_provider_openai():
     """Headers from an openai.APIStatusError land on ModelHTTPError.
 
     This is a unit test — not a VCR test — because the header propagation path
     lives in our own _map_api_errors helper, not in recorded API behaviour.
     """
+    openai = pytest.importorskip('openai', reason='openai extra not installed')
     import httpx
-    import openai
 
     from pydantic_ai.models.openai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
 

@@ -387,6 +387,9 @@ class ModelHTTPError(ModelAPIError):
         try:
             retry_time = parsedate_to_datetime(raw)
             assert isinstance(retry_time, datetime)
+            # asctime-date format (RFC 9110 §5.6.7) carries no timezone; treat as UTC.
+            if retry_time.tzinfo is None:
+                retry_time = retry_time.replace(tzinfo=timezone.utc)
             wait = (retry_time - datetime.now(timezone.utc)).total_seconds()
             return max(0.0, wait)
         except (ValueError, TypeError, AssertionError):

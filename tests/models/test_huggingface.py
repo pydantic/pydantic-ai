@@ -8,6 +8,7 @@ from functools import cached_property
 from typing import Any, Literal, cast
 from unittest.mock import Mock
 
+import httpx
 import pytest
 from typing_extensions import TypedDict
 
@@ -750,8 +751,6 @@ async def test_image_as_binary_content_input(
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
-    import httpx
-
     error = HfHubHTTPError(
         message='test_error',
         response=Mock(status_code=500, content={'error': 'test error'}, headers=httpx.Headers({'x-request-id': 'abc'})),
