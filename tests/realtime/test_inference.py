@@ -15,6 +15,11 @@ with try_import() as imports_successful:
     import google.genai  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import xai_sdk  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
+with try_import() as bedrock_imports_successful:
+    # Inferring the Bedrock realtime model imports the `aws-sdk-bedrock-runtime` SDK, so its dispatch
+    # case only runs when the `realtime-bedrock` optional dependency is installed.
+    import aws_sdk_bedrock_runtime  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
 
 @pytest.mark.skipif(not imports_successful(), reason='xai-sdk / google-genai not installed')
 def test_infer_realtime_models(env: TestEnv) -> None:
@@ -91,8 +96,17 @@ def test_azure_rejects_non_azure_provider(env: TestEnv) -> None:
         AzureRealtimeModel('gpt-realtime', provider='openai')
 
 
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='aws-sdk-bedrock-runtime not installed')
+def test_infer_realtime_model_bedrock() -> None:
+    # The `bedrock:` prefix selects the experimental `BedrockRealtimeModel`, carrying the (colon-bearing)
+    # Nova Sonic model id through as `model_name`.
+    bedrock_model = infer_realtime_model('bedrock:amazon.nova-2-sonic-v1:0')
+    assert type(bedrock_model).__name__ == 'BedrockRealtimeModel'
+    assert bedrock_model.model_name == 'amazon.nova-2-sonic-v1:0'
+
+
 def test_infer_realtime_model_unknown_provider() -> None:
-    with pytest.raises(UserError, match='Supported providers are `openai`, `azure`, `xai`, and `google`'):
+    with pytest.raises(UserError, match='Supported providers are `openai`, `azure`, `xai`, `google`, and `bedrock`'):
         infer_realtime_model('anthropic:voice')
 
     with pytest.raises(UserError):
