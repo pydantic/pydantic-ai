@@ -1,10 +1,10 @@
-"""Keep the capability docs honest about what ships.
+"""Keep the README honest about what ships.
 
-Every capability package must document itself with a `README.md` and a unified
-docs page. A capability cannot land without showing up in the docs site, so its
-document inventory cannot silently fall behind the code. This is the mechanical half of
-docs parity; the semantic half (does the prose match the code as written) is a
-review-time concern, not a unit test.
+Every capability package must document itself with a `README.md` and be linked
+from the top-level `README.md`. A capability cannot land without showing up in
+the docs, so the "what's available today" tables cannot silently fall behind the
+code. This is the mechanical half of docs parity; the semantic half (does the
+prose match the code as written) is a review-time concern, not a unit test.
 """
 
 from __future__ import annotations
@@ -18,14 +18,14 @@ _ROOT = Path(__file__).parent.parent
 _PACKAGE = _ROOT / 'pydantic_ai_harness'
 
 # The `experimental` package is a namespace/warning shim, not a capability, so it
-# has no standalone README or unified docs page.
+# has no standalone README and is not listed in the top-level tables.
 _NAMESPACE_PACKAGES = {_PACKAGE / 'experimental'}
 
 
 def _is_deprecation_shim(package: Path) -> bool:
     """A package left at a moved capability's old path re-exports it and calls `warn_moved`.
 
-    Such shims carry no docs of their own, so they are excluded from the capability docs inventory.
+    Such shims carry no docs of their own, so they are excluded from the capability tables.
     """
     return 'warn_moved(' in (package / '__init__.py').read_text(encoding='utf-8')
 
@@ -61,6 +61,20 @@ def test_capability_has_readme(package: Path) -> None:
     assert readme.exists(), (
         f'{package.relative_to(_ROOT)} is an importable capability package but has no README.md. '
         'Add one (start from an existing capability README) so its public surface is documented.'
+    )
+
+
+@pytest.mark.parametrize('package', _CAPABILITY_PACKAGES, ids=lambda p: str(p.relative_to(_ROOT)))
+def test_capability_linked_from_top_readme(package: Path) -> None:
+    top_readme = (_ROOT / 'README.md').read_text(encoding='utf-8')
+    link_target = f'{package.relative_to(_ROOT).as_posix()}/'
+    # Require an actual Markdown link to the package, not just the path appearing
+    # anywhere (prose or an unrelated URL would otherwise satisfy the check).
+    linked = any(t.startswith(link_target) for t in _markdown_link_targets(top_readme))
+    assert linked, (
+        f'{package.relative_to(_ROOT)} is not linked from the top-level README.md. '
+        f'Add a row for it (linking `{link_target}`) to the "What\'s available today" or "Roadmap" tables '
+        'so the README stays in step with the code.'
     )
 
 
@@ -125,30 +139,6 @@ _CAPABILITY_PAGE_META = {
 def _markdown_link_targets(text: str) -> list[str]:
     """Every `](target)` destination in the text -- so a bare path mention is not a link."""
     return re.findall(r'\]\(([^)\s]+)\)', text)
-
-
-def _assert_page_links_source(page: Path, module: str) -> None:
-    expected = f'{_SOURCE_LINK}{module}/'
-    targets = _markdown_link_targets(page.read_text(encoding='utf-8'))
-    assert any(expected in target for target in targets), (
-        f'{page.relative_to(_ROOT)} must link its own source module (a Markdown link containing `{expected}`).'
-    )
-
-
-@pytest.mark.parametrize('package', _CAPABILITY_PACKAGES, ids=lambda p: str(p.relative_to(_ROOT)))
-def test_capability_has_unified_doc(package: Path) -> None:
-    module = package.relative_to(_PACKAGE).as_posix()
-    designated_pages = [name for name, (source_module, _) in _CAPABILITY_PAGE_META.items() if source_module == module]
-    assert len(designated_pages) == 1, (
-        f'{package.relative_to(_ROOT)} must map to exactly one unified docs page in _CAPABILITY_PAGE_META; '
-        f'found {designated_pages}.'
-    )
-
-    page = _DOCS_DIR / designated_pages[0]
-    assert page.exists(), (
-        f'{package.relative_to(_ROOT)} is missing its designated docs page: {page.relative_to(_ROOT)}.'
-    )
-    _assert_page_links_source(page, module)
 
 
 def _strip_frontmatter(text: str) -> str:
@@ -261,7 +251,12 @@ def test_capability_doc_pages_discovered() -> None:
 @pytest.mark.parametrize('page', _CAPABILITY_DOC_PAGES, ids=lambda p: p.name)
 def test_doc_page_links_its_source(page: Path) -> None:
     module, _ = _CAPABILITY_PAGE_META[page.name]
-    _assert_page_links_source(page, module)
+    expected = f'{_SOURCE_LINK}{module}/'
+    targets = _markdown_link_targets(page.read_text(encoding='utf-8'))
+    assert any(expected in t for t in targets), (
+        f'{page.relative_to(_ROOT)} must link its own source module as a Markdown link '
+        f'(target containing `{expected}`), not just mention the prefix or link a different module.'
+    )
 
 
 @pytest.mark.parametrize('page', _CAPABILITY_DOC_PAGES, ids=lambda p: p.name)
