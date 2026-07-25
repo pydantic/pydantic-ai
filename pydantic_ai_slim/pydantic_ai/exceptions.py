@@ -378,8 +378,11 @@ class ModelHTTPError(ModelAPIError):
         if raw is None:
             return None
         try:
-            return float(int(raw))
-        except ValueError:
+            seconds = int(raw)
+            if seconds < 0:
+                return None
+            return float(seconds)
+        except (ValueError, OverflowError):
             pass
         try:
             retry_time = parsedate_to_datetime(raw)

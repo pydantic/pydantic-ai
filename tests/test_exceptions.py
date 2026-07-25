@@ -325,6 +325,30 @@ def test_model_http_error_retry_after_unparseable():
     assert exc.retry_after is None
 
 
+def test_model_http_error_retry_after_negative():
+    """retry_after returns None for a negative Retry-After value.
+
+    Negative delta-seconds are not defined by RFC 9110 — a server that sends
+    Retry-After: -1 is misbehaving, and we must not propagate a negative wait
+    time to callers who would sleep for a negative duration.
+    """
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': '-1'})
+    assert exc.retry_after is None
+
+
+def test_model_http_error_retry_after_overflow():
+    """retry_after returns None for an astronomically large integer Retry-After.
+
+    float(int(very_large_string)) raises OverflowError in Python when the integer
+    cannot be represented as a finite float. The except clause must cover it so
+    callers always receive None rather than an unhandled exception.
+    """
+    # 10^309 cannot be represented as a finite double
+    huge = '1' + '0' * 309
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': huge})
+    assert exc.retry_after is None
+
+
 def test_model_http_error_headers_provider_openai():
     """Headers from an openai.APIStatusError land on ModelHTTPError.
 
