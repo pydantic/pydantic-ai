@@ -436,6 +436,37 @@ async def test_session_span_turn_complete_omits_interrupted_when_false() -> None
     assert dict(turn_complete.attributes or {}) == {}
 
 
+async def test_interrupt_records_lifecycle_span_with_audio_offset() -> None:
+    # A barge-in records an `interrupt` lifecycle span; when the caller passes `audio_end_ms` (the ms of
+    # output audio actually played before truncating), it's recorded so the trace shows how far the
+    # response got before the user cut in.
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection([TurnCompleteEvent()]), _ok_runner, instrumentation=settings, model_name='gpt-realtime'
+    )
+    async with session:
+        await session.interrupt(audio_end_ms=1500)
+        _ = [event async for event in session]
+
+    interrupt = next(s for s in exporter.get_finished_spans() if s.name == 'interrupt')
+    assert dict(interrupt.attributes or {}) == {'audio_end_ms': 1500}
+
+
+async def test_interrupt_without_offset_records_bare_lifecycle_span() -> None:
+    # A cancel without truncation (no `audio_end_ms`) still records the `interrupt` marker, with no
+    # null attribute.
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection([TurnCompleteEvent()]), _ok_runner, instrumentation=settings, model_name='gpt-realtime'
+    )
+    async with session:
+        await session.interrupt()
+        _ = [event async for event in session]
+
+    interrupt = next(s for s in exporter.get_finished_spans() if s.name == 'interrupt')
+    assert dict(interrupt.attributes or {}) == {}
+
+
 async def test_unnamed_agent_session_span_defaults_agent_name() -> None:
     # An agent with no `name=` still gets `agent_name='agent'` on its session span (both the semconv
     # `gen_ai.agent.name` and legacy `agent_name` keys), mirroring the classic run span. Backends that

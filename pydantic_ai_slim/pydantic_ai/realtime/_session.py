@@ -783,6 +783,10 @@ class RealtimeSession:
                 )
             await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
         await self._connection.send(CancelResponse())
+        # Mark the barge-in in the trace. When the caller supplied `audio_end_ms` (the ms of output audio
+        # actually played before truncating), record it so a reader can see how far the response got before
+        # the user cut in; it's dropped when absent (a cancel without truncation).
+        self._record_lifecycle_event('interrupt', audio_end_ms=audio_end_ms)
 
     def _require_capability(self, supported: bool, method: str, feature: str) -> None:
         """Raise a clear `UserError` before sending when the model doesn't support `method`."""
