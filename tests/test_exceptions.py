@@ -413,7 +413,7 @@ def test_model_http_error_headers_provider_xai_no_headers():
 
     class _FakeRpcError(grpc.RpcError):
         def code(self) -> Any:  # grpc.StatusCode only known at runtime
-            return grpc.StatusCode.RESOURCE_EXHAUSTED  # pyright: ignore[reportUnknownMemberType]
+            return grpc.StatusCode.RESOURCE_EXHAUSTED
 
         def details(self) -> str:
             return 'quota exceeded'
