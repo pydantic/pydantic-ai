@@ -1657,7 +1657,7 @@ class TestGoogle:
         req = httpx.Request('POST', 'https://generativelanguage.googleapis.com/v1beta/models')
         resp = httpx.Response(429, headers={'retry-after': '10', 'x-goog-request-id': 'rid-1'}, request=req)
         error_with_response = errors.APIError(429, {'error': {'code': 429, 'message': 'Rate limited'}})
-        error_with_response.response = resp  # type: ignore[attr-defined]
+        error_with_response.response = resp
         mocker.patch.object(model._client.aio.models, 'embed_content', side_effect=error_with_response)  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(ModelHTTPError) as exc_info:
