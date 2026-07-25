@@ -1609,7 +1609,7 @@ class TestGoogle:
 
         model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
         error_without_response = errors.APIError(503, {'error': {'code': 503, 'message': 'Unavailable'}})
-        mocker.patch.object(model._client.aio.models, 'embed_content', side_effect=error_without_response)
+        mocker.patch.object(model._client.aio.models, 'embed_content', side_effect=error_without_response)  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(ModelHTTPError) as exc_info:
             await model.embed(['test'], input_type='query')
@@ -1623,13 +1623,44 @@ class TestGoogle:
 
         model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
         error_without_response = errors.APIError(503, {'error': {'code': 503, 'message': 'Unavailable'}})
-        mocker.patch.object(model._client.aio.models, 'count_tokens', side_effect=error_without_response)
+        mocker.patch.object(model._client.aio.models, 'count_tokens', side_effect=error_without_response)  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(ModelHTTPError) as exc_info:
             await model.count_tokens('test')
 
         assert exc_info.value.status_code == 503
         assert exc_info.value.headers is None
+
+    async def test_embed_error_low_status_code(self, gemini_api_key: str, mocker: MockerFixture):
+        """An APIError with code < 400 is re-raised verbatim, not wrapped in ModelHTTPError.
+
+        GoogleEmbeddingModel only wraps errors with status_code >= 400. A code below
+        400 is a non-HTTP-error signal from the SDK; the original exception propagates.
+        This covers the `raise` (else) branch of `if (status_code := e.code) >= 400`.
+        """
+        from google.genai import errors
+
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        low_code_error = errors.APIError(0, {'error': {'code': 0, 'message': 'Unknown'}})
+        mocker.patch.object(model._client.aio.models, 'embed_content', side_effect=low_code_error)  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(errors.APIError) as exc_info:
+            await model.embed(['test'], input_type='query')
+
+        assert exc_info.value is low_code_error
+
+    async def test_count_tokens_error_low_status_code(self, gemini_api_key: str, mocker: MockerFixture):
+        """Same as test_embed_error_low_status_code for the count_tokens path."""
+        from google.genai import errors
+
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        low_code_error = errors.APIError(0, {'error': {'code': 0, 'message': 'Unknown'}})
+        mocker.patch.object(model._client.aio.models, 'count_tokens', side_effect=low_code_error)  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(errors.APIError) as exc_info:
+            await model.count_tokens('test')
+
+        assert exc_info.value is low_code_error
 
     async def test_query_with_task_type(self, embedder: Embedder):
         result = await embedder.embed_query(
