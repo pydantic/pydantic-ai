@@ -354,7 +354,7 @@ def test_model_http_error_headers_provider_openai():
 
 def test_model_http_error_headers_provider_anthropic():
     """Headers from an anthropic.APIStatusError land on ModelHTTPError."""
-    import anthropic
+    anthropic = pytest.importorskip('anthropic', reason='anthropic extra not installed')
     import httpx
 
     from pydantic_ai.models.anthropic import _map_api_errors
@@ -380,6 +380,7 @@ def test_model_http_error_headers_provider_anthropic():
 
 def test_model_http_error_headers_provider_bedrock():
     """Headers from a botocore.ClientError land on ModelHTTPError."""
+    pytest.importorskip('botocore', reason='botocore (bedrock extra) not installed')
     from botocore.exceptions import ClientError
 
     from pydantic_ai.models.bedrock import _map_api_errors
@@ -406,7 +407,7 @@ def test_model_http_error_headers_provider_bedrock():
 
 def test_model_http_error_headers_provider_xai_no_headers():
     """xAI errors are gRPC-based: no HTTP response headers, so ModelHTTPError.headers is None."""
-    import grpc
+    grpc = pytest.importorskip('grpc', reason='grpcio (xai extra) not installed')
 
     from pydantic_ai.models.xai import _map_api_errors
 
