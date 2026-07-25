@@ -276,7 +276,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
                     body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
                     headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
                 ) from e
-            raise  # pragma: no cover
+            raise
 
         embeddings: list[list[float]] = [emb.values for emb in (response.embeddings or []) if emb.values is not None]
 
@@ -306,7 +306,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
                     body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
                     headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
                 ) from e
-            raise  # pragma: no cover
+            raise
 
         if response.total_tokens is None:
             raise UnexpectedModelBehavior('Token counting returned no result')  # pragma: no cover
