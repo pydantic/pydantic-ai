@@ -505,6 +505,12 @@ class BedrockConverseModel(Model[BaseClient]):
 
         super().__init__(settings=settings, profile=profile)
 
+        if self.profile.get('bedrock_supported_on_converse', True) is False:
+            raise UserError(
+                f'Model {model_name!r} is not served by the Bedrock Converse API. Use `BedrockMantleProvider` '
+                "(the `bedrock-mantle:` prefix) to access it through Bedrock Mantle's OpenAI-compatible API."
+            )
+
     @property
     def client(self) -> BedrockRuntimeClient:
         """The boto3 client used to make requests to the Bedrock Converse API.

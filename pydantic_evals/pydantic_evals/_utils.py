@@ -118,7 +118,7 @@ async def task_group_gather(tasks: Sequence[Callable[[], Awaitable[T]]]) -> list
     Returns:
         A list of results in the same order as the input tasks.
     """
-    results: list[T] = [None] * len(tasks)  # type: ignore
+    results: list[T] = [None] * len(tasks)  # pyright: ignore[reportAssignmentType]
 
     async def _run_task(tsk: Callable[[], Awaitable[T]], index: int) -> None:
         """Helper function to run a task and store the result in the correct index."""
