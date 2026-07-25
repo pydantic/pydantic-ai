@@ -31,6 +31,7 @@ uv add "pydantic-ai-harness[dynamic-workflow]"  # DynamicWorkflow (adds the Mont
 uv add "pydantic-ai-harness[modal]"             # ModalSandbox (adds the Modal SDK)
 uv add "pydantic-ai-harness[logfire]"           # ManagedPrompt (Logfire-managed prompts)
 uv add "pydantic-ai-harness[exa]"               # ExaSearch + ExaAgent (web research via the Exa API)
+uv add "pydantic-ai-harness[skills]"            # Skills (loads SKILL.md frontmatter)
 uv add "pydantic-ai-harness[acp]"               # ACP (serve an agent to editors over the Agent Client Protocol)
 ```
 
@@ -172,7 +173,7 @@ We studied leading coding agents, agent frameworks, and Claw-style assistants to
 | | **Media externalization** | Offload large `BinaryContent` to content-addressed stores (building blocks) | :white_check_mark: [Docs](pydantic_ai_harness/media/) | |
 | **Agent orchestration** | **Sub-agents** | Delegate subtasks to specialized child agents | :white_check_mark: [Docs](pydantic_ai_harness/subagents/) | [subagents-pydantic-ai](https://github.com/vstorm-co/subagents-pydantic-ai) (vstorm&#8209;co) |
 | | **Dynamic workflow** | Orchestrate sub-agents from a model-written Python script -- fan-out, chaining, voting in one tool call | :white_check_mark: [Docs](pydantic_ai_harness/dynamic_workflow/) | |
-| | **Skills** | Progressive tool loading -- search, activate, deactivate | :construction: [PR&nbsp;#183](https://github.com/pydantic/pydantic-ai-harness/pull/183) | [pydantic-ai-skills](https://github.com/DougTrajano/pydantic-ai-skills) (DougTrajano), [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
+| | **Skills** | Load Agent Skill instructions as on-demand capabilities | :white_check_mark: [Docs](pydantic_ai_harness/skills/) | [pydantic-ai-skills](https://github.com/DougTrajano/pydantic-ai-skills) (DougTrajano), [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
 | | **Planning** | Break complex tasks into structured plans before execution | :white_check_mark: [Docs](pydantic_ai_harness/planning/) | |
 | | **Runtime authoring** | Let an agent author, validate, and load real capabilities at runtime | :white_check_mark: [Docs](pydantic_ai_harness/runtime_authoring/) | |
 | | **Task tracking** | Track tasks, subtasks, and dependencies | :memo: [#65](https://github.com/pydantic/pydantic-ai-harness/issues/65) | [pydantic-ai-todo](https://github.com/vstorm-co/pydantic-ai-todo) (vstorm&#8209;co) |
@@ -202,11 +203,11 @@ import logfire
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP, Thinking, ToolSearch, WebSearch
 from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness.skills import Skills
 
 # Community packages, alphabetical:
 from pydantic_ai_backends import ConsoleCapability
 from pydantic_ai_shields import CostTracking, InputGuard, SecretRedaction, ToolGuard
-from pydantic_ai_skills import SkillsCapability
 from pydantic_ai_summarization import ContextManagerCapability
 from pydantic_ai_todo import TodoCapability
 from pydantic_deep import MemoryCapability, StuckLoopDetection
@@ -254,11 +255,8 @@ agent = Agent(
         MemoryCapability(agent_name='harness-example'),
 
         # --- Orchestration ---
-        # Agent skills (Anthropic's spec) by @DougTrajano:
-        # https://github.com/DougTrajano/pydantic-ai-skills
-        # @vstorm-co's pydantic-deep also offers skills loading; the two have different
-        # spec footprints (Doug's is closer to programmatic skills).
-        SkillsCapability(directories=['./skills']),
+        # Load Agent Skill instructions only when the model needs them.
+        Skills(directories=['./skills']),
 
         # Spawn sub-agents with their own toolsets and instructions. By @vstorm-co:
         # https://github.com/vstorm-co/subagents-pydantic-ai
