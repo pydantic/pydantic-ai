@@ -132,11 +132,11 @@ Checks:
 - Docs explain composition constraints and safety implications.
 - The PR links an issue.
 
-The mechanical half of these checks (README present + linked, flat page present,
-source link present, name matches, no experimental strings on non-ACP pages, no
-hook name in the lead) is enforced by `tests/test_docs_parity.py`. The semantic
-half (does the prose match the code, are snippets truly runnable) is what the
-reviewer below is for.
+The mechanical half of these checks (README present and source-linked,
+designated flat page present and source-linked, name matches, no experimental
+strings on non-ACP pages, no hook name in the lead) is enforced by
+`tests/test_docs_parity.py`. The semantic half (does the prose match the code,
+are snippets truly runnable) is what the reviewer below is for.
 
 This is the last documentation gate before merge. Run the `docs-parity-reviewer`
 subagent (`.agents/agents/docs-parity-reviewer.md`) on the change as the final

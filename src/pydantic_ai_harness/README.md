@@ -13,9 +13,9 @@ Pydantic AI's [capabilities](https://ai.pydantic.dev/capabilities/) and [hooks](
 
 **Pydantic AI Harness** is the official capability library for Pydantic AI, maintained by the [Pydantic AI](https://github.com/pydantic/pydantic-ai) team. Pydantic AI core ships capabilities that require model or framework support, and capabilities fundamental to every agent -- [web search](https://ai.pydantic.dev/capabilities/#provider-adaptive-tools), [tool search](https://ai.pydantic.dev/deferred-tools/), [thinking](https://ai.pydantic.dev/capabilities/#thinking). Everything else lives here: standalone building blocks you pick and choose to turn your agent into a coding agent, a research assistant, or anything else. This is also where new capabilities start -- as they stabilize and prove themselves broadly essential, they can graduate into core.
 
-The [capability matrix](#capability-matrix) tracks where we are. [Tell us what to prioritize.](#help-us-prioritize)
+[Browse the capability docs](https://pydantic.dev/docs/ai/harness/) or [tell us what to prioritize](#help-us-prioritize).
 
-**Contents:** [Installation](#installation) · [Quick start](#quick-start) · [DynamicWorkflow](#orchestrating-sub-agents-dynamicworkflow) · [Capability matrix](#capability-matrix) · [An ecosystem agent](#an-ecosystem-agent) · [Help us prioritize](#help-us-prioritize) · [Build your own](#build-your-own) · [Contributing](#contributing) · [Version policy](#version-policy) · [Pydantic AI references](#pydantic-ai-references) · [License](#license)
+**Contents:** [Installation](#installation) · [Quick start](#quick-start) · [DynamicWorkflow](#orchestrating-sub-agents-dynamicworkflow) · [An ecosystem agent](#an-ecosystem-agent) · [Help us prioritize](#help-us-prioritize) · [Build your own](#build-your-own) · [Contributing](#contributing) · [Version policy](#version-policy) · [Pydantic AI references](#pydantic-ai-references) · [License](#license)
 
 ## Installation
 
@@ -138,64 +138,9 @@ It composes with the rest of the harness:
 
 [Full tutorial →](pydantic_ai_harness/dynamic_workflow/)
 
-## Capability matrix
-
-We studied leading coding agents, agent frameworks, and Claw-style assistants to map every capability area that matters for production agents. Each one is tracked as an [issue](https://github.com/pydantic/pydantic-ai-harness/issues) in this repo.
-
-**Vote on whatever is linked in the Status column** -- PRs if we're actively building it, issues if it's planned -- to help us decide what to work on next.
-
-| Category | Capability | Description | Status | Community&nbsp;alternatives |
-|---|---|---|---|---|
-| **Tools &&nbsp;execution** | **Code mode** | Sandboxed Python execution via [Monty](https://github.com/pydantic/monty) -- one `run_code` call replaces N tool calls | :white_check_mark: [Docs](pydantic_ai_harness/code_mode/) | |
-| | **Tool search** | Progressive tool discovery for large tool sets | :white_check_mark: [Pydantic&nbsp;AI](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/#deferred-loading) | |
-| | **File system** | Read, write, edit, search files with path traversal prevention | :white_check_mark: [Docs](pydantic_ai_harness/filesystem/) | [pydantic-ai-backend](https://github.com/vstorm-co/pydantic-ai-backend) (vstorm&#8209;co) |
-| | **Shell** | Execute commands with allowlists, denylists, and timeouts | :white_check_mark: [Docs](pydantic_ai_harness/shell/) | [pydantic-ai-backend](https://github.com/vstorm-co/pydantic-ai-backend) (vstorm&#8209;co) |
-| | **LocalStack** | Environment-backed AWS emulator with AWS CLI tools and optional Docker lifecycle | :white_check_mark: [Docs](pydantic_ai_harness/localstack/) | |
-| | **Modal sandbox** | Run commands and manage files in an isolated [Modal](https://modal.com) cloud sandbox | :white_check_mark: [Docs](pydantic_ai_harness/modal_sandbox/) | |
-| | **Repo context injection** | Auto-load CLAUDE.md/AGENTS.md and repo structure | :white_check_mark: [Docs](pydantic_ai_harness/context/) | [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
-| | **Docs lookup** | On-demand `read_pyai_docs` tool for Pydantic AI docs | :white_check_mark: [Docs](pydantic_ai_harness/docs/) | |
-| | **Web research** | Web search returning relevant page excerpts, full single-page retrieval, and opt-in deep search with cited answers, backed by [Exa](https://exa.ai) | :white_check_mark: [Docs](pydantic_ai_harness/exa/) | |
-| | **Hosted research agent** | Delegate open-ended research to the [Exa](https://exa.ai) Agent API as deferred tool calls -- resolved inline or by the host application | :white_check_mark: [Docs](pydantic_ai_harness/exa/) | |
-| | **Verification loop** | Run tests after edits, auto-fix failures | :construction: [PR&nbsp;#169](https://github.com/pydantic/pydantic-ai-harness/pull/169) | |
-| | **Code review** | Run a local [Macroscope](https://docs.macroscope.com/cli) review (`macroscope codereview`) and hand findings to the agent | :white_check_mark: [Docs](pydantic_ai_harness/macroscope/) | |
-| **Editor integration** | **ACP** | Serve an agent to editors (Zed, etc.) over the [Agent Client Protocol](https://agentclientprotocol.com) -- streamed text, diff-rendered edits, tool approval | :white_check_mark: [Docs](pydantic_ai_harness/experimental/acp/) (experimental) | |
-| **Prompt management** | **Managed prompt** | Back an agent's instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt, editable without shipping code | :white_check_mark: [Docs](pydantic_ai_harness/logfire/) | |
-| **Context management** | **Sliding window** | Trim conversation history to stay within token limits | :white_check_mark: [Docs](pydantic_ai_harness/compaction/) | [summarization-pydantic-ai](https://github.com/vstorm-co/summarization-pydantic-ai) (vstorm&#8209;co) |
-| | **Context compaction** | LLM-powered summarization of older messages | :white_check_mark: [Docs](pydantic_ai_harness/compaction/) | [summarization-pydantic-ai](https://github.com/vstorm-co/summarization-pydantic-ai) (vstorm&#8209;co) |
-| | **Limit warnings** | Warn agent before hitting context/iteration limits | :white_check_mark: [Docs](pydantic_ai_harness/compaction/) | [summarization-pydantic-ai](https://github.com/vstorm-co/summarization-pydantic-ai) (vstorm&#8209;co) |
-| | **Tool output management** | Truncate, summarize, or spill large tool outputs | :white_check_mark: [Docs](pydantic_ai_harness/overflowing_tool_output/) | |
-| | **Cache-bust monitoring** | Warn when a run's prompt-cache prefix collapses between model requests | :white_check_mark: [Docs](pydantic_ai_harness/cache_stability/) | |
-| | **System reminders** | Inject periodic reminders to counteract instruction drift | :construction: [PR&nbsp;#181](https://github.com/pydantic/pydantic-ai-harness/pull/181) | |
-| **Memory &&nbsp;persistence** | **Memory** | Persistent, namespaced notebook with bounded prompt injection, on-demand search, and concurrency-safe stores | :white_check_mark: [Docs](pydantic_ai_harness/memory/) | [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
-| | **Session persistence** | Save and restore full conversation state | :white_check_mark: [Docs](pydantic_ai_harness/step_persistence/) | |
-| | **Checkpointing** | Snapshot, resume (`continue_run`), and fork (`fork_run`) a run | :white_check_mark: [Docs](pydantic_ai_harness/step_persistence/) | [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
-| | **Media externalization** | Offload large `BinaryContent` to content-addressed stores (building blocks) | :white_check_mark: [Docs](pydantic_ai_harness/media/) | |
-| **Agent orchestration** | **Sub-agents** | Delegate subtasks to specialized child agents | :white_check_mark: [Docs](pydantic_ai_harness/subagents/) | [subagents-pydantic-ai](https://github.com/vstorm-co/subagents-pydantic-ai) (vstorm&#8209;co) |
-| | **Dynamic workflow** | Orchestrate sub-agents from a model-written Python script -- fan-out, chaining, voting in one tool call | :white_check_mark: [Docs](pydantic_ai_harness/dynamic_workflow/) | |
-| | **Skills** | Progressive tool loading -- search, activate, deactivate | :construction: [PR&nbsp;#183](https://github.com/pydantic/pydantic-ai-harness/pull/183) | [pydantic-ai-skills](https://github.com/DougTrajano/pydantic-ai-skills) (DougTrajano), [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
-| | **Planning** | Break complex tasks into structured plans before execution | :white_check_mark: [Docs](pydantic_ai_harness/planning/) | |
-| | **Runtime authoring** | Let an agent author, validate, and load real capabilities at runtime | :white_check_mark: [Docs](pydantic_ai_harness/runtime_authoring/) | |
-| | **Task tracking** | Track tasks, subtasks, and dependencies | :memo: [#65](https://github.com/pydantic/pydantic-ai-harness/issues/65) | [pydantic-ai-todo](https://github.com/vstorm-co/pydantic-ai-todo) (vstorm&#8209;co) |
-| | **Teams** | Multi-agent teams with shared state and message bus | :memo: [#195](https://github.com/pydantic/pydantic-ai-harness/issues/195) | [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
-| **Safety &&nbsp;guardrails** | **Input guardrails** | Validate user input before the agent run starts | :white_check_mark: [Docs](pydantic_ai_harness/guardrails/) | [pydantic-ai-shields](https://github.com/vstorm-co/pydantic-ai-shields) (vstorm&#8209;co) |
-| | **Output guardrails** | Validate model output after the run completes | :white_check_mark: [Docs](pydantic_ai_harness/guardrails/) | [pydantic-ai-shields](https://github.com/vstorm-co/pydantic-ai-shields) (vstorm&#8209;co) |
-| | **Cost/token budgets** | Enforce token and cost limits per run | :construction: [PR&nbsp;#182](https://github.com/pydantic/pydantic-ai-harness/pull/182) | [pydantic-ai-shields](https://github.com/vstorm-co/pydantic-ai-shields) (vstorm&#8209;co) |
-| | **Tool access control** | Block tools or require approval before execution | :construction: [PR&nbsp;#182](https://github.com/pydantic/pydantic-ai-harness/pull/182) | [pydantic-ai-shields](https://github.com/vstorm-co/pydantic-ai-shields) (vstorm&#8209;co) |
-| | **Async guardrails** | Run validation concurrently with model requests | :construction: [PR&nbsp;#182](https://github.com/pydantic/pydantic-ai-harness/pull/182) | [pydantic-ai-shields](https://github.com/vstorm-co/pydantic-ai-shields) (vstorm&#8209;co) |
-| | **Secret masking** | Detect and redact secrets in agent I/O | :construction: [PR&nbsp;#172](https://github.com/pydantic/pydantic-ai-harness/pull/172) | [pydantic-ai-shields](https://github.com/vstorm-co/pydantic-ai-shields) (vstorm&#8209;co) |
-| | **Approval workflows** | Require human approval for sensitive operations | :construction: [PR&nbsp;#173](https://github.com/pydantic/pydantic-ai-harness/pull/173) | [Pydantic&nbsp;AI](https://ai.pydantic.dev/deferred-tools/#human-in-the-loop-tool-approval) (built&#8209;in) |
-| | **Tool budget** | Limit total tool calls or cost per run | :construction: [PR&nbsp;#168](https://github.com/pydantic/pydantic-ai-harness/pull/168) | |
-| **Reliability** | **Stuck loop detection** | Detect and break out of repetitive agent loops | :construction: [PR&nbsp;#186](https://github.com/pydantic/pydantic-ai-harness/pull/186) | |
-| | **Tool error recovery** | Retry failed tool calls with backoff and budget | :construction: [PR&nbsp;#171](https://github.com/pydantic/pydantic-ai-harness/pull/171) | |
-| | **Tool orphan repair** | Fix orphaned tool calls in conversation history | :construction: [PR&nbsp;#184](https://github.com/pydantic/pydantic-ai-harness/pull/184) | |
-| **Reasoning** | **Adaptive reasoning** | Adjust thinking effort based on task complexity | :construction: [PR&nbsp;#174](https://github.com/pydantic/pydantic-ai-harness/pull/174) | |
-| | **Current time** | Inject current date/time into system prompt | :construction: [PR&nbsp;#170](https://github.com/pydantic/pydantic-ai-harness/pull/170) | |
-
-> Packages by [vstorm-co](https://github.com/vstorm-co) are endorsed by the Pydantic AI team. We're working with them to upstream some of their implementations into this repo.
-
 ## An ecosystem agent
 
-The Quick start above is deliberately small. Here's the other end of the spectrum -- an agent wired up with capabilities drawn from across the Pydantic AI ecosystem: this repo, core `pydantic-ai`, and the community packages we vouch for in the matrix above.
+The Quick start above is deliberately small. Here's the other end of the spectrum -- an agent wired up with capabilities drawn from across the Pydantic AI ecosystem: this repo, core `pydantic-ai`, and community packages.
 
 ```python
 import logfire
@@ -295,11 +240,11 @@ agent = Agent(
 )
 ```
 
-This snippet is illustrative, not literally copy-pasteable: a few capabilities have setup requirements (a `./skills` directory, a Postgres database for `TodoCapability`'s persistent storage), and the community packages move independently of this one. The [capability matrix](#capability-matrix) tracks each one's status. As the harness ships first-party versions, the imports above will collapse onto fewer packages -- but the example will keep working, since the API surface is the same.
+This snippet is illustrative, not literally copy-pasteable: a few capabilities have setup requirements (a `./skills` directory, a Postgres database for `TodoCapability`'s persistent storage), and the community packages move independently of this one. As the harness ships first-party versions, the imports above will collapse onto fewer packages -- but the example will keep working, since the API surface is the same.
 
 ## Help us prioritize
 
-**Vote on whatever is linked in the Status column above.** If there's a PR, vote on the PR -- it means we're actively building it. If there's only an issue, vote on the issue.
+Vote or comment on [open capability requests](https://github.com/pydantic/pydantic-ai-harness/issues?q=is%3Aissue%20state%3Aopen%20label%3Acapability) to help us decide what to work on next.
 
 Want something that's not on the list? [Open a capability request](https://github.com/pydantic/pydantic-ai-harness/issues/new?template=capability-request.yml).
 
