@@ -235,9 +235,9 @@ Gemini's native-audio models can also decide on their own when to speak via `goo
 When the user barges in you get a [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] event; stop
 playing any buffered model audio immediately, and call
 [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt] to cancel the model's in-progress
-response. Pass `audio_end_ms` (how many milliseconds of the response the user actually heard) so the
-provider truncates its stored transcript to match — otherwise the model "remembers" saying words the
-user never heard:
+response. Pass `audio_end_ms` (how many milliseconds of the model's output audio the user actually
+heard) so the provider truncates its record of the turn to that point — otherwise the model
+"remembers" saying words the user never heard:
 
 ```python {test="skip"}
 from typing import Any
