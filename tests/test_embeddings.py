@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 import httpx
 import pytest
+from pytest_mock import MockerFixture
 
 from ._inline_snapshot import snapshot
 
@@ -1596,6 +1597,39 @@ class TestGoogle:
         embedder = Embedder(model)
         with pytest.raises(ModelHTTPError, match='not found'):
             await embedder.count_tokens('Hello, world!')
+
+    async def test_embed_error_no_http_response(self, gemini_api_key: str, mocker: MockerFixture):
+        """An APIError with response=None (no HTTP response object) yields headers=None on ModelHTTPError.
+
+        This exercises the defensive `e.response is not None else None` branch in the embed
+        path of GoogleEmbeddingModel — the branch that handles non-HTTP errors where the SDK
+        raises an APIError without attaching an httpx.Response.
+        """
+        from google.genai import errors
+
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        error_without_response = errors.APIError(503, {'error': {'code': 503, 'message': 'Unavailable'}})
+        mocker.patch.object(model._client.aio.models, 'embed_content', side_effect=error_without_response)
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.embed(['test'], input_type='query')
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.headers is None
+
+    async def test_count_tokens_error_no_http_response(self, gemini_api_key: str, mocker: MockerFixture):
+        """Same as above for the count_tokens path."""
+        from google.genai import errors
+
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        error_without_response = errors.APIError(503, {'error': {'code': 503, 'message': 'Unavailable'}})
+        mocker.patch.object(model._client.aio.models, 'count_tokens', side_effect=error_without_response)
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.count_tokens('test')
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.headers is None
 
     async def test_query_with_task_type(self, embedder: Embedder):
         result = await embedder.embed_query(
