@@ -320,8 +320,9 @@ def _capture_ws_connect(captured: dict[str, Any]) -> Any:
 async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     # A gateway provider dials the Live WebSocket through the SDK, which forwards the client's HTTP
     # headers as the handshake's `additional_headers`. The gateway authenticates on `Authorization:
-    # Bearer <key>` — added to REST calls by its httpx hook, which can't reach this `websockets` dial —
-    # so `connect` must inject the gateway key into the handshake headers itself. Driven end-to-end
+    # Bearer <key>` — added to REST calls by its httpx hook, which can't reach this `websockets` dial.
+    # So `gateway_provider` sets the bearer as a static header on the client at build time (see
+    # `_set_google_ws_gateway_auth`), and it rides along to the handshake automatically. Driven end-to-end
     # through `connect` (patching the SDK's `ws_connect`, as the cassette engine does) so the real URL
     # derivation and header stack are exercised, not a hand-built dict.
     provider = gateway_provider('google', api_key='gw-key', base_url='https://gateway.pydantic.dev/proxy')
@@ -344,10 +345,11 @@ async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyP
     assert captured['headers'].get('Authorization') == 'Bearer gw-key'
     # `_single_ws_user_agent` still runs, so the handshake carries exactly one user-agent header.
     assert sum(key.lower() == 'user-agent' for key in captured['headers']) == 1
-    # The injected `Authorization` is removed after the connect so the shared client's later REST
-    # requests fall back to the gateway's httpx hook rather than carrying a stale bearer header.
+    # The bearer lives permanently on the client's static http options (that's what carries it onto the
+    # WebSocket), so REST requests carry it too. That's redundant with the gateway's httpx request hook
+    # but harmless — the same value — and the hook leaves a pre-existing `Authorization` header untouched.
     rest_headers = provider.client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
-    assert rest_headers is not None and 'Authorization' not in rest_headers
+    assert rest_headers is not None and rest_headers['Authorization'] == 'Bearer gw-key'
 
 
 async def test_non_gateway_handshake_has_no_bearer_auth(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -363,56 +365,6 @@ async def test_non_gateway_handshake_has_no_bearer_auth(monkeypatch: pytest.Monk
             pass  # pragma: no cover - the dial short-circuits before yielding
 
     assert 'Authorization' not in captured['headers']
-
-
-def test_ws_gateway_auth_injects_and_restores_bearer() -> None:
-    # `google-genai` forwards the client's HTTP headers as the Live handshake headers, so the gateway
-    # bearer key is injected into them for the connect only, then removed so the shared client's later
-    # REST requests fall back to the gateway's httpx hook. The header dict is the SDK's private one, so
-    # this is a direct unit test.
-    from types import SimpleNamespace
-
-    headers = {'user-agent': 'solo'}
-    client = SimpleNamespace(
-        _api_client=SimpleNamespace(api_key='gw-key', _http_options=SimpleNamespace(headers=headers))
-    )
-    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        assert headers == {'user-agent': 'solo', 'Authorization': 'Bearer gw-key'}
-    assert headers == {'user-agent': 'solo'}
-
-
-def test_ws_gateway_auth_noop_without_api_key() -> None:
-    # No key to mirror (e.g. an ADC gateway client), so the handshake headers are left untouched.
-    from types import SimpleNamespace
-
-    headers = {'user-agent': 'solo'}
-    client = SimpleNamespace(_api_client=SimpleNamespace(api_key=None, _http_options=SimpleNamespace(headers=headers)))
-    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        assert headers == {'user-agent': 'solo'}
-    assert headers == {'user-agent': 'solo'}
-
-
-def test_ws_gateway_auth_noop_with_existing_authorization() -> None:
-    # A caller-supplied `Authorization` header wins: the gateway key is not layered on top of it.
-    from types import SimpleNamespace
-
-    headers = {'Authorization': 'Bearer caller'}
-    client = SimpleNamespace(
-        _api_client=SimpleNamespace(api_key='gw-key', _http_options=SimpleNamespace(headers=headers))
-    )
-    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        assert headers == {'Authorization': 'Bearer caller'}
-    assert headers == {'Authorization': 'Bearer caller'}
-
-
-def test_ws_gateway_auth_noop_without_http_options() -> None:
-    # A custom/fake client without the SDK's private HTTP options simply skips injection.
-    from types import SimpleNamespace
-
-    client = SimpleNamespace(_api_client=None)
-    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        assert client._api_client is None
-    assert client._api_client is None
 
 
 # --- provider resolution & capabilities --------------------------------------

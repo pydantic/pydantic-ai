@@ -554,36 +554,6 @@ def _ws_trace_context(client: Client) -> Generator[None]:
             headers.pop(key, None)
 
 
-@contextmanager
-def _ws_gateway_auth(client: Client) -> Generator[None]:
-    """Add the Pydantic AI Gateway bearer auth to the Gemini Live handshake headers for the connect only.
-
-    The gateway authenticates on `Authorization: Bearer <key>`, added to REST calls by its `httpx`
-    request hook. That hook can't cover the Live handshake: `google-genai` dials the WebSocket with the
-    `websockets` library, bypassing the provider's `httpx` client, and on the Vertex Express-mode client
-    the gateway `GoogleCloudProvider` builds, the SDK carries the key only as `x-goog-api-key`. So the
-    gateway key (`client._api_client.api_key`) is mirrored into an `Authorization` header on the shared
-    HTTP options — which the SDK forwards as the handshake's `additional_headers` — and removed after the
-    connect so the shared client's later REST requests fall back to the request hook. A pre-existing
-    `Authorization` header (or an absent key) is left untouched. Guarded like `_single_ws_user_agent`:
-    custom/fake clients without the private HTTP options simply skip injection.
-    """
-    raw_headers = getattr(getattr(getattr(client, '_api_client', None), '_http_options', None), 'headers', None)
-    api_key = getattr(getattr(client, '_api_client', None), 'api_key', None)
-    if not isinstance(raw_headers, dict) or not api_key:
-        yield
-        return
-    headers = cast('dict[str, str]', raw_headers)
-    if 'Authorization' in headers:
-        yield
-        return
-    headers['Authorization'] = f'Bearer {api_key}'
-    try:
-        yield
-    finally:
-        headers.pop('Authorization', None)
-
-
 # Matches the native Vertex Bidi WebSocket path the `google-genai` SDK dials (both API versions).
 _VERTEX_BIDI_PATH_RE = re.compile(r'/ws/google\.cloud\.aiplatform\.v1(?:beta1)?\.LlmBidiService/BidiGenerateContent')
 
@@ -870,12 +840,12 @@ class GoogleRealtimeModel(RealtimeModel):
                 with ExitStack() as stack:
                     stack.enter_context(_single_ws_user_agent(client))
                     stack.enter_context(_ws_trace_context(client))
-                    # A gateway provider dials the WS itself and can't run the gateway's httpx auth hook,
-                    # so the bearer key is added to the handshake headers only when routing through it.
                     if self._gateway:
-                        stack.enter_context(_ws_gateway_auth(client))
                         # TEMPORARY: reshape the dialed URL to the gateway's unified realtime path until
                         # the gateway routes the native Vertex Bidi path (see `_ws_gateway_url_rewrite`).
+                        # The gateway bearer auth reaches the handshake via a static header set on the
+                        # client at build time (see `_set_google_ws_gateway_auth`), so no per-connect
+                        # header injection is needed here.
                         stack.enter_context(_ws_gateway_url_rewrite(self.model))
                     session = await opening.__aenter__()
             cm = opening

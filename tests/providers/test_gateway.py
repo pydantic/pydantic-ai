@@ -60,6 +60,17 @@ def test_is_gateway_provider():
     assert not is_gateway_provider(OpenAIProvider(api_key='k'))
 
 
+def test_gateway_google_sets_static_ws_bearer_auth():
+    # Unit (not VCR): the gateway's httpx request hook adds `Authorization: Bearer <key>` to REST calls,
+    # but it can't reach the Gemini Live handshake — `google-genai` dials that WebSocket with the
+    # `websockets` library, bypassing httpx. So `gateway_provider` sets the bearer as a *static* header on
+    # the client's http options at build time (the SDK forwards those to both REST and the WS handshake).
+    # This pins that the header lands on the client, since a cassette wouldn't exercise the WS dial.
+    provider = gateway_provider('google', api_key='gw-key', base_url=GATEWAY_BASE_URL)
+    headers = provider.client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
+    assert headers is not None and headers['Authorization'] == 'Bearer gw-key'
+
+
 def test_init_gateway_without_api_key_raises_error(env: TestEnv):
     env.remove('PYDANTIC_AI_GATEWAY_API_KEY')
     with pytest.raises(
