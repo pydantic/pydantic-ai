@@ -291,9 +291,7 @@
     <script>
       const INPUT_RATE = 16000; // Gemini Live expects 16kHz PCM input
       const OUTPUT_RATE = 24000; // and produces 24kHz output
-      const FRAME_MS = 2000; // ~1 camera frame every 2s — a live assistant doesn't need full video, and
-                             // every frame is kept in the model's context, so a low rate keeps cost down
-                             // (and stays friendly to providers that bill per image, like OpenAI)
+      const FRAME_MS = 1000; // ~1 camera frame per second
       const FRAME_W = 512; // downscale streamed frames to keep bandwidth/cost low
       const WATCH_MS = 3500; // in Watch mode, check this often whether to nudge the model to report changes
 

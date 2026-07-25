@@ -1,8 +1,8 @@
 """Realtime camera + voice assistant — talk to a realtime model and show it your camera.
 
-The browser streams microphone audio (PCM16, 16kHz) and low-rate JPEG camera frames (~1 every 2s) into
-a Gemini, OpenAI, or Azure OpenAI realtime session and plays the model's audio back: point your camera
-at something and ask about it. xAI realtime is not supported because it has no image input.
+The browser streams microphone audio (PCM16, 16kHz) and ~1 fps JPEG camera frames into a Gemini,
+OpenAI, or Azure OpenAI realtime session and plays the model's audio back: point your camera at
+something and ask about it. xAI realtime is not supported because it has no image input.
 The assistant can also ground answers with web search and redraw a hand-drawn sketch into a clean
 diagram (see the tool and capability notes below).
 
