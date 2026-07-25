@@ -274,6 +274,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
                     status_code=status_code,
                     model_name=self._model_name,
                     body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
+                    headers=dict(e.response.headers) if e.response is not None else None,
                 ) from e
             raise  # pragma: no cover
 
@@ -303,6 +304,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
                     status_code=status_code,
                     model_name=self._model_name,
                     body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
+                    headers=dict(e.response.headers) if e.response is not None else None,
                 ) from e
             raise  # pragma: no cover
 
