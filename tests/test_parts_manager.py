@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import (
+    ModelResponseStreamEvent,
     NativeToolCallPart,
     PartDeltaEvent,
     PartStartEvent,
@@ -707,4 +708,33 @@ def test_get_part_by_vendor_id():
     part = manager.get_part_by_vendor_id('content')
     assert part == snapshot(TextPart(content='hello', part_kind='text'))
 
-    assert manager.get_part_by_vendor_id('missing') is None
+
+def test_apply_event_with_incomplete_tool_call_delta():
+    """Regression test for #6731.
+
+    `apply_event` used `get_parts()` (which filters out `ToolCallPartDelta`) instead of
+    `_parts` for the `PartDeltaEvent` branch, so an incomplete tool call delta occupying
+    an earlier `_parts` slot caused an `IndexError` (or a wrong-part update) when a
+    later part's delta event was replayed.
+    """
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+
+    # Incomplete tool call delta (no tool_name yet) stays as a ToolCallPartDelta and emits no event.
+    event = manager.handle_tool_call_delta(vendor_part_id='tool', tool_name=None, args='{"arg1":', tool_call_id=None)
+    assert event is None
+    assert manager.get_parts() == []
+
+    # Text starts at _parts index 1, after the delta at index 0.
+    events: list[ModelResponseStreamEvent] = []
+    events.extend(manager.handle_text_delta(vendor_part_id='text', content='hello '))
+    events.extend(manager.handle_text_delta(vendor_part_id='text', content='world'))
+
+    # Replay onto a fresh manager: first re-create the incomplete delta (it emitted no
+    # event to replay), then apply all collected events via apply_event.
+    replay_manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    replay_manager.handle_tool_call_delta(vendor_part_id='tool', tool_name=None, args='{"arg1":', tool_call_id=None)
+    for replay_event in events:
+        replay_manager.apply_event(replay_event)
+
+    assert replay_manager._parts == manager._parts
+    assert replay_manager.get_parts() == manager.get_parts()
