@@ -52,7 +52,7 @@ from pydantic_ai.realtime import (
     TurnCompleteEvent,
     TurnDetection,
 )
-from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
+from pydantic_ai.realtime._base import ImageInput, RealtimeModelProfile, SessionErrorEvent, TextInput
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     InputTranscript,
@@ -156,6 +156,20 @@ def test_tool_def_to_genai_with_and_without_description() -> None:
         ToolDefinition(name='ping', parameters_json_schema={'type': 'object'})
     )
     assert without_desc.description is None
+
+
+@pytest.mark.parametrize(
+    ('profile', 'expected_behavior'),
+    [
+        (RealtimeModelProfile(), None),
+        (RealtimeModelProfile(supports_async_tool_calls=True), genai_types.Behavior.NON_BLOCKING),
+    ],
+)
+def test_tool_def_async_behavior(profile: RealtimeModelProfile, expected_behavior: genai_types.Behavior | None) -> None:
+    tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
+        ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'}), profile=profile
+    )
+    assert tool.behavior == expected_behavior
 
 
 def test_native_tool_web_search_maps_to_google_search() -> None:
@@ -401,6 +415,7 @@ def test_profile() -> None:
         False,
     )
     assert profile.get('supported_native_tools') == frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
+    assert profile.get('supports_async_tool_calls') is False
     assert profile.get('audio_input_sample_rate') == 16000
     assert profile.get('audio_output_sample_rate') == 24000
 
@@ -539,6 +554,35 @@ async def test_send_tool_result_echoes_name() -> None:
     assert response.id == 'c1'
     assert response.name == 'get_weather'
     assert response.response == {'output': 'Sunny'}
+
+
+@pytest.mark.parametrize(
+    ('profile', 'expected_scheduling'),
+    [
+        (RealtimeModelProfile(), None),
+        (
+            RealtimeModelProfile(supports_async_tool_calls=True),
+            genai_types.FunctionResponseScheduling.WHEN_IDLE,
+        ),
+    ],
+)
+async def test_send_tool_result_async_scheduling(
+    profile: RealtimeModelProfile,
+    expected_scheduling: genai_types.FunctionResponseScheduling | None,
+) -> None:
+    session = _RecordingSession()
+    conn = GoogleRealtimeConnection(cast('AsyncSession', session), profile=profile)
+    conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            tool_call=genai_types.LiveServerToolCall(
+                function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+            )
+        )
+    )
+
+    await conn.send(ToolResult(tool_call_id='c1', output='Sunny'))
+
+    assert session.tool_responses[0].scheduling == expected_scheduling
 
 
 async def test_send_tool_result_content_falls_back_to_text() -> None:

@@ -89,6 +89,7 @@ from ..settings import ThinkingEffort, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._base import (
+    DEFAULT_REALTIME_PROFILE,
     AudioDelta,
     AudioInput,
     ImageInput,
@@ -411,12 +412,15 @@ def _genai_user_parts(content: Sequence[str | BinaryContent]) -> list[genai_type
     ]
 
 
-def _tool_def_to_genai(tool: ToolDefinition) -> genai_types.FunctionDeclaration:
+def _tool_def_to_genai(
+    tool: ToolDefinition, *, profile: RealtimeModelProfile | None = None
+) -> genai_types.FunctionDeclaration:
     """Convert a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] to a Gemini function declaration."""
     return genai_types.FunctionDeclaration(
         name=tool.name,
         description=tool.description or None,
         parameters_json_schema=tool.parameters_json_schema,
+        behavior=genai_types.Behavior.NON_BLOCKING if profile and profile.get('supports_async_tool_calls') else None,
     )
 
 
@@ -795,7 +799,9 @@ class GoogleRealtimeModel(RealtimeModel):
         # MCP types); a precisely-typed `list[Tool]` isn't assignable to it (list invariance).
         genai_tools: list[Any] = []
         if tools:
-            genai_tools.append(genai_types.Tool(function_declarations=[_tool_def_to_genai(t) for t in tools]))
+            genai_tools.append(
+                genai_types.Tool(function_declarations=[_tool_def_to_genai(t, profile=self.profile) for t in tools])
+            )
         genai_tools.extend(_native_tool_to_genai(t) for t in native_tools or [])
         if genai_tools:
             config.tools = genai_tools
@@ -884,6 +890,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 await session.send_client_content(turns=turns, turn_complete=False)
             yield GoogleRealtimeConnection(
                 session,
+                profile=self.profile,
                 provider_name=self._provider.name,
                 dial=dial if reconnectable else None,
                 reconnect=self.reconnect if reconnectable else None,
@@ -901,12 +908,14 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self,
         session: AsyncSession,
         *,
+        profile: RealtimeModelProfile | None = None,
         provider_name: str = 'google',
         dial: Callable[[str | None], Awaitable[AsyncSession]] | None = None,
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
     ) -> None:
         self._session = session
+        self._profile = profile if profile is not None else DEFAULT_REALTIME_PROFILE
         self._input_transcription_enabled = input_transcription_enabled
         # Provider name stamped onto native-tool history parts (grounding / code execution), matching the
         # classic `GoogleModel` (`NativeToolCallPart.provider_name`), so a turn's history is provider-tagged
@@ -977,6 +986,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     id=gemini_id,
                     name=name,
                     response={'output': output},
+                    scheduling=genai_types.FunctionResponseScheduling.WHEN_IDLE
+                    if self._profile.get('supports_async_tool_calls')
+                    else None,
                 )
             )
         else:

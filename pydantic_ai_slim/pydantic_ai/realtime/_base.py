@@ -667,6 +667,11 @@ class RealtimeModelProfile(TypedDict, total=False):
     [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting — OpenAI's `gpt-realtime-2*`
     reasoning models and Gemini's native-audio models. When `False` (the default), a `thinking` setting
     is ignored with a warning rather than sent to a model that would reject it."""
+    supports_async_tool_calls: bool
+    """Whether the model runs tool calls asynchronously without blocking generation.
+
+    Gemini Live maps this to `Behavior.NON_BLOCKING` on function declarations and
+    `FunctionResponseScheduling.WHEN_IDLE` on function responses."""
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The [native tools][pydantic_ai.native_tools.AbstractNativeTool] the model runs server-side, e.g.
     [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].
@@ -689,6 +694,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_session_seeding': False,
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
+    'supports_async_tool_calls': False,
     'supported_native_tools': frozenset(),
     'audio_input_sample_rate': 24000,
     'audio_output_sample_rate': 24000,
