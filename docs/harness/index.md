@@ -43,7 +43,7 @@ uv add "pydantic-ai-harness[acp]"               # ACP (Agent Client Protocol SDK
 
 The `code-mode` extra is also supported as an alias for `codemode`.
 
-Requires Python 3.10+ and `pydantic-ai-slim>=2.14.1`.
+Requires Python 3.10+ and `pydantic-ai-slim>=2.18.0`.
 
 ## Quick start
 

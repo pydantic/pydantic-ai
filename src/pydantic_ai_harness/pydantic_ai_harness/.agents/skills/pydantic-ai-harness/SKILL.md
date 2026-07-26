@@ -2,7 +2,7 @@
 name: pydantic-ai-harness
 description: Extend Pydantic AI agents with batteries-included capabilities from pydantic-ai-harness -- Code Mode (collapse many tool calls into one sandboxed Python execution), a filesystem and shell, sub-agents, planning, context compaction, and more. Use when the user mentions pydantic-ai-harness, CodeMode, Monty, code mode, or tool sandboxing, when they want first-party filesystem/shell/sub-agent/planning/compaction capabilities for a Pydantic AI agent, when they want an agent to run agent-written Python, or when a Pydantic AI agent would benefit from orchestrating multiple tool calls in a single sandboxed script.
 license: MIT
-compatibility: Requires Python 3.10+ and pydantic-ai-slim>=2.1.0
+compatibility: Requires Python 3.10+ and pydantic-ai-slim>=2.18.0
 metadata:
   version: "0.1.0"
   author: pydantic
@@ -79,7 +79,7 @@ Each capability declares its own extra. Code Mode needs the Monty sandbox:
 uv add "pydantic-ai-harness[codemode]"   # `code-mode` is also accepted as an alias
 ```
 
-Requires Python 3.10+ and `pydantic-ai-slim>=2.1.0`.
+Requires Python 3.10+ and `pydantic-ai-slim>=2.18.0`.
 
 ## Quick Start
 
