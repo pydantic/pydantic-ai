@@ -4403,6 +4403,36 @@ async def test_openai_gpt_5_2_temperature_warns_when_reasoning_enabled(allow_mod
     assert 'temperature' not in get_mock_chat_completion_kwargs(mock_client)[0]
 
 
+async def test_openai_reasoning_does_not_mutate_reused_settings(allow_model_requests: None):
+    """Dropping sampling params for reasoning models must not mutate the caller's settings object.
+
+    `prepare_request` can return the caller's settings dict by identity, so popping the unsupported
+    sampling params in place used to strip them from a settings object reused across requests — which
+    also silenced the "settings will be ignored" warning on every request after the first. This is a
+    unit-style assertion (rather than VCR) because it pins an internal no-mutation invariant the request
+    payload alone doesn't reveal.
+    """
+    c = completion_message(ChatCompletionMessage(content='Paris.', role='assistant'))
+    mock_client = MockOpenAI.create_mock([c, c])
+    m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    settings = OpenAIChatModelSettings(temperature=0.5, openai_reasoning_effort='medium')
+
+    # The warning fires on every request, proving the caller's settings object still carries `temperature`.
+    with pytest.warns(UserWarning, match='Sampling parameters.*temperature.*not supported when reasoning is enabled'):
+        await agent.run('first', model_settings=settings)
+    with pytest.warns(UserWarning, match='Sampling parameters.*temperature.*not supported when reasoning is enabled'):
+        await agent.run('second', model_settings=settings)
+
+    # The caller's object is untouched...
+    assert settings == OpenAIChatModelSettings(temperature=0.5, openai_reasoning_effort='medium')
+    # ...while both requests correctly omit the unsupported sampling param.
+    kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert 'temperature' not in kwargs[0]
+    assert 'temperature' not in kwargs[1]
+
+
 async def test_openai_model_cerebras_provider(allow_model_requests: None, cerebras_api_key: str):
     m = OpenAIChatModel('llama3.3-70b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m)

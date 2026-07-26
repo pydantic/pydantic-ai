@@ -918,6 +918,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
+        # Copy before dropping unsupported settings: `prepare_request` can return the caller's settings
+        # dict by identity, so popping in place would mutate settings that are reused across requests.
+        model_settings = cast(OpenAIChatModelSettings, {**model_settings})
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
 
         _drop_unsupported_params(profile, model_settings)
@@ -2298,6 +2301,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
             profile,
         )
+        # Copy before dropping unsupported settings: `prepare_request` can return the caller's settings
+        # dict by identity, so popping in place would mutate settings that are reused across requests.
+        model_settings = cast(OpenAIResponsesModelSettings, {**model_settings})
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
         _drop_unsupported_params(profile, model_settings)
         extra_headers, timeout = self._build_request_options(model_settings)
