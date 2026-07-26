@@ -1064,9 +1064,9 @@ async def test_openrouter_prepare_request_does_not_mutate_caller_settings() -> N
     # The caller's pre-existing extra_body entries are preserved.
     assert first_extra_body['caller_key'] == 'kept'
     # The openrouter_* keys remain on the original caller settings object.
-    assert settings['openrouter_models'] == ['vendor/model']
-    assert settings['openrouter_provider'] == {'only': ['provider']}
-    assert settings['openrouter_usage'] == {'include': True}
+    assert settings.get('openrouter_models') == ['vendor/model']
+    assert settings.get('openrouter_provider') == {'only': ['provider']}
+    assert settings.get('openrouter_usage') == {'include': True}
 
 
 def _openrouter_completion(content: str) -> ChatCompletion:
