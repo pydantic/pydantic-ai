@@ -209,27 +209,67 @@ Here are some recent papers about transformer architectures from arxiv.org:
 """
 ```
 
-## Nimble Search Tool
+## Nimble Tools
 
 !!! info
     Nimble is a paid service, but they have free credits to explore their product.
 
-    You need to [sign up for an account](https://online.nimbleway.com/account-settings/api-keys) and get an API key to use the Nimble search tool.
+    You need to [sign up for an account](https://online.nimbleway.com/account-settings/api-keys) and get an API key to use the Nimble tools.
 
-The Nimble search tool allows you to search the web for information. It is built on top of the [Nimble Search API](https://www.nimbleway.com/) via the [`nimble_python`](https://pypi.org/project/nimble_python/) SDK.
+The Nimble common tools cover web search, page extract, site map, crawl job control, and [Agent API V2](https://docs.nimbleway.com/) run lifecycle. They are built on the [`nimble_python`](https://pypi.org/project/nimble_python/) SDK.
 
 ### Installation
 
-To use [`nimble_search_tool`][pydantic_ai.common_tools.nimble.nimble_search_tool], you need to install
-[`pydantic-ai-slim`](install.md#slim-install) with the `nimble` optional group:
+To use the Nimble tools, install [`pydantic-ai-slim`](install.md#slim-install) with the `nimble` optional group:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[nimble]"
 ```
 
-### Usage
+### Recommended: `NimbleToolset`
 
-Here's an example of how you can use the Nimble search tool with an agent:
+Prefer [`NimbleToolset`][pydantic_ai.common_tools.nimble.NimbleToolset] when you want several Nimble tools that share one client. By default it includes search and extract; map, crawl, and Agent API tools are opt-in:
+
+```py {title="nimble_toolset.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.nimble import NimbleToolset
+
+api_key = os.getenv('NIMBLE_API_KEY')
+assert api_key is not None
+
+agent = Agent(
+    'openai:gpt-5.2',
+    toolsets=[
+        NimbleToolset(
+            api_key,
+            include_map=True,
+            include_crawl=True,
+            include_agents=True,
+        )
+    ],
+    instructions='Use Nimble tools to research the web and return sources.',
+)
+
+result = agent.run_sync('Summarize the top GenAI news with links.')
+print(result.output)
+```
+
+Crawl and Agent API tools are intentionally **non-blocking**: start a job, then poll status (and fetch agent results) across later turns. Do not expect a single tool call to wait until a multi-minute crawl or agent run finishes.
+
+### Individual tools
+
+In addition to the toolset, you can register factories one at a time:
+
+| Factory | Purpose |
+| --- | --- |
+| [`nimble_search_tool`][pydantic_ai.common_tools.nimble.nimble_search_tool] | Web search |
+| [`nimble_extract_tool`][pydantic_ai.common_tools.nimble.nimble_extract_tool] | URL → markdown |
+| [`nimble_map_tool`][pydantic_ai.common_tools.nimble.nimble_map_tool] | Discover links on a site |
+| [`nimble_crawl_start_tool`][pydantic_ai.common_tools.nimble.nimble_crawl_start_tool] / [`nimble_crawl_status_tool`][pydantic_ai.common_tools.nimble.nimble_crawl_status_tool] | Start and poll a crawl job |
+| [`nimble_agents_list_tool`][pydantic_ai.common_tools.nimble.nimble_agents_list_tool] / [`nimble_agent_templates_list_tool`][pydantic_ai.common_tools.nimble.nimble_agent_templates_list_tool] | Discover agents and templates |
+| [`nimble_agent_run_start_tool`][pydantic_ai.common_tools.nimble.nimble_agent_run_start_tool] / [`nimble_agent_run_status_tool`][pydantic_ai.common_tools.nimble.nimble_agent_run_status_tool] / [`nimble_agent_run_result_tool`][pydantic_ai.common_tools.nimble.nimble_agent_run_result_tool] | Agent API V2 run lifecycle |
 
 ```py {title="nimble_search.py" test="skip"}
 import os
@@ -250,7 +290,7 @@ result = agent.run_sync('Tell me the top news in the GenAI world, give me links.
 print(result.output)
 ```
 
-### Configuring Parameters
+### Configuring search parameters
 
 The `nimble_search_tool` factory accepts optional parameters that control search behavior. `max_results` is always developer-controlled and never appears in the LLM tool schema. Other parameters, when provided, are fixed for all searches and hidden from the LLM's tool schema. Parameters left unset remain available for the LLM to set per-call.
 

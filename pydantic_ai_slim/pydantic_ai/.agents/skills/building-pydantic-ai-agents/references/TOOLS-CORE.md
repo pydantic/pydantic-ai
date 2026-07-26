@@ -91,7 +91,7 @@ agent = Agent(
 
 When you need to manage the toolset lifecycle yourself, share an MCP server across multiple agents, or use FastMCP-specific configuration that doesn't fit the capability shape, use [`MCPToolset`](https://ai.pydantic.dev/mcp/client/) directly and pass it via `toolsets=[...]`. Its `tool_error_behavior` controls how a tool error from the server surfaces: `'retry'` (default) raises `ModelRetry`, `'failed'` raises `ToolFailed` (recorded as `outcome='failed'`), and `'error'` raises the raw `fastmcp` `ToolError`.
 
-## Search with DuckDuckGo, Tavily, or Exa
+## Search with DuckDuckGo, Tavily, Nimble, or Exa
 
 Use common tools when the user wants explicit search tools rather than provider-adaptive capabilities.
 
@@ -107,7 +107,9 @@ agent = Agent(
 )
 ```
 
+For Nimble, prefer `NimbleToolset` (`pydantic-ai-slim[nimble]`) when the user wants search plus extract (and optionally map, crawl, or Agent API V2). Crawl and agent runs are resumable start/status/result tools — do not poll inside a single tool call.
+
 Good default split:
 
 - use `WebSearch()` capability when the user wants model-agnostic search with native fallback
-- use `duckduckgo_search_tool()` / Tavily / Exa when the user explicitly wants those engines as tools
+- use `duckduckgo_search_tool()` / Tavily / Nimble / Exa when the user explicitly wants those engines as tools

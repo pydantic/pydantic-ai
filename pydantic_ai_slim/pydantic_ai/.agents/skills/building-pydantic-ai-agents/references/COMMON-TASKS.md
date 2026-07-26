@@ -38,9 +38,9 @@ Read [Enable Thinking Across Providers](./CAPABILITIES-AND-HOOKS.md#enable-think
 
 Read [Use MCP Servers](./TOOLS-CORE.md#use-mcp-servers).
 
-## Search with DuckDuckGo, Tavily, or Exa
+## Search with DuckDuckGo, Tavily, Nimble, or Exa
 
-Read [Search with DuckDuckGo, Tavily, or Exa](./TOOLS-CORE.md#search-with-duckduckgo-tavily-or-exa).
+Read [Search with DuckDuckGo, Tavily, Nimble, or Exa](./TOOLS-CORE.md#search-with-duckduckgo-tavily-nimble-or-exa).
 
 ## Require Tool Approval (Human in the Loop)
 

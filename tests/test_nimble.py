@@ -17,7 +17,21 @@ from nimble_python.types.search_response import Result, ResultMetadataSerpMetada
 
 from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.common_tools.nimble import NimbleSearchTool, nimble_search_tool
+from pydantic_ai.common_tools.nimble import (
+    NimbleAgentRunResultTool,
+    NimbleAgentRunStartTool,
+    NimbleAgentRunStatusTool,
+    NimbleAgentsListTool,
+    NimbleAgentTemplatesListTool,
+    NimbleCrawlStartTool,
+    NimbleCrawlStatusTool,
+    NimbleExtractTool,
+    NimbleMapTool,
+    NimbleSearchTool,
+    NimbleToolset,
+    nimble_extract_tool,
+    nimble_search_tool,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -306,3 +320,226 @@ def test_import_error_mentions_nimble_extra(monkeypatch: pytest.MonkeyPatch):
     sys.modules.pop('nimble_python', None)
     with pytest.raises(ImportError, match=r'pydantic-ai-slim\[nimble\]'):
         importlib.import_module('pydantic_ai.common_tools.nimble')
+
+
+async def test_extract_returns_markdown():
+    """Extract projects markdown from SDK response without a network call."""
+    data = AsyncMock()
+    data.markdown = '# Hello'
+    response = AsyncMock()
+    response.data = data
+    client = AsyncMock()
+    client.extract = AsyncMock()
+    client.extract.run = AsyncMock(return_value=response)
+    tool = NimbleExtractTool(client=cast(AsyncNimble, client))
+    assert await tool('https://example.com') == '# Hello'
+    client.extract.run.assert_awaited_once_with(url='https://example.com', formats=['markdown'])
+
+
+async def test_extract_empty_when_no_markdown():
+    """Extract returns empty string when markdown is missing."""
+    response = AsyncMock()
+    response.data = None
+    client = AsyncMock()
+    client.extract = AsyncMock()
+    client.extract.run = AsyncMock(return_value=response)
+    tool = NimbleExtractTool(client=cast(AsyncNimble, client))
+    assert await tool('https://example.com') == ''
+
+
+async def test_map_projects_links():
+    """Map projects link fields from the SDK response."""
+    link = AsyncMock()
+    link.url = 'https://example.com/a'
+    link.title = 'A'
+    link.description = 'desc'
+    response = AsyncMock()
+    response.links = [link]
+    client = AsyncMock()
+    client.map = AsyncMock(return_value=response)
+    tool = NimbleMapTool(client=cast(AsyncNimble, client))
+    assert await tool(
+        'https://example.com',
+        limit=10,
+        domain_filter='domain',
+        sitemap='include',
+    ) == [{'url': 'https://example.com/a', 'title': 'A', 'description': 'desc'}]
+    client.map.assert_awaited_once_with(
+        url='https://example.com',
+        limit=10,
+        domain_filter='domain',
+        sitemap='include',
+    )
+
+
+async def test_map_omits_unset_optional_kwargs():
+    """Map only forwards optional kwargs that the caller sets."""
+    response = AsyncMock()
+    response.links = []
+    client = AsyncMock()
+    client.map = AsyncMock(return_value=response)
+    await NimbleMapTool(client=cast(AsyncNimble, client))('https://example.com')
+    client.map.assert_awaited_once_with(url='https://example.com')
+
+
+async def test_crawl_start_and_status():
+    """Crawl start/status are separate tools and do not poll."""
+    start_response = AsyncMock()
+    start_response.crawl_id = 'crawl_1'
+    start_response.status = 'queued'
+    start_response.url = 'https://example.com'
+    start_response.completed = 0
+    start_response.failed = 0
+    start_response.pending = 1
+    start_response.total = 1
+    status_response = AsyncMock()
+    status_response.crawl_id = 'crawl_1'
+    status_response.status = 'running'
+    status_response.url = 'https://example.com'
+    status_response.completed = 0
+    status_response.failed = 0
+    status_response.pending = 1
+    status_response.total = 1
+    client = AsyncMock()
+    client.crawl = AsyncMock()
+    client.crawl.run = AsyncMock(return_value=start_response)
+    client.crawl.status = AsyncMock(return_value=status_response)
+
+    started = await NimbleCrawlStartTool(client=cast(AsyncNimble, client))(
+        'https://example.com',
+        limit=5,
+        max_discovery_depth=2,
+        include_paths=['/docs'],
+        exclude_paths=['/admin'],
+        sitemap='skip',
+        name='docs-crawl',
+    )
+    assert started['crawl_id'] == 'crawl_1'
+    assert started['status'] == 'queued'
+    client.crawl.run.assert_awaited_once_with(
+        url='https://example.com',
+        limit=5,
+        max_discovery_depth=2,
+        include_paths=['/docs'],
+        exclude_paths=['/admin'],
+        sitemap='skip',
+        name='docs-crawl',
+    )
+    status = await NimbleCrawlStatusTool(client=cast(AsyncNimble, client))('crawl_1')
+    assert status['status'] == 'running'
+    client.crawl.status.assert_awaited_once_with('crawl_1')
+
+
+async def test_crawl_start_omits_unset_optional_kwargs():
+    """Crawl start only forwards optional kwargs that the caller sets."""
+    start_response = AsyncMock()
+    start_response.crawl_id = 'crawl_2'
+    start_response.status = 'queued'
+    start_response.url = 'https://example.com'
+    start_response.completed = 0
+    start_response.failed = 0
+    start_response.pending = 1
+    start_response.total = 1
+    client = AsyncMock()
+    client.crawl = AsyncMock()
+    client.crawl.run = AsyncMock(return_value=start_response)
+    await NimbleCrawlStartTool(client=cast(AsyncNimble, client))('https://example.com')
+    client.crawl.run.assert_awaited_once_with(url='https://example.com')
+
+
+async def test_agent_api_lifecycle_tools():
+    """Agent list/start/status/result tools map onto SDK Agent API V2 methods."""
+    item = AsyncMock()
+    item.model_dump = lambda mode='json': {'id': 'agent_1', 'name': 'Research'}
+    list_response = AsyncMock()
+    list_response.items = [item]
+    template_item = AsyncMock()
+    template_item.model_dump = lambda mode='json': {'template_name': 'research'}
+    templates_response = AsyncMock()
+    templates_response.items = [template_item]
+    start_response = AsyncMock()
+    start_response.model_dump = lambda mode='json': {'id': 'run_1', 'status': 'queued'}
+    status_response = AsyncMock()
+    status_response.model_dump = lambda mode='json': {'id': 'run_1', 'status': 'running'}
+    result_response = AsyncMock()
+    result_response.model_dump = lambda mode='json': {'id': 'run_1', 'output': 'done'}
+
+    client = AsyncMock()
+    client.agents = AsyncMock()
+    client.agents.list = AsyncMock(return_value=list_response)
+    client.agents.templates = AsyncMock()
+    client.agents.templates.list = AsyncMock(return_value=templates_response)
+    client.agents.runs = AsyncMock()
+    client.agents.runs.create = AsyncMock(return_value=start_response)
+    client.agents.runs.get = AsyncMock(return_value=status_response)
+    client.agents.runs.result = AsyncMock(return_value=result_response)
+
+    assert await NimbleAgentsListTool(client=cast(AsyncNimble, client))() == [{'id': 'agent_1', 'name': 'Research'}]
+    client.agents.list.assert_awaited_once_with()
+    assert await NimbleAgentsListTool(client=cast(AsyncNimble, client))(limit=10, offset=5) == [
+        {'id': 'agent_1', 'name': 'Research'}
+    ]
+    client.agents.list.assert_awaited_with(limit=10, offset=5)
+    assert await NimbleAgentTemplatesListTool(client=cast(AsyncNimble, client))() == [{'template_name': 'research'}]
+    client.agents.templates.list.assert_awaited_once_with()
+    assert await NimbleAgentTemplatesListTool(client=cast(AsyncNimble, client))(limit=3, offset=1) == [
+        {'template_name': 'research'}
+    ]
+    client.agents.templates.list.assert_awaited_with(limit=3, offset=1)
+    assert await NimbleAgentRunStartTool(client=cast(AsyncNimble, client))('agent_1', 'Find AI news') == {
+        'id': 'run_1',
+        'status': 'queued',
+    }
+    client.agents.runs.create.assert_awaited_once_with(agent_id='agent_1', input='Find AI news')
+    assert await NimbleAgentRunStartTool(client=cast(AsyncNimble, client))('agent_1', 'Find AI news', effort='low') == {
+        'id': 'run_1',
+        'status': 'queued',
+    }
+    client.agents.runs.create.assert_awaited_with(agent_id='agent_1', input='Find AI news', effort='low')
+    assert await NimbleAgentRunStatusTool(client=cast(AsyncNimble, client))('agent_1', 'run_1') == {
+        'id': 'run_1',
+        'status': 'running',
+    }
+    assert await NimbleAgentRunResultTool(client=cast(AsyncNimble, client))('agent_1', 'run_1') == {
+        'id': 'run_1',
+        'output': 'done',
+    }
+    client.agents.runs.get.assert_awaited_once_with('run_1', agent_id='agent_1')
+    client.agents.runs.result.assert_awaited_once_with('run_1', agent_id='agent_1')
+
+
+def test_toolset_default_and_full_surface(nimble_api_key: str):
+    """NimbleToolset defaults to search+extract; opt-in flags add the rest."""
+    default = NimbleToolset(nimble_api_key)
+    assert sorted(default.tools) == ['nimble_extract', 'nimble_search']
+
+    full = NimbleToolset(
+        nimble_api_key,
+        include_map=True,
+        include_crawl=True,
+        include_agents=True,
+    )
+    assert sorted(full.tools) == [
+        'nimble_agent_run_result',
+        'nimble_agent_run_start',
+        'nimble_agent_run_status',
+        'nimble_agent_templates_list',
+        'nimble_agents_list',
+        'nimble_crawl_start',
+        'nimble_crawl_status',
+        'nimble_extract',
+        'nimble_map',
+        'nimble_search',
+    ]
+
+    extract_only = NimbleToolset(nimble_api_key, include_search=False, include_extract=True)
+    assert sorted(extract_only.tools) == ['nimble_extract']
+
+    search_only = NimbleToolset(nimble_api_key, include_search=True, include_extract=False)
+    assert sorted(search_only.tools) == ['nimble_search']
+
+
+def test_extract_factory_name():
+    """Extract factory returns a named tool."""
+    tool = nimble_extract_tool('test-key')
+    assert tool.name == 'nimble_extract'
