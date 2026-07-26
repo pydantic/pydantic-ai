@@ -396,12 +396,15 @@ class TestSkillValidation:
         with pytest.raises(ValueError, match="found duplicate key 'description'"):
             Skills(library)
 
-    def test_description_is_limited(self, tmp_path: Path) -> None:
+    def test_overlong_description_warns_and_is_preserved(self, tmp_path: Path) -> None:
         library = tmp_path / 'skills'
-        _write_skill(library, 'verbose', description='x' * 1025)
+        description = 'x' * 1025
+        _write_skill(library, 'verbose', description=description)
 
-        with pytest.raises(ValueError, match='Invalid Agent Skill frontmatter'):
-            Skills(library)
+        with pytest.warns(UserWarning, match=r'verbose \(1,025 characters\)'):
+            leaves = _leaves(Skills(library))
+
+        assert [leaf.description for leaf in leaves] == [description]
 
     def test_duplicate_names_across_roots_are_rejected(self, tmp_path: Path) -> None:
         first = tmp_path / 'first'

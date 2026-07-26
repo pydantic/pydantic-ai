@@ -144,7 +144,7 @@ The loader uses these parts of `SKILL.md`:
 | Part | Requirement |
 |---|---|
 | `name` | Optional. Defaults to the parent directory name. If provided, it must match the directory after Unicode normalization. |
-| `description` | Required, non-blank, and at most 1,024 characters. This appears in the initial catalog. |
+| `description` | Required and non-blank. The Agent Skills limit is 1,024 characters; longer descriptions load with a warning. This appears in the initial catalog. |
 | Markdown body | Optional. This is loaded under a generated `# Skill: <name>` heading. |
 
 Skill names and `include` or `exclude` values are normalized with Unicode NFKC

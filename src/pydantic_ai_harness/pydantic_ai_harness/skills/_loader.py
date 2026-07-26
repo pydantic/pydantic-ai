@@ -8,7 +8,7 @@ from collections.abc import Collection, Hashable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 # These fields affect invocation, permissions, model selection, execution, or
 # prompt rendering in clients that implement them. Skills accepts their files
@@ -39,7 +39,7 @@ class _SkillFrontmatter(BaseModel):
     model_config = ConfigDict(extra='allow')
 
     name: str | None = None
-    description: str = Field(min_length=1, max_length=1024)
+    description: str
 
     @field_validator('description', mode='after')
     @classmethod

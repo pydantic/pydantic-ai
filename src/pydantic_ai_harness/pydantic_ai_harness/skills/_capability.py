@@ -13,6 +13,8 @@ from pydantic_ai.tools import AgentDepsT
 
 from pydantic_ai_harness.skills._loader import SkillDefinition, load_skill_libraries
 
+_MAX_DESCRIPTION_LENGTH = 1024
+
 
 @dataclass(init=False, repr=False)
 class Skills(AbstractCapability[AgentDepsT]):
@@ -21,7 +23,8 @@ class Skills(AbstractCapability[AgentDepsT]):
     Libraries are scanned once during construction. Each selected immediate
     child containing `SKILL.md` becomes a deferred capability using the skill's
     name, description, and Markdown body. Bundled files are not loaded or
-    executed.
+    executed. Descriptions longer than the Agent Skills limit are preserved and
+    emit a warning.
     """
 
     directories: tuple[str | Path, ...]
@@ -76,6 +79,18 @@ class Skills(AbstractCapability[AgentDepsT]):
         self.exclude = self._normalize_selection('exclude', exclude) if exclude is not None else frozenset()
 
         definitions = load_skill_libraries(self.directories, include=self.include, exclude=self.exclude)
+        overlong_descriptions = [
+            f'{skill.name} ({len(skill.description):,} characters)'
+            for skill in definitions
+            if len(skill.description) > _MAX_DESCRIPTION_LENGTH
+        ]
+        if overlong_descriptions:
+            warnings.warn(
+                f'Agent Skill descriptions exceed the {_MAX_DESCRIPTION_LENGTH:,}-character limit: '
+                + '; '.join(overlong_descriptions),
+                UserWarning,
+                stacklevel=2,
+            )
         ignored = [
             f'{skill.name}: {", ".join(skill.ignored_behavioral_fields)}'
             for skill in definitions
