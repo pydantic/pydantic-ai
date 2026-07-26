@@ -1,0 +1,67 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '126'
+      content-type:
+      - application/json
+      host:
+      - sdk.nimbleway.com
+    method: POST
+    parsed_body:
+      exclude_domains: null
+      include_domains: null
+      max_results: 2
+      query: a
+      search_depth: lite
+      time_range: null
+    uri: https://sdk.nimbleway.com/v2/search
+  response:
+    headers:
+      content-length:
+      - '742'
+      content-type:
+      - application/json
+      ratelimit-limit:
+      - '20'
+      ratelimit-remaining:
+      - '19'
+      ratelimit-reset:
+      - '1'
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      request_id: 9c0c9c1d-a952-456d-976c-528668b8992c
+      results:
+      - content: ''
+        description: 'A (minuscule: a) is the first letter and the first vowel letter of the Latin alphabet, used in the modern
+          English alphabet, and others worldwide.'
+        metadata:
+          country: US
+          entity_type: OrganicResult
+          locale: en
+          position: 1
+        title: A - Wikipedia
+        url: https://en.wikipedia.org/wiki/A
+      - content: ''
+        description: Free shipping on millions of items. Enjoy low prices and great deals. Shop clothing, shoes, and more
+        metadata:
+          country: US
+          entity_type: OrganicResult
+          locale: en
+          position: 2
+        title: Amazon.com. Spend less. Smile more.
+        url: https://www.amazon.com/
+      total_results: 2
+    status:
+      code: 200
+      message: OK
+version: 1

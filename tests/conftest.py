@@ -884,6 +884,11 @@ def tavily_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def nimble_api_key() -> str:
+    return os.getenv('NIMBLE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def zai_api_key() -> str:
     return os.getenv('ZAI_API_KEY', 'mock-api-key')
 

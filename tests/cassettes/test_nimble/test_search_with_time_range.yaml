@@ -1,0 +1,78 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '145'
+      content-type:
+      - application/json
+      host:
+      - sdk.nimbleway.com
+    method: POST
+    parsed_body:
+      exclude_domains: null
+      include_domains: null
+      max_results: 3
+      query: generative AI news
+      search_depth: lite
+      time_range: week
+    uri: https://sdk.nimbleway.com/v2/search
+  response:
+    headers:
+      content-length:
+      - '1420'
+      content-type:
+      - application/json
+      ratelimit-limit:
+      - '20'
+      ratelimit-remaining:
+      - '19'
+      ratelimit-reset:
+      - '1'
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      request_id: 3772ba83-a1f5-4c6d-9f86-09d8ad0fec2a
+      results:
+      - content: ''
+        description: 5 days ago -- AI reduced excessive brain stress and unnecessary processes that occur during problem-solving,
+          thereby drastically increasing learning efficiency.
+        metadata:
+          country: US
+          entity_type: OrganicResult
+          locale: en
+          position: 1
+        title: Uncovering Multidimensional Effects of Generative AI on ...
+        url: https://www.newswise.com/articles/uncovering-multidimensional-effects-of-generative-ai-on-learning-high-dependency-lowers-actual-test-scores
+      - content: ''
+        description: 18 hours ago -- All the latest content about Artificial intelligence from the BBC. Man sues ChatGPT for
+          near-fatal medical advice. Chinese AI companies are facing increased US ...
+        metadata:
+          country: US
+          entity_type: OrganicResult
+          locale: en
+          position: 2
+        title: Artificial intelligence - BBC News
+        url: https://www.bbc.com/news/topics/ce1qrvleleqt
+      - content: ''
+        description: 2 days ago -- OpenAI and other companies have warned that their new A.I. systems could be powerful hacking
+          tools. CreditAaron Wojack for The New York Times.
+        metadata:
+          country: US
+          entity_type: OrganicResult
+          locale: en
+          position: 3
+        title: Artificial Intelligence - The New York ...
+        url: https://www.nytimes.com/spotlight/artificial-intelligence
+      total_results: 3
+    status:
+      code: 200
+      message: OK
+version: 1

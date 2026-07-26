@@ -4,6 +4,8 @@
 
 ::: pydantic_ai.common_tools.exa
 
+::: pydantic_ai.common_tools.nimble
+
 ::: pydantic_ai.common_tools.tavily
 
 ::: pydantic_ai.common_tools.web_fetch

@@ -1,0 +1,79 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '159'
+      content-type:
+      - application/json
+      host:
+      - sdk.nimbleway.com
+    method: POST
+    parsed_body:
+      exclude_domains: null
+      include_domains:
+      - arxiv.org
+      max_results: 3
+      query: transformer architectures
+      search_depth: lite
+      time_range: null
+    uri: https://sdk.nimbleway.com/v2/search
+  response:
+    headers:
+      content-length:
+      - '1313'
+      content-type:
+      - application/json
+      ratelimit-limit:
+      - '20'
+      ratelimit-remaining:
+      - '19'
+      ratelimit-reset:
+      - '1'
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      request_id: 3eed6afc-0036-4276-ac5f-d704bec641a0
+      results:
+      - content: ''
+        description: by RE Turner · 2023 · Cited by 96 -- In this note we aim for a mathematically precise, intuitive, and
+          clean description of the transformer architecture.
+        metadata:
+          country: US
+          entity_type: OrganicResult
+          locale: en
+          position: 1
+        title: '[2304.10557] An Introduction to Transformers'
+        url: https://arxiv.org/abs/2304.10557
+      - content: ''
+        description: by HH Samson · 2026 · Cited by 11 -- This comprehensive survey examines lightweight transformer architectures
+          specifically designed for edge deployment, analyzing recent advances ...
+        metadata:
+          country: US
+          entity_type: OrganicResult
+          locale: en
+          position: 2
+        title: Lightweight Transformer Architectures for Edge Devices in ...
+        url: https://arxiv.org/abs/2601.03290
+      - content: ''
+        description: Feb 15, 2026 -- Transformer architectures have revolutionized machine learning across a wide range of
+          domains, from natural language processing to scientific ...
+        metadata:
+          country: US
+          entity_type: OrganicResult
+          locale: en
+          position: 3
+        title: In Transformer We Trust? A Perspective on ...
+        url: https://arxiv.org/html/2602.14318v1
+      total_results: 3
+    status:
+      code: 200
+      message: OK
+version: 1

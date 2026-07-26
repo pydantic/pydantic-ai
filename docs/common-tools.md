@@ -209,6 +209,80 @@ Here are some recent papers about transformer architectures from arxiv.org:
 """
 ```
 
+## Nimble Search Tool
+
+!!! info
+    Nimble is a paid service, but they have free credits to explore their product.
+
+    You need to [sign up for an account](https://online.nimbleway.com/account-settings/api-keys) and get an API key to use the Nimble search tool.
+
+The Nimble search tool allows you to search the web for information. It is built on top of the [Nimble Search API](https://www.nimbleway.com/) via the [`nimble_python`](https://pypi.org/project/nimble_python/) SDK.
+
+### Installation
+
+To use [`nimble_search_tool`][pydantic_ai.common_tools.nimble.nimble_search_tool], you need to install
+[`pydantic-ai-slim`](install.md#slim-install) with the `nimble` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[nimble]"
+```
+
+### Usage
+
+Here's an example of how you can use the Nimble search tool with an agent:
+
+```py {title="nimble_search.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.nimble import nimble_search_tool
+
+api_key = os.getenv('NIMBLE_API_KEY')
+assert api_key is not None
+
+agent = Agent(
+    'openai:gpt-5.2',
+    tools=[nimble_search_tool(api_key)],
+    instructions='Search Nimble for the given query and return the results.',
+)
+
+result = agent.run_sync('Tell me the top news in the GenAI world, give me links.')
+print(result.output)
+```
+
+### Configuring Parameters
+
+The `nimble_search_tool` factory accepts optional parameters that control search behavior. `max_results` is always developer-controlled and never appears in the LLM tool schema. Other parameters, when provided, are fixed for all searches and hidden from the LLM's tool schema. Parameters left unset remain available for the LLM to set per-call.
+
+For example, you can lock in `max_results` and `include_domains` at tool creation time while still letting the LLM control `exclude_domains`:
+
+```py {title="nimble_domain_filtering.py"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.nimble import nimble_search_tool
+
+api_key = os.getenv('NIMBLE_API_KEY')
+assert api_key is not None
+
+agent = Agent(
+    'openai:gpt-5.2',
+    tools=[nimble_search_tool(api_key, max_results=5, include_domains=['arxiv.org'])],
+    instructions='Search for information and return the results.',
+)
+
+result = agent.run_sync(
+    'Find recent papers about transformer architectures'
+)
+print(result.output)
+"""
+Here are some recent papers about transformer architectures from arxiv.org:
+
+1. "Attention Is All You Need" - The foundational paper on the Transformer model.
+2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.
+"""
+```
+
 ## Exa Search Tool
 
 !!! warning "Deprecated"

@@ -1,0 +1,69 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '154'
+      content-type:
+      - application/json
+      host:
+      - sdk.nimbleway.com
+    method: POST
+    parsed_body:
+      exclude_domains: null
+      include_domains:
+      - arxiv.org
+      max_results: 2
+      query: attention mechanisms
+      search_depth: lite
+      time_range: null
+    uri: https://sdk.nimbleway.com/v2/search
+  response:
+    headers:
+      content-length:
+      - '927'
+      content-type:
+      - application/json
+      ratelimit-limit:
+      - '20'
+      ratelimit-remaining:
+      - '19'
+      ratelimit-reset:
+      - '1'
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      request_id: 65099ec7-673d-4cd1-a683-f7a091453703
+      results:
+      - content: ''
+        description: by H Hays · 2026 · Cited by 4 -- Attention mechanisms represent a fundamental paradigm shift in neural
+          network architectures, enabling models to selectively focus on relevant ...
+        metadata:
+          country: US
+          entity_type: OrganicResult
+          locale: en
+          position: 1
+        title: Attention mechanisms in neural networks
+        url: https://arxiv.org/pdf/2601.03329
+      - content: ''
+        description: by H Hays · 2026 · Cited by 4 -- :Attention mechanisms represent a fundamental paradigm shift in neural
+          network architectures, enabling models to selectively focus on relevant ...
+        metadata:
+          country: US
+          entity_type: OrganicResult
+          locale: en
+          position: 2
+        title: '[2601.03329] Attention mechanisms in neural networks'
+        url: https://arxiv.org/abs/2601.03329
+      total_results: 2
+    status:
+      code: 200
+      message: OK
+version: 1

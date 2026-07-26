@@ -1,0 +1,78 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '145'
+      content-type:
+      - application/json
+      host:
+      - sdk.nimbleway.com
+    method: POST
+    parsed_body:
+      exclude_domains: null
+      include_domains: null
+      max_results: 3
+      query: What is Pydantic AI?
+      search_depth: lite
+      time_range: null
+    uri: https://sdk.nimbleway.com/v2/search
+  response:
+    headers:
+      content-length:
+      - '1225'
+      content-type:
+      - application/json
+      ratelimit-limit:
+      - '20'
+      ratelimit-remaining:
+      - '19'
+      ratelimit-reset:
+      - '1'
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      request_id: 9fda41d7-5663-4022-9a89-1c88d248eab2
+      results:
+      - content: ''
+        description: Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build
+          production grade applications and workflows with...
+        metadata:
+          country: US
+          entity_type: OrganicResult
+          locale: en
+          position: 1
+        title: Pydantic AI | Pydantic Docs
+        url: https://pydantic.dev/docs/ai/overview/
+      - content: ''
+        description: Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build
+          production grade applications and workflows with...
+        metadata:
+          country: US
+          entity_type: OrganicResult
+          locale: en
+          position: 2
+        title: AI Agent Framework, the Pydantic way
+        url: https://github.com/pydantic/pydantic-ai
+      - content: ''
+        description: 2 days ago -- Pydantic is the AI engineering stack for teams building with AI. Build in Python, TypeScript,
+          Rust, and Go. Observe and optimize on the cloud ...
+        metadata:
+          country: US
+          entity_type: OrganicResult
+          locale: en
+          position: 3
+        title: Pydantic | The end-to-end AI engineering stack
+        url: https://pydantic.dev/
+      total_results: 3
+    status:
+      code: 200
+      message: OK
+version: 1
