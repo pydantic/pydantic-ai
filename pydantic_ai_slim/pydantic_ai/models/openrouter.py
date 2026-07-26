@@ -663,7 +663,11 @@ def _openrouter_settings_to_openai_settings(
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
     """
-    extra_body = cast(dict[str, Any], model_settings.get('extra_body', {}))
+    # Copy so the `openrouter_` pops and `extra_body` mutations never mutate the caller's dict:
+    # `merge_model_settings` can return the model's own `settings` by identity, so popping in place
+    # would drop the keys on the next request and accumulate duplicate plugin entries.
+    model_settings = model_settings.copy()
+    extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
 
     if models := model_settings.pop('openrouter_models', None):
         extra_body['models'] = models

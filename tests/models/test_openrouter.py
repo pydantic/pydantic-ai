@@ -1,5 +1,6 @@
 import datetime
 from collections.abc import Sequence
+from copy import deepcopy
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
@@ -1022,6 +1023,50 @@ async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
     assert extra_body['plugins'] == [{'id': 'web'}]
     assert 'web_search_options' in extra_body
     assert extra_body['web_search_options'] == {'search_context_size': 'high'}
+
+
+async def test_openrouter_prepare_request_does_not_mutate_caller_settings() -> None:
+    """Repeated `prepare_request` calls must not mutate the caller's settings or duplicate plugins.
+
+    `merge_model_settings` can return the model's own `settings` by identity, so the converter's
+    `openrouter_` pops and `extra_body`/`plugins` appends would otherwise leak back onto the
+    caller's object across calls. This is an API-free preparation-path test (no provider request),
+    so it is a unit test rather than a VCR test despite the module-level `vcr` mark.
+    """
+    provider = OpenRouterProvider(api_key='mock-api-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    settings = OpenRouterModelSettings(
+        openrouter_models=['vendor/model'],
+        openrouter_provider={'only': ['provider']},
+        openrouter_usage={'include': True},
+        extra_body={'caller_key': 'kept'},
+    )
+    original = deepcopy(settings)
+    params = ModelRequestParameters(native_tools=[WebSearchTool(search_context_size='medium')])
+
+    first, _ = model.prepare_request(settings, params)
+    assert first is not None
+    second, _ = model.prepare_request(settings, params)
+    assert second is not None
+
+    # The caller's settings object is preserved across both calls.
+    assert settings == original
+
+    first_extra_body = cast(dict[str, Any], first.get('extra_body', {}))
+    second_extra_body = cast(dict[str, Any], second.get('extra_body', {}))
+    # Each prepared request carries exactly one web plugin (no duplication).
+    assert first_extra_body['plugins'] == [{'id': 'web'}]
+    assert second_extra_body['plugins'] == [{'id': 'web'}]
+    # openrouter_* values are moved into extra_body without stripping the caller's originals.
+    assert first_extra_body['models'] == ['vendor/model']
+    assert first_extra_body['provider'] == {'only': ['provider']}
+    assert first_extra_body['usage'] == {'include': True}
+    # The caller's pre-existing extra_body entries are preserved.
+    assert first_extra_body['caller_key'] == 'kept'
+    # The openrouter_* keys remain on the original caller settings object.
+    assert settings['openrouter_models'] == ['vendor/model']
+    assert settings['openrouter_provider'] == {'only': ['provider']}
+    assert settings['openrouter_usage'] == {'include': True}
 
 
 def _openrouter_completion(content: str) -> ChatCompletion:
