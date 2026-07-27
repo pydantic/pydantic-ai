@@ -49,7 +49,7 @@ async def test_swallowing_event_stream_handler_run_still_cancels():
 
     async def handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
         try:
-            async for _event in events:
+            async for _event in events:  # pragma: no branch
                 in_flight.set()
                 await asyncio.Event().wait()  # a slow consumer; cancel lands here
         except asyncio.CancelledError:
