@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .base import EmbeddingModel
+from .input import EmbeddingInput, EmbeddingModality
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
@@ -41,7 +42,11 @@ class WrapperEmbeddingModel(EmbeddingModel):
         self.wrapped = infer_embedding_model(wrapped) if isinstance(wrapped, str) else wrapped
 
     async def embed(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
         return await self.wrapped.embed(inputs, input_type=input_type, settings=settings)
 
@@ -58,6 +63,10 @@ class WrapperEmbeddingModel(EmbeddingModel):
     @property
     def system(self) -> str:
         return self.wrapped.system
+
+    @property
+    def supported_modalities(self) -> frozenset[EmbeddingModality]:
+        return self.wrapped.supported_modalities
 
     @property
     def settings(self) -> EmbeddingSettings | None:

@@ -13,6 +13,15 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.providers import Provider, infer_provider
 
 from .base import EmbeddingModel
+from .input import (
+    EmbeddingContent,
+    EmbeddingContentPart,
+    EmbeddingFile,
+    EmbeddingInput,
+    EmbeddingModality,
+    embedding_modality,
+    embedding_parts,
+)
 from .instrumented import InstrumentedEmbeddingModel, instrument_embedding_model
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings, merge_embedding_settings
@@ -24,6 +33,13 @@ __all__ = [
     'EmbeddingModel',
     'EmbeddingSettings',
     'EmbeddingResult',
+    'EmbeddingContent',
+    'EmbeddingContentPart',
+    'EmbeddingFile',
+    'EmbeddingInput',
+    'EmbeddingModality',
+    'embedding_modality',
+    'embedding_parts',
     'merge_embedding_settings',
     'KnownEmbeddingModelName',
     'infer_embedding_model',
@@ -264,7 +280,7 @@ class Embedder:
                 self._override_model.reset(model_token)
 
     async def embed_query(
-        self, query: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+        self, query: EmbeddingInput | Sequence[EmbeddingInput], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         """Embed one or more query texts.
 
@@ -282,7 +298,7 @@ class Embedder:
         return await self.embed(query, input_type='query', settings=settings)
 
     async def embed_documents(
-        self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+        self, documents: EmbeddingInput | Sequence[EmbeddingInput], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         """Embed one or more document texts.
 
@@ -300,7 +316,11 @@ class Embedder:
         return await self.embed(documents, input_type='document', settings=settings)
 
     async def embed(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
         """Embed text inputs with explicit input type specification.
 
@@ -347,19 +367,23 @@ class Embedder:
         return await model.count_tokens(text)
 
     def embed_query_sync(
-        self, query: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+        self, query: EmbeddingInput | Sequence[EmbeddingInput], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         """Synchronous version of [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query]."""
         return _utils.run_until_complete(self.embed_query(query, settings=settings))
 
     def embed_documents_sync(
-        self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+        self, documents: EmbeddingInput | Sequence[EmbeddingInput], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         """Synchronous version of [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents]."""
         return _utils.run_until_complete(self.embed_documents(documents, settings=settings))
 
     def embed_sync(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
         """Synchronous version of [`embed()`][pydantic_ai.embeddings.Embedder.embed]."""
         return _utils.run_until_complete(self.embed(inputs, input_type=input_type, settings=settings))

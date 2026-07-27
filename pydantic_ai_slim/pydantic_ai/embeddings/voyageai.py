@@ -9,6 +9,7 @@ from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
 from .base import EmbeddingModel, EmbedInputType
+from .input import EmbeddingInput
 from .result import EmbeddingResult
 from .settings import EmbeddingSettings
 
@@ -146,12 +147,12 @@ class VoyageAIEmbeddingModel(EmbeddingModel):
 
     async def embed(
         self,
-        inputs: str | Sequence[str],
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
         *,
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        inputs, settings = self.prepare_embed(inputs, settings)
+        inputs, settings = self.prepare_text_embed(inputs, settings)
         settings = cast(VoyageAIEmbeddingSettings, settings)
 
         voyageai_input_type: VoyageAIEmbedInputType = settings.get(

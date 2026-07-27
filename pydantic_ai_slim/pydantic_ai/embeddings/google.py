@@ -4,16 +4,19 @@ from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.messages import BinaryContent, TextContent
+from pydantic_ai.models import download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
 from .base import EmbeddingModel
+from .input import EmbeddingContentPart, EmbeddingInput, EmbeddingModality, embedding_parts
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
 try:
     from google.genai import Client, errors
-    from google.genai.types import Content, ContentListUnion, EmbedContentConfig, EmbedContentResponse, Part
+    from google.genai.types import Blob, Content, ContentUnion, EmbedContentConfig, EmbedContentResponse, Part
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google embeddings model, '
@@ -84,6 +87,11 @@ _SYMMETRIC_TASKS: frozenset[GoogleEmbeddingTask] = frozenset({'classification', 
 
 # The only model that conditions on a task via a text prefix rather than the `task_type` field.
 _TASK_PREFIX_MODEL = 'gemini-embedding-2'
+
+# Models that accept more than text. See https://ai.google.dev/gemini-api/docs/embeddings#multimodal
+_MULTIMODAL_MODELS: frozenset[str] = frozenset({'gemini-embedding-2'})
+
+_MULTIMODAL_MODALITIES: frozenset[EmbeddingModality] = frozenset({'text', 'image', 'audio', 'video', 'document'})
 
 
 _MAX_INPUT_TOKENS: dict[GoogleEmbeddingModelName, int] = {
@@ -209,17 +217,28 @@ class GoogleEmbeddingModel(EmbeddingModel):
         """The embedding model provider."""
         return self._provider.name
 
-    async def embed(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> EmbeddingResult:
-        inputs, settings = self.prepare_embed(inputs, settings)
-        settings = cast(GoogleEmbeddingSettings, settings)
+    @property
+    def supported_modalities(self) -> frozenset[EmbeddingModality]:
+        if self._model_name in _MULTIMODAL_MODELS:
+            return _MULTIMODAL_MODALITIES
+        return super().supported_modalities
 
-        google_task = settings.get('google_task')
-        google_task_type = settings.get('google_task_type')
+    async def embed(
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
+    ) -> EmbeddingResult:
+        items: Sequence[EmbeddingInput]
+        contents: list[ContentUnion]
 
         if self._model_name == _TASK_PREFIX_MODEL:
-            if google_task_type is not None:
+            items, merged_settings = self.prepare_embed(inputs, settings)
+            settings = cast(GoogleEmbeddingSettings, merged_settings)
+
+            google_task = settings.get('google_task')
+            if (google_task_type := settings.get('google_task_type')) is not None:
                 warnings.warn(
                     f'`google_task_type` is not supported by `{_TASK_PREFIX_MODEL}` and is ignored; '
                     'this model conditions on a task via the `google_task` text prefix instead.',
@@ -227,40 +246,67 @@ class GoogleEmbeddingModel(EmbeddingModel):
                     stacklevel=2,
                 )
             task = google_task if google_task is not None else 'search result'
-            # `'raw'` opts out of conditioning (verbatim passthrough). Named `'raw'`, not `'none'`:
-            # the prefix is applied client-side (no provider API value to mirror, unlike VoyageAI's
-            # `'none'` which maps to a null `input_type`), and `'raw'` avoids the `google_task=None`
-            # footgun where `None` would silently fall back to the `'search result'` default.
-            if task == 'raw':
-                texts = inputs
-            elif input_type == 'document' and task not in _SYMMETRIC_TASKS:
-                title = settings.get('google_title') or 'none'
-                texts = [f'title: {title} | text: {text}' for text in inputs]
-            else:
-                texts = [f'task: {task} | query: {text}' for text in inputs]
+
+            contents = []
+            conditioned_all_inputs = True
+            for item in items:
+                parts = embedding_parts(item)
+                # The prefix conditions text, so it only applies to an input that is a single text part;
+                # Google doesn't define task instructions for other modalities.
+                # See https://ai.google.dev/gemini-api/docs/embeddings#multimodal
+                if len(parts) == 1 and isinstance(text_part := parts[0], str | TextContent):
+                    text = text_part if isinstance(text_part, str) else text_part.content
+                    # `'raw'` opts out of conditioning (verbatim passthrough). Named `'raw'`, not `'none'`:
+                    # the prefix is applied client-side (no provider API value to mirror, unlike VoyageAI's
+                    # `'none'` which maps to a null `input_type`), and `'raw'` avoids the `google_task=None`
+                    # footgun where `None` would silently fall back to the `'search result'` default.
+                    if task == 'raw':
+                        pass
+                    elif input_type == 'document' and task not in _SYMMETRIC_TASKS:
+                        title = settings.get('google_title') or 'none'
+                        text = f'title: {title} | text: {text}'
+                    else:
+                        text = f'task: {task} | query: {text}'
+                    contents.append(Content(parts=[Part(text=text)]))
+                else:
+                    conditioned_all_inputs = False
+                    contents.append(Content(parts=[await _map_content_part(part) for part in parts]))
+
+            if google_task is not None and task != 'raw' and not conditioned_all_inputs:
+                warnings.warn(
+                    f'`google_task` only conditions inputs that are a single text part and is ignored for the others; '
+                    f'`{self._model_name}` has no task conditioning for other modalities.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+
             config = EmbedContentConfig(
                 task_type=None,
                 output_dimensionality=settings.get('dimensions'),
                 title=None,
             )
         else:
-            if google_task is not None:
+            texts, merged_settings = self.prepare_text_embed(inputs, settings)
+            settings = cast(GoogleEmbeddingSettings, merged_settings)
+            items = texts
+
+            if settings.get('google_task') is not None:
                 warnings.warn(
                     f'`google_task` is only supported by `{_TASK_PREFIX_MODEL}` and is ignored; '
                     f'`{self._model_name}` conditions on a task via the `google_task_type` setting instead.',
                     UserWarning,
                     stacklevel=2,
                 )
+            google_task_type = settings.get('google_task_type')
             if google_task_type is None:
                 google_task_type = 'RETRIEVAL_DOCUMENT' if input_type == 'document' else 'RETRIEVAL_QUERY'
-            texts = inputs
+
+            contents = [Content(parts=[Part(text=text)]) for text in texts]
             config = EmbedContentConfig(
                 task_type=google_task_type,
                 output_dimensionality=settings.get('dimensions'),
                 title=settings.get('google_title'),
             )
-
-        contents: ContentListUnion = [Content(parts=[Part(text=text)]) for text in texts]
 
         try:
             response = await self._client.aio.models.embed_content(
@@ -281,7 +327,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
 
         return EmbeddingResult(
             embeddings=embeddings,
-            inputs=inputs,
+            inputs=items,
             input_type=input_type,
             usage=_map_usage(response, self.system, self.base_url, self._model_name),
             model_name=self._model_name,
@@ -309,6 +355,19 @@ class GoogleEmbeddingModel(EmbeddingModel):
         if response.total_tokens is None:
             raise UnexpectedModelBehavior('Token counting returned no result')  # pragma: no cover
         return response.total_tokens
+
+
+async def _map_content_part(part: EmbeddingContentPart) -> Part:
+    """Map a content part to a Google `Part`, downloading URLs as the embeddings API only takes inline data."""
+    if isinstance(part, str):
+        return Part(text=part)
+    elif isinstance(part, TextContent):
+        return Part(text=part.content)
+    elif isinstance(part, BinaryContent):
+        return Part(inline_data=Blob(data=part.data, mime_type=part.media_type))
+    else:
+        downloaded = await download_item(part, data_format='bytes')
+        return Part(inline_data=Blob(data=downloaded['data'], mime_type=downloaded['data_type']))
 
 
 def _map_usage(

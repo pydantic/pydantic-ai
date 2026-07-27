@@ -17,6 +17,7 @@ from pydantic_ai.providers.bedrock import remove_bedrock_geo_prefix
 from pydantic_ai.usage import RequestUsage
 
 from .base import EmbeddingModel
+from .input import EmbeddingInput
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
@@ -570,9 +571,13 @@ class BedrockEmbeddingModel(EmbeddingModel):
         return self._provider.name
 
     async def embed(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        inputs_list, settings_dict = self.prepare_embed(inputs, settings)
+        inputs_list, settings_dict = self.prepare_text_embed(inputs, settings)
         settings_typed = cast(BedrockEmbeddingSettings, settings_dict)
 
         if self._handler.supports_batch:

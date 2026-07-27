@@ -21,6 +21,7 @@ from .concurrency import (
 )
 from .embeddings import (
     Embedder,
+    EmbeddingContent,
     EmbeddingModel,
     EmbeddingResult,
     EmbeddingSettings,
@@ -182,6 +183,7 @@ __all__ = (
     'InstrumentationSettings',
     # embeddings
     'Embedder',
+    'EmbeddingContent',
     'EmbeddingModel',
     'EmbeddingSettings',
     'EmbeddingResult',

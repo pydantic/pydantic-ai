@@ -8,6 +8,8 @@ from genai_prices import calc_price, types as genai_types
 from pydantic_ai._utils import now_utc as _now_utc
 from pydantic_ai.usage import RequestUsage
 
+from .input import EmbeddingInput
+
 EmbedInputType = Literal['query', 'document']
 """The type of input to the embedding model.
 
@@ -58,8 +60,8 @@ class EmbeddingResult:
 
     _: KW_ONLY
 
-    inputs: Sequence[str]
-    """The original input texts that were embedded."""
+    inputs: Sequence[EmbeddingInput]
+    """The original inputs that were embedded, one per embedding."""
 
     input_type: EmbedInputType
     """Whether the inputs were embedded as queries or documents."""
@@ -84,6 +86,8 @@ class EmbeddingResult:
 
     def __getitem__(self, item: int | str) -> Sequence[float]:
         """Get the embedding for an input by index or by the original input text.
+
+        Lookup by value is text-only; embeddings of non-text inputs are accessed by index.
 
         Args:
             item: Either an integer index or the original input string.

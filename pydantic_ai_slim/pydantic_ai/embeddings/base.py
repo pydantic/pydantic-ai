@@ -1,8 +1,14 @@
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import TextContent
+
+from .input import EmbeddingInput, EmbeddingModality, embedding_modality, embedding_parts
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings, merge_embedding_settings
+
+_TEXT_ONLY: frozenset[EmbeddingModality] = frozenset({'text'})
 
 
 class EmbeddingModel(ABC):
@@ -54,14 +60,30 @@ class EmbeddingModel(ABC):
         """The embedding model provider/system identifier (e.g., 'openai', 'cohere')."""
         raise NotImplementedError()
 
+    @property
+    def supported_modalities(self) -> frozenset[EmbeddingModality]:
+        """The modalities this model can embed.
+
+        Defaults to text only. Models that support images, audio, video or documents should override
+        this, keyed by model name where support differs between the models a class covers.
+
+        Inputs are checked against this in [`prepare_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_embed],
+        so an unsupported input raises a [`UserError`][pydantic_ai.exceptions.UserError] instead of a provider error.
+        """
+        return _TEXT_ONLY
+
     @abstractmethod
     async def embed(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
         """Generate embeddings for the given inputs.
 
         Args:
-            inputs: A single string or sequence of strings to embed.
+            inputs: A single input or sequence of inputs to embed, each yielding one embedding.
             input_type: Whether the inputs are queries or documents.
             settings: Optional settings to override the model's defaults.
 
@@ -72,25 +94,70 @@ class EmbeddingModel(ABC):
         raise NotImplementedError
 
     def prepare_embed(
-        self, inputs: str | Sequence[str], settings: EmbeddingSettings | None = None
-    ) -> tuple[list[str], EmbeddingSettings]:
+        self, inputs: EmbeddingInput | Sequence[EmbeddingInput], settings: EmbeddingSettings | None = None
+    ) -> tuple[list[EmbeddingInput], EmbeddingSettings]:
         """Prepare the inputs and settings for embedding.
 
-        This method normalizes inputs to a list and merges settings.
-        Subclasses should call this at the start of their `embed()` implementation.
+        This method normalizes inputs to a list, checks them against the model's
+        [`supported_modalities`][pydantic_ai.embeddings.EmbeddingModel.supported_modalities], and merges settings.
+        Subclasses should call this at the start of their `embed()` implementation, or
+        [`prepare_text_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_text_embed] if they only support text.
 
         Args:
-            inputs: A single string or sequence of strings.
+            inputs: A single input or sequence of inputs.
             settings: Optional settings to merge with defaults.
 
         Returns:
             A tuple of (normalized inputs list, merged settings).
+
+        Raises:
+            UserError: If an input uses a modality the model doesn't support.
         """
-        inputs = [inputs] if isinstance(inputs, str) else list(inputs)
+        items = list(inputs) if isinstance(inputs, Sequence) and not isinstance(inputs, str) else [inputs]
+
+        supported = self.supported_modalities
+        for item in items:
+            for part in embedding_parts(item):
+                if (modality := embedding_modality(part)) not in supported:
+                    raise UserError(
+                        f'`{self.model_name}` does not support {modality} inputs. '
+                        f'Supported modalities: {", ".join(sorted(supported))}.'
+                    )
 
         settings = merge_embedding_settings(self._settings, settings) or {}
 
-        return inputs, settings
+        return items, settings
+
+    def prepare_text_embed(
+        self, inputs: EmbeddingInput | Sequence[EmbeddingInput], settings: EmbeddingSettings | None = None
+    ) -> tuple[list[str], EmbeddingSettings]:
+        """Prepare text-only inputs and settings for embedding.
+
+        Like [`prepare_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_embed], but unwraps
+        [`TextContent`][pydantic_ai.messages.TextContent] so implementations that only send text get plain strings.
+
+        Args:
+            inputs: A single input or sequence of inputs.
+            settings: Optional settings to merge with defaults.
+
+        Returns:
+            A tuple of (normalized text list, merged settings).
+
+        Raises:
+            UserError: If an input isn't plain text.
+        """
+        items, settings = self.prepare_embed(inputs, settings)
+
+        texts: list[str] = []
+        for item in items:
+            if isinstance(item, str):
+                texts.append(item)
+            elif isinstance(item, TextContent):
+                texts.append(item.content)
+            else:
+                raise UserError(f'`{self.model_name}` only supports plain text inputs, got `{type(item).__name__}`.')
+
+        return texts, settings
 
     async def max_input_tokens(self) -> int | None:
         """Get the maximum number of tokens that can be input to the model.

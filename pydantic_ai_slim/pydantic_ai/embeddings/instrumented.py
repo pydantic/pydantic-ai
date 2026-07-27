@@ -9,15 +9,18 @@ from typing import Any
 from urllib.parse import urlparse
 
 from opentelemetry.util.types import AttributeValue
+from pydantic import JsonValue
 
 from pydantic_ai._instrumentation import (
     ANY_ADAPTER,
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,
     CostCalculationFailedWarning,
 )
+from pydantic_ai.messages import BinaryContent, TextContent
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
 from .base import EmbeddingModel
+from .input import EmbeddingContent, EmbeddingInput, embedding_modality
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 from .wrapper import WrapperEmbeddingModel
@@ -57,18 +60,22 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
         self.instrumentation_settings = options or InstrumentationSettings()
 
     async def embed(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        inputs, settings = self.prepare_embed(inputs, settings)
-        with self._instrument(inputs, input_type, settings) as finish:
-            result = await super().embed(inputs, input_type=input_type, settings=settings)
+        items, settings = self.prepare_embed(inputs, settings)
+        with self._instrument(items, input_type, settings) as finish:
+            result = await super().embed(items, input_type=input_type, settings=settings)
             finish(result)
             return result
 
     @contextmanager
     def _instrument(
         self,
-        inputs: list[str],
+        inputs: list[EmbeddingInput],
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None,
     ) -> Generator[Callable[[EmbeddingResult], None]]:
@@ -88,7 +95,8 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
             attributes['embedding_settings'] = json.dumps(self.serialize_any(settings))
 
         if self.instrumentation_settings.include_content:
-            attributes['inputs'] = json.dumps(inputs)
+            include_binary = self.instrumentation_settings.include_binary_content
+            attributes['inputs'] = json.dumps([_otel_input(item, include_binary) for item in inputs])
 
         attributes['logfire.json_schema'] = json.dumps(
             {
@@ -207,3 +215,29 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                 return str(value)
             except Exception as e:
                 return f'Unable to serialize: {e}'
+
+
+def _otel_input(item: EmbeddingInput, include_binary_content: bool) -> JsonValue:
+    """Represent an input for the `inputs` span attribute, describing files instead of inlining their data."""
+    if isinstance(item, EmbeddingContent):
+        return [_otel_input(part, include_binary_content) for part in item.content]
+    elif isinstance(item, str):
+        return item
+    elif isinstance(item, TextContent):
+        return item.content
+    elif isinstance(item, BinaryContent):
+        blob: dict[str, JsonValue] = {
+            'type': 'blob',
+            'modality': embedding_modality(item),
+            'mime_type': item.media_type,
+        }
+        if include_binary_content:
+            blob['content'] = item.base64
+        return blob
+    else:
+        return {
+            'type': 'uri',
+            'modality': embedding_modality(item),
+            'uri': item.url,
+            'mime_type': item.media_type,
+        }

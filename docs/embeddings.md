@@ -77,6 +77,46 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+## Multimodal inputs
+
+Some models embed more than text. Pass images, audio, video or documents using the same content types you'd use in a prompt — [`ImageUrl`][pydantic_ai.messages.ImageUrl], [`BinaryContent`][pydantic_ai.messages.BinaryContent], and friends — and each input yields one embedding, exactly like text.
+
+To combine several parts into a *single* vector — a page screenshot and its caption, say — wrap them in [`EmbeddingContent`][pydantic_ai.embeddings.EmbeddingContent]:
+
+```python {title="multimodal_embeddings.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings import EmbeddingContent
+from pydantic_ai.messages import ImageUrl
+
+embedder = Embedder('google:gemini-embedding-2')
+
+
+async def main():
+    image = ImageUrl(url='https://iili.io/3Hs4FMg.png')
+
+    # Two inputs, two vectors
+    result = await embedder.embed_documents(['a kiwi fruit', image])
+    print(len(result.embeddings))
+    #> 2
+
+    # One input, one vector combining the caption and the image
+    result = await embedder.embed_documents(EmbeddingContent(['a kiwi fruit', image]))
+    print(len(result.embeddings))
+    #> 1
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+Support is per model, not per provider, and is declared by [`EmbeddingModel.supported_modalities`][pydantic_ai.embeddings.EmbeddingModel.supported_modalities]. Passing an unsupported input raises a [`UserError`][pydantic_ai.exceptions.UserError] before any request is made, rather than a provider error:
+
+| Model | Modalities |
+|-------|------------|
+| `google:gemini-embedding-2` | text, image, audio, video, document |
+| Every other built-in model | text |
+
+!!! note "Looking up embeddings"
+    `result['some text']` only works for text inputs; embeddings of files and of `EmbeddingContent` are accessed by index.
+
 ## Choosing a model
 
 The best embedding model depends on your language, domain, latency, deployment, and evaluation constraints. Use this table as a starting point, then check the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard), the model card on the [Hugging Face Hub](https://huggingface.co/models?library=sentence-transformers), and your own retrieval evaluation before committing to a model for a large index.
@@ -293,6 +333,8 @@ async def main():
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings) for available models.
+
+`gemini-embedding-2` also embeds images, audio, video and documents — see [Multimodal inputs](#multimodal-inputs).
 
 ##### Google Cloud
 
@@ -903,7 +945,12 @@ To integrate a custom embedding provider, subclass [`EmbeddingModel`][pydantic_a
 ```python {title="custom_embedding_model.py"}
 from collections.abc import Sequence
 
-from pydantic_ai.embeddings import EmbeddingModel, EmbeddingResult, EmbeddingSettings
+from pydantic_ai.embeddings import (
+    EmbeddingInput,
+    EmbeddingModel,
+    EmbeddingResult,
+    EmbeddingSettings,
+)
 from pydantic_ai.embeddings.result import EmbedInputType
 
 
@@ -918,12 +965,14 @@ class MyCustomEmbeddingModel(EmbeddingModel):
 
     async def embed(
         self,
-        inputs: str | Sequence[str],
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
         *,
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        inputs, settings = self.prepare_embed(inputs, settings)
+        # `prepare_text_embed()` normalizes to plain strings and rejects anything else;
+        # use `prepare_embed()` instead if your model accepts more than text.
+        inputs, settings = self.prepare_text_embed(inputs, settings)
 
         # Call your embedding API here
         embeddings = [[0.1, 0.2, 0.3] for _ in inputs]  # Placeholder

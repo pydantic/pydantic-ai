@@ -9,6 +9,7 @@ from pydantic_ai.usage import RequestUsage
 
 from . import OpenAIEmbeddingsCompatibleProvider
 from .base import EmbeddingModel
+from .input import EmbeddingInput
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
@@ -119,9 +120,13 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         return self._provider.name
 
     async def embed(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        inputs, settings = self.prepare_embed(inputs, settings)
+        inputs, settings = self.prepare_text_embed(inputs, settings)
         settings = cast(OpenAIEmbeddingSettings, settings)
 
         try:
