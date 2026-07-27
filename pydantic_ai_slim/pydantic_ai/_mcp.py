@@ -7,21 +7,12 @@ from typing import TYPE_CHECKING, Literal
 from typing_extensions import assert_never
 
 from . import exceptions, messages
-from ._mcp_compat import mcp_field, mcp_optional_field
+from ._mcp_compat import import_mcp_types, mcp_field, mcp_optional_field
 
 if TYPE_CHECKING:
     from mcp import types as mcp_types
 else:
-    try:
-        from mcp import types as mcp_types
-    except ImportError:
-        try:
-            import mcp_types
-        except ImportError as _import_error:
-            raise ImportError(
-                'Please install the `mcp` package to use the MCP server, '
-                'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
-            ) from _import_error
+    mcp_types = import_mcp_types('the MCP server')
 
 
 def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[messages.ModelMessage]:

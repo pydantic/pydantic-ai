@@ -8,8 +8,28 @@ from pydantic import BaseModel, TypeAdapter
 T = TypeVar('T')
 
 
+def import_mcp_types(feature: str) -> ModuleType:
+    """Import the MCP wire types from whichever SDK generation is installed.
+
+    MCP SDK v1 ships them as `mcp.types`; SDK v2 moved them to a standalone `mcp_types`
+    distribution. `feature` names the caller in the error raised when neither is installed.
+    """
+    try:
+        from mcp import types
+    except ImportError:
+        try:
+            import mcp_types  # pyright: ignore[reportMissingImports]
+        except ImportError as import_error:
+            raise ImportError(
+                f'Please install the `mcp` package to use {feature}, '
+                'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
+            ) from import_error
+        return mcp_types
+    return types
+
+
 def is_mcp_sdk_v2(mcp_types: ModuleType) -> bool:
-    """Whether the imported MCP wire types come from the standalone v2 package."""
+    """Whether the imported MCP wire types come from the standalone SDK v2 package."""
     return mcp_types.__name__ == 'mcp_types'
 
 

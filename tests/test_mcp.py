@@ -14,9 +14,11 @@ import base64
 import functools
 import json
 import re
+import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import AsyncMock
 
@@ -52,16 +54,21 @@ with try_import() as imports_successful:
 
     try:
         from fastmcp.server.tasks import TaskConfig
-    except ImportError:
+    except ImportError:  # pragma: no cover
+        # FastMCP 4 moved `TaskConfig`; no supported install resolves it, since `[mcp]` pins < 4.
         from fastmcp.utilities.tasks import TaskConfig
+    from pydantic_ai import mcp as mcp_module
+    from pydantic_ai._mcp_compat import import_mcp_types
+
     if TYPE_CHECKING:
         TasksExtension: Any
         from mcp import types as mcp_types
     else:
+        mcp_types = import_mcp_types('the MCP tests')
         try:
-            from mcp import types as mcp_types
+            from fastmcp_tasks import TasksExtension
         except ImportError:
-            import mcp_types
+            TasksExtension = None
 
     Annotations = mcp_types.Annotations
     AudioContent = mcp_types.AudioContent
@@ -89,12 +96,6 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.messages import TextContent
 
-    if not TYPE_CHECKING:
-        try:
-            from fastmcp_tasks import TasksExtension
-        except ImportError:
-            TasksExtension = None
-
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fastmcp not installed'),
@@ -110,19 +111,50 @@ xfail_missing_task_metadata = pytest.mark.xfail(
 
 
 def make_mcp_error(code: int, message: str) -> McpError:
-    """Construct an MCP protocol error with either SDK generation."""
-    try:
-        return McpError(mcp_types.ErrorData(code=code, message=message))
-    except TypeError:
+    """Construct an MCP protocol error with either SDK generation.
+
+    SDK v1 wraps an `ErrorData`; v2 takes the fields directly.
+    """
+    if MCP_SDK_V2:  # pragma: no cover
         return cast(Callable[..., McpError], McpError)(code=code, message=message)
+    return McpError(mcp_types.ErrorData(code=code, message=message))
 
 
 def wrap_server_notification(notification: Any) -> Any:
-    """Wrap a notification in the SDK v1 root model; SDK v2 uses the value directly."""
-    server_notification = mcp_types.ServerNotification
-    if isinstance(server_notification, type):
-        return server_notification(root=notification)
-    return notification
+    """Wrap a notification in the SDK v1 root model; SDK v2 delivers the value unwrapped."""
+    if MCP_SDK_V2:  # pragma: no cover
+        return notification
+    return mcp_types.ServerNotification(root=notification)
+
+
+def hide_mcp_types(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `from mcp import types` fail, as it does under MCP SDK v2."""
+    import mcp
+
+    monkeypatch.delattr(mcp, 'types', raising=False)
+    monkeypatch.setitem(sys.modules, 'mcp.types', None)
+
+
+def test_import_mcp_types_falls_back_to_standalone_package(monkeypatch: pytest.MonkeyPatch):
+    """MCP SDK v2 moved the wire types out of `mcp` into a standalone `mcp_types` distribution.
+
+    Unit-tested rather than exercised through `MCPToolset`: the import runs once at module import,
+    so only one SDK generation's branch is reachable per test session.
+    """
+    standalone = ModuleType('mcp_types')
+    hide_mcp_types(monkeypatch)
+    monkeypatch.setitem(sys.modules, 'mcp_types', standalone)
+
+    assert import_mcp_types('`MCPToolset`') is standalone
+
+
+def test_import_mcp_types_without_either_package_raises(monkeypatch: pytest.MonkeyPatch):
+    """With neither SDK generation installed, the error names the extra that installs one."""
+    hide_mcp_types(monkeypatch)
+    monkeypatch.setitem(sys.modules, 'mcp_types', None)
+
+    with pytest.raises(ImportError, match=r'Please install the `mcp` package to use `MCPToolset`'):
+        import_mcp_types('`MCPToolset`')
 
 
 # Construction tests don't need a server and don't take async fixtures.
@@ -1138,22 +1170,50 @@ class TestMCPToolsetIntegration:
         assert result == 'resource://greeting.txt'
 
     async def test_log_level_is_set_after_aenter(self, fastmcp_server: FastMCP[None]):
-        if MCP_SDK_V2:
-            client = cast(Any, Client)(fastmcp_server, mode='legacy')
-            toolset = MCPToolset(client, log_level='warning')
-        else:
-            toolset = MCPToolset(fastmcp_server, log_level='warning')
+        toolset = MCPToolset(fastmcp_server, log_level='warning')
         async with toolset:
             assert toolset.is_running
 
-    async def test_log_level_is_rejected_by_modern_session(self, fastmcp_server: FastMCP[None]):
-        if not MCP_SDK_V2:
-            pytest.skip('MCP SDK v1 only supports legacy sessions')
-
+    async def test_log_level_is_rejected_by_modern_session(
+        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None
+    ):
+        """`logging/setLevel` left the protocol in the 2026-07-28 revision, so a modern session
+        can't honour `log_level` and says so rather than silently ignoring it."""
         toolset = MCPToolset(fastmcp_server, log_level='warning')
         with pytest.raises(UserError, match='`log_level` is not supported by modern MCP sessions'):
             async with toolset:
                 pass
+
+    async def test_server_metadata_read_from_era_neutral_properties(
+        self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch
+    ):
+        """A modern session has no `initialize` handshake, so server metadata comes off the
+        client's era-neutral properties instead of `initialize_result`."""
+        client = Client(fastmcp_server)
+        monkeypatch.setattr(
+            client, 'server_info', mcp_types.Implementation(name='era-neutral', version='9.9'), raising=False
+        )
+        monkeypatch.setattr(client, 'server_capabilities', mcp_types.ServerCapabilities(), raising=False)
+        monkeypatch.setattr(client, 'instructions', 'from the era-neutral property', raising=False)
+
+        toolset = MCPToolset(client)
+        async with toolset:
+            assert toolset.server_info.name == 'era-neutral'
+            assert toolset.instructions == 'from the era-neutral property'
+
+    async def test_non_string_era_neutral_instructions_are_dropped(
+        self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch
+    ):
+        """A server that omits instructions leaves the property unset rather than a string."""
+        client = Client(fastmcp_server)
+        monkeypatch.setattr(
+            client, 'server_info', mcp_types.Implementation(name='era-neutral', version='9.9'), raising=False
+        )
+        monkeypatch.setattr(client, 'server_capabilities', mcp_types.ServerCapabilities(), raising=False)
+
+        toolset = MCPToolset(client)
+        async with toolset:
+            assert toolset.instructions is None
 
     async def test_label_falls_back_to_repr(self):
         toolset = MCPToolset('https://example.com/mcp')
@@ -1509,13 +1569,37 @@ def test_construction_does_not_emit_warnings(recwarn: Any) -> None:
     assert deprecation_messages == [], deprecation_messages
 
 
+@pytest.fixture
+def as_mcp_sdk_v2(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Take the MCP SDK v2 branches.
+
+    `[mcp]` pins `fastmcp-slim<4`, so no supported install resolves SDK v2 and these branches are
+    otherwise unreachable — the SDK generation is read once at import into a module-level constant.
+    """
+    monkeypatch.setattr(mcp_module, '_MCP_SDK_V2', True)
+
+
+@pytest.fixture
+def as_modern_mcp_session(monkeypatch: pytest.MonkeyPatch, as_mcp_sdk_v2: None) -> None:
+    """Additionally present the client as a modern (sessionless) session: server metadata comes
+    from the era-neutral properties FastMCP 4 adds, and there is no `initialize` handshake."""
+    server_info = mcp_types.Implementation(name='modern', version='9.9')
+    monkeypatch.setattr(Client, 'server_info', property(lambda self: server_info), raising=False)
+    monkeypatch.setattr(
+        Client, 'server_capabilities', property(lambda self: mcp_types.ServerCapabilities()), raising=False
+    )
+    monkeypatch.setattr(Client, 'instructions', property(lambda self: None), raising=False)
+    monkeypatch.setattr(Client, 'initialize_result', property(lambda self: None))
+
+
 class TestMCPToolsetBackgroundTasks:
     """SEP-1686 task-augmented execution across the legacy and modern FastMCP APIs."""
 
     @pytest.fixture
     async def task_server(self) -> FastMCP[None]:
         server: FastMCP[None] = FastMCP('task_server')
-        if TasksExtension is not None:
+        if TasksExtension is not None:  # pragma: no cover
+            # Only installed alongside FastMCP 4, which `[mcp]`'s `< 4` pin excludes.
             getattr(server, 'add_extension')(TasksExtension())
 
         @server.tool(task=TaskConfig(mode='required'))
@@ -1595,15 +1679,45 @@ class TestMCPToolsetBackgroundTasks:
             result = await toolset.direct_call_tool('task_required_tool', {}, use_task=True)
         assert result == 'task_required_completed'
 
-    async def test_modern_client_in_legacy_mode_rejects_tasks(self, task_server: FastMCP[None]) -> None:
-        if not MCP_SDK_V2:
-            pytest.skip('FastMCP 3 uses the legacy task API')
-
-        client = cast(Any, Client)(task_server, mode='legacy')
-        toolset = MCPToolset(client)
+    async def test_task_call_on_a_legacy_session_is_rejected(
+        self, task_server: FastMCP[None], as_mcp_sdk_v2: None
+    ) -> None:
+        """Under MCP SDK v2, tasks ride a client extension that a legacy session never negotiates,
+        so a legacy client has no task path at all."""
+        toolset = MCPToolset(task_server)
         async with toolset:
             with pytest.raises(UserError, match='not supported by FastMCP 4 clients using legacy protocol mode'):
                 await toolset.direct_call_tool('task_required_tool', {}, use_task=True)
+
+    async def test_task_call_without_fastmcp_tasks_installed_is_rejected(
+        self, task_server: FastMCP[None], as_modern_mcp_session: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """MCP SDK v2 moved tasks out of fastmcp core into the separate `fastmcp-tasks` package."""
+        monkeypatch.setattr(mcp_module, '_fastmcp_tasks', None)
+
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            with pytest.raises(ImportError, match=r'requires the `fastmcp-tasks` package'):
+                await toolset.direct_call_tool('task_required_tool', {}, use_task=True)
+
+    async def test_task_call_dispatches_through_fastmcp_tasks(
+        self, task_server: FastMCP[None], as_modern_mcp_session: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """On a modern session the call goes through `fastmcp_tasks.call_tool_task`, which hands back
+        a handle whose `result()` resolves to the same `CallToolResult` the direct path returns."""
+        calls: list[str] = []
+
+        async def call_tool_task(client: Any, **kwargs: Any) -> Any:
+            calls.append(kwargs['name'])
+            return await client.call_tool(task=True, **kwargs)
+
+        monkeypatch.setattr(mcp_module, '_fastmcp_tasks', SimpleNamespace(call_tool_task=call_tool_task))
+
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            result = await toolset.direct_call_tool('task_required_tool', {}, use_task=True)
+        assert result == 'task_required_completed'
+        assert calls == ['task_required_tool']
 
     @xfail_missing_task_metadata
     async def test_process_tool_call_receives_use_task_partial(

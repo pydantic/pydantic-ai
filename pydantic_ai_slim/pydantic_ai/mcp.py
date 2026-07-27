@@ -22,22 +22,14 @@ from typing_extensions import Self, assert_never
 
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
+from ._mcp_compat import import_mcp_types
 from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
     from mcp import types as mcp_types
 else:
-    try:
-        from mcp import types as mcp_types
-    except ImportError:
-        try:
-            import mcp_types
-        except ImportError as _import_error:
-            raise ImportError(
-                'Please install the `mcp` package to use `MCPToolset`, '
-                'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
-            ) from _import_error
+    mcp_types = import_mcp_types('`MCPToolset`')
 
 try:
     from fastmcp.client import Client as FastMCPClient
