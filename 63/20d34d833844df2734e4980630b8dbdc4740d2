@@ -1,0 +1,19 @@
+tests/test_usage_limits.py
+  s_b97076dfa69464::t_08140964ee695e 6-7,491,493-494,504,506-508
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "6320d34d833844df2734e4980630b8dbdc4740d2",
+  "prompts": {},
+  "sessions": {
+    "s_b97076dfa69464": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa3af-e09e-74b0-9e3b-3f82e321793b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
