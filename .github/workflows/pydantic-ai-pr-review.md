@@ -53,7 +53,7 @@ pre-steps:
   # which also drops the bundled AWF firewall binary install. Re-run gh-aw's
   # own installer (the same call it makes for non-custom-command jobs).
   - name: Install AWF firewall binary (skipped by custom engine.command)
-    run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.25.46
+    run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
 
 pre-agent-steps:
   # Stage the committed launcher script at gh-aw's exec-able

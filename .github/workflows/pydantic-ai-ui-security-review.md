@@ -55,7 +55,7 @@ safe-outputs:
   # `github-actions[bot]` and GitHub's merge-gate uses the latest verdict
   # per reviewer login — an APPROVE/REQUEST_CHANGES from here would
   # overwrite pr-review's. To be reconsidered when gh-aw supports check
-  # runs (https://github.com/githubnext/gh-aw — Bill Easton's WIP).
+  # runs (https://github.com/github/gh-aw — Bill Easton's WIP).
   submit-pull-request-review:
     max: 1
 timeout-minutes: 30
