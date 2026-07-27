@@ -91,6 +91,8 @@ The failure is recorded in message history as a `ToolReturnPart` with `outcome='
 
 `ToolFailed` can also be raised from an `args_validator` (see below) and from tool validation/execution hooks with the same model-visible and retry-budget behavior. This is useful for converting a third-party exception into a failed result in one place instead of per tool. MCP servers expose the same retry-vs-failed choice via `tool_error_behavior`. For deferred tools, a `ToolFailed` instance can be supplied as a `DeferredToolResults.calls` value to report an external execution failure, just like `ModelRetry` requests a retry from there.
 
+`ToolFailed` is handled only for function tools, their `args_validator`, and tool validation/execution hooks. Output functions and output validators use `ModelRetry` to request another attempt; there, `ToolFailed` is an ordinary exception that aborts the run unless an output-process error hook recovers from it.
+
 ## Validate or Require Approval Before Tool Execution
 
 Use `args_validator=` when arguments are structurally valid but still need business-rule validation before execution or approval. A validator returns `None` on success, raises `ModelRetry` to ask the model to correct the arguments and try again, or raises `ToolFailed` to report a terminal failure the model should adapt to instead of retrying.

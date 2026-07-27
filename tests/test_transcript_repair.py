@@ -872,6 +872,55 @@ async def test_dangling_tool_call_followed_by_response():
     )
 
 
+async def test_tool_return_answering_call_across_intervening_response():
+    """A return may answer a call across a non-answering intervening response; left unrepaired by design.
+
+    The ordered walk in `_dangling_tool_calls_by_response` opens the call, skips the intervening
+    text-only response, and closes the call when the later `ToolReturnPart` reuses its id — so the
+    call reads as answered, no synthesized return is inserted, and the real return isn't orphaned.
+    The cross-turn ordering (a result separated from its call by another response) is a documented
+    out-of-scope boundary of `_clean_message_history` — providers with ordering rules beyond
+    call/result pairing may reject it — and this pins that the pipeline leaves the shape untouched so
+    a future change can't silently "repair" (and thereby alter) it.
+    """
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the weather?', timestamp=TS)], timestamp=TS),
+        ModelResponse(
+            parts=[ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1')],
+            timestamp=TS,
+            provider_response_id='resp_1',
+        ),
+        ModelResponse(parts=[TextPart('I could not check the weather.')], timestamp=TS, provider_response_id='resp_2'),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id='call_1', timestamp=TS)], timestamp=TS),
+    ]
+
+    await agent.run('Thanks.', message_history=message_history)
+
+    # The call and its across-response return both survive verbatim; no synthesized return appears.
+    assert received[0] == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='What is the weather?', timestamp=TS)], timestamp=TS),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Mexico City'}, tool_call_id='call_1')],
+                timestamp=TS,
+                provider_response_id='resp_1',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='I could not check the weather.')], timestamp=TS, provider_response_id='resp_2'
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='get_weather', content='Sunny', tool_call_id='call_1', timestamp=TS),
+                    UserPromptPart(content='Thanks.', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
 async def test_valid_history_untouched():
     """A history without dangling tool calls passes through byte-identical."""
     agent, received = capture_agent()

@@ -71,6 +71,7 @@ Rules of thumb:
 - Do **not** pass `run_id=''`, or reuse a `run_id` that already appears on `message_history` — both raise `UserError` because they break `new_messages()` boundary detection. Correlate pause/resume and multi-turn work with `conversation_id` instead. When retrying a failed run with the same `run_id`, rebuild `message_history` without the failed attempt's messages.
 - Pass `conversation_id='new'` to fork a thread off existing history; `'new'` is **not** a sentinel for `run_id`.
 - UI adapters auto-wire protocol thread/chat ids into `conversation_id`. Protocol run ids (e.g. AG-UI `runId`) are **not** mapped into agent `run_id` — pass `run_id=` on the adapter/`Agent.run` if you need them aligned.
+- AG-UI live failed tool outcomes round-trip through message metadata with `ag-ui-protocol >= 0.1.13`. Earlier event streams have no outcome carrier, so reloading them reconstructs the tool result as successful.
 
 ## Manage Context Size
 
@@ -100,6 +101,8 @@ Good uses:
 Use `RunContext.enqueue(...)` (from a tool or capability hook) or `AgentRun.enqueue(...)` (from external code driving `agent.iter()`) to add content to the conversation while a run is in progress — e.g. a tool adding follow-up context, or an external event "steering" the agent.
 
 `enqueue` is variadic; each positional arg is one item: a piece of `UserContent` (a `str` or multi-modal content like an `ImageUrl`), a `ModelRequestPart` (e.g. a `SystemPromptPart`), or a complete `ModelRequest`/`ModelResponse`. Adjacent user content is gathered into one `UserPromptPart`. Pass an existing list by spreading it (`enqueue(*items)`). Both `enqueue` methods return an `enqueue_id` (`str`) for non-empty calls, or `None` for empty calls. The event stream yields an `EnqueuedMessagesEvent` (with that `enqueue_id` and the delivered messages) once those messages enter run history, so a client can observe when its steering message took effect.
+
+Never mutate messages already in the history in place (e.g. `ctx.messages[0].parts[0].content = '...'`, or `append`/item assignment on an existing `parts` list) — enqueue new content, or rewrite history via `ProcessHistory` by building new message objects, e.g. with `dataclasses.replace` passing a new `parts` list (replacing a message in the history and reassigning its `parts` list are both safe). In-place mutation is unsupported: instrumentation caches each message's serialized form per run, so later request spans record stale `gen_ai.input.messages` (a `MessageHistoryMutatedWarning` is emitted at run end when detected).
 
 ```python
 from pydantic_ai import Agent, RunContext

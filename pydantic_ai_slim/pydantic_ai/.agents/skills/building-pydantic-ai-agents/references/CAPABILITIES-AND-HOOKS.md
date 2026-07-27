@@ -100,6 +100,8 @@ Important hook families:
 
 From tool-validation and tool-execution hooks you can raise `ModelRetry` (the model should retry the call) or `ToolFailed` (the call is done and failed — the model sees the result and adapts, without consuming the retry budget) to redirect a tool call in one place instead of per tool.
 
+At wrap boundaries, `ModelRetry` is control flow and bypasses `on_model_request_error`, `on_tool_execute_error`, and `on_output_process_error`. `ToolFailed` bypasses only `on_tool_execute_error`; from model-request or output-process hooks it is an ordinary exception passed to the corresponding error hook.
+
 Use hooks when the user wants observability, auditing, or light interception without adding a new abstraction.
 
 ## Build a Custom Capability

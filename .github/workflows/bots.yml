@@ -94,15 +94,24 @@ jobs:
       skip: ${{ steps.check-label.outputs.has_label }}
     steps:
       - name: Check for modified config files
-        if: github.event.pull_request.head.repo.fork
+        # Runs for ALL PRs, not just forks: a same-repo branch (e.g. an automated
+        # agent's branch built from an untrusted issue) can carry a poisoned
+        # CLAUDE.md/AGENTS.md/.claude just as a fork can, and this job loads that
+        # config. Compare the immutable base...head SHAs via the diff media type
+        # (not `gh pr diff`, which reads the live PR head -- a force-push could then
+        # slip a config edit past this guard while different code runs; TOCTOU) and
+        # match the per-file `diff --git` headers (the compare JSON `.files` array
+        # caps at 300 entries, so it could hide an edit in a large PR).
         run: |
-          CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only --repo ${{ github.repository }})
-          if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
+          CHANGED=$(gh api "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" -H 'Accept: application/vnd.github.v3.diff' | grep '^diff --git ')
+          if echo "$CHANGED" | grep -qiE '/(AGENTS\.md|CLAUDE\.md)( |$)|/\.claude/'; then
             echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping auto-labeling for security."
             exit 1
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
       - name: Check if category label already exists
         id: check-label
@@ -227,15 +236,25 @@ jobs:
           persist-credentials: false
 
       - name: Check for modified config files
-        if: github.event.pull_request.head.repo.fork
+        # Runs for ALL PRs, not just forks: a same-repo branch (e.g. an automated
+        # agent's branch built from an untrusted issue) can carry a poisoned
+        # CLAUDE.md/AGENTS.md/.claude just as a fork can, and the review step below
+        # checks out that head and loads its root CLAUDE.md into the reviewer's
+        # system prompt. Compare the immutable base...head SHAs via the diff media
+        # type (not `gh pr diff`, which reads the live PR head -- a force-push could
+        # slip a config edit past this guard while different code runs; TOCTOU) and
+        # match the per-file `diff --git` headers (the compare JSON `.files` array
+        # caps at 300 entries, so it could hide an edit in a large PR).
         run: |
-          CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only --repo ${{ github.repository }})
-          if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
+          CHANGED=$(gh api "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" -H 'Accept: application/vnd.github.v3.diff' | grep '^diff --git ')
+          if echo "$CHANGED" | grep -qiE '/(AGENTS\.md|CLAUDE\.md)( |$)|/\.claude/'; then
             echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping auto-review for security."
             exit 1
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
       - name: Select review model
         id: model

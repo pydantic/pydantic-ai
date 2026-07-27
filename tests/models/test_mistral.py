@@ -412,6 +412,27 @@ async def test_usage_with_cached_tokens(allow_model_requests: None):
     assert result.usage == snapshot(RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1))
 
 
+@pytest.mark.vcr()
+async def test_mistral_history_uses_prompt_cache(allow_model_requests: None, mistral_api_key: str, vcr: Cassette):
+    instructions = ' '.join(['Retain this instruction prefix for the entire conversation.'] * 24)
+    settings = MistralModelSettings(mistral_prompt_cache_key='pydantic-ai-test-mistral-history-cache')
+    agent = Agent(
+        MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key)),
+        instructions=instructions,
+    )
+
+    first = await agent.run('Reply with exactly: cache probe one.', model_settings=settings)
+    second = await agent.run(
+        'Reply with exactly: cache probe two.',
+        message_history=first.all_messages(),
+        model_settings=settings,
+    )
+
+    second_request = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert second_request['messages'][2]['content'] == [{'text': first.output, 'type': 'text'}]
+    assert second.usage.cache_read_tokens >= 64
+
+
 #####################
 ## Completion Stream
 #####################

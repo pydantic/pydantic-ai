@@ -534,13 +534,15 @@ def read_file(path: str) -> str:
     return file_path.read_text()
 ```
 
-The exception message is recorded in message history as a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='failed'`. Where the model API has a native error or failed-status field for tool results, Pydantic AI uses it. For APIs without a native error channel, the model-visible content is JSON-framed as `{"error": ...}` so the failure is still explicit. The failed outcome is always preserved in Pydantic AI message history. The call is traced as an error in telemetry.
+The exception message is recorded in message history as a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='failed'`. Where the model API has a native error or failed-status field for tool results, Pydantic AI uses it. For APIs without a native error channel, the model-visible content is JSON-framed as `{"error": ...}` so the failure is still explicit. The failed outcome is preserved in Pydantic AI message history; protocol adapters may need their own carrier when that history is round-tripped, as described for [AG-UI](ui/ag-ui.md#preserving-failed-tool-outcomes). The call is traced as an error in telemetry.
 
 Unlike `ModelRetry`, `ToolFailed` does **not** consume the per-tool retry budget; bounding repeated failures is the job of [`UsageLimits`][pydantic_ai.usage.UsageLimits] at the run level — specifically [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit], since [`tool_calls_limit`][pydantic_ai.usage.UsageLimits.tool_calls_limit] only counts successful tool invocations.
 
 Rule of thumb: raise `ModelRetry` when you want the model to try again with corrections; raise `ToolFailed` when the call is done and the result is a failure. For MCP server tool errors, the same choice is available as the [`tool_error_behavior`](mcp/client.md#tool-errors) configuration.
 
 You can also raise `ModelRetry` or `ToolFailed` from tool validation and execution hooks. This is useful for converting third-party exceptions without repeating `try`/`except` in every tool; see [Error hooks](hooks.md#error-hooks) and [Tool execution hooks](hooks.md#tool-execution-hooks).
+
+`ToolFailed` is handled for function tools, their `args_validator`, and tool validation or execution hooks. [Output functions](output.md#output-functions) and [output validators](output.md#output-validator-functions) use `ModelRetry` when the model should try again; there, `ToolFailed` is an ordinary exception that aborts the run unless an output-process error hook recovers from it.
 
 ### Tool Timeout
 
@@ -813,6 +815,38 @@ To force the local `keywords` algorithm on a provider that natively supports too
     Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.
 
 See [`ToolDefinition.defer_loading`][pydantic_ai.tools.ToolDefinition.defer_loading] and [Deferred Loading](toolsets.md#deferred-loading) for more details.
+
+### Tool search and prompt caching {#tool-search-caching}
+
+Prompt caching keys on a **stable prefix**: providers cache the longest unchanged run of tokens from the start of the request, in roughly the order tool definitions → system/instructions → message history. A change at any layer invalidates the cache for that layer and everything after it — so on most providers **changing, adding, removing, or reordering a tool definition invalidates the cache**, because tool definitions sit at the very front.
+
+Tool search works on **every model**, but it only *preserves* the cache where the model supports native tool search — Anthropic Sonnet 4.5+, Opus 4.5+, and Haiku 4.5+, and OpenAI Responses on GPT-5.4+. There, discovery is [append-only](#tool-search) and the deferred tools never enter the prompt prefix, so an identical prefix is re-read from cache across discovery rounds. On every other model — including Google, and older Anthropic and OpenAI models — the local `search_tools` fallback reveals a discovered tool by adding it to the tools array, which **invalidates the cached prefix from the tool definitions onward on each discovery turn** (on Google, a stable `system_instruction` sits ahead of the tool block and can still be reused — see [Related caching controls](#related-caching-controls) below).
+
+!!! note "Why Gemini tool search never keeps the prefix warm"
+    Native tool search preserves the cache by handing discovery off to a provider-side primitive that keeps the discovered tools out of the request prefix. Gemini's API exposes no such primitive — unlike Anthropic's `bm25`/`regex` tool search or OpenAI Responses' `tool_search` — so tool search on Gemini always falls back to the local `search_tools` function tool, which reveals each match by adding it to the tools array. Because Gemini caches on the request prefix and tool definitions sit at its front, every discovery turn that reveals a new tool invalidates the cache from the tool block onward. This is a missing-primitive limitation, not a version gate: with Anthropic and OpenAI a newer model *does* support native tool search, but no Gemini model does.
+
+!!! note "Deferring saves context — it is not dynamic registration"
+    With either strategy, every tool the model can ever reach must be **declared on the agent or toolset up front**. Deferring keeps unused definitions out of the model's context (and, natively, out of the cached prefix); it does not let you register a brand-new, never-declared tool mid-conversation. Introducing a genuinely new tool changes the tools array, which invalidates the cache from that point on.
+
+For [on-demand capabilities](capabilities/on-demand.md#on-demand-capabilities), loading a capability that reveals no new tool definitions — instructions or model settings only — preserves the cache on every provider, even without native tool search. Revealing a deferred function tool (on a non-native model) or a native tool enters the tool-definitions prefix; so does a deferred `prepare_tools`/`prepare_output_tools` hook that rewrites tool definitions on load. See [Cache implications](capabilities/on-demand.md#cache-implications) for the full breakdown.
+
+For a genuinely open-ended tool universe, route everything through a single, stable tool. The harness [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) capability collapses many tools into one `run_code` tool whose definition stays byte-stable; newly discovered tools are surfaced as callables inside the sandbox rather than as new tool schemas, keeping the tool-definitions prefix — and its cache — intact across discoveries.
+
+#### Seeing it in a trace
+
+With native tool search the deferred catalog never enters the cached prefix, so an identical request prefix is re-read from cache on the next turn — `cache_read_tokens` stays warm even as the model discovers new tools:
+
+/// public-trace | https://logfire-us.pydantic.dev/public-trace/243f9aa5-dd9d-4de4-a36a-5818611892f1?spanId=28a1621e429ce027
+    title: 'Anthropic: cached tool + system prefix re-read from cache, with deferred tools declared'
+///
+
+Change a single tool definition, and the whole prefix is re-created instead — the [same request with one tool's description edited](https://logfire-us.pydantic.dev/public-trace/c3205dc9-6251-40fa-9d0a-ed647be9ba30?spanId=38ef4635ecaf3e0b) records no cache read.
+
+#### Related caching controls
+
+- Restricting the *active* tools with [`tool_choice`](#tool-choice) can also invalidate the cache when Pydantic AI has to trim the array client-side — see [Prompt caching implications](#tool-choice-caching) for the per-provider breakdown and the cache-preserving alternatives (`allowed_tools`, `allowed_function_names`, `ToolOrOutput`).
+- To place explicit cache breakpoints on messages, use [`CachePoint`][pydantic_ai.messages.CachePoint] (honored by Anthropic, Bedrock, and OpenRouter). Anthropic's tool, system, and instruction caching settings are documented under [Anthropic prompt caching](models/anthropic.md#prompt-caching).
+- On providers that cache tool definitions at the front of the prefix — Anthropic, OpenAI, and xAI — editing a single tool's description invalidates the cached prefix. Google's *implicit* cache is prefix-based on a different layout (its `system_instruction` is a separate field ahead of the tool block), so a large stable system instruction can keep cache hits even when the tool list changes; an explicit [`CachedContent`](models/google.md) instead fixes the tools as an immutable part of the cache by construction.
 
 ## See Also
 
