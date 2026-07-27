@@ -598,35 +598,6 @@ def test_usage_arbitrary_fields_use_standard_dataclass_serialization():
     assert to_jsonable_python(usage)['_extra'] == {'future_data': {'timestamp': '2026-07-24T00:00:00Z'}}
 
 
-def test_usage_pydantic_core_serialization_subclass():
-    @dataclass(repr=False, init=False, eq=False)
-    class CustomUsage(RequestUsage):
-        custom_tokens: int = 7
-
-    class UsageModel(BaseModel):
-        usage: RequestUsage
-
-    usage = CustomUsage(custom_tokens=9, future_tokens=42)
-
-    expected = snapshot(
-        {
-            'input_tokens': 0,
-            'cache_write_tokens': 0,
-            'cache_read_tokens': 0,
-            'output_tokens': 0,
-            'input_audio_tokens': 0,
-            'cache_audio_read_tokens': 0,
-            'output_audio_tokens': 0,
-            'details': {},
-            'custom_tokens': 9,
-            '_extra': {'future_tokens': 42},
-        }
-    )
-    assert to_jsonable_python(usage) == expected
-    assert TypeAdapter(RequestUsage).dump_python(usage) == expected
-    assert UsageModel(usage=usage).model_dump()['usage'] == expected
-
-
 def test_cache_hit_ratio():
     """Pure arithmetic on usage fields -- no model request to record."""
     assert RequestUsage(input_tokens=1000, cache_read_tokens=900).cache_hit_ratio == 0.9

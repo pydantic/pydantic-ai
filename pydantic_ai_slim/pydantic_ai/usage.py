@@ -149,36 +149,18 @@ class UsageBase:
         def serialize(
             value: UsageBase,
             inner: core_schema.SerializerFunctionWrapHandler,
-            info: core_schema.SerializationInfo,
         ) -> Any:
-            if type(value) is source_type:
-                result = inner(value)
-                assert isinstance(result, dict)
-                result = cast(dict[str, Any], result)
-                if not value._extra:
-                    result.pop('_extra', None)
-                return result
-            return _usage_serializer(type(value)).to_python(
-                value,
-                mode=info.mode,
-                include=cast(Any, info.include),
-                exclude=cast(Any, info.exclude),
-                by_alias=info.by_alias,
-                exclude_unset=info.exclude_unset,
-                exclude_defaults=info.exclude_defaults,
-                exclude_none=info.exclude_none,
-                exclude_computed_fields=info.exclude_computed_fields,
-                round_trip=info.round_trip,
-                serialize_as_any=info.serialize_as_any,
-                context=info.context,
-            )
+            result = inner(value)
+            assert isinstance(result, dict)
+            result = cast(dict[str, Any], result)
+            if not value._extra:
+                result.pop('_extra', None)
+            return result
 
         return core_schema.no_info_wrap_validator_function(
             validate,
             schema,
-            # Hand subclasses to their own generated serializer so declared fields survive base-typed containers.
-            # Each concrete usage class otherwise uses normal dataclass field serialization.
-            serialization=core_schema.wrap_serializer_function_ser_schema(serialize, info_arg=True, schema=schema),
+            serialization=core_schema.wrap_serializer_function_ser_schema(serialize, schema=schema),
         )
 
     def __getattr__(self, name: str) -> Any:
