@@ -455,6 +455,30 @@ async def test_openai_responses_reasoning_context_default_wire_contract(
     assert single_request_body(vcr).get('reasoning') == expected_reasoning
 
 
+@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4'])
+async def test_azure_responses_reasoning_context_default_wire_contract(
+    allow_model_requests: None, azure_api_key: str, vcr: Cassette, model_name: str
+):
+    """VCR test: Azure's Responses backend accepts the `all_turns` default, like OpenAI's.
+
+    `AzureProvider.model_profile` resolves unprefixed OpenAI model names through
+    `openai_model_profile`, so `openai_responses_supports_reasoning_context` survives to the
+    Azure-resolved profile and every Azure request for these families carries
+    `context='all_turns'` without the user opting in. Recorded against live Azure deployments so
+    that default rests on Azure's own backend rather than on OpenAI-direct behavior.
+    """
+    provider = AzureProvider(
+        azure_endpoint='https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/', api_key=azure_api_key
+    )
+    agent = Agent(model=OpenAIResponsesModel(model_name, provider=provider))
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    # A successful answer proves Azure accepted the request we built.
+    assert 'Paris' in result.output
+    assert single_request_body(vcr)['reasoning'] == {'context': 'all_turns'}
+
+
 async def test_openai_responses_reasoning_mode_pro(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
     """VCR test: the real GPT-5.6 Responses API accepts `reasoning.mode='pro'` end to end.
 
