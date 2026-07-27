@@ -525,6 +525,25 @@ class TestMCPToolsetIntegration:
 
         assert [t.name for t in eager_tools] == [t.name for t in stateless_tools]
 
+    async def test_stateless_ensure_initialized_before_entering_context_raises(self, fastmcp_server: FastMCP[None]):
+        """Calling _ensure_initialized on a stateless toolset before __aenter__ raises ValueError."""
+        toolset = MCPToolset(fastmcp_server, stateless=True)
+        # Not yet entered context (is_running is False)
+        assert toolset.is_running is False
+        with pytest.raises(ValueError, match='called before entering the toolset context'):
+            await toolset._ensure_initialized()  # pyright: ignore[reportPrivateUsage]
+
+    async def test_stateless_with_log_level_sets_logging_after_lazy_init(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """Stateless mode with log_level triggers set_logging_level on lazy init."""
+        toolset = MCPToolset(fastmcp_server, stateless=True, log_level='warning')
+        async with toolset:
+            assert toolset._initialized is False  # pyright: ignore[reportPrivateUsage]
+            # Trigger lazy init
+            await toolset.list_tools()
+            assert toolset._initialized is True  # pyright: ignore[reportPrivateUsage]
+
     # --- End stateless mode tests ---
 
     async def test_get_instructions_when_enabled(self, fastmcp_server: FastMCP[None], run_context: RunContext):
