@@ -88,7 +88,6 @@ with try_import() as imports_successful:
         UsageTranscriptTextUsageTokens,
         UsageTranscriptTextUsageTokensInputTokenDetails,
     )
-
     from openai.types.realtime.realtime_audio_config_output import Voice as SDKVoice
 
     from pydantic_ai.providers.gateway import gateway_provider
@@ -120,12 +119,7 @@ def test_known_voice_names_match_sdk() -> None:
     The setting stays open to any string, so a stale list only costs autocomplete — but a voice OpenAI
     adds should show up here, and this is the only thing that would tell us.
     """
-    sdk_voices = {
-        voice
-        for member in get_args(SDKVoice)
-        if get_origin(member) is Literal
-        for voice in get_args(member)
-    }
+    sdk_voices = {voice for member in get_args(SDKVoice) if get_origin(member) is Literal for voice in get_args(member)}
     assert set(get_args(KnownOpenAIRealtimeVoiceName.__value__)) == sdk_voices
 
 
