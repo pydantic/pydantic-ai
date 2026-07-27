@@ -80,6 +80,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    RunCancelled,
     SkipModelRequest,
     ToolFailed,
     UnexpectedModelBehavior,
@@ -8281,6 +8282,97 @@ def _workflow_failure_cause(exc: WorkflowFailureError) -> ApplicationError:
 
 def _scheduled_activity_count(history: WorkflowHistory) -> int:
     return len([e for e in history.events if e.HasField('activity_task_scheduled_event_attributes')])
+
+
+_workflow_cancel_agent = Agent(
+    TestModel(custom_output_text='finished'),
+    name='workflow_cancel_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class WorkflowCancelAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        try:
+            async with _workflow_cancel_agent.iter(prompt) as agent_run:
+                async for node in agent_run:
+                    if Agent.is_call_tools_node(node):
+                        agent_run.cancel()
+        except RunCancelled as exc:
+            return f'cancelled:{bool(exc.messages)}'
+        return 'completed'  # pragma: no cover
+
+
+async def test_workflow_agent_run_cancel_is_application_outcome_and_replays(client: Client) -> None:
+    """Workflow-side first-party cancellation completes normally and remains replay-deterministic."""
+    workflow_id = f'{WorkflowCancelAgentWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowCancelAgentWorkflow],
+        plugins=[AgentPlugin(_workflow_cancel_agent)],
+    ):
+        output = await client.execute_workflow(
+            WorkflowCancelAgentWorkflow.run,
+            args=['cancel after the first model response'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        history = await client.get_workflow_handle(workflow_id).fetch_history()
+
+    assert output == 'cancelled:True'
+    await Replayer(
+        workflows=[WorkflowCancelAgentWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(history)
+
+
+def _cancel_run_from_activity(ctx: RunContext[None]) -> str:
+    ctx.cancel_run()
+    return 'cancelled'  # pragma: no cover
+
+
+_activity_cancel_agent = Agent(
+    TestModel(call_tools=['_cancel_run_from_activity']),
+    name='activity_cancel_agent',
+    deps_type=type(None),
+    tools=[_cancel_run_from_activity],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class ActivityCancelAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _activity_cancel_agent.run(prompt)).output
+
+
+async def test_run_context_cancel_run_in_activity_surfaces_user_error(client: Client) -> None:
+    """An activity cannot cancel its workflow-side run and fails clearly instead of hanging."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ActivityCancelAgentWorkflow],
+        plugins=[AgentPlugin(_activity_cancel_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ActivityCancelAgentWorkflow.run,
+                args=['call the cancellation tool'],
+                id=f'{ActivityCancelAgentWorkflow.__name__}-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+            )
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == UserError.__name__
+    assert cause.message == snapshot(
+        '`cancel_run` is only available during an agent run (from tools, event stream handlers, or capability hooks) '
+        'in the same process as the run itself. This `RunContext` has no run to cancel.'
+    )
 
 
 _continuation_model = ScriptedContinuationModel()
