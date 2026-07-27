@@ -18,7 +18,15 @@ from ..exceptions import UserError
 from ..profiles import ModelProfile
 
 if TYPE_CHECKING:
-    import httpx
+    from httpx import AsyncClient
+else:
+    try:
+        from httpx import AsyncClient
+    except ImportError:
+        # `httpx` reaches us only transitively, via the provider SDKs. `Provider` is public and
+        # subclassable, so its annotations must stay resolvable for `typing.get_type_hints()` even
+        # where no SDK — and therefore no client — is installed.
+        AsyncClient = object
 
 InterfaceClient = TypeVar('InterfaceClient', default=Any)
 
@@ -52,8 +60,8 @@ class Provider(ABC, Generic[InterfaceClient]):
     """
 
     _client: InterfaceClient
-    _own_http_client: httpx.AsyncClient | None = None
-    _http_client_factory: Callable[[], httpx.AsyncClient] | None = None
+    _own_http_client: AsyncClient | None = None
+    _http_client_factory: Callable[[], AsyncClient] | None = None
     _entered_count: int = 0
 
     @functools.cached_property
@@ -92,7 +100,7 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: AsyncClient) -> None:
         """Update the SDK client's internal HTTP client reference.
 
         Subclasses that manage their own HTTP client should override this to inject

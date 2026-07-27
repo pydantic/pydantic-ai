@@ -90,9 +90,21 @@ sys.meta_path.insert(0, BlockHttpx())
 import asyncio
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.models.function import FunctionModel
 
 assert Agent('test').run_sync('hello').output
+
+# `ModelSettings` is a field type on several pydantic models, so building one resolves this
+# module's annotations — including `timeout`'s `httpx.Timeout` arm.
+assert AgentSpec.model_json_schema_with_capabilities()
+
+# `Provider` is public and subclassable, so its `httpx`-typed attributes have to stay resolvable.
+import typing
+
+from pydantic_ai.providers import Provider
+
+assert typing.get_type_hints(Provider)
 
 
 async def stream_function(messages, info):
