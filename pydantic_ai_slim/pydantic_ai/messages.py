@@ -134,9 +134,12 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', '
   transparently for both `agent.run` and `agent.run_stream`, merging every segment into a single
   completed [`ModelResponse`][pydantic_ai.messages.ModelResponse], so a finished turn in the message
   history is never left in this state.
-- `'interrupted'`: streaming was explicitly stopped via
-  [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel] before the model
-  finished generating.
+- `'interrupted'`: generation was explicitly stopped before the model finished. Set when a streamed
+  response is cancelled via [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel],
+  and when a realtime turn is cut off by a barge-in or
+  [`RealtimeSession.interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] — in which case the
+  cut-off point is recorded on the last
+  [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms].
 """
 
 ModelRequestState: TypeAlias = Literal['complete', 'interrupted']

@@ -130,7 +130,12 @@ class RealtimeModelSettings(TypedDict, total=False):
     """
 
     voice: str
-    """Voice used for audio output, e.g. `alloy` (OpenAI), `Puck` (Gemini), or `eve` (xAI)."""
+    """Voice used for audio output, e.g. `alloy` (OpenAI), `Puck` (Gemini), or `eve` (xAI).
+
+    Each provider ships its own voices, so this stays a plain string;
+    [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] narrows it
+    to the ones OpenAI documents.
+    """
 
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None
     """Model used to transcribe the user's audio input, so their turns are captured into history.

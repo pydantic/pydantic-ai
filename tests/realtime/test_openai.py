@@ -10,7 +10,7 @@ import re
 import wave
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Any, Literal
+from typing import Any, Literal, get_args, get_origin
 
 import pytest
 from inline_snapshot import snapshot
@@ -89,10 +89,17 @@ with try_import() as imports_successful:
         UsageTranscriptTextUsageTokensInputTokenDetails,
     )
 
+    from openai.types.realtime.realtime_audio_config_output import Voice as SDKVoice
+
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime import openai as rt_openai
-    from pydantic_ai.realtime.openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, map_event
+    from pydantic_ai.realtime.openai import (
+        KnownOpenAIRealtimeVoiceName,
+        OpenAIRealtimeConnection,
+        OpenAIRealtimeModel,
+        map_event,
+    )
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
 
@@ -105,6 +112,21 @@ def _wav_bytes(pcm: bytes, sample_rate: int = 24000) -> bytes:
         wav.setframerate(sample_rate)
         wav.writeframes(pcm)
     return buffer.getvalue()
+
+
+def test_known_voice_names_match_sdk() -> None:
+    """`KnownOpenAIRealtimeVoiceName` mirrors the SDK's own voice union, so it can't quietly fall behind.
+
+    The setting stays open to any string, so a stale list only costs autocomplete — but a voice OpenAI
+    adds should show up here, and this is the only thing that would tell us.
+    """
+    sdk_voices = {
+        voice
+        for member in get_args(SDKVoice)
+        if get_origin(member) is Literal
+        for voice in get_args(member)
+    }
+    assert set(get_args(KnownOpenAIRealtimeVoiceName.__value__)) == sdk_voices
 
 
 def test_map_transcription_usage() -> None:

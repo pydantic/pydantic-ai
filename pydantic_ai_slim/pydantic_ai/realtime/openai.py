@@ -19,6 +19,8 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from typing_extensions import TypeAliasType
+
 try:
     import websockets
     from openai.types.realtime import (
@@ -115,14 +117,44 @@ __all__ = (
     'OpenAIRealtimeModel',
     'OpenAIRealtimeModelSettings',
     'OpenAIRealtimeConnection',
+    'KnownOpenAIRealtimeVoiceName',
     'ServerVAD',
     'SemanticVAD',
     'map_event',
 )
 
+KnownOpenAIRealtimeVoiceName = TypeAliasType(
+    'KnownOpenAIRealtimeVoiceName',
+    Literal[
+        'alloy',
+        'ash',
+        'ballad',
+        'cedar',
+        'coral',
+        'echo',
+        'marin',
+        'sage',
+        'shimmer',
+        'verse',
+    ],
+)
+"""The prebuilt voices OpenAI's realtime API ships, mirroring the `openai` SDK's own `Voice` union.
+
+The [`voice`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings.voice] setting also accepts any
+other string, so a voice OpenAI adds later works before this list catches up; a test pins the list
+against the SDK so it doesn't silently fall behind.
+"""
+
 
 class OpenAIRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Settings specific to OpenAI realtime models."""
+
+    voice: KnownOpenAIRealtimeVoiceName | str
+    """Voice used for audio output, e.g. `alloy`.
+
+    Narrows the cross-provider [`voice`][pydantic_ai.realtime.RealtimeModelSettings.voice] setting to
+    the voices OpenAI ships, for autocomplete; any other string is still accepted.
+    """
 
     openai_input_noise_reduction: Literal['near_field', 'far_field']
     """Noise reduction tuned for `near_field` (headset) or `far_field` (laptop/conference) microphones.
