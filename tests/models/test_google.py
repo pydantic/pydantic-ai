@@ -958,6 +958,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {'text_prompt_tokens': 14},
+                    '_extra': {},
                 },
                 'model_name': 'gemini-1.5-flash',
                 'timestamp': IsStr(),

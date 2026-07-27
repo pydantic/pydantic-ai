@@ -5441,6 +5441,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    '_extra': {},
                 },
                 'model_name': 'gpt-5-mini',
                 'timestamp': IsStr(),
