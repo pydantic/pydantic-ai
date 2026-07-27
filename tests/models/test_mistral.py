@@ -2944,13 +2944,18 @@ async def test_uploaded_file_input(allow_model_requests: None):
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
-    response = httpx.Response(500, content=b'test error')
+    response = httpx.Response(500, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, content=b'test error')
     mock_client = MockMistralAI.create_mock(SDKError('test error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
-    assert str(exc_info.value) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')
+    exc = exc_info.value
+    assert str(exc) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')
+    # SDKError.headers is httpx.Headers; _map_api_errors converts it with dict() — verify it lands correctly.
+    assert exc.headers is not None
+    assert exc.headers.get('retry-after') == '30'
+    assert exc.headers.get('x-request-id') == 'rid-1'
 
 
 def test_model_non_http_error(allow_model_requests: None) -> None:

@@ -109,8 +109,9 @@ cli = [
 ]
 # MCP — `fastmcp-slim[client]` is the lightweight client-only distribution (no Starlette /
 # Uvicorn server stack). Pulls the `mcp` SDK transitively. For an in-process FastMCP server,
-# install the full `fastmcp` package directly alongside `[mcp]`.
-mcp = ["fastmcp-slim[client]>=3.3.0"]
+# install the full `fastmcp` package directly alongside `[mcp]`. FastMCP 4 uses MCP SDK v2,
+# which is not yet supported (#6661).
+mcp = ["fastmcp-slim[client]>=3.3.0,<4"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # UI
