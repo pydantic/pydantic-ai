@@ -1,14 +1,14 @@
 """Tests for the run-cancellation contract: an external cancellation always cancels the run.
 
-A step the run awaits — a Temporal activity under ``WAIT_CANCELLATION_COMPLETED``, an
-``event_stream_handler``, a capability hook — can absorb the ``CancelledError`` injected by
-``task.cancel()`` and return normally, which used to let a cancelled run complete as if it was
-never cancelled. A level-triggered backstop (``Task.cancelling()`` re-checked at step
+A step the run awaits — a Temporal activity under `WAIT_CANCELLATION_COMPLETED`, an
+`event_stream_handler`, a capability hook — can absorb the `CancelledError` injected by
+`task.cancel()` and return normally, which used to let a cancelled run complete as if it was
+never cancelled. A level-triggered backstop (`Task.cancelling()` re-checked at step
 boundaries) re-asserts the pending cancellation after the completed step's messages have been
 recorded.
 
 These are unit-style tests rather than VCR tests because the behavior under test is pure
-control flow around injected ``asyncio`` cancellation, which no recorded provider response can
+control flow around injected `asyncio` cancellation, which no recorded provider response can
 trigger.
 """
 
