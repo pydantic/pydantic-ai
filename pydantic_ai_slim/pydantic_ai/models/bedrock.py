@@ -120,9 +120,15 @@ def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except ClientError as e:
-        status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+        metadata = e.response.get('ResponseMetadata', {})
+        status_code = metadata.get('HTTPStatusCode')
         if isinstance(status_code, int):
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.response) from e
+            raise ModelHTTPError(
+                status_code=status_code,
+                model_name=model_name,
+                body=e.response,
+                headers=metadata.get('HTTPHeaders'),
+            ) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
 
@@ -504,6 +510,12 @@ class BedrockConverseModel(Model[BaseClient]):
         self._provider = provider
 
         super().__init__(settings=settings, profile=profile)
+
+        if self.profile.get('bedrock_supported_on_converse', True) is False:
+            raise UserError(
+                f'Model {model_name!r} is not served by the Bedrock Converse API. Use `BedrockMantleProvider` '
+                "(the `bedrock-mantle:` prefix) to access it through Bedrock Mantle's OpenAI-compatible API."
+            )
 
     @property
     def client(self) -> BedrockRuntimeClient:

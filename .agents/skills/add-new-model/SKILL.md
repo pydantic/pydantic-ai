@@ -173,6 +173,13 @@ Include the [PR template](.github/pull_request_template.md), fill in the issue n
 - **Snapshot that ratchets:** `tests/test_capabilities.py::test_model_json_schema_with_capabilities` embeds the full `KnownModelName` enum. It's a plain sorted string list — hand-add the new ids in sorted position (deterministic, no need for `--inline-snapshot=fix`). Profile-flag tests go in `tests/providers/test_xai.py` (see `test_xai_model_profile`); the parametrized `tests/test_thinking.py::test_grok_43_profile_thinking_support` asserts the *4.3* effort set specifically — don't add a different-effort model to it.
 - **env / probing:** `XAI_API_KEY` lives in the repo-root `.env` (not in every worktree). Run probes with `source .env && <script>` so `$XAI_API_KEY` is exported; put any `curl` referencing it in a script file rather than passing the key inline. Verify enumeration/profile logic with a plain `uv run python` snippet (recurse `get_args(XaiModelName)`, compare to `known_model_names()`; call `grok_model_profile(...)` directly) rather than a full `uv run pytest tests/` run.
 
+### Bedrock
+
+- **Bedrock Mantle is a separate provider from Bedrock Runtime.** `bedrock:` (the `BedrockProvider`, boto3-only) talks to the Converse API; `bedrock-mantle:` (the `BedrockMantleProvider`, an `openai`-backed `Provider[AsyncOpenAI]` built on `AsyncBedrockOpenAI`) talks to Mantle's OpenAI-compatible API. They have separate model catalogs and separate optional extras (`bedrock` vs `bedrock-mantle`); don't fold Mantle deps into the `bedrock` group.
+- **Mantle model families use different endpoints, keyed off the profile.** `BedrockMantleProvider.model_profile` stamps `bedrock_mantle_interface: Literal['chat','responses','openai-responses']` on the profile (GPT-5.4+ → `openai-responses` at `/openai/v1`; GPT-OSS → `responses` at `/v1`; GPT-OSS Safeguard → `chat` at `/v1`). `infer_model` reads that (via the profile, not a separate interface method) to pick `BedrockMantleResponsesModel` vs `BedrockMantleChatModel`, and the Responses model overrides `client` to pick the base URL. Add a family only after verifying its endpoint against the AWS model card + a live request.
+- **`bedrock:` stays on Converse; it does NOT auto-route to Mantle.** A GPT-5.4+ model on `bedrock:` raises from `BedrockProvider.model_profile` pointing users to `bedrock-mantle:` (there's a `TODO(v3)` to flip the default with a deprecation later). Only add `bedrock-mantle:` names to `KnownModelName` — no `bedrock:openai.gpt-5.*` names, and hence no `UNSUPPORTED_GATEWAY_MODEL_NAMES` entries for them.
+- **Response-scoped tool-call IDs are a profile flag, not a Mantle-wide behavior.** `openai_responses_tool_call_ids_are_response_scoped` (on `OpenAIModelProfile`) is enabled only for Mantle GPT-5.6 Responses; `OpenAIResponsesModel` qualifies call IDs with the response ID in both request and streaming ingestion so history stays uniquely keyed (#6536).
+
 ### Google (Gemini)
 
 - **TWO places for the id, FOUR `KnownModelName` blocks.** Add to:
@@ -185,7 +192,7 @@ Include the [PR template](.github/pull_request_template.md), fill in the issue n
 - **Snapshots / tests:** hand-add the new ids in sorted position in `tests/test_capabilities.py::test_model_json_schema_with_capabilities` (plain sorted string list). Mirror-only adds skip new VCR by default; #5527 recorded one for `gemini-3.5-flash` but that is not required for a pure name add.
 - **Docs:** example snippets often hard-code a recent flash id (`docs/models/google.md`, `docs/capabilities/thinking.md`) — leave them alone unless the docs maintain a model registry table (they currently do not).
 
-### Bedrock, others
+### Others
 
 Not yet documented here. **When you add the next model for one of these providers, add the landmines you encountered to this section before closing the session** (see Step 9).
 

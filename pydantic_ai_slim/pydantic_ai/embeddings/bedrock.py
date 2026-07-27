@@ -658,9 +658,15 @@ class BedrockEmbeddingModel(EmbeddingModel):
                 )
             )
         except ClientError as e:
-            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+            metadata = e.response.get('ResponseMetadata', {})
+            status_code = metadata.get('HTTPStatusCode')
             if isinstance(status_code, int):
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self.model_name,
+                    body=e.response,
+                    headers=metadata.get('HTTPHeaders'),
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
         # Extract input token count from HTTP headers

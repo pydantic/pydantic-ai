@@ -2,6 +2,9 @@ from __future__ import annotations as _annotations
 
 import json
 import sys
+from collections.abc import Mapping
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
 
 import pydantic_core
@@ -34,6 +37,7 @@ __all__ = (
     'ModelHTTPError',
     'ContentFilterError',
     'IncompleteToolCall',
+    'MessageHistoryMutatedWarning',
     'FallbackExceptionGroup',
     'ToolFailed',
 )
@@ -332,14 +336,64 @@ class ModelHTTPError(ModelAPIError):
     body: object | None
     """The body of the response, if available."""
 
-    def __init__(self, status_code: int, model_name: str, body: object | None = None):
+    headers: dict[str, str] | None
+    """Response headers from the provider, with keys lowercased for consistent access.
+
+    For example, use `exc.headers.get('retry-after')` to read the `Retry-After` header
+    regardless of provider casing.  `None` when the provider does not supply headers
+    (e.g. gRPC-based providers or synthesised errors).
+    """
+
+    def __init__(
+        self,
+        status_code: int,
+        model_name: str,
+        body: object | None = None,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ):
         self.status_code = status_code
         self.body = body
+        self.headers = {k.lower(): v for k, v in headers.items()} if headers is not None else None
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         super().__init__(model_name=model_name, message=message)
 
-    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
-        return self.__class__, (self.status_code, self.model_name, self.body)
+    def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        return self.__class__, (self.status_code, self.model_name, self.body), {'headers': self.headers}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        self.headers = state.get('headers')
+
+    @property
+    def retry_after(self) -> float | None:
+        """Seconds to wait before retrying, parsed from the `Retry-After` response header.
+
+        Returns `None` when the header is absent or cannot be parsed. The header value
+        is interpreted first as an integer number of seconds, then as an
+        [HTTP-date](https://httpwg.org/specs/rfc9110.html#http.date) string.
+        """
+        if self.headers is None:
+            return None
+        raw = self.headers.get('retry-after')
+        if raw is None:
+            return None
+        try:
+            seconds = int(raw)
+            if seconds < 0:
+                return None
+            return float(seconds)
+        except (ValueError, OverflowError):
+            pass
+        try:
+            retry_time = parsedate_to_datetime(raw)
+            assert isinstance(retry_time, datetime)
+            # asctime-date format (RFC 9110 §5.6.7) carries no timezone; treat as UTC.
+            if retry_time.tzinfo is None:
+                retry_time = retry_time.replace(tzinfo=timezone.utc)
+            wait = (retry_time - datetime.now(timezone.utc)).total_seconds()
+            return max(0.0, wait)
+        except (ValueError, TypeError, AssertionError):
+            return None
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):
@@ -396,3 +450,23 @@ class ToolFailedError(Exception):
 
 class IncompleteToolCall(UnexpectedModelBehavior):
     """Error raised when a model stops due to token limit while emitting a tool call."""
+
+
+class MessageHistoryMutatedWarning(Warning):
+    """Warning raised when in-place mutation of the message history is detected at the end of a run.
+
+    Mutating messages that are already part of the run's history in place (e.g.
+    `ctx.messages[0].parts[0].content = '...'` from a tool) is not supported: the per-request
+    `gen_ai.input.messages` span attribute caches each message's serialized form, so spans recorded
+    after the mutation may not match the messages actually sent to the model. The run-level
+    `pydantic_ai.all_messages` attribute is always serialized fresh and does reflect the mutation.
+    To transform history mid-run, build new message or part objects instead — e.g. with
+    `dataclasses.replace`, passing the message a new `parts` list (replacing a message in the
+    history and reassigning its `parts` list are both safe) — for instance in a history processor
+    ([`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory]).
+
+    The warning is best-effort: it's raised when a mutation is detected at the end of a successful
+    run, which covers messages still present in the final history. Errored runs aren't checked —
+    with warnings configured as errors, the warning would displace the run's own exception. Its
+    absence does not guarantee that no stale span was recorded.
+    """
