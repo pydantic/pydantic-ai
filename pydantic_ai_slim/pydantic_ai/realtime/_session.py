@@ -1025,8 +1025,9 @@ class RealtimeSession:
         reuse the classic instrumentation helpers.
         Added vs. the classic span: `gen_ai.output.type` (`speech`/`text`), the one semconv attribute
         specific to voice output. The span keeps the semconv `chat` operation and `chat {model}` name, but
-        renders (via `logfire.msg`) as `turn {model}` — a realtime step is a conversational turn, not a
-        one-shot request/response, so "turn" reads less confusingly than "chat" in a trace.
+        renders (via `logfire.msg`) as `response {model}`: nothing was "chatted" — no request was sent —
+        and this span covers exactly one `ModelResponse`, which is *not* the same as a conversational
+        turn (a turn that calls tools produces several). The turn boundary is the `turn complete` span.
         """
         settings = self._instrumentation
         if settings is None or self._chat_span is not None:
@@ -1037,10 +1038,10 @@ class RealtimeSession:
             # Mark the turn as realtime too (see the session span), so a backend can tell a realtime
             # `chat` span apart from a classic model-request `chat` span.
             'pydantic_ai.realtime': True,
-            # Render as `turn {model}` while keeping the semconv `chat` operation + span name: a realtime
-            # step is a conversational turn, clearer than "chat" in the Logfire trace view. Verb-first
+            # Render as `response {model}` while keeping the semconv `chat` operation + span name: this
+            # span covers one `ModelResponse`, and no request was sent, so "chat" misleads. Verb-first
             # matches the other span messages (`chat {model}`, `execute_tool {name}`, `invoke_agent {name}`).
-            'logfire.msg': f'turn {self._model_name}' if self._model_name else 'turn',
+            'logfire.msg': f'response {self._model_name}' if self._model_name else 'response',
         }
         if self._model_name:
             attributes['gen_ai.request.model'] = self._model_name
@@ -1061,7 +1062,7 @@ class RealtimeSession:
         )
 
     def _end_chat_span(self, input_messages: list[ModelMessage], response: ModelResponse | None) -> None:
-        """Close the current `chat` span, attaching per-turn messages and usage from `response`."""
+        """Close the current `chat` span, attaching the response's messages, usage, and state."""
         settings = self._instrumentation
         span = self._chat_span
         if settings is None or span is None:
@@ -1075,6 +1076,11 @@ class RealtimeSession:
             span.set_attributes(
                 response_attributes(response, response.model_name or self._model_name, price_calculation)
             )
+            if response.state != 'complete':
+                # How the response ended, when it didn't end normally: `'interrupted'` for a barge-in
+                # or an explicit `interrupt()`. The `interrupt` span records the request; this records
+                # the outcome on the response it actually cut off.
+                span.set_attribute('pydantic_ai.response.state', response.state)
         span.end()
         if response is not None:
             settings.record_metrics(

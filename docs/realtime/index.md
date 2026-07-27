@@ -174,10 +174,16 @@ Spoken content (both the user's and the model's) streams as a
 | [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | The original deferred or approval-required requests resolved by an inline capability handler. |
 | [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | The inline handler supplied results and normal tool processing continues. |
 
-For playback, read audio from the `SpeechPartDelta.audio_chunk`s: the model's speech is always
-delivered in full as deltas, whether or not audio is [retained](#retaining-audio). When it is
-retained, the `SpeechPart` on `PartEndEvent` holds that same audio again as a finalized WAV — a
-snapshot for history, not more audio to play. Playing both plays the turn twice.
+For playback, read audio from the `SpeechPartDelta.audio_chunk`s and nothing else. The rules:
+
+- The model's speech is delivered in full as deltas, whether or not audio is
+  [retained](#retaining-audio) — retention controls what *history* keeps, not what streams.
+- `audio_chunk` is only ever the model's audio, so a delta needs no correlation back to its
+  `PartStartEvent` to be played. (`transcript_delta` is not: it carries both sides' transcripts, so
+  rendering text does mean tracking which speaker each part index belongs to.)
+- The `SpeechPart` on `PartStartEvent` never carries audio; it starts empty and the deltas fill it.
+- When audio is retained, the `SpeechPart` on `PartEndEvent` holds the whole turn's audio again as a
+  finalized WAV — a snapshot for history, not more audio to play. Playing both plays the turn twice.
 
 The remaining realtime control-plane events:
 
@@ -600,10 +606,13 @@ Realtime sessions emit OpenTelemetry spans when the agent is instrumented — ca
 (reported as an agent invocation, like a classic run) carrying cumulative usage and the conversation
 transcript (content is redacted when `include_content` is disabled). The session span uses
 `gen_ai.operation.name='invoke_agent'` and sets `gen_ai.output.type` to `'speech'` or `'text'`.
-Nested under it, each assistant response gets a `chat {model}` span with
-`gen_ai.output.type` set to the same value, and each tool call gets an
-`execute_tool` span (including any delegated text-agent run). See
-[Debugging and monitoring](../logfire.md).
+Nested under it, each assistant response gets a `chat {model}` span (rendered as `response {model}`)
+with `gen_ai.output.type` set to the same value, and each tool call gets an
+`execute_tool` span (including any delegated text-agent run). One conversational turn can produce
+several response spans, since a turn that calls tools is split into a response per step; the
+zero-duration `turn complete` span marks the end of the turn itself, alongside `user speech started`
+and `interrupt`. A response cut off by a barge-in carries `pydantic_ai.response.state='interrupted'`.
+See [Debugging and monitoring](../logfire.md).
 
 OpenAI, Azure OpenAI, and xAI `chat` spans carry the response's own usage, including function-call-only responses.
 Gemini finalizes a function-call response before the provider reports usage; that response has zero

@@ -359,11 +359,13 @@ async def test_session_and_chat_spans_carry_request_config() -> None:
         }
 
     # The `chat` span keeps the semconv `chat` operation and `chat {model}` span name, but renders (via
-    # `logfire.msg`) as `turn {model}`: a realtime step is a conversational turn, not a one-shot request.
+    # `logfire.msg`) as `response {model}`: it covers one `ModelResponse`, and no request was sent. It is
+    # deliberately not called a "turn" — a turn that calls tools produces several of these spans, and the
+    # turn boundary is the separate `turn complete` span.
     chat_attributes = spans['chat gpt-realtime'].attributes
     assert chat_attributes is not None
     assert chat_attributes['gen_ai.operation.name'] == 'chat'
-    assert chat_attributes['logfire.msg'] == 'turn gpt-realtime'
+    assert chat_attributes['logfire.msg'] == 'response gpt-realtime'
 
 
 async def test_request_config_respects_include_model_request_parameters() -> None:
@@ -435,6 +437,29 @@ async def test_session_span_turn_complete_omits_interrupted_when_false() -> None
 
     turn_complete = next(s for s in exporter.get_finished_spans() if s.name == 'turn complete')
     assert dict(turn_complete.attributes or {}) == {}
+
+
+async def test_chat_span_records_interrupted_response_state() -> None:
+    # A response cut off by a barge-in is recorded on the span covering that response, so a reader
+    # can see *which* response was cut off rather than only that an interruption happened somewhere.
+    # A response that ends normally carries no state attribute.
+    settings, exporter = _settings()
+    conn = _Connection([Transcript(text='hello there', is_final=False), TurnCompleteEvent(interrupted=True)])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    _ = await collect_events(session)
+
+    chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
+    assert chat.attributes is not None
+    assert chat.attributes['pydantic_ai.response.state'] == 'interrupted'
+
+    settings, exporter = _settings()
+    conn = _Connection([Transcript(text='hello there', is_final=False), TurnCompleteEvent()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    _ = await collect_events(session)
+
+    chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
+    assert chat.attributes is not None
+    assert 'pydantic_ai.response.state' not in chat.attributes
 
 
 async def test_interrupt_records_lifecycle_span_with_audio_offset() -> None:
