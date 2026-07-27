@@ -1639,11 +1639,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             try:
                 yield
             except asyncio.CancelledError as exc:
-                if graph_deps.cancellation.resolve():
+                first_party = graph_deps.cancellation.resolve()
+                graph_deps.cancellation.release_issued()
+                if first_party:
                     raise exceptions.RunCancelled(
                         'The agent run was cancelled.', messages=list(state.message_history)
                     ) from exc
                 raise
+            else:
+                # A requested cancellation that user code swallowed inside the block, or that was
+                # issued to a superseded driving task, must not leak an elevated `Task.cancelling()`
+                # count past the run: exiting the block without finishing the run is quiet abandonment.
+                graph_deps.cancellation.release_issued()
 
         async with AsyncExitStack() as stack:
             # Enter first so cancellation is classified only after every other context has torn down.

@@ -40,8 +40,7 @@ class RunCancellation:
 
     def __init__(self) -> None:
         self._owner: asyncio.Task[object] | None = None
-        self._issued = 0
-        self._issued_to: asyncio.Task[object] | None = None
+        self._issued: dict[asyncio.Task[object], int] = {}
         self._requested = False
         self._finished = False
 
@@ -63,13 +62,9 @@ class RunCancellation:
         if task is None:  # pragma: no cover — agent runs always execute inside a task
             return
         self._owner = task
-        if self._issued_to is not None and self._issued_to is not task:
-            # Cancellations issued to a previous driving task can never be resolved on this
-            # one; forget them so they can't mis-consume this task's external cancellations.
-            self._issued = 0
-            self._issued_to = None
-        if self._requested and not self._finished and self._issued == 0:
-            # Deliver a request that arrived before this task was bound.
+        if self._requested and not self._finished and task not in self._issued:
+            # Deliver a request that arrived before this task was bound, or was previously
+            # delivered to a different driving task.
             self._issue(task)
 
     def cancel(self) -> None:
@@ -81,8 +76,7 @@ class RunCancellation:
             self._issue(self._owner)
 
     def _issue(self, task: asyncio.Task[object]) -> None:
-        self._issued += 1
-        self._issued_to = task
+        self._issued[task] = self._issued.get(task, 0) + 1
         task.cancel()
 
     def finish(self) -> None:
@@ -92,9 +86,10 @@ class RunCancellation:
     def resolve(self) -> bool:
         """Resolve a caught `CancelledError` at the run's outer edge: is it ours to translate?
 
-        Consumes exactly the cancellations this controller issued via `Task.uncancel()`. Returns
-        `True` if the cancellation was first-party and no external cancellation is still pending
-        (translate to `RunCancelled`); `False` if it must keep propagating as `CancelledError`.
+        Consumes only the cancellations this controller issued to the calling task via
+        `Task.uncancel()`. Returns `True` if the cancellation was first-party and no external
+        cancellation is still pending (translate to `RunCancelled`); `False` if it must keep
+        propagating as `CancelledError`.
 
         Must be called on the task the cancellation was delivered to.
         """
@@ -107,8 +102,24 @@ class RunCancellation:
         task = asyncio.current_task()
         if task is None:  # pragma: no cover — agent runs always execute inside a task
             return True
-        while self._issued > 0 and task.cancelling() > 0:
+        count = self._issued.pop(task, 0)
+        while count > 0 and task.cancelling() > 0:
             task.uncancel()
-            self._issued -= 1
+            count -= 1
         # Anything left on the counter was issued externally and takes precedence.
         return task.cancelling() == 0
+
+    def release_issued(self) -> None:
+        """Release controller-issued cancellations that were never resolved.
+
+        This includes cancellations swallowed by user code or issued to a superseded driving
+        task. Releasing them prevents contamination of the tasks' outer cancellation bookkeeping,
+        such as `asyncio.timeout()` and AnyIO cancellation scopes.
+        """
+        if sys.version_info >= (3, 11):  # pragma: lax no cover
+            for task, count in self._issued.items():
+                if not task.done():
+                    for _ in range(count):
+                        if task.cancelling() > 0:
+                            task.uncancel()
+        self._issued.clear()

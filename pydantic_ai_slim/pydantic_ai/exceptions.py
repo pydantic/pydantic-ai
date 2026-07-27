@@ -276,7 +276,7 @@ class RunCancelled(AgentRunError):
     messages: list[ModelMessage]
     """The cancelled run's message history.
 
-    A complete snapshot of the run's message history at termination, ready to pass as
+    A detached snapshot of the run's message history at termination, ready to pass as
     `message_history` for a resumed run.
     """
 

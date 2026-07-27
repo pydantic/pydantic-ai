@@ -28,6 +28,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, RunCancelled, UserError, capture_run_messages
+from pydantic_ai._cancel import RunCancellation
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -50,6 +51,18 @@ READINESS_WAIT_TIMEOUT = 5
 requires_task_cancelling = pytest.mark.skipif(
     sys.version_info < (3, 11), reason='the backstop needs `Task.cancelling()` (Python 3.11+)'
 )
+
+
+def _task_cancelling(task: asyncio.Task[Any]) -> int:
+    if sys.version_info < (3, 11):  # pragma: lax no cover
+        return 0
+    return task.cancelling()
+
+
+def _task_uncancel(task: asyncio.Task[Any]) -> None:
+    if sys.version_info < (3, 11):  # pragma: lax no cover
+        return
+    task.uncancel()
 
 
 @requires_task_cancelling
@@ -244,12 +257,158 @@ async def test_iter_cancellation_is_typed_only_after_context_exit():
     assert seen_inside
 
 
+@requires_task_cancelling
+async def test_iter_swallowed_cancellation_is_quiet_abandonment():
+    """Leaving `agent.iter()` normally after swallowing its cancellation cleans task state."""
+    agent = Agent(TestModel())
+
+    async with agent.iter('go') as agent_run:
+        agent_run.cancel()
+        try:
+            await anext(agent_run)
+        except asyncio.CancelledError:
+            pass
+
+    assert agent_run.result is None
+    task = asyncio.current_task()
+    assert task is not None
+    assert _task_cancelling(task) == 0
+
+
+@requires_task_cancelling
+async def test_run_cancellation_tracks_issuances_per_task():
+    """A controller unit test pins the task-rebind window that the public API cannot trigger
+    deterministically."""
+    cancellation = RunCancellation()
+    a_bound = asyncio.Event()
+    a_cancelled = asyncio.Event()
+    resolve_a = asyncio.Event()
+    a_resolved = asyncio.Event()
+    external_cancel_a = asyncio.Event()
+    a_state: list[tuple[bool, int]] = []
+
+    async def drive_a() -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        cancellation.bind(task)
+        a_bound.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            a_cancelled.set()
+        await resolve_a.wait()
+        a_state.append((cancellation.resolve(), _task_cancelling(task)))
+        a_resolved.set()
+        try:
+            await external_cancel_a.wait()
+        except asyncio.CancelledError:
+            a_state.append((cancellation.resolve(), _task_cancelling(task)))
+            _task_uncancel(task)
+
+    task_a = asyncio.create_task(drive_a())
+    await a_bound.wait()
+    cancellation.cancel()
+    cancellation.cancel()  # idempotent while a request is already pending
+    await a_cancelled.wait()
+
+    b_cancelled = asyncio.Event()
+    finish_b = asyncio.Event()
+    b_state: list[int] = []
+
+    async def drive_b() -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        try:
+            cancellation.bind(task)
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            b_cancelled.set()
+        await finish_b.wait()
+        b_state.append(_task_cancelling(task))
+
+    task_b = asyncio.create_task(drive_b())
+    await b_cancelled.wait()
+    resolve_a.set()
+    await a_resolved.wait()
+    assert a_state == [(True, 0)]
+
+    cancellation.release_issued()
+    finish_b.set()
+    await task_b
+    assert b_state == [0]
+
+    task_a.cancel()
+    await task_a
+    assert a_state == [(True, 0), (False, 1)]
+
+    done_cancellation = RunCancellation()
+    done_bound = asyncio.Event()
+
+    async def finish_with_issued_cancellation() -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        done_cancellation.bind(task)
+        done_bound.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            pass
+
+    done_task = asyncio.create_task(finish_with_issued_cancellation())
+    await done_bound.wait()
+    done_cancellation.cancel()
+    await done_task
+    done_cancellation.release_issued()
+    done_cancellation.release_issued()  # clearing an already-empty controller is a no-op
+
+    unbound_cancellation = RunCancellation()
+    unbound_cancellation.cancel()
+    rebound_cancelled = asyncio.Event()
+
+    async def bind_after_request() -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        try:
+            unbound_cancellation.bind(task)
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            rebound_cancelled.set()
+            assert unbound_cancellation.resolve()
+
+    rebound_task = asyncio.create_task(bind_after_request())
+    await rebound_cancelled.wait()
+    await rebound_task
+
+    uncancelled_cancellation = RunCancellation()
+    uncancelled_bound = asyncio.Event()
+    keep_uncancelled_task_live = asyncio.Event()
+
+    async def swallow_and_uncancel() -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        uncancelled_cancellation.bind(task)
+        uncancelled_bound.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            _task_uncancel(task)
+        await keep_uncancelled_task_live.wait()
+
+    uncancelled_task = asyncio.create_task(swallow_and_uncancel())
+    await uncancelled_bound.wait()
+    uncancelled_cancellation.cancel()
+    await asyncio.sleep(0)
+    uncancelled_cancellation.release_issued()
+    keep_uncancelled_task_live.set()
+    await uncancelled_task
+
+
 async def test_event_stream_handler_cancels_run():
     """`ctx.cancel_run()` from an `event_stream_handler` (the TUI Esc gesture) cancels the run;
     the partial response streamed so far is preserved on `RunCancelled.messages`."""
 
     async def handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
-        async for _event in events:
+        async for _event in events:  # pragma: no branch
             ctx.cancel_run()
 
     agent = Agent(TestModel(custom_output_text='a few words of output'))
@@ -314,6 +473,37 @@ async def test_external_cancellation_wins_race_with_first_party_cancel():
         await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
 
 
+@requires_task_cancelling
+async def test_external_cancellation_wins_when_it_arrives_first():
+    """An external cancellation delivered before `cancel()` still wins the race."""
+    started = asyncio.Event()
+
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        started.set()
+        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        return 'slow'  # pragma: no cover
+
+    runs: list[Any] = []
+
+    async def drive():
+        async with agent.iter('go') as agent_run:
+            runs.append(agent_run)
+            async for _node in agent_run:
+                pass
+
+    task = asyncio.create_task(drive())
+    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel()
+    runs[0].cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+    assert _task_cancelling(task) == 1
+
+
 async def test_cancel_run_under_run_stream_events():
     """With `run_stream_events()` the run is driven by a background task; `ctx.cancel_run()`
     from a tool must cancel *that* task and surface `RunCancelled` to the event consumer."""
@@ -369,10 +559,9 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
                 return AgentRunResult(output='recovered')
 
         async def on_run_error(self, ctx: RunContext, *, error: BaseException) -> AgentRunResult:
-            if isinstance(error, asyncio.CancelledError):
-                observed.append('on_run_error')
-                return AgentRunResult(output='recovered')
-            raise error
+            assert isinstance(error, asyncio.CancelledError)
+            observed.append('on_run_error')
+            return AgentRunResult(output='recovered')
 
     agent = Agent(TestModel(), capabilities=[RecoverCancellation()])
 
@@ -390,7 +579,7 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
             async for _node in agent_run:
                 pass
         assert agent_run.result is not None  # pragma: no cover
-        return agent_run.result
+        return agent_run.result  # pragma: no cover
 
     task = asyncio.create_task(drive())
     await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)

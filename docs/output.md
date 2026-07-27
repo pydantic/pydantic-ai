@@ -1086,9 +1086,9 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
-Inside an `agent.iter()` block, both first-party and external cancellation surface as `asyncio.CancelledError`. When the context exits, a first-party cancellation is raised as `RunCancelled` with a complete snapshot of the run's message history. Cancellation is terminal: capability hooks may observe it and clean up, but cannot recover the run to success.
+Inside an `agent.iter()` block, both first-party and external cancellation surface as `asyncio.CancelledError`. When the context exits, a first-party cancellation is raised as `RunCancelled` with a detached snapshot of the run's message history. Cancellation is terminal: capability hooks may observe it and clean up, but cannot recover the run to success. On Python 3.11+, this guarantee remains exact when user code absorbs the delivered cancellation; on Python 3.10, where `Task.cancelling()` and `Task.uncancel()` are unavailable, it is best-effort.
 
-`RunCancelled` is an application-level outcome: your own code asked the run to stop. Externally cancelling the task running the agent — `asyncio.Task.cancel()`, a timeout scope, workflow cancellation under [durable execution](durable_execution/overview.md) — is not translated: it keeps raising `asyncio.CancelledError`, and when both happen at once the external cancellation wins. Either way, completed work is preserved in message history (accessible via [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] in the external case).
+`RunCancelled` is an application-level outcome: your own code asked the run to stop. Externally cancelling the task running the agent — `asyncio.Task.cancel()`, a timeout scope, workflow cancellation under [durable execution](durable_execution/overview.md) — is not translated: it keeps raising `asyncio.CancelledError`, and when both happen at once the external cancellation wins. On Python 3.10, that race cannot be distinguished, so the first-party cancellation wins instead. Either way, completed work is preserved in message history (accessible via [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] in the external case).
 
 #### Message History After Cancellation
 
