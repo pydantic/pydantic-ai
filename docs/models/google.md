@@ -158,6 +158,26 @@ agent = Agent(model)
 ...
 ```
 
+In addition to the single-region values listed in
+[`GoogleCloudLocation`][pydantic_ai.providers.google.GoogleCloudLocation], `GoogleCloudProvider` accepts the
+`'global'` location and the `'us'`/`'eu'` multi-regions. The multi-region values are routed to the
+`aiplatform.{us,eu}.rep.googleapis.com` data-residency endpoints — use them when an org policy blocks the
+global endpoint for data residency, or when a model is initially available only on `global` and the
+multi-regions rather than a single region. Model availability differs between single regions, multi-regions,
+and `global`; see the
+[Vertex AI locations docs](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions).
+
+```python {title="google_model_multi_region.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+
+provider = GoogleCloudProvider(location='us', project='your-google-cloud-project-id')
+model = GoogleModel('gemini-3-pro-preview', provider=provider)
+agent = Agent(model)
+...
+```
+
 #### Service tier (`service_tier`, `google_cloud_service_tier`)
 
 The unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field works on both Google subsystems, with [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier] available for finer Google Cloud routing control. The provider-specific field wins when both are set.

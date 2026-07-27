@@ -117,6 +117,7 @@ from .messages import (
 from .models import ModelRequestContext, ModelResolutionContext, ModelSelectionContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
+    AdvisorTool,
     CodeExecutionTool,
     FileSearchTool,
     ImageGenerationTool,
@@ -312,6 +313,7 @@ __all__ = (
     'ToolsetTool',
     'WrapperToolset',
     # builtin_tools
+    'AdvisorTool',
     'CodeExecutionTool',
     'FileSearchTool',
     'ImageGenerationTool',

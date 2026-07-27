@@ -65,6 +65,7 @@ voyageai = ["pydantic-ai-slim[voyageai]=={{ version }}"]
 cohere = ["pydantic-ai-slim[cohere]=={{ version }}"]
 mistral = ["pydantic-ai-slim[mistral]=={{ version }}"]
 bedrock = ["pydantic-ai-slim[bedrock]=={{ version }}"]
+bedrock-mantle = ["pydantic-ai-slim[bedrock-mantle]=={{ version }}"]
 xai = ["pydantic-ai-slim[xai]=={{ version }}"]
 groq = ["pydantic-ai-slim[groq]=={{ version }}"]
 openrouter = ["pydantic-ai-slim[openrouter]=={{ version }}"]
@@ -168,8 +169,8 @@ dev = [
     "brotli>=1.2.0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
-    # `fastmcp` package alongside.
-    "fastmcp>=3.3.0",
+    # `fastmcp` package alongside. FastMCP 4 uses MCP SDK v2, which is not yet supported (#6661).
+    "fastmcp>=3.3.0,<4",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
 docs = [
@@ -229,6 +230,7 @@ extend-select = [
     "D",
     "TID251",
     "PLW1514", # https://docs.astral.sh/ruff/rules/unspecified-encoding/
+    "PGH003", # https://docs.astral.sh/ruff/rules/blanket-type-ignore/
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 mccabe = { max-complexity = 15 }
