@@ -159,7 +159,7 @@ class CohereEmbeddingModel(EmbeddingModel):
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        inputs, settings = self.prepare_text_embed(inputs, settings)
+        items, texts, settings = self.prepare_text_embed(inputs, settings)
         settings = cast(CohereEmbeddingSettings, settings)
 
         cohere_input_type = settings.get(
@@ -183,7 +183,7 @@ class CohereEmbeddingModel(EmbeddingModel):
         try:
             response = await self._client.embed(
                 model=self.model_name,
-                texts=inputs,
+                texts=texts,
                 output_dimension=settings.get('dimensions'),
                 input_type=cohere_input_type,
                 max_tokens=settings.get('cohere_max_tokens'),
@@ -205,7 +205,7 @@ class CohereEmbeddingModel(EmbeddingModel):
 
         return EmbeddingResult(
             embeddings=embeddings,
-            inputs=inputs,
+            inputs=items,
             input_type=input_type,
             usage=_map_usage(response, self.system, self.base_url, self.model_name),
             model_name=self.model_name,

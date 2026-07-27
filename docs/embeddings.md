@@ -112,7 +112,8 @@ Support is per model, not per provider, and is declared by [`EmbeddingModel.supp
 | Model | Modalities |
 |-------|------------|
 | `google:gemini-embedding-2` | text, image, audio, video, document |
-| Every other built-in model | text |
+| Every other built-in provider model | text |
+| [`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] | all of them, so you can test a multimodal pipeline without calling a provider |
 
 !!! note "Looking up embeddings"
     `result['some text']` only works for text inputs; embeddings of files and of `EmbeddingContent` are accessed by index.

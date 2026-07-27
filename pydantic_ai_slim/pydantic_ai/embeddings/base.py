@@ -130,10 +130,10 @@ class EmbeddingModel(ABC):
 
     def prepare_text_embed(
         self, inputs: EmbeddingInput | Sequence[EmbeddingInput], settings: EmbeddingSettings | None = None
-    ) -> tuple[list[str], EmbeddingSettings]:
+    ) -> tuple[list[EmbeddingInput], list[str], EmbeddingSettings]:
         """Prepare text-only inputs and settings for embedding.
 
-        Like [`prepare_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_embed], but unwraps
+        Like [`prepare_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_embed], but additionally unwraps
         [`TextContent`][pydantic_ai.messages.TextContent] so implementations that only send text get plain strings.
 
         Args:
@@ -141,7 +141,9 @@ class EmbeddingModel(ABC):
             settings: Optional settings to merge with defaults.
 
         Returns:
-            A tuple of (normalized text list, merged settings).
+            A tuple of (normalized inputs list, text to send, merged settings). Pass the inputs list to
+            [`EmbeddingResult.inputs`][pydantic_ai.embeddings.EmbeddingResult.inputs] so a `TextContent`'s
+            metadata survives into the result, and the text to the provider.
 
         Raises:
             UserError: If an input isn't plain text.
@@ -157,7 +159,7 @@ class EmbeddingModel(ABC):
             else:
                 raise UserError(f'`{self.model_name}` only supports plain text inputs, got `{type(item).__name__}`.')
 
-        return texts, settings
+        return items, texts, settings
 
     async def max_input_tokens(self) -> int | None:
         """Get the maximum number of tokens that can be input to the model.

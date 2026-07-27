@@ -577,30 +577,31 @@ class BedrockEmbeddingModel(EmbeddingModel):
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        inputs_list, settings_dict = self.prepare_text_embed(inputs, settings)
+        items, texts, settings_dict = self.prepare_text_embed(inputs, settings)
         settings_typed = cast(BedrockEmbeddingSettings, settings_dict)
 
         if self._handler.supports_batch:
             # Models like Cohere support batch requests
-            return await self._embed_batch(inputs_list, input_type, settings_typed)
+            return await self._embed_batch(items, texts, input_type, settings_typed)
         else:
             # Models like Titan require individual requests
-            return await self._embed_concurrent(inputs_list, input_type, settings_typed)
+            return await self._embed_concurrent(items, texts, input_type, settings_typed)
 
     async def _embed_batch(
         self,
-        inputs: list[str],
+        items: list[EmbeddingInput],
+        texts: list[str],
         input_type: EmbedInputType,
         settings: BedrockEmbeddingSettings,
     ) -> EmbeddingResult:
         """Embed all inputs in a single batch request."""
-        body = self._handler.prepare_request(inputs, input_type, settings)
+        body = self._handler.prepare_request(texts, input_type, settings)
         response, input_tokens = await self._invoke_model(body, settings)
         embeddings, response_id = self._handler.parse_response(response)
 
         return EmbeddingResult(
             embeddings=embeddings,
-            inputs=inputs,
+            inputs=items,
             input_type=input_type,
             usage=RequestUsage(input_tokens=input_tokens),
             model_name=self.model_name,
@@ -610,7 +611,8 @@ class BedrockEmbeddingModel(EmbeddingModel):
 
     async def _embed_concurrent(
         self,
-        inputs: list[str],
+        items: list[EmbeddingInput],
+        texts: list[str],
         input_type: EmbedInputType,
         settings: BedrockEmbeddingSettings,
     ) -> EmbeddingResult:
@@ -618,7 +620,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
         max_concurrency = settings.get('bedrock_max_concurrency', 5)
         semaphore = anyio.Semaphore(max_concurrency)
 
-        results: list[tuple[Sequence[float], int]] = [None] * len(inputs)  # type: ignore[list-item]
+        results: list[tuple[Sequence[float], int]] = [None] * len(texts)  # type: ignore[list-item]
 
         async def embed_single(index: int, text: str) -> None:
             async with semaphore:
@@ -628,7 +630,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
                 results[index] = (embeddings[0], input_tokens)
 
         async with anyio.create_task_group() as tg:
-            for i, text in enumerate(inputs):
+            for i, text in enumerate(texts):
                 tg.start_soon(embed_single, i, text)
 
         all_embeddings = [embedding for embedding, _ in results]
@@ -636,7 +638,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
 
         return EmbeddingResult(
             embeddings=all_embeddings,
-            inputs=inputs,
+            inputs=items,
             input_type=input_type,
             usage=RequestUsage(input_tokens=total_input_tokens),
             model_name=self.model_name,

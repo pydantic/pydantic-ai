@@ -126,12 +126,12 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        inputs, settings = self.prepare_text_embed(inputs, settings)
+        items, texts, settings = self.prepare_text_embed(inputs, settings)
         settings = cast(OpenAIEmbeddingSettings, settings)
 
         try:
             response = await self._client.embeddings.create(
-                input=inputs,
+                input=texts,
                 model=self.model_name,
                 dimensions=settings.get('dimensions') or OMIT,
                 extra_headers=settings.get('extra_headers'),
@@ -148,7 +148,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
 
         return EmbeddingResult(
             embeddings=embeddings,
-            inputs=inputs,
+            inputs=items,
             input_type=input_type,
             usage=_map_usage(response.usage, self.system, self.base_url, response.model),
             model_name=response.model,

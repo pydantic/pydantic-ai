@@ -119,9 +119,13 @@ async def test_combined_content_on_text_only_model_raises(gemini_api_key: str):
 
 
 def test_prepare_text_embed_unwraps_text_content():
-    """Text-only implementations get plain strings, whichever way the text was passed."""
-    texts, _ = TestEmbeddingModel().prepare_text_embed(['hello', TextContent(content='world')])
+    """Text-only implementations get plain strings, while the result keeps the original inputs."""
+    tagged = TextContent(content='world', metadata={'chunk': 7})
+    items, texts, _ = TestEmbeddingModel().prepare_text_embed(['hello', tagged])
+
     assert texts == ['hello', 'world']
+    # The originals go to `EmbeddingResult.inputs`, so a `TextContent`'s metadata survives.
+    assert items == ['hello', tagged]
 
 
 @dataclass
@@ -222,6 +226,8 @@ async def test_instrumentation_describes_non_text_inputs(capfire: CaptureLogfire
             'a kiwi fruit',
             tiny_image,
             ImageUrl(url='https://example.com/img.png'),
+            # No extension to infer a media type from; the span omits it rather than failing the request.
+            ImageUrl(url='https://example.com/redirects/to/an/image'),
             EmbeddingContent([TextContent(content='a kiwi fruit'), tiny_image]),
         ]
     )
@@ -232,6 +238,7 @@ async def test_instrumentation_describes_non_text_inputs(capfire: CaptureLogfire
             'a kiwi fruit',
             {'type': 'blob', 'modality': 'image', 'mime_type': 'image/jpeg'},
             {'type': 'uri', 'modality': 'image', 'uri': 'https://example.com/img.png', 'mime_type': 'image/png'},
+            {'type': 'uri', 'modality': 'image', 'uri': 'https://example.com/redirects/to/an/image'},
             ['a kiwi fruit', {'type': 'blob', 'modality': 'image', 'mime_type': 'image/jpeg'}],
         ]
     )

@@ -286,9 +286,8 @@ class GoogleEmbeddingModel(EmbeddingModel):
                 title=None,
             )
         else:
-            texts, merged_settings = self.prepare_text_embed(inputs, settings)
+            items, texts, merged_settings = self.prepare_text_embed(inputs, settings)
             settings = cast(GoogleEmbeddingSettings, merged_settings)
-            items = texts
 
             if settings.get('google_task') is not None:
                 warnings.warn(

@@ -235,9 +235,9 @@ def _otel_input(item: EmbeddingInput, include_binary_content: bool) -> JsonValue
             blob['content'] = item.base64
         return blob
     else:
-        return {
-            'type': 'uri',
-            'modality': embedding_modality(item),
-            'uri': item.url,
-            'mime_type': item.media_type,
-        }
+        uri: dict[str, JsonValue] = {'type': 'uri', 'modality': embedding_modality(item), 'uri': item.url}
+        try:  # don't fail the whole request if the media type can't be inferred from the URL, just omit it
+            uri['mime_type'] = item.media_type
+        except ValueError:
+            pass
+        return uri
