@@ -18,7 +18,10 @@ from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES,
     TOKEN_HISTOGRAM_BOUNDARIES,
+    CachedMessageJson,
+    MessageJsonCache,
     get_instructions,
+    message_json_fragment,
     open_model_request_span,
     safe_to_json,
 )
@@ -66,6 +69,7 @@ class InstrumentationSettings:
     tracer: Tracer = field(repr=False)
     include_binary_content: bool = True
     include_content: bool = True
+    include_model_request_parameters: bool = True
     version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = True
 
@@ -76,6 +80,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
+        include_model_request_parameters: bool = True,
         version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION,
         use_aggregated_usage_attribute_names: bool = True,
     ):
@@ -91,6 +96,13 @@ class InstrumentationSettings:
             include_binary_content: Whether to include binary content in the instrumentation events.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
+            include_model_request_parameters: Whether to emit the `model_request_parameters` span attribute on
+                model request spans. This serializes the full `ModelRequestParameters` (output configuration
+                and every tool definition, including fields that are not sent to the model such as tool
+                `metadata` and, when not requested, `return_schema`). Defaults to `True`. Set to `False` to
+                omit it entirely, which is useful when large tool output schemas make the attribute big enough
+                to strain span export. The OpenTelemetry `gen_ai.tool.definitions` attribute (tool name,
+                description, and parameters) is always emitted regardless of this setting.
             version: Version of the data format. This is unrelated to the Pydantic AI package version.
                 Defaults to version 5. Versions 2, 3, and 4 are deprecated compatibility formats
                 and emit a `PydanticAIDeprecationWarning` when used.
@@ -122,6 +134,7 @@ class InstrumentationSettings:
         self.meter = meter_provider.get_meter(scope_name, __version__)
         self.include_binary_content = include_binary_content
         self.include_content = include_content
+        self.include_model_request_parameters = include_model_request_parameters
 
         if version not in (2, 3, 4, 5):
             raise ValueError('Instrumentation version must be one of 2, 3, 4, or 5.')
@@ -149,7 +162,7 @@ class InstrumentationSettings:
         except TypeError:  # pragma: lax no cover
             # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
             self.tokens_histogram = self.meter.create_histogram(
-                **tokens_histogram_kwargs,  # pyright: ignore
+                **tokens_histogram_kwargs,  # pyright: ignore[reportArgumentType]
             )
         self.cost_histogram = self.meter.create_histogram(
             'operation.cost',
@@ -169,7 +182,7 @@ class InstrumentationSettings:
         except TypeError:  # pragma: lax no cover
             # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
             self.time_to_first_chunk_histogram = self.meter.create_histogram(
-                **time_to_first_chunk_histogram_kwargs,  # pyright: ignore
+                **time_to_first_chunk_histogram_kwargs,  # pyright: ignore[reportArgumentType]
             )
 
     def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
@@ -192,12 +205,42 @@ class InstrumentationSettings:
                 result.append(otel_message)
         return result
 
+    def _input_messages_json(
+        self, input_messages: list[ModelMessage], message_json_cache: MessageJsonCache | None
+    ) -> bytes:
+        """Serialize the input message history to a JSON array.
+
+        With a `message_json_cache` (agent runs, where the growing history is re-serialized every
+        request), each message's fragment is cached and concatenated, keeping the per-request cost
+        proportional to new messages rather than the whole history. Entries for messages no longer
+        in the input history are evicted, so the cache (and the `parts` lists it keeps alive) stays
+        bounded by the current history even when a history processor prunes or rebuilds messages.
+        Without a cache (one-off requests), the whole history is serialized in a single call.
+        """
+        if message_json_cache is None:
+            return safe_to_json(self.messages_to_otel_messages(input_messages))
+
+        fragments: list[bytes] = []
+        fresh_entries: MessageJsonCache = {}
+        for message in input_messages:
+            entry = message_json_cache.get(id(message))
+            if entry is None or entry.parts is not message.parts:
+                entry = CachedMessageJson(message, message.parts, message_json_fragment(self, message))
+            fresh_entries[id(message)] = entry
+            if entry.fragment:
+                fragments.append(entry.fragment)
+        message_json_cache.clear()
+        message_json_cache.update(fresh_entries)
+        return b'[' + b','.join(fragments) + b']'
+
     def handle_messages(
         self,
         input_messages: list[ModelMessage],
         response: ModelResponse,
         span: Span,
         parameters: ModelRequestParameters | None = None,
+        *,
+        message_json_cache: MessageJsonCache | None = None,
     ):
         output_messages = self.messages_to_otel_messages([response])
         assert len(output_messages) == 1
@@ -207,7 +250,7 @@ class InstrumentationSettings:
         system_instructions_attributes = self.system_instructions_attributes(instructions)
 
         attributes: dict[str, AttributeValue] = {
-            'gen_ai.input.messages': safe_to_json(self.messages_to_otel_messages(input_messages)).decode(),
+            'gen_ai.input.messages': self._input_messages_json(input_messages, message_json_cache).decode(),
             'gen_ai.output.messages': safe_to_json([output_message]).decode(),
             **system_instructions_attributes,
             'logfire.json_schema': to_json(
@@ -217,7 +260,11 @@ class InstrumentationSettings:
                         'gen_ai.input.messages': {'type': 'array'},
                         'gen_ai.output.messages': {'type': 'array'},
                         **({'gen_ai.system_instructions': {'type': 'array'}} if system_instructions_attributes else {}),
-                        'model_request_parameters': {'type': 'object'},
+                        **(
+                            {'model_request_parameters': {'type': 'object'}}
+                            if self.include_model_request_parameters
+                            else {}
+                        ),
                     },
                 }
             ).decode(),

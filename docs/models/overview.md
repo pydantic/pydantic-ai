@@ -87,7 +87,7 @@ print(WebSearchTool in profile['supported_native_tools'])
 ```
 
 `model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so direct key access like `profile['supports_tools']` works. If you supply `profile=` as a callable (or otherwise have a partial profile dict), use `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`) to tolerate missing keys.
-Any [`Model`][pydantic_ai.models.Model] instance exposes its resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. Don't confuse this with [Capabilities](../capabilities.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
+Any [`Model`][pydantic_ai.models.Model] instance exposes its resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. Don't confuse this with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
 
 ## HTTP Client Lifecycle
 
@@ -407,10 +407,29 @@ print(result.output)
     To keep exception-based fallback alongside a response handler, pass them together as a list — see the [mixed example below](#combining-handlers).
 
 !!! note
-    Note that Pydantic AI already handles some finish reasons automatically in the [agent loop](../agent.md):
-    responses with a `'length'` or `'content_filter'` finish reason raise exceptions (which `FallbackModel`
-    catches by default), and empty responses are retried. A response handler is useful for custom
-    checks beyond these built-in behaviors.
+    The [agent loop](../agent.md) only acts on a finish reason when the response has no actionable
+    output. A `'length'` finish reason on an empty or thinking-only response raises
+    [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] (typically the model hit
+    the token limit mid-thinking), and an empty response with a `'content_filter'` finish reason raises
+    [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
+    responses are re-prompted, up to the output retry limit. Non-empty responses are handled normally
+    regardless of finish reason — a tool call truncated mid-arguments is re-prompted like any other
+    invalid-arguments failure, and only once its retry budget is exhausted does it surface as
+    [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
+    `UnexpectedModelBehavior`).
+
+    All of these are raised from the agent loop, after `model.request()` has already returned
+    successfully, so no exception-based `fallback_on` can catch them — not the default
+    `fallback_on=(ModelAPIError,)` (which wouldn't match anyway, as `ContentFilterError` inherits from
+    `UnexpectedModelBehavior`, not [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]), and not an
+    explicit `fallback_on=(ContentFilterError,)` either. To fall back on a bad finish reason instead,
+    use a response handler (see the [example above](#finish-reason-example)) that inspects
+    [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason]: it rejects the response inside
+    `FallbackModel` before the agent loop sees it, so the next model is tried instead of an exception
+    being raised. Note that it rejects *every* response with that finish reason, including non-empty
+    ones the agent loop would have accepted. To instead raise on `content_filter` responses that still
+    carry partial or refusal text, add the
+    [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
 
 #### Native Tool Failure Example
 

@@ -46,13 +46,15 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolDefinition,
+    ToolFailed,
     ToolReturnPart,
     UsageLimitExceeded,
     UserPromptPart,
 )
+from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
@@ -63,6 +65,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
+    AdvisorTool,
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
@@ -74,10 +77,21 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
+from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, message, raise_if_exception, try_import
+from ..conftest import (
+    IsDatetime,
+    IsInstance,
+    IsNow,
+    IsStr,
+    TestEnv,
+    iter_message_parts,
+    message,
+    raise_if_exception,
+    try_import,
+)
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
@@ -97,6 +111,11 @@ with try_import() as imports_successful:
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
+        BetaAdvisorMessageIterationUsage,
+        BetaAdvisorRedactedResultBlock,
+        BetaAdvisorResultBlock,
+        BetaAdvisorToolResultBlock,
+        BetaAdvisorToolResultError,
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
         BetaCompactionIterationUsage,
@@ -142,6 +161,7 @@ with try_import() as imports_successful:
         _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.profiles.anthropic import anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -206,6 +226,7 @@ async def test_anthropic_cancelled_read_error_is_suppressed():
         _response=_peekable_broken_stream(stream),
         _provider_name='anthropic',
         _provider_url='https://api.anthropic.com',
+        _enabled_server_tool_names=frozenset(),
     )
 
     await response.cancel()
@@ -223,6 +244,7 @@ async def test_anthropic_read_error_is_raised_when_not_cancelled():
         _response=_peekable_broken_stream(_BrokenClosableStream()),
         _provider_name='anthropic',
         _provider_url='https://api.anthropic.com',
+        _enabled_server_tool_names=frozenset(),
     )
 
     with pytest.raises(httpx.ReadError):
@@ -318,7 +340,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
         )
     )
     # reset the index so we get the same response again
-    mock_client.index = 0  # type: ignore
+    mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
@@ -2195,6 +2217,38 @@ async def test_request_tool_call(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
         ]
+    )
+
+
+async def test_tool_failed_maps_to_anthropic_error_tool_result(allow_model_requests: None):
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='1', input={'city': 'London'}, name='get_weather', type='tool_use')],
+            usage=BetaUsage(input_tokens=2, output_tokens=1),
+        ),
+        completion_message(
+            [BetaTextBlock(text='weather unavailable', type='text')],
+            usage=BetaUsage(input_tokens=3, output_tokens=5),
+        ),
+    ]
+
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        raise ToolFailed(f'Weather service is unavailable for {city}.')
+
+    await agent.run('hello')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[1]['messages'][2]['content'][0] == snapshot(
+        {
+            'tool_use_id': '1',
+            'type': 'tool_result',
+            'content': [{'text': 'Weather service is unavailable for London.', 'type': 'text'}],
+            'is_error': True,
+        }
     )
 
 
@@ -7041,6 +7095,424 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
     assert web_fetch_tool_param.get('allowed_domains') is None
 
 
+def test_advisor_tool_max_tokens_validation():
+    """`AdvisorTool.max_tokens` below Anthropic's 1024 floor is a `ValueError`; at/above is fine."""
+    with pytest.raises(ValueError, match='max_tokens must be at least 1024'):
+        AdvisorTool(model='claude-opus-4-8', max_tokens=512)
+    assert AdvisorTool(model='claude-opus-4-8', max_tokens=1024).max_tokens == 1024
+    assert AdvisorTool(model='claude-opus-4-8').max_tokens is None
+
+
+def test_anthropic_advisor_tool_request_shape():
+    """`_add_native_tools` emits the advisor tool definition and beta header, translating `caching`.
+
+    This intentionally calls the private mapper because the VCR matcher does not compare request
+    bodies and therefore cannot pin the exact tool definition.
+    """
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='test-key'))
+
+    full = ModelRequestParameters(
+        native_tools=[AdvisorTool(model='claude-opus-4-8', max_uses=2, max_tokens=2048, caching='1h')],
+    )
+    tools, _, beta_features = m._add_native_tools([], full, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+    advisor_param = next(t for t in tools if t.get('name') == 'advisor')
+    assert advisor_param == snapshot(
+        {
+            'type': 'advisor_20260301',
+            'name': 'advisor',
+            'model': 'claude-opus-4-8',
+            'max_uses': 2,
+            'max_tokens': 2048,
+            'caching': {'type': 'ephemeral', 'ttl': '1h'},
+        }
+    )
+    assert 'advisor-tool-2026-03-01' in beta_features
+
+    # Optional fields are omitted from the wire payload when unset.
+    minimal = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-fable-5')])
+    tools, _, _ = m._add_native_tools([], minimal, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert next(t for t in tools if t.get('name') == 'advisor') == snapshot(
+        {'type': 'advisor_20260301', 'name': 'advisor', 'model': 'claude-fable-5'}
+    )
+
+
+def test_anthropic_advisor_tool_profile_gating():
+    """The advisor tool is gated by both executor model and client/platform."""
+    # Executor gating: valid executors expose the tool, older/other models don't.
+    assert AdvisorTool in (anthropic_model_profile('claude-sonnet-5') or {}).get(
+        'supported_native_tools', frozenset[Any]()
+    )
+    assert AdvisorTool in (anthropic_model_profile('claude-opus-4-8') or {}).get(
+        'supported_native_tools', frozenset[Any]()
+    )
+    assert AdvisorTool not in (anthropic_model_profile('claude-sonnet-4-5') or {}).get(
+        'supported_native_tools', frozenset[Any]()
+    )
+    assert AdvisorTool not in (anthropic_model_profile('claude-opus-4-1') or {}).get(
+        'supported_native_tools', frozenset[Any]()
+    )
+
+    # Client gating: available on the direct API and Mantle, not on Bedrock/Vertex/Foundry.
+    pytest.importorskip('botocore')
+    from anthropic import (
+        AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicFoundry,
+        AsyncAnthropicVertex,
+    )
+
+    supported: dict[str, bool] = {}
+    for name, client in (
+        ('direct', None),
+        ('bedrock', AsyncAnthropicBedrock(aws_access_key='x', aws_secret_key='y', aws_region='us-east-1')),
+        ('vertex', AsyncAnthropicVertex(project_id='p', region='us-central1', access_token='x')),
+        ('foundry', AsyncAnthropicFoundry(api_key='x', base_url='https://example.com')),
+        ('mantle', AsyncAnthropicBedrockMantle(aws_region='us-east-1', aws_access_key='x', aws_secret_key='y')),
+    ):
+        provider = AnthropicProvider(api_key='x') if client is None else AnthropicProvider(anthropic_client=client)
+        model = AnthropicModel('claude-opus-4-8', provider=provider)
+        supported[name] = AdvisorTool in model.profile.get('supported_native_tools', frozenset[Any]())
+    assert supported == snapshot({'direct': True, 'bedrock': False, 'vertex': False, 'foundry': False, 'mantle': True})
+
+
+def _advisor_response(
+    result_content: BetaAdvisorResultBlock | BetaAdvisorRedactedResultBlock | BetaAdvisorToolResultError,
+    *,
+    final_text: str = '2 + 2 = 4.',
+) -> BetaMessage:
+    return completion_message(
+        [
+            BetaTextBlock(text='Let me consult my advisor.', type='text'),
+            BetaServerToolUseBlock(
+                id='adv_1', name='advisor', input={}, type='server_tool_use', caller=BetaDirectCaller(type='direct')
+            ),
+            BetaAdvisorToolResultBlock(tool_use_id='adv_1', type='advisor_tool_result', content=result_content),
+            BetaTextBlock(text=final_text, type='text'),
+        ],
+        BetaUsage(input_tokens=10, output_tokens=20),
+    )
+
+
+@pytest.mark.parametrize(
+    'variant,expected_content',
+    [
+        pytest.param(
+            'plaintext',
+            {'stop_reason': 'max_tokens', 'text': 'The answer is 4.', 'type': 'advisor_result'},
+            id='plaintext',
+        ),
+        pytest.param(
+            'redacted',
+            {'encrypted_content': 'ENCRYPTED_BLOB', 'stop_reason': 'end_turn', 'type': 'advisor_redacted_result'},
+            id='redacted',
+        ),
+        pytest.param(
+            'error',
+            {'error_code': 'max_uses_exceeded', 'type': 'advisor_tool_result_error'},
+            id='error',
+        ),
+    ],
+)
+async def test_anthropic_advisor_result_variants(
+    allow_model_requests: None,
+    variant: Literal['plaintext', 'redacted', 'error'],
+    expected_content: dict[str, Any],
+):
+    """Plaintext, redacted, and error advisor results all map through one path, stored verbatim."""
+    if variant == 'plaintext':
+        result_content = BetaAdvisorResultBlock(
+            text='The answer is 4.', type='advisor_result', stop_reason='max_tokens'
+        )
+    elif variant == 'redacted':
+        result_content = BetaAdvisorRedactedResultBlock(
+            encrypted_content='ENCRYPTED_BLOB', type='advisor_redacted_result', stop_reason='end_turn'
+        )
+    else:
+        result_content = BetaAdvisorToolResultError(error_code='max_uses_exceeded', type='advisor_tool_result_error')
+
+    mock_client = MockAnthropic.create_mock(_advisor_response(result_content))
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8', max_tokens=1024))])
+
+    result = await agent.run('What is 2 + 2?')
+    assert result.output == '2 + 2 = 4.'
+
+    calls = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
+    returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
+    assert [c.tool_name for c in calls] == ['advisor']
+    # The advisor `server_tool_use` input is always empty, so `args` stays None.
+    assert calls[0].args is None
+    assert [r.tool_name for r in returns] == ['advisor']
+    assert returns[0].content == expected_content
+
+
+async def test_anthropic_advisor_usage_iterations():
+    """Advisor iteration tokens are recorded under `advisor_*` keys and excluded from request totals.
+
+    This intentionally calls the private usage mapper because a VCR test cannot isolate whether
+    advisor iteration tokens were folded into the normalized request totals.
+    """
+    usage_with_advisor = BetaUsage(
+        input_tokens=100,
+        output_tokens=50,
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+        iterations=[
+            BetaMessageIterationUsage(
+                type='message',
+                model='claude-sonnet-5',
+                input_tokens=100,
+                output_tokens=50,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+            BetaAdvisorMessageIterationUsage(
+                type='advisor_message',
+                model='claude-opus-4-8',
+                input_tokens=500,
+                output_tokens=200,
+                cache_creation_input_tokens=10,
+                cache_read_input_tokens=0,
+            ),
+        ],
+    )
+    mapped = _map_usage(
+        completion_message([BetaTextBlock(text='ok', type='text')], usage_with_advisor),
+        'anthropic',
+        'https://api.anthropic.com',
+        'claude-sonnet-5',
+    )
+    assert mapped.details == snapshot(
+        {
+            'input_tokens': 100,
+            'output_tokens': 50,
+            'cache_creation_input_tokens': 0,
+            'cache_read_input_tokens': 0,
+            'message_iterations': 1,
+            'advisor_iterations': 1,
+            'advisor_input_tokens': 500,
+            'advisor_output_tokens': 200,
+            'advisor_cache_creation_input_tokens': 10,
+        }
+    )
+    # Advisor tokens must NOT inflate the request totals (they bill at the advisor model's rates).
+    assert mapped.input_tokens == 100
+    assert mapped.output_tokens == 50
+
+
+def _advisor_history(m: AnthropicModel) -> list[ModelMessage]:
+    return [
+        ModelRequest(parts=[UserPromptPart(content='What is 2 + 2?')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(provider_name=m.system, tool_name=AdvisorTool.kind, tool_call_id='adv_1'),
+                NativeToolReturnPart(
+                    provider_name=m.system,
+                    tool_name=AdvisorTool.kind,
+                    content={'stop_reason': 'end_turn', 'text': 'It is 4.', 'type': 'advisor_result'},
+                    tool_call_id='adv_1',
+                ),
+                TextPart(content='2 + 2 = 4.'),
+            ],
+            model_name='claude-sonnet-5',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Are you sure?')]),
+    ]
+
+
+async def test_anthropic_advisor_history_replayed_when_active():
+    """With the advisor tool in the request, advisor call/result blocks round-trip verbatim.
+
+    This intentionally calls the private message mapper because the VCR matcher does not compare
+    request bodies and therefore cannot pin the exact replayed blocks.
+    """
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key='test-key'))
+    mrp = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-opus-4-8')])
+    _, anthropic_messages = await m._map_message(_advisor_history(m), mrp, {})  # pyright: ignore[reportPrivateUsage]
+
+    assistant_content = next(msg['content'] for msg in anthropic_messages if msg['role'] == 'assistant')
+    blocks = [item for item in assistant_content if isinstance(item, dict)]
+    assert [b for b in blocks if b.get('type') in ('server_tool_use', 'advisor_tool_result')] == snapshot(
+        [
+            {'id': 'adv_1', 'type': 'server_tool_use', 'name': 'advisor', 'input': {}},
+            {
+                'tool_use_id': 'adv_1',
+                'type': 'advisor_tool_result',
+                'content': {'stop_reason': 'end_turn', 'text': 'It is 4.', 'type': 'advisor_result'},
+            },
+        ]
+    )
+
+
+async def test_anthropic_advisor_history_dropped_when_absent():
+    """Without the advisor tool in the request, advisor call/result blocks are stripped from history.
+
+    This intentionally calls the private message mapper because the VCR matcher does not compare
+    request bodies and therefore cannot prove the advisor blocks were omitted.
+    """
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key='test-key'))
+    mrp = ModelRequestParameters(native_tools=[])
+    _, anthropic_messages = await m._map_message(_advisor_history(m), mrp, {})  # pyright: ignore[reportPrivateUsage]
+
+    assistant_content = next(msg['content'] for msg in anthropic_messages if msg['role'] == 'assistant')
+    blocks = [item for item in assistant_content if isinstance(item, dict)]
+    # Only the assistant text survives; the advisor call and result blocks are gone.
+    assert [b.get('type') for b in blocks] == snapshot(['text'])
+
+
+async def test_anthropic_advisor_history_dropped_for_count_tokens(allow_model_requests: None):
+    """`count_tokens` strips the advisor tool from the wire, so advisor history must be stripped too.
+
+    The advisor tool is a server tool that `count_tokens` rejects, so `_messages_count_tokens`
+    drops it from the outgoing `tools`. Replaying advisor call/result history blocks without the
+    tool definition would 400, so mapping must run with advisor inactive even though the request
+    params still carry the `AdvisorTool` (which stays active on the real `/v1/messages` request).
+    """
+    mock_client = cast(AsyncAnthropic, MockAnthropic())
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    mrp = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-opus-4-8')])
+
+    await m.count_tokens(_advisor_history(m), None, mrp)
+
+    count_tokens_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    # The advisor beta header is only added when the advisor tool reaches the wire; its absence
+    # (`betas` stays unset/`Omit`) confirms the tool was stripped from the count-tokens request...
+    assert count_tokens_kwargs.get('betas', OMIT) is OMIT
+    # ...so the advisor history blocks it would otherwise require must be stripped too.
+    assistant_content = cast(
+        list[dict[str, Any]],
+        next(msg['content'] for msg in count_tokens_kwargs['messages'] if msg['role'] == 'assistant'),
+    )
+    assert [block.get('type') for block in assistant_content] == snapshot(['text'])
+
+
+async def test_anthropic_advisor_dangling_call_replayed_when_active():
+    """A dangling advisor call (pause-turn resume) with no paired result replays verbatim when active.
+
+    This intentionally calls the private message mapper because the VCR matcher does not compare
+    request bodies and therefore cannot pin the dangling replay shape.
+    """
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key='test-key'))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What is 2 + 2?')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Consulting the advisor.'),
+                NativeToolCallPart(provider_name=m.system, tool_name=AdvisorTool.kind, tool_call_id='adv_dangling'),
+            ],
+            model_name='claude-sonnet-5',
+        ),
+    ]
+    mrp = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-opus-4-8')])
+    _, anthropic_messages = await m._map_message(messages, mrp, {})  # pyright: ignore[reportPrivateUsage]
+
+    assistant_content = next(msg['content'] for msg in anthropic_messages if msg['role'] == 'assistant')
+    server_tool_uses = [
+        item for item in assistant_content if isinstance(item, dict) and item.get('type') == 'server_tool_use'
+    ]
+    assert server_tool_uses == snapshot(
+        [{'id': 'adv_dangling', 'type': 'server_tool_use', 'name': 'advisor', 'input': {}}]
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_advisor_tool(allow_model_requests: None, anthropic_api_key: str):
+    """Live: a Sonnet 5 executor consults an Opus 4.8 advisor, which returns plaintext advice."""
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8', max_tokens=1024))])
+
+    result = await agent.run("What's 2+2? Consult your advisor first.")
+    assert '4' in result.output
+
+    calls = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
+    returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
+    assert [c.tool_name for c in calls] == ['advisor']
+    # The advisor `server_tool_use` input is always empty, so `args` stays None.
+    assert calls[0].args is None
+    assert [r.tool_name for r in returns] == ['advisor']
+    content = returns[0].content
+    assert isinstance(content, dict)
+    assert content['type'] == 'advisor_result'
+    assert isinstance(content['text'], str) and content['text']
+    # `stop_reason` is present because `max_tokens` was set on the advisor tool.
+    assert content['stop_reason'] is not None
+
+    details = result.usage.details
+    assert details['advisor_iterations'] == 1
+    assert details['advisor_input_tokens'] > 0
+    assert details['advisor_output_tokens'] > 0
+    # Advisor tokens bill at the advisor model's rates and are excluded from the request totals.
+    assert result.usage.input_tokens == details['input_tokens']
+
+
+@pytest.mark.vcr()
+async def test_anthropic_advisor_tool_stream(
+    allow_model_requests: None, anthropic_api_key: str
+):  # pragma: lax no cover
+    """Live: the advisor result block streams in fully formed via a single `content_block_start`."""
+    from pydantic_ai.messages import PartStartEvent
+
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8', max_tokens=1024))])
+
+    advisor_return_started = False
+    async with agent.iter(user_prompt="What's 2+2? Consult your advisor first.") as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        if (
+                            isinstance(event, PartStartEvent)
+                            and isinstance(event.part, NativeToolReturnPart)
+                            and event.part.tool_name == 'advisor'
+                        ):
+                            advisor_return_started = True
+
+    assert agent_run.result is not None
+    assert '4' in agent_run.result.output
+    assert advisor_return_started
+    returns = list(iter_message_parts(agent_run.result.all_messages(), ModelResponse, NativeToolReturnPart))
+    content = returns[0].content
+    assert isinstance(content, dict)
+    assert content['type'] == 'advisor_result'
+
+
+@pytest.mark.vcr()
+async def test_anthropic_advisor_tool_redacted(allow_model_requests: None, anthropic_api_key: str):
+    """Live: a Fable 5 advisor returns encrypted content the client cannot read."""
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, capabilities=[NativeTool(AdvisorTool(model='claude-fable-5', max_tokens=1024))])
+
+    result = await agent.run("What's 2+2? Consult your advisor first.")
+    assert '4' in result.output
+
+    returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
+    assert [r.tool_name for r in returns] == ['advisor']
+    content = returns[0].content
+    assert isinstance(content, dict)
+    assert content['type'] == 'advisor_redacted_result'
+    assert isinstance(content['encrypted_content'], str) and content['encrypted_content']
+    assert result.usage.details['advisor_iterations'] == 1
+
+
+@pytest.mark.vcr()
+async def test_anthropic_advisor_tool_message_replay(allow_model_requests: None, anthropic_api_key: str):
+    """Live: advisor blocks round-trip verbatim across turns; a second run with the tool must not 400."""
+    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8', max_tokens=1024))])
+
+    result = await agent.run("What's 2+2? Consult your advisor first.")
+    assert '4' in result.output
+    first_returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
+    assert [r.tool_name for r in first_returns] == ['advisor']
+
+    result2 = await agent.run('And what is that plus one?', message_history=result.all_messages())
+    assert '5' in result2.output
+    # The original advisor result survives unchanged in the replayed history.
+    replayed_returns = list(iter_message_parts(result2.all_messages(), ModelResponse, NativeToolReturnPart))
+    assert replayed_returns[0].content == first_returns[0].content
+
+
 async def test_anthropic_mcp_call_replays_empty_tool_args(allow_model_requests: None):
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
     mock_client = MockAnthropic.create_mock(c)
@@ -8739,8 +9211,8 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
     result = await agent.run('What day is today?')
 
     # Verify we have server tool parts in the history
-    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolCallPart)]
-    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolReturnPart)]
+    server_tool_calls = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
+    server_tool_returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
     assert server_tool_calls[0].tool_name == 'web_search'
@@ -8799,8 +9271,8 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     result = await agent.run('What is 2 + 2?')
 
     # Verify we have server tool parts in the history
-    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolCallPart)]
-    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolReturnPart)]
+    server_tool_calls = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
+    server_tool_returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
     assert server_tool_calls[0].tool_name == 'code_execution'
@@ -10520,8 +10992,8 @@ async def test_anthropic_count_tokens_with_mock(allow_model_requests: None):
 
     result = await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
     assert result.output == 'hello world'
-    assert len(mock_client.chat_completion_kwargs) == 2  # type: ignore
-    count_tokens_kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert len(mock_client.chat_completion_kwargs) == 2  # pyright: ignore[reportAttributeAccessIssue, reportUnknownArgumentType, reportUnknownMemberType]
+    count_tokens_kwargs = mock_client.chat_completion_kwargs[0]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
     assert 'model' in count_tokens_kwargs
     assert 'messages' in count_tokens_kwargs
 
@@ -11840,6 +12312,303 @@ async def test_anthropic_service_tier_mapping(
         assert 'service_tier' not in kwargs or kwargs['service_tier'] is OMIT
     else:
         assert kwargs['service_tier'] == expected
+
+
+async def test_pause_turn_continues_run(allow_model_requests: None):
+    c1 = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    c1.stop_reason = 'pause_turn'
+    c2 = completion_message([BetaTextBlock(text='final', type='text')], BetaUsage(input_tokens=7, output_tokens=3))
+    # A real `pause_turn` continuation appends new content under a fresh response id, so give the
+    # segments distinct ids (they accumulate rather than replace) and distinct usage (so the merged
+    # total exercises the sum, not a single segment's value).
+    c2.id = '456'
+
+    mock_client = MockAnthropic.create_mock([c1, c2])
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    result = await agent.run('test prompt')
+
+    # Both segments' text is retained (accumulate), and the merged usage sums the two.
+    assert result.output == 'pausedfinal'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test prompt', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='paused'), TextPart(content='final')],
+                usage=RequestUsage(input_tokens=17, output_tokens=8, details={'input_tokens': 17, 'output_tokens': 8}),
+                model_name='claude-3-5-haiku-123',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='456',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_pause_turn_exceeds_max_generation_continuations(allow_model_requests: None):
+    """Test that exceeding the default generation-continuation limit raises `UnexpectedModelBehavior`."""
+    responses: list[BetaMessage | Exception] = []
+    for i in range(11):
+        c = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+        c.stop_reason = 'pause_turn'
+        # Distinct ids so each pause accumulates (real `pause_turn` behavior), hitting the accumulate cap
+        # rather than the far larger same-id replace-poll backstop.
+        c.id = str(i)
+        responses.append(c)
+
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    with pytest.raises(UnexpectedModelBehavior, match='suspended more than the maximum of 10 times'):
+        await agent.run('test prompt', usage_limits=UsageLimits(request_limit=None))
+
+
+@pytest.mark.vcr()
+async def test_pause_turn_web_search_vcr(allow_model_requests: None, anthropic_api_key: str):
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 4096}, max_tokens=15000)
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
+
+    prompt = (
+        'Run a series of web searches to gather up-to-date context. '
+        'Do 6 separate searches, one at a time, and do not answer until all searches are complete. '
+        'Queries: '
+        '1) "San Francisco weather today", '
+        '2) "San Francisco sunrise time today", '
+        '3) "Golden Gate Bridge traffic today", '
+        '4) "San Francisco air quality today", '
+        '5) "San Francisco events this week", '
+        '6) "San Francisco ferry schedule today". '
+        '7) "prevailing information on quantum computing today", '
+        '8) "latest news on the stock market today", '
+        '9) "latest news on the weather in San Francisco today", '
+        '10) "latest news on the traffic in San Francisco today", '
+        '11) "latest news on the air quality in San Francisco today", '
+        '12) "latest news on the events in San Francisco this week", '
+        '13) "latest news on the ferry schedule in San Francisco today", '
+        '14) "latest news on the quantum computing in San Francisco today", '
+        '15) "latest news on the stock market in San Francisco today", '
+        'After the searches, provide a concise summary.'
+    )
+
+    result = await agent.run(prompt)
+
+    # `pause_turn` responses are stitched into the final merged response by the continuation loop,
+    # so they no longer appear as separate messages in the history. Verify the agent completed
+    # successfully, which exercises the (non-streaming) continuation path end-to-end.
+    assert result.output
+
+
+@pytest.mark.vcr()
+async def test_pause_turn_web_search_streaming_vcr(allow_model_requests: None, anthropic_api_key: str):
+    """Real streamed `pause_turn` continuation: server-side web search pauses the turn mid-stream.
+
+    The streamed-continuation composite stitches every `messages.create(stream=True)` segment (the
+    paused turn echoed back) into one `AgentStream`. Because Anthropic `pause_turn` continuations
+    *accumulate* fresh parts, the stitched `PartStartEvent` indices must strictly increase across the
+    pause (each new part offset past all prior ones, no index collision), and the final merged
+    response must be a single coherent turn. This validates the accumulate reindex rule against real
+    provider part-indexing.
+    """
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 4096}, max_tokens=15000)
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
+
+    prompt = (
+        'Run a series of web searches to gather up-to-date context. '
+        'Do 6 separate searches, one at a time, and do not answer until all searches are complete. '
+        'Queries: '
+        '1) "San Francisco weather today", '
+        '2) "San Francisco sunrise time today", '
+        '3) "Golden Gate Bridge traffic today", '
+        '4) "San Francisco air quality today", '
+        '5) "San Francisco events this week", '
+        '6) "San Francisco ferry schedule today". '
+        '7) "prevailing information on quantum computing today", '
+        '8) "latest news on the stock market today", '
+        '9) "latest news on the weather in San Francisco today", '
+        '10) "latest news on the traffic in San Francisco today", '
+        '11) "latest news on the air quality in San Francisco today", '
+        '12) "latest news on the events in San Francisco this week", '
+        '13) "latest news on the ferry schedule in San Francisco today", '
+        '14) "latest news on the quantum computing in San Francisco today", '
+        '15) "latest news on the stock market in San Francisco today", '
+        'After the searches, provide a concise summary.'
+    )
+
+    part_start_indices: list[int] = []
+    request_stream_count = 0
+    merged: ModelResponse | None = None
+    async with agent.iter(prompt) as agent_run:
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            if isinstance(node, ModelRequestNode):
+                async with node.stream(agent_run.ctx) as stream:
+                    request_stream_count += 1
+                    async for event in stream:
+                        if isinstance(event, PartStartEvent):
+                            part_start_indices.append(event.index)
+                    merged = stream.response
+            node = await agent_run.next(node)
+
+    # The whole paused turn is stitched inside one `ModelRequestNode`, streamed once.
+    assert request_stream_count == 1
+    # Accumulate reindexing: each stitched part gets a strictly higher index than the previous one,
+    # so segments from before and after the pause never collide.
+    assert part_start_indices == sorted(set(part_start_indices))
+    assert part_start_indices[0] == 0
+    assert len(part_start_indices) > 1  # the turn spans multiple parts across the pause
+    # The stitched result is a single coherent, completed turn.
+    assert merged is not None
+    assert merged.state == 'complete'
+    assert agent_run.result
+    assert agent_run.result.output
+
+
+async def test_pause_turn_streaming_continuation(allow_model_requests: None):
+    """`pause_turn` continuations are stitched into one streamed response with offset part indices.
+
+    Every segment is streamed inside a single `ModelRequestNode`, so streaming that node once drives
+    the whole `suspended → suspended → complete` chain. Because each `pause_turn` segment accumulates
+    (fresh `provider_response_id`), the streamed `PartStartEvent` indices increase across segments and
+    the final merged response carries all parts in order.
+    """
+
+    def _make_stream(text: str, stop_reason: str) -> list[BetaRawMessageStreamEvent]:
+        return [
+            BetaRawMessageStartEvent(
+                type='message_start',
+                message=BetaMessage(
+                    id=f'msg_{text}',
+                    model='claude-3-5-haiku-123',
+                    role='assistant',
+                    type='message',
+                    content=[],
+                    stop_reason=None,
+                    usage=BetaUsage(input_tokens=10, output_tokens=0),
+                ),
+            ),
+            BetaRawContentBlockStartEvent(
+                type='content_block_start',
+                index=0,
+                content_block=BetaTextBlock(type='text', text=text),
+            ),
+            BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+            BetaRawMessageDeltaEvent(
+                type='message_delta',
+                delta=Delta(stop_reason=cast(Any, stop_reason)),
+                usage=BetaMessageDeltaUsage(input_tokens=10, output_tokens=5),
+            ),
+            BetaRawMessageStopEvent(type='message_stop'),
+        ]
+
+    # All three segments are streamed: the composite opens one `request_stream` per segment as it
+    # stitches `pause_turn → pause_turn → end_turn` into a single streamed response.
+    mock_client = cast(
+        AsyncAnthropic,
+        MockAnthropic(
+            stream=[
+                _make_stream('first', 'pause_turn'),
+                _make_stream('second', 'pause_turn'),
+                _make_stream('done', 'end_turn'),
+            ],
+        ),
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    part_start_indices: list[int] = []
+    async with agent.iter('test prompt') as agent_run:
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            if isinstance(node, ModelRequestNode):
+                async with node.stream(agent_run.ctx) as stream:
+                    async for event in stream:
+                        if isinstance(event, PartStartEvent):
+                            part_start_indices.append(event.index)
+            node = await agent_run.next(node)
+
+    # Each `pause_turn` segment appends a fresh text part, so the stitched indices increase.
+    assert part_start_indices == snapshot([0, 1, 2])
+    assert agent_run.result
+    assert agent_run.result.output == snapshot('firstseconddone')
+
+
+async def test_pause_turn_streaming_continuation_stream_error(allow_model_requests: None):
+    """An error mid-stream during a `pause_turn` continuation propagates cleanly out of the node."""
+
+    # First segment streams a `pause_turn`, the continuation segment raises mid-stream.
+    def _make_stream(text: str, stop_reason: str) -> list[MockRawMessageStreamEvent]:
+        return [
+            BetaRawMessageStartEvent(
+                type='message_start',
+                message=BetaMessage(
+                    id=f'msg_{text}',
+                    model='claude-3-5-haiku-123',
+                    role='assistant',
+                    type='message',
+                    content=[],
+                    stop_reason=None,
+                    usage=BetaUsage(input_tokens=10, output_tokens=0),
+                ),
+            ),
+            BetaRawContentBlockStartEvent(
+                type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text=text)
+            ),
+            BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+            BetaRawMessageDeltaEvent(
+                type='message_delta',
+                delta=Delta(stop_reason=cast(Any, stop_reason)),
+                usage=BetaMessageDeltaUsage(input_tokens=10, output_tokens=5),
+            ),
+            BetaRawMessageStopEvent(type='message_stop'),
+        ]
+
+    error_stream: list[MockRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_err',
+                model='claude-3-5-haiku-123',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=10, output_tokens=0),
+            ),
+        ),
+        RuntimeError('stream exploded'),
+    ]
+
+    mock_client = cast(
+        AsyncAnthropic,
+        MockAnthropic(stream=[_make_stream('first', 'pause_turn'), error_stream]),
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    async with agent.iter('test prompt') as agent_run:
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            if isinstance(node, ModelRequestNode):
+                with pytest.raises(RuntimeError, match='stream exploded'):
+                    async with node.stream(agent_run.ctx) as stream:
+                        async for _event in stream:
+                            pass
+                break
+            node = await agent_run.next(node)
 
 
 async def test_anthropic_top_k_propagation(allow_model_requests: None):

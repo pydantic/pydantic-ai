@@ -1,6 +1,6 @@
 # Agent Specs
 
-Agent specs let you define agents declaratively in YAML or JSON — [model](models/overview.md), [instructions](agent.md#instructions), [capabilities](capabilities.md), and all. One line to load, no Python agent construction code required.
+Agent specs let you define agents declaratively in YAML or JSON — [model](models/overview.md), [instructions](agent.md#instructions), [capabilities](capabilities/overview.md), and all. One line to load, no Python agent construction code required.
 
 This is useful for:
 
@@ -27,7 +27,7 @@ capabilities:
 
 ## Loading specs
 
-[`Agent.from_file`][pydantic_ai.Agent.from_file] loads a spec from a YAML or JSON file and constructs an agent:
+[`Agent.from_file`][pydantic_ai.agent.Agent.from_file] loads a spec from a YAML or JSON file and constructs an agent:
 
 ```python {title="from_file_example.py" test="skip"}
 from pydantic_ai import Agent
@@ -35,7 +35,7 @@ from pydantic_ai import Agent
 agent = Agent.from_file('agent.yaml')
 ```
 
-[`Agent.from_spec`][pydantic_ai.Agent.from_spec] accepts a dict or [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] instance and supports additional keyword arguments that supplement or override the spec:
+[`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec] accepts a dict or [`AgentSpec`][pydantic_ai.agent.AgentSpec] instance and supports additional keyword arguments that supplement or override the spec:
 
 ```python {title="from_spec_example.py"}
 from dataclasses import dataclass
@@ -68,11 +68,11 @@ Keyword arguments interact with spec fields as follows:
 
 When `deps_type` is passed, [template strings](#template-strings) in the spec's `instructions`, `description`, and capability arguments are compiled and validated against the deps type at construction time.
 
-For more control over spec loading, use [`AgentSpec.from_file`][pydantic_ai.agent.spec.AgentSpec.from_file] to load the spec separately before passing it to `Agent.from_spec`.
+For more control over spec loading, use [`AgentSpec.from_file`][pydantic_ai.agent.AgentSpec.from_file] to load the spec separately before passing it to `Agent.from_spec`.
 
 ## Template strings
 
-[`TemplateStr`][pydantic_ai.TemplateStr] provides Handlebars-style templates (`{{variable}}`) that are rendered against the agent's [dependencies](dependencies.md) at runtime. In spec files, strings containing `{{` are automatically converted to template strings:
+[`TemplateStr`][pydantic_ai.template.TemplateStr] provides Handlebars-style templates (`{{variable}}`) that are rendered against the agent's [dependencies](dependencies.md) at runtime. In spec files, strings containing `{{` are automatically converted to template strings:
 
 ```yaml {test="skip"}
 instructions: "You are assisting {{name}}, who is a {{role}}."
@@ -80,7 +80,7 @@ instructions: "You are assisting {{name}}, who is a {{role}}."
 
 Template variables are resolved from the fields of the `deps` object. When a `deps_type` (or [`deps_schema`](#deps_schema)) is provided, template variable names are validated at construction time.
 
-In Python code, [`TemplateStr`][pydantic_ai.TemplateStr] can be used explicitly, but a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete and type checking:
+In Python code, [`TemplateStr`][pydantic_ai.template.TemplateStr] can be used explicitly, but a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete and type checking:
 
 ```python {title="template_instructions.py"}
 from dataclasses import dataclass
@@ -114,11 +114,11 @@ Capabilities in specs support three forms:
 
 ## Custom capabilities in specs
 
-See [Publishing capabilities](capabilities.md#publishing-capabilities) for how to make custom capabilities work with agent specs.
+See [Publishing capabilities](capabilities/custom.md#publishing-capabilities) for how to make custom capabilities work with agent specs.
 
 ## `AgentSpec` reference
 
-The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full spec structure:
+The [`AgentSpec`][pydantic_ai.agent.AgentSpec] model represents the full spec structure:
 
 | Field | Type | Description |
 |---|---|---|
@@ -127,7 +127,7 @@ The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full sp
 | `description` | `str \| None` | Agent description (supports [templates](#template-strings)) |
 | `instructions` | `str \| list[str] \| None` | [Instructions](agent.md#instructions) (supports [templates](#template-strings)) |
 | `model_settings` | `dict \| None` | [Model settings](agent.md#model-run-settings) |
-| `capabilities` | `list` | [Capabilities](capabilities.md) (see [spec syntax](#capability-spec-syntax)) |
+| `capabilities` | `list` | [Capabilities](capabilities/overview.md) (see [spec syntax](#capability-spec-syntax)) |
 | `deps_schema` | `dict \| None` | JSON Schema for [template string](#template-strings) validation (see below) |
 | `output_schema` | `dict \| None` | JSON Schema for [structured output](output.md) (see below) |
 | `retries` | `int \| AgentRetries \| None` | Retry budgets for [tools](tools-advanced.md#tool-retries) and [output validation](output.md#output-validator-functions). Pass an integer to use the same budget for both, or [`AgentRetries`][pydantic_ai.agent.AgentRetries] to configure them separately. |
@@ -171,7 +171,7 @@ capabilities:
 
 ## Saving specs
 
-[`AgentSpec.to_file`][pydantic_ai.agent.spec.AgentSpec.to_file] saves a spec to YAML or JSON and optionally generates a companion JSON Schema file for editor autocompletion:
+[`AgentSpec.to_file`][pydantic_ai.agent.AgentSpec.to_file] saves a spec to YAML or JSON and optionally generates a companion JSON Schema file for editor autocompletion:
 
 ```python {title="save_spec_example.py"}
 from pydantic_ai import AgentSpec

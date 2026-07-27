@@ -81,7 +81,7 @@ class MockAsyncClientV2:
     completions: MockChatResponse | Sequence[MockChatResponse] | None = None
     index = 0
     chat_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
-    _client_wrapper: MockClientWrapper = None  # type: ignore
+    _client_wrapper: MockClientWrapper = None  # pyright: ignore[reportAssignmentType]
 
     def __post_init__(self):
         self._client_wrapper = MockClientWrapper()
@@ -129,7 +129,7 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.usage == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
-    mock_client.index = 0  # type: ignore
+    mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
@@ -199,6 +199,100 @@ async def test_request_simple_usage(allow_model_requests: None):
             details={
                 'input_tokens': 1,
                 'output_tokens': 1,
+            },
+        )
+    )
+
+
+async def test_request_usage_without_tokens(allow_model_requests: None):
+    """The mock pins billed-unit mapping when Cohere omits `tokens`, a response shape VCR cannot reliably trigger."""
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+            role='assistant',
+        ),
+        usage=cohere.Usage(
+            billed_units=cohere.UsageBilledUnits(input_tokens=4, output_tokens=2),
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == 'world'
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            details={
+                'input_tokens': 4,
+                'output_tokens': 2,
+            },
+        )
+    )
+
+
+async def test_request_usage_with_partial_tokens(allow_model_requests: None):
+    """The mock pins optional token fields, which a VCR response cannot reliably trigger."""
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+            role='assistant',
+        ),
+        usage=cohere.Usage(
+            tokens=cohere.UsageTokens(input_tokens=4),
+            billed_units=cohere.UsageBilledUnits(input_tokens=3),
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == 'world'
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            input_tokens=4,
+            details={'input_tokens': 3},
+        )
+    )
+
+
+async def test_request_usage_with_cached_tokens_mock(allow_model_requests: None):
+    """Top-level `usage.cached_tokens` surfaces as first-class `cache_read_tokens` via the genai-prices tokens flavor.
+
+    Unit-style mock rather than VCR: the SDK types these counts as floats, and this pins the
+    float-to-int normalization plus nonzero token extraction, so a silently-broken extraction
+    path (which yields all-zero tokens with details preserved) cannot pass. The VCR variant
+    `test_request_usage_with_cached_tokens` covers the recorded-API path.
+    """
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+            role='assistant',
+        ),
+        usage=cohere.Usage(
+            billed_units=cohere.UsageBilledUnits(input_tokens=13, output_tokens=8),
+            tokens=cohere.UsageTokens(input_tokens=542, output_tokens=8),
+            cached_tokens=37,
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == 'world'
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            input_tokens=542,
+            cache_read_tokens=37,
+            output_tokens=8,
+            details={
+                'input_tokens': 13,
+                'output_tokens': 8,
             },
         )
     )

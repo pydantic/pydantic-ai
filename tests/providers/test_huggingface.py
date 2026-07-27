@@ -52,7 +52,7 @@ def test_huggingface_provider_pass_http_client() -> None:
         ValueError,
         match=re.escape('`http_client` is ignored for HuggingFace provider, please use `hf_client` instead'),
     ):
-        HuggingFaceProvider(http_client=http_client, api_key='api-key')  # type: ignore
+        HuggingFaceProvider(http_client=http_client, api_key='api-key')  # pyright: ignore[reportCallIssue]
 
 
 def test_huggingface_provider_pass_hf_client() -> None:

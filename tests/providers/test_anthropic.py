@@ -2,11 +2,12 @@ from __future__ import annotations as _annotations
 
 import pytest
 
-from ..conftest import try_import
+from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from anthropic import AsyncAnthropic, AsyncAnthropicBedrock
 
+    from pydantic_ai.exceptions import UserError
     from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
     from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -21,6 +22,18 @@ def test_anthropic_provider():
     assert provider.base_url == 'https://api.anthropic.com'
     assert isinstance(provider.client, AsyncAnthropic)
     assert provider.client.api_key == 'api-key'
+
+
+def test_anthropic_provider_without_api_key_raises_error(env: TestEnv):
+    env.remove('ANTHROPIC_API_KEY')
+    with pytest.raises(
+        UserError,
+        match=(
+            r'Set the `ANTHROPIC_API_KEY` environment variable or pass it via `AnthropicProvider\(api_key=\.\.\.\)`'
+            r" to use the Anthropic provider\. To try Pydantic AI without an API key, use the built-in test model: `Agent\('test'\)`\."
+        ),
+    ):
+        AnthropicProvider()
 
 
 def test_anthropic_provider_pass_anthropic_client() -> None:
