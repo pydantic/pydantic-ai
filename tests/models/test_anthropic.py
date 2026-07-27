@@ -132,6 +132,7 @@ with try_import() as imports_successful:
         BetaMessageDeltaUsage,
         BetaMessageIterationUsage,
         BetaMessageTokensCount,
+        BetaOutputTokensDetails,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
         BetaRawContentBlockStopEvent,
@@ -429,6 +430,36 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
     )
     last_message = message(result.all_messages(), ModelResponse, index=-1)
     assert last_message.cost().total_price == snapshot(Decimal('0.00002688'))
+
+
+async def test_async_request_thinking_tokens(allow_model_requests: None):
+    """Anthropic reports reasoning tokens at `usage.output_tokens_details.thinking_tokens`.
+
+    They are billed within `output_tokens`, so the detail is a readable subset of the output total
+    and must not be added to it.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='world', type='text')],
+        usage=BetaUsage(
+            input_tokens=3,
+            output_tokens=100,
+            output_tokens_details=BetaOutputTokensDetails(thinking_tokens=40),
+        ),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            input_tokens=3,
+            output_tokens=100,
+            details={'input_tokens': 3, 'output_tokens': 100, 'thinking_tokens': 40},
+        )
+    )
+    assert result.usage.total_tokens == snapshot(103)
 
 
 async def test_cache_point_adds_cache_control(allow_model_requests: None):
@@ -4809,6 +4840,25 @@ def test_streaming_usage():
     final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(input_tokens=1, output_tokens=5, details={'input_tokens': 1, 'output_tokens': 5})
+    )
+
+
+def test_streaming_usage_thinking_tokens():
+    """Streaming usage is cumulative, so `thinking_tokens` from a delta event replaces the running value."""
+    start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
+    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    delta = BetaRawMessageDeltaEvent(
+        delta=Delta(),
+        usage=BetaMessageDeltaUsage(output_tokens=5, output_tokens_details=BetaOutputTokensDetails(thinking_tokens=3)),
+        type='message_delta',
+    )
+    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    assert final_usage == snapshot(
+        RequestUsage(
+            input_tokens=1,
+            output_tokens=5,
+            details={'input_tokens': 1, 'output_tokens': 5, 'thinking_tokens': 3},
+        )
     )
 
 

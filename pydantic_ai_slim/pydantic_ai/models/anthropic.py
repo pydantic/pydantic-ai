@@ -2441,6 +2441,13 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
         if isinstance((value := getattr(response_usage, key, None)), int):
             details[key] = value
 
+    # Anthropic bills thinking tokens inside `output_tokens`, so this is a readable subset of the
+    # output total rather than an additive one, matching `reasoning_tokens` on OpenAI and
+    # `thoughts_tokens` on Google.
+    output_tokens_details = response_usage.output_tokens_details
+    if output_tokens_details is not None and (thinking_tokens := output_tokens_details.thinking_tokens):
+        details['thinking_tokens'] = thinking_tokens
+
     iterations = response_usage.iterations
     if not iterations:
         return details
