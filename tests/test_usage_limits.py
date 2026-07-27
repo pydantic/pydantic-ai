@@ -485,6 +485,21 @@ def test_usage_arbitrary_fields_pydantic_roundtrip(
 
 
 @pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_pydantic_serialization_filters(usage_type: type[RequestUsage] | type[RunUsage]):
+    usage = usage_type(input_tokens=5, future_tokens=42, label=None)
+    adapter = TypeAdapter(usage_type)
+
+    assert adapter.dump_python(usage, include={'input_tokens', '_extra'}) == {
+        'input_tokens': 5,
+        '_extra': {'future_tokens': 42, 'label': None},
+    }
+    assert '_extra' not in adapter.dump_python(usage, exclude={'_extra'})
+    assert adapter.dump_python(usage, include={'_extra'}, exclude_none=True) == {
+        '_extra': {'future_tokens': 42, 'label': None}
+    }
+
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
 def test_usage_arbitrary_fields_legacy_flat_deserialization(
     usage_type: type[RequestUsage] | type[RunUsage],
 ):
