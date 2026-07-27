@@ -76,10 +76,12 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         return merge_profile(
             AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer),
             profile,
-            # Inline system prompts are a fact about the Messages API rather than about the model
-            # family, so they're set here instead of in `anthropic_model_profile()`: the Bedrock
-            # Converse API and the OpenAI-compatible gateways that route the same models hoist a
-            # non-leading system prompt into their own top-level system field, losing its position.
+            # Accepting a `{'role': 'system'}` entry is a fact about the Messages API, not about the
+            # model family, so it's set here rather than in `anthropic_model_profile()`, which is
+            # shared with the Bedrock Converse API and the OpenAI-compatible gateways that route the
+            # same models. Only the transport verified to serve the role opts in; everywhere else the
+            # flag stays `False` and `Model.prepare_messages` keeps applying the `<system>`-tagged
+            # rendering, as it did before this was supported anywhere.
             AnthropicModelProfile(
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES)
             ),
