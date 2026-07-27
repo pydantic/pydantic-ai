@@ -27,7 +27,6 @@ from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
     from mcp import types as mcp_types
-    from mcp.shared.exceptions import McpError
 else:
     try:
         from mcp import types as mcp_types
@@ -55,9 +54,6 @@ try:
         StreamableHttpTransport,
     )
     from fastmcp.exceptions import ToolError
-
-    if not TYPE_CHECKING:
-        from fastmcp.exceptions import McpError
     from fastmcp.mcp_config import infer_transport_type_from_url
 except ImportError as _fastmcp_import_error:  # pragma: no cover
     raise ImportError(
@@ -65,6 +61,12 @@ except ImportError as _fastmcp_import_error:  # pragma: no cover
         '`pip install "pydantic-ai-slim[mcp]"` pulls `fastmcp-slim[client]`, '
         'or install the full `fastmcp` package directly.'
     ) from _fastmcp_import_error
+
+if TYPE_CHECKING:
+    from mcp.shared.exceptions import McpError
+else:
+    # SDK v2 renamed `McpError` to `MCPError`; fastmcp re-exports whichever the installed SDK has.
+    from fastmcp.exceptions import McpError
 
 # FastMCP 4 discovers its task client extension when `fastmcp_tasks` is imported.
 # Load it before constructing a client so modern sessions advertise task support.
@@ -1646,7 +1648,7 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
         if (temperature := params.temperature) is not None:  # pragma: no branch
             model_settings['temperature'] = temperature
         stop_sequences = mcp_validated_field(params, 'stopSequences', 'stop_sequences', _STOP_SEQUENCES_ADAPTER)
-        if stop_sequences is not None:
+        if stop_sequences is not None:  # pragma: no branch
             model_settings['stop_sequences'] = stop_sequences
 
         model_response = await model_request(sampling_model, pai_messages, model_settings=model_settings)
