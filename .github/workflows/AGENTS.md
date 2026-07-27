@@ -7,18 +7,15 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 
 | Name | Where | Runs when |
 |------|-------|-----------|
-| `Pydantic AI PR Review` | `pydantic-ai-pr-review.md` | every PR from an `admin`/`maintainer`/`write` actor, **unless** the `auto-review` label is present. MiniMax engine, submits a formal `APPROVE`/`REQUEST_CHANGES` verdict. |
-| `douwebot (label)` | `bots.yml` | only on applying the **`auto-review` label** — the fork-capable path (`pull_request_target`) and the stronger model. Deletes the label when it finishes, so the next push re-enables the gh-aw reviewer. |
+| `douwebot (gh-aw)` | `pydantic-ai-pr-review.md` | every PR from an `admin`/`maintainer`/`write` actor, **unless** the `douwebot` label is present. MiniMax engine, submits a formal `APPROVE`/`REQUEST_CHANGES` verdict. |
+| `douwebot (label)` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and the stronger model. Deletes the label when it finishes, so the next push re-enables `douwebot (gh-aw)`. |
 
 Exactly one of the two runs per event; the label is the switch. Do not add a third
 reviewer under a name that reads like either of these.
 
-The gh-aw reviewer is still named for its file rather than its role, and the label is
-still `auto-review`. Both are meant to become `douwebot (gh-aw)` / `douwebot`, so the
-shared role is legible from the check name alone. That rename is blocked: the label
-string is read in `pydantic-ai-pr-review.md`, renaming only one side of the switch makes
-**both** reviewers run at once, and the gh-aw lock cannot currently be regenerated (see
-"Lock files are not reproducible" below).
+The `douwebot` label is the switch, and it is read in **two** places — `bots.yml` and
+`pydantic-ai-pr-review.md`. Change one without the other and both reviewers run on the
+same event. Rename it in both, or not at all.
 
 Not to be confused with `Pydantic AI UI Security Review`, a separate narrow reviewer
 that only audits the UI-adapter trust boundary and never owns the merge-gate verdict.

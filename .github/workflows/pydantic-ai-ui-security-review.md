@@ -1,7 +1,7 @@
 ---
 emoji: "🛡️"
 name: "Pydantic AI UI Security Review"
-description: "Security review of UI-adapter PRs (Vercel AI + AG-UI): audits the client/server trust boundary for outbound leakage and inbound abuse. Inline comments + a non-voting COMMENT-type review summary (pydantic-ai-pr-review owns the merge-gate verdict until gh-aw check-runs land). Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
+description: "Security review of UI-adapter PRs (Vercel AI + AG-UI): audits the client/server trust boundary for outbound leakage and inbound abuse. Inline comments + a non-voting COMMENT-type review summary (douwebot (gh-aw) owns the merge-gate verdict until gh-aw check-runs land). Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
 on:
   # Runs on EVERY PR (no `paths:` filter) so the review's check is always
   # reported on the head commit. The UI-path selection moved into the `detect`
