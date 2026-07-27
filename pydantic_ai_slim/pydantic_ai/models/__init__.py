@@ -1677,19 +1677,25 @@ def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) 
             if request_parts:
                 new_messages.append(replace(message, parts=request_parts))
         else:
+            # A barge-in cuts the model off mid-sentence, so the last speech part's transcript stops
+            # short. Note that inline, or a standard model reads the fragment as a complete utterance
+            # and may repeat itself. The note is written here, on the way to the model, and never
+            # persisted: history keeps the interruption on `SpeechPart.interrupted_at_ms`.
+            last_speech = max(
+                (index for index, part in enumerate(message.parts) if isinstance(part, SpeechPart)),
+                default=None,
+            )
             response_parts: list[ModelResponsePart] = []
             for index, part in enumerate(message.parts):
                 if isinstance(part, SpeechPart):
-                    marker = (
-                        f'[Interrupted after {part.interrupted_at_ms} ms]'
-                        if part.interrupted_at_ms is not None
-                        else '[Interrupted]'
-                        if message.state == 'interrupted'
-                        and not any(isinstance(p, SpeechPart) for p in message.parts[index + 1 :])
-                        else None
-                    )
-                    if part.transcript or marker:
-                        response_parts.append(TextPart(content='\n'.join(filter(None, (part.transcript, marker)))))
+                    lines = [part.transcript] if part.transcript else []
+                    if part.interrupted_at_ms is not None:
+                        lines.append(f'[Interrupted after {part.interrupted_at_ms} ms]')
+                    elif message.state == 'interrupted' and index == last_speech:
+                        # The provider reported the interruption without an offset.
+                        lines.append('[Interrupted]')
+                    if lines:
+                        response_parts.append(TextPart(content='\n'.join(lines)))
                     # Assistant audio without a transcript has nothing to send.
                 else:
                     response_parts.append(part)
