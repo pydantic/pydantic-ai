@@ -618,7 +618,7 @@ def test_pre_usage_refactor_empty_usage_deserializable():
     assert message.usage == RequestUsage()
 
 
-def test_empty_usage_serialization_omits_private_storage_without_warnings():
+def test_empty_usage_serialization_includes_private_storage_without_warnings():
     messages: list[ModelMessage] = [ModelResponse(parts=[], usage=RequestUsage())]
 
     serialized = ModelMessagesTypeAdapter.dump_json(messages, warnings='error')
@@ -633,6 +633,7 @@ def test_empty_usage_serialization_omits_private_storage_without_warnings():
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
             'details': {},
+            '_extra': {},
         }
     )
 

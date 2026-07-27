@@ -146,22 +146,7 @@ class UsageBase:
             assert isinstance(result, UsageBase)
             return result
 
-        def serialize(
-            value: UsageBase,
-            inner: core_schema.SerializerFunctionWrapHandler,
-        ) -> Any:
-            result = inner(value)
-            assert isinstance(result, dict)
-            result = cast(dict[str, Any], result)
-            if not value._extra:
-                result.pop('_extra', None)
-            return result
-
-        return core_schema.no_info_wrap_validator_function(
-            validate,
-            schema,
-            serialization=core_schema.wrap_serializer_function_ser_schema(serialize, schema=schema),
-        )
+        return core_schema.no_info_wrap_validator_function(validate, schema)
 
     def __getattr__(self, name: str) -> Any:
         try:
