@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, TypeVar
 
-import httpx
+import httpx2 as httpx
 
 from pydantic_ai import Agent
 from pydantic_ai.native_tools import AbstractNativeTool

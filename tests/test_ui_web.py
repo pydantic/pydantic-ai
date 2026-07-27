@@ -30,7 +30,7 @@ from ._inline_snapshot import snapshot
 from .conftest import try_import
 
 with try_import() as starlette_import_successful:
-    import httpx
+    import httpx2 as httpx
     from starlette.applications import Starlette
     from starlette.responses import Response
     from starlette.testclient import TestClient
