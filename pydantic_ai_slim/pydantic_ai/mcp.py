@@ -1270,7 +1270,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     parameters_json_schema=input_schema,
                     metadata={
                         'meta': mcp_tool.meta,
-                        'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
+                        # `by_alias` pins the keys to the wire spelling: SDK v1 names the fields in
+                        # camelCase while v2 renamed them to snake_case, and this dict is a public
+                        # surface tool filters read by key.
+                        'annotations': mcp_tool.annotations.model_dump(by_alias=True) if mcp_tool.annotations else None,
                         'task': task_support in ('required', 'optional'),
                     },
                     return_schema=output_schema or None,

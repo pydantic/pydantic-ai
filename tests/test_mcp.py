@@ -335,7 +335,7 @@ async def fastmcp_server() -> FastMCP[None]:
     """In-process FastMCP server with a representative tool/resource surface."""
     server: FastMCP[None] = FastMCP('test_server', instructions='You are an MCP test server.')
 
-    @server.tool()
+    @server.tool(annotations={'title': 'Echo', 'readOnlyHint': True})
     async def echo(message: str) -> str:
         """Echo a message back."""
         return f'Echo: {message}'
@@ -360,6 +360,8 @@ async def fastmcp_server() -> FastMCP[None]:
     async def embedded_blob_tool() -> EmbeddedResource:
         """A tool that returns an embedded blob resource."""
         encoded = base64.b64encode(b'fake_blob_bytes').decode('utf-8')
+        # SDK v2 retypes every `uri` from `AnyUrl` to `str` and rejects an `AnyUrl` instance, so the
+        # URIs here are plain strings, cast to satisfy the v1 annotation these tests type-check against.
         return EmbeddedResource(
             type='resource',
             resource=BlobResourceContents(uri=cast(AnyUrl, 'resource://blob.bin'), blob=encoded),
@@ -504,6 +506,24 @@ class TestMCPToolsetIntegration:
             assert {'echo', 'add', 'boom'} <= set(tools_first)
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
+
+    async def test_tool_annotations_keep_the_wire_spelling(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """Tool filters read `metadata['annotations']` by key, so the keys track the wire spelling
+        rather than the attribute names of whichever MCP SDK generation happens to be installed."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+        assert (tools['echo'].tool_def.metadata or {})['annotations'] == snapshot(
+            {
+                'title': 'Echo',
+                'readOnlyHint': True,
+                'destructiveHint': None,
+                'idempotentHint': None,
+                'openWorldHint': None,
+            }
+        )
 
     async def test_get_instructions_when_enabled(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server, include_instructions=True)
