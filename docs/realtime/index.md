@@ -168,11 +168,16 @@ Spoken content (both the user's and the model's) streams as a
 | --- | --- |
 | [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] | A new part started — a `SpeechPart` (assistant or user), a `ToolCallPart`, or a plain `TextPart` when [`output_modality='text'`](#configuring-shared-settings). |
 | [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | A [`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta]: `audio_chunk` for playback and/or `transcript_delta` for incremental text (a [`TextPartDelta`][pydantic_ai.messages.TextPartDelta] in text mode). |
-| [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | The completed part: speech has `transcript` and optional retained `audio`, text has `content`, and tool parts carry their own fields. |
+| [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | The completed part: speech has `transcript` and, with [audio retention](#retaining-audio) on, the turn's full `audio`; text has `content`, and tool parts carry their own fields. |
 | [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] | The session began executing a tool the model requested (carries the `ToolCallPart`). |
 | [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | The tool finished and produced a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]. Normally the result is sent to the model; a provider-cancelled call records a synthetic cancellation result only in local history. |
 | [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | The original deferred or approval-required requests resolved by an inline capability handler. |
 | [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | The inline handler supplied results and normal tool processing continues. |
+
+For playback, read audio from the `SpeechPartDelta.audio_chunk`s: the model's speech is always
+delivered in full as deltas, whether or not audio is [retained](#retaining-audio). When it is
+retained, the `SpeechPart` on `PartEndEvent` holds that same audio again as a finalized WAV — a
+snapshot for history, not more audio to play. Playing both plays the turn twice.
 
 The remaining realtime control-plane events:
 
@@ -456,11 +461,12 @@ support.
 
 #### Retaining audio
 
-By default only transcripts are kept on the history parts. Pass
+By default only transcripts are kept on the history parts, so `SpeechPart.audio` is `None`. Pass
 `audio_retention=` to [`session()`][pydantic_ai.agent.AgentRealtime.session] to also retain
 the spoken audio as WAV [`BinaryContent`][pydantic_ai.messages.BinaryContent] on the `SpeechPart`s,
-at the cost of memory. Streaming input and `SpeechPartDelta.audio_chunk` output remain raw PCM16;
-only finalized history audio is wrapped in a WAV container.
+at the cost of memory. Retention only affects what history keeps: live playback reads
+`SpeechPartDelta.audio_chunk` either way. Streaming input and `SpeechPartDelta.audio_chunk` output
+remain raw PCM16; only finalized history audio is wrapped in a WAV container.
 
 | [`audio_retention`][pydantic_ai.realtime.AudioRetention] | Retains |
 | --- | --- |
