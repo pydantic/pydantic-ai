@@ -27,3 +27,32 @@ is left unresolved.**
    your reasoning, the decision that needs making, the trade-offs (pros/cons of each option), and
    your recommendation. Then **poll every 30 minutes for a reply** and continue when it lands.
 4. Repeat until CI is green and no comment is outstanding.
+
+## When the loop completes — consider a deep `auto-review`
+
+Adding the `auto-review` label triggers a one-shot in-depth review (the `Review` job in
+`bots.yml`) that is significantly more expensive and thorough than the per-push CI reviewer.
+The label removes itself after the run, so each application buys exactly one review of the
+diff as it stands at that moment.
+
+Once the loop above has terminated — CI green, every comment triaged — decide whether to apply
+it before handing the PR back or requesting merge:
+
+- **Apply it last, not early.** It won't re-run on later pushes, so a deep review of a
+  still-moving PR is wasted money. Wait until CI is green and feedback from the per-push
+  reviewer and any other bots has been addressed.
+- **Use judgment on whether it's warranted.** Skip it when you're highly confident there's
+  nothing left to catch (typo fixes, dependency bumps, mechanical chores). Apply it for
+  substantive changes: new features, behavior changes, public API surface, non-trivial bug
+  fixes — and user-facing docs, where it catches things like examples using outdated models.
+  In between, weigh cost against risk; smaller PRs are cheaper to review, so lean toward
+  applying when unsure.
+- **How:** `gh pr edit <number> --add-label auto-review`. This requires triage permission on
+  the repo (Pydantic team members and their agents). If it fails, quote the actual error —
+  don't skip it based on an assumed lack of permission.
+- **Known refusal:** the review job exits without reviewing if the PR touches `AGENTS.md`,
+  `CLAUDE.md`, or anything under `.claude/` (a security guard). Don't apply the label to
+  those PRs.
+- **Afterwards, re-enter the loop.** The review posts comments that need the same triage as
+  any other. If your fixes are substantial enough to deserve another deep pass, you may
+  re-apply the label — but usually once is enough.
