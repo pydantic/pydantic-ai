@@ -34,6 +34,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
 
 from pydantic_ai import Agent
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.messages import (
     ModelMessage,
@@ -437,6 +438,22 @@ async def test_session_span_turn_complete_omits_interrupted_when_false() -> None
 
     turn_complete = next(s for s in exporter.get_finished_spans() if s.name == 'turn complete')
     assert dict(turn_complete.attributes or {}) == {}
+
+
+async def test_session_span_name_follows_instrumentation_version() -> None:
+    # The session span follows the configured instrumentation version's agent-run naming: semconv
+    # `invoke_agent {name}` from v3 on, and a bare operation name on v2 (where the classic agent-run
+    # span is likewise a bare `agent run`).
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    with pytest.warns(PydanticAIDeprecationWarning, match='versions 2, 3, and 4 are deprecated'):
+        settings = InstrumentationSettings(tracer_provider=provider, version=2)
+    conn = _Connection([TurnCompleteEvent()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    _ = await collect_events(session)
+
+    assert [s.name for s in exporter.get_finished_spans() if s.name != 'turn complete'] == snapshot(['realtime'])
 
 
 async def test_chat_span_records_interrupted_response_state() -> None:

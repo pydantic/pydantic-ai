@@ -726,6 +726,31 @@ async def test_explicit_interrupt_records_audio_offset_on_last_speech_part() -> 
     )
 
 
+async def test_interrupted_turn_without_trailing_speech_records_no_offset() -> None:
+    # The offset is recorded on the last *speech* part, so a turn interrupted while the model was
+    # calling a tool (its trailing part is a `ToolCallPart`) walks past it to the speech before it.
+    # With no speech in the response at all, nothing is marked and `state='interrupted'` carries the
+    # whole meaning.
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='tc_1', tool_name='noop', args='', response_usage_follows=True),
+            TurnCompleteEvent(interrupted=True),
+        ]
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'ok'
+
+    session = RealtimeSession(conn, runner, model_name='m')
+
+    await session.interrupt(audio_end_ms=120)
+    _ = await collect_events(session)
+
+    response = next(m for m in session.new_messages() if isinstance(m, ModelResponse))
+    assert response.state == 'interrupted'
+    assert not any(isinstance(part, SpeechPart) for part in response.parts)
+
+
 async def test_speech_part_provider_item_id_and_gemini_fallback() -> None:
     openai = RealtimeSession(
         FakeRealtimeConnection([Transcript(text='hello', is_final=True, item_id='item-a'), TurnCompleteEvent()]),

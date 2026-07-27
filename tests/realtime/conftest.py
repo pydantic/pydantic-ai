@@ -144,7 +144,7 @@ def gateway_openai_ws_cassette(
     `websockets` reference) is patched; only the provider's base URL and bearer key differ. Recording
     needs a real `PYDANTIC_AI_GATEWAY_API_KEY`; offline replay never dials, so a placeholder is enough.
     """
-    if not imports_successful():
+    if not imports_successful():  # pragma: no cover
         pytest.skip('openai / websockets not installed')
     provider = _gateway_realtime_provider('openai', gateway_api_key)
     with _ws_cassette(request, 'openai') as cassette:
@@ -169,7 +169,7 @@ def gateway_gemini_ws_cassette(
         pytest.skip('google-genai / websockets not installed')
     provider = _gateway_realtime_provider('google', gateway_api_key)
     with _ws_cassette(request, 'gemini', skip_if_missing=True) as cassette:
-        yield provider, cassette
+        yield provider, cassette  # pragma: no cover - no cassette to replay until the gateway routes Bidi
 
 
 @pytest.fixture(scope='session')

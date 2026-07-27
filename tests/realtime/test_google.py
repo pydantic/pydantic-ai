@@ -17,7 +17,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     CachePoint,
@@ -70,6 +70,7 @@ from .test_session import make_tool_manager
 with try_import() as imports_successful:
     from google.genai import Client, errors as genai_errors, types as genai_types
     from google.genai.live import AsyncSession, ConnectionClosed
+    from websockets.exceptions import WebSocketException
 
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
@@ -367,6 +368,28 @@ async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyP
     # but harmless — the same value — and the hook leaves a pre-existing `Authorization` header untouched.
     rest_headers = provider.client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
     assert rest_headers is not None and rest_headers['Authorization'] == 'Bearer gw-key'
+
+
+async def test_gateway_url_rewrite_leaves_other_urls_alone() -> None:
+    # TEMPORARY, with `_ws_gateway_url_rewrite`: the rewrite only fires on the Vertex Bidi path it
+    # exists to reshape. Any other URI (a gateway route that already speaks the realtime path, or a
+    # non-Vertex dial) passes through untouched, so the patch can't corrupt a URL it doesn't own.
+    dialed: list[str] = []
+
+    async def _fake_ws_connect(uri: str, *args: Any, **kwargs: Any) -> None:
+        dialed.append(uri)
+
+    from google.genai import live
+
+    original = live.ws_connect
+    live.ws_connect = _fake_ws_connect
+    try:
+        with rt_google._ws_gateway_url_rewrite('gemini-live-2.5-flash'):  # pyright: ignore[reportPrivateUsage]
+            await live.ws_connect('wss://gateway.pydantic.dev/proxy/openai/v1/realtime?model=gpt-realtime')
+    finally:
+        live.ws_connect = original
+
+    assert dialed == snapshot(['wss://gateway.pydantic.dev/proxy/openai/v1/realtime?model=gpt-realtime'])
 
 
 async def test_non_gateway_handshake_has_no_bearer_auth(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1054,6 +1077,29 @@ async def test_connect_maps_websocket_invalid_status_to_model_http_error() -> No
             pass  # pragma: no cover - connect raises before yielding
     assert exc_info.value.status_code == 401
     assert exc_info.value.body == 'bad key'
+
+
+async def test_connect_maps_other_websocket_errors_to_model_api_error() -> None:
+    # A handshake failure with no HTTP status (DNS, TLS, protocol) reaches us as a bare
+    # `websockets.WebSocketException`. There's no status to report, so it becomes a `ModelAPIError`
+    # rather than escaping untyped — the sibling of the `InvalidStatus` → `ModelHTTPError` mapping.
+    class _FailingConnect:
+        async def __aenter__(self) -> Any:
+            raise WebSocketException('handshake went sideways')
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover - never entered
+            return False
+
+    class _Live:
+        def connect(self, *, model: str, config: Any) -> _FailingConnect:
+            return _FailingConnect()
+
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})()})())
+    model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover - connect raises before yielding
+    assert exc_info.value.message == snapshot('WebSocket error during connect: handshake went sideways')
 
 
 async def test_connect_continues_after_empty_server_turn() -> None:
