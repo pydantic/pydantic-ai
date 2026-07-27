@@ -80,7 +80,7 @@ jobs:
 
   # Security: The classify job runs the LLM with READ-ONLY permissions and no label API access.
   # The LLM's output is validated against an allowlist before the apply job takes any write action.
-  # This prevents prompt injection from adding arbitrary labels (e.g. 'auto-review' to trigger the review job).
+  # This prevents prompt injection from adding arbitrary labels (e.g. 'douwebot' to trigger the review job).
   category-classify:
     name: Category Classify
     if: github.event.action != 'labeled'
@@ -215,11 +215,11 @@ jobs:
           NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY: ${{ needs.category-classify.outputs.category }}
 
   review:
-    name: Review
+    name: douwebot (label)
     needs: [size-label, category-apply]
     if: >-
       !failure() && !cancelled() &&
-      github.event.action == 'labeled' && github.event.label.name == 'auto-review'
+      github.event.action == 'labeled' && github.event.label.name == 'douwebot'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -248,7 +248,7 @@ jobs:
         run: |
           CHANGED=$(gh api "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" -H 'Accept: application/vnd.github.v3.diff' | grep '^diff --git ')
           if echo "$CHANGED" | grep -qiE '/(AGENTS\.md|CLAUDE\.md)( |$)|/\.claude/'; then
-            echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping auto-review for security."
+            echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping douwebot for security."
             exit 1
           fi
         env:
@@ -335,7 +335,7 @@ jobs:
             Before doing anything else, read ALL of the following pre-gathered context files in a single parallel tool call:
             - `.github/.review-context/pr-details.json` — PR title, body, author, branch info, labels, state, review decision, timestamps
             - `.github/.review-context/pr-comments.txt` — existing top-level PR comments
-            - `.github/.review-context/review-comments.txt` — existing inline review comments (resolved+outdated threads and threads predating the last auto-review are collapsed to one-liners with comment IDs so you can fetch full details if needed)
+            - `.github/.review-context/review-comments.txt` — existing inline review comments (resolved+outdated threads and threads predating the last douwebot review are collapsed to one-liners with comment IDs so you can fetch full details if needed)
             - `.github/.review-context/related-issues.txt` — linked issues and their comments
             - `.github/.review-context/changed-files.txt` — changed files with per-file addition/deletion counts (tab-separated; non-generated files include a third column with the path to their per-file diff)
             - `.github/.review-context/agents-md.txt` — directory-specific `AGENTS.md` files for changed directories
@@ -387,8 +387,8 @@ jobs:
 
             It bears repeating that you are the first line of defense against low-quality contributions and maintainer headaches, and you have a big role in ensuring that every contribution to this project meets or exceeds the high standards that the Pydantic brand is known and loved for.
 
-      - name: Remove auto-review label
+      - name: Remove douwebot label
         if: always()
-        run: gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/auto-review" --method DELETE 2>/dev/null || true
+        run: gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/douwebot" --method DELETE 2>/dev/null || true
         env:
           GH_TOKEN: ${{ github.token }}

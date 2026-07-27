@@ -51,7 +51,7 @@ gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate --jq '.[] | "### 
 [ -s "$CTX/pr-comments.txt" ] || echo "(No PR comments)" > "$CTX/pr-comments.txt"
 
 # Inline review comments (with diff hunks and resolved state via GraphQL)
-# Fetch all review threads first, then determine last auto-review timestamp, then format
+# Fetch all review threads first, then determine last douwebot-review timestamp, then format
 echo "  - Review comments"
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO##*/}"
@@ -103,8 +103,8 @@ while true; do
   fi
 done
 
-# Find timestamp of last auto-review from both issue comments and inline review comments
-echo "  - Checking for previous auto-review"
+# Find timestamp of last douwebot review from both issue comments and inline review comments
+echo "  - Checking for previous douwebot review"
 LAST_ISSUE_COMMENT_TS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
   | jq -s '[.[][] | select(.user.login == "github-actions" or .user.login == "github-actions[bot]") | .created_at] | sort | last // empty' -r)
 LAST_REVIEW_COMMENT_TS=$(jq -r '
@@ -126,9 +126,9 @@ else
 fi
 
 if [ -n "$LAST_REVIEW_TS" ]; then
-  echo "    Last auto-review: $LAST_REVIEW_TS"
+  echo "    Last douwebot review: $LAST_REVIEW_TS"
 else
-  echo "    No previous auto-review found"
+  echo "    No previous douwebot review found"
 fi
 
 # Format review threads with compaction
@@ -153,7 +153,7 @@ jq -r --arg last_review "$LAST_REVIEW_TS" '
   $arr[$i] as $t |
   $t.first as $first |
 
-  # Compact if: (resolved AND outdated) OR (all comments predate last auto-review)
+  # Compact if: (resolved AND outdated) OR (all comments predate last douwebot review)
   (
     ($t.resolved and $t.outdated) or
     ($last_review != "" and $t.lastCommentAt < $last_review)

@@ -1,6 +1,6 @@
 ---
 emoji: "🔎"
-name: "Pydantic AI PR Review"
+name: "douwebot (gh-aw)"
 description: "AI-driven PR review on the Pydantic AI gh-aw shim: inline comments + a single review verdict. Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
 on:
   pull_request:
@@ -10,8 +10,10 @@ on:
   # access. Without this, any established external contributor's PR would
   # consume the configured Anthropic key and a model run.
   roles: [admin, maintainer, write]
-# Skip if PR has the `auto-review` label (opts into the legacy bots.yml reviewer).
-if: ${{ !contains(github.event.pull_request.labels.*.name, 'auto-review') }}
+# Skip if the PR carries the `douwebot` label: that opts into `douwebot (label)` in
+# bots.yml, the same reviewer role on a different engine. Exactly one of the two runs
+# per event.
+if: ${{ !contains(github.event.pull_request.labels.*.name, 'douwebot') }}
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the
