@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
-from httpx import Timeout
 from typing_extensions import TypedDict
+
+if TYPE_CHECKING:
+    # `httpx` reaches us transitively, via whichever provider SDK is installed, so it can't be
+    # imported at runtime here: `ModelSettings` is part of the SDK-less core.
+    from httpx import Timeout
 
 ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh']
 """The string effort levels for thinking/reasoning configuration."""

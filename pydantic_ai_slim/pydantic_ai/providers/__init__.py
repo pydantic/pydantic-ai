@@ -9,14 +9,16 @@ import functools
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from types import TracebackType
-from typing import Any, Generic
+from typing import TYPE_CHECKING, Any, Generic
 
 import anyio
-import httpx
 from typing_extensions import Self, TypeVar
 
 from ..exceptions import UserError
 from ..profiles import ModelProfile
+
+if TYPE_CHECKING:
+    import httpx
 
 InterfaceClient = TypeVar('InterfaceClient', default=Any)
 
