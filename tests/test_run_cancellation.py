@@ -353,7 +353,8 @@ async def test_first_party_cancel_swallowed_by_after_run_is_typed():
         await agent.run('go')
 
 
-@pytest.mark.parametrize('first_party', [True, False])
+# Blocking *external*-cancel recovery relies on the backstop, which is a no-op on Python 3.10.
+@pytest.mark.parametrize('first_party', [True, pytest.param(False, marks=requires_task_cancelling)])
 async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
     """`wrap_run` and `on_run_error` may observe cancellation but cannot recover it."""
     started = asyncio.Event()
