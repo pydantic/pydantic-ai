@@ -184,6 +184,9 @@ requires_google = pytest.mark.skipif(GoogleProvider is None, reason='google-gena
 requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_task_cancelling = pytest.mark.skipif(
+    sys.version_info < (3, 11), reason='the backstop needs `Task.cancelling()` (Python 3.11+)'
+)
 
 # Wall-clock guard for the readiness `Event.wait()`s in the cancellation tests below. The events are set
 # near-instantly; the timeout only exists to fail fast on a genuine hang, since no global pytest timeout is
@@ -9962,6 +9965,7 @@ async def test_run_handoff_survives_absorbed_cancellation():
         pytest.fail('run completed instead of ending cancelled')
 
 
+@requires_task_cancelling
 async def test_streaming_handoff_survives_absorbed_cancellation():
     """Streaming counterpart of #6422: model request survives cancellation without deadlock.
 
