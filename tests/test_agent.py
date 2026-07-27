@@ -10012,8 +10012,9 @@ async def test_streaming_handoff_survives_absorbed_cancellation():
         task.cancel()
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
-        except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
-            pytest.fail('deadlock: run task still pending after cancellation (#6422)')
+        except (TimeoutError, asyncio.TimeoutError):
+            # fails only on regression
+            pytest.fail('deadlock: run task still pending after cancellation (#6422)')  # pragma: no cover
         except asyncio.CancelledError:
             # The continuation composite opens each segment lazily on the consumer/run task, so the
             # model consumes the injected cancellation on the run task itself and completes normally
