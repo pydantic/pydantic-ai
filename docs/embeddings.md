@@ -946,6 +946,7 @@ To integrate a custom embedding provider, subclass [`EmbeddingModel`][pydantic_a
 ```python {title="custom_embedding_model.py"}
 from collections.abc import Sequence
 
+from pydantic_ai import Embedder
 from pydantic_ai.embeddings import (
     EmbeddingInput,
     EmbeddingModel,
@@ -971,20 +972,28 @@ class MyCustomEmbeddingModel(EmbeddingModel):
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        # `prepare_text_embed()` normalizes to plain strings and rejects anything else;
-        # use `prepare_embed()` instead if your model accepts more than text.
-        inputs, settings = self.prepare_text_embed(inputs, settings)
+        # `prepare_text_embed()` gives you the text to send plus the original inputs to
+        # report back; use `prepare_embed()` instead if your model accepts more than text.
+        items, texts, settings = self.prepare_text_embed(inputs, settings)
 
         # Call your embedding API here
-        embeddings = [[0.1, 0.2, 0.3] for _ in inputs]  # Placeholder
+        embeddings = [[0.1, 0.2, 0.3] for _ in texts]  # Placeholder
 
         return EmbeddingResult(
             embeddings=embeddings,
-            inputs=inputs,
+            inputs=items,
             input_type=input_type,
             model_name=self.model_name,
             provider_name=self.system,
         )
+
+
+async def main():
+    result = await Embedder(MyCustomEmbeddingModel()).embed_documents('Hello world')
+    print(result.embeddings)
+    #> [[0.1, 0.2, 0.3]]
 ```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 Use [`WrapperEmbeddingModel`][pydantic_ai.embeddings.WrapperEmbeddingModel] if you want to wrap an existing model to add custom behavior like caching or logging.
