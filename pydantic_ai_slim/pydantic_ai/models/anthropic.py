@@ -1517,7 +1517,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
         client_supports_inline_system_prompts = not isinstance(self.client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS)
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
-        for m in messages:
+        for message_index, m in enumerate(messages):
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
                 # Mid-conversation system prompts, each with the index in `user_content_params` it'd be
@@ -1611,14 +1611,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 is_error=True,
                             )
                         user_content_params.append(retry_param)
+                next_message = messages[message_index + 1] if message_index + 1 < len(messages) else None
                 if mid_conversation_system_prompts and not (
-                    client_supports_inline_system_prompts and user_content_params
+                    client_supports_inline_system_prompts
+                    and user_content_params
+                    # A system entry has to be followed by an assistant turn, or end the array and feed
+                    # the generation; another request following this one would put a user turn after it.
+                    and not isinstance(next_message, ModelRequest)
                 ):
-                    # The API requires a system entry to follow a user turn (and rejects one in leading
-                    # position), so without a user turn from this request — e.g. a system prompt enqueued
-                    # after the model's last response — the instruction degrades to the `<system>`-tagged
-                    # text that models without inline system prompt support get, as it does on the
-                    # transports that don't serve the `system` role at all.
+                    # The API only takes a system entry sandwiched between a user turn and an assistant
+                    # turn (or the end of the array), so where this request can't provide that — e.g. a
+                    # system prompt enqueued after the model's last response, leaving no user turn to
+                    # follow — the instruction degrades to the `<system>`-tagged text that models without
+                    # inline system prompt support get, as it does on the transports that don't serve the
+                    # `system` role at all.
                     for offset, (index, content) in enumerate(mid_conversation_system_prompts):
                         user_content_params.insert(
                             index + offset, BetaTextBlockParam(text=f'<system>{content}</system>', type='text')
