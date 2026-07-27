@@ -193,6 +193,7 @@ def test_profile() -> None:
         supports_session_seeding=True,
         supports_seeding_images=False,
         supports_seeding_audio=False,
+        supports_async_tool_calls=False,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supported_native_tools=frozenset(),
