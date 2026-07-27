@@ -219,6 +219,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         except BaseException as exc:
             self._node_error = exc
             raise
+        # The completed step's messages are already recorded on `state.message_history`,
+        # so if it absorbed an external cancellation, re-assert it before advancing.
+        _utils.raise_if_cancelling()
         node = self._task_to_node(task)
         if isinstance(node, End) and self._graph_run.state.pending_messages:
             # `asap` messages drain in `before_model_request` (which fires either way), but
