@@ -159,17 +159,20 @@ def test_tool_def_to_genai_with_and_without_description() -> None:
 
 
 @pytest.mark.parametrize(
-    ('profile', 'expected_behavior'),
+    ('profile', 'expect_non_blocking'),
     [
-        (RealtimeModelProfile(), None),
-        (RealtimeModelProfile(supports_async_tool_calls=True), genai_types.Behavior.NON_BLOCKING),
+        (RealtimeModelProfile(), False),
+        (RealtimeModelProfile(supports_async_tool_calls=True), True),
     ],
 )
-def test_tool_def_async_behavior(profile: RealtimeModelProfile, expected_behavior: genai_types.Behavior | None) -> None:
+def test_tool_def_async_behavior(profile: RealtimeModelProfile, expect_non_blocking: bool) -> None:
+    # The expected enum is resolved in the body, not the `parametrize` decorator: decorators are
+    # evaluated at collection time, before `pytestmark` can skip the module, so naming `genai_types`
+    # there breaks collection wherever the `google` extra isn't installed.
     tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
         ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'}), profile=profile
     )
-    assert tool.behavior == expected_behavior
+    assert tool.behavior == (genai_types.Behavior.NON_BLOCKING if expect_non_blocking else None)
 
 
 def test_native_tool_web_search_maps_to_google_search() -> None:
@@ -557,19 +560,15 @@ async def test_send_tool_result_echoes_name() -> None:
 
 
 @pytest.mark.parametrize(
-    ('profile', 'expected_scheduling'),
+    ('profile', 'expect_when_idle'),
     [
-        (RealtimeModelProfile(), None),
-        (
-            RealtimeModelProfile(supports_async_tool_calls=True),
-            genai_types.FunctionResponseScheduling.WHEN_IDLE,
-        ),
+        (RealtimeModelProfile(), False),
+        (RealtimeModelProfile(supports_async_tool_calls=True), True),
     ],
 )
-async def test_send_tool_result_async_scheduling(
-    profile: RealtimeModelProfile,
-    expected_scheduling: genai_types.FunctionResponseScheduling | None,
-) -> None:
+async def test_send_tool_result_async_scheduling(profile: RealtimeModelProfile, expect_when_idle: bool) -> None:
+    # As in `test_tool_def_async_behavior`, the expected enum is resolved in the body so collection
+    # doesn't need the `google` extra.
     session = _RecordingSession()
     conn = GoogleRealtimeConnection(cast('AsyncSession', session), profile=profile)
     conn._map_message(  # pyright: ignore[reportPrivateUsage]
@@ -582,7 +581,9 @@ async def test_send_tool_result_async_scheduling(
 
     await conn.send(ToolResult(tool_call_id='c1', output='Sunny'))
 
-    assert session.tool_responses[0].scheduling == expected_scheduling
+    assert session.tool_responses[0].scheduling == (
+        genai_types.FunctionResponseScheduling.WHEN_IDLE if expect_when_idle else None
+    )
 
 
 async def test_send_tool_result_content_falls_back_to_text() -> None:

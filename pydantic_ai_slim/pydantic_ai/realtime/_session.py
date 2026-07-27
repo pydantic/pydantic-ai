@@ -977,7 +977,7 @@ class RealtimeSession:
 
         The `logfire.json_schema` declarations that make the serialized blobs render as objects (rather
         than raw strings) are added at span *finalization*: the session span's in `_finalize_span`, the
-        `chat` span's by `handle_messages` (which re-declares `model_request_parameters`) — both rebuild
+        `chat` span's by `handle_messages` (which redeclares `model_request_parameters`) — both rebuild
         `logfire.json_schema` at the end, so declaring it here would be overwritten. See
         `_request_config_schema_properties`.
         """
@@ -1048,7 +1048,7 @@ class RealtimeSession:
         if self._provider_name:
             attributes.update(provider_attributes(self._provider_name, self._provider_url))
         # The session-wide request config, duplicated here so Logfire's per-step rendering fires (see
-        # `_request_config_attributes`). `_end_chat_span`'s `handle_messages` re-declares
+        # `_request_config_attributes`). `_end_chat_span`'s `handle_messages` redeclares
         # `model_request_parameters` in the span's `logfire.json_schema`, so it stays richly rendered.
         attributes.update(self._request_config_attributes(settings))
         name = f'chat {self._model_name}' if self._model_name else 'chat'
