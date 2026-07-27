@@ -54,7 +54,12 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC, JSON_CODEC
-from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset, wrap_tool_call_result
+from pydantic_ai.durable_exec._toolset import (
+    DurableDynamicToolset,
+    DurableFunctionToolset,
+    DurableMCPToolset,
+    wrap_tool_call_result,
+)
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -1552,6 +1557,31 @@ def test_dynamic_toolset():
     assert isinstance(result.output, str)
 
 
+async def test_deprecated_agent_wraps_identified_dynamic_toolset():
+    """The deprecated `PrefectAgent` runs *identified* dynamic toolsets in Prefect tasks.
+
+    Anonymous ones stay inline (covered by `test_dynamic_toolset`); the capability path validates
+    ids before wrapping, but `PrefectAgent` accepts either and only wraps the identified ones.
+    """
+
+    async def get_price() -> str:
+        return '42'
+
+    agent = Agent(
+        TestModel(),
+        name='deprecated_identified_dynamic',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([get_price]), id='deprecated_dyn')],
+    )
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
+    assert any(
+        isinstance(toolset, DurableDynamicToolset)
+        for toolset in prefect_agent._toolsets  # pyright: ignore[reportPrivateUsage]
+    )
+
+    result = await prefect_agent.run('Get the price')
+    assert '42' in str(result.output)
+
+
 # Test cache policies
 async def test_cache_policy_default():
     """Test that the default cache policy is set correctly."""
@@ -2915,11 +2945,17 @@ async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
 
 
 async def test_prefect_non_streaming_model_request_rejects_enqueue() -> None:
+    enqueued = False
+
     def request_with_enqueue(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        nonlocal enqueued
         ctx = get_current_run_context()
         assert ctx is not None
-        ctx.enqueue('later')
-        return ModelResponse(parts=[TextPart('unreachable')])
+        if not enqueued:
+            # Only the first request enqueues, so the outside-flow run below terminates.
+            enqueued = True
+            ctx.enqueue('later')
+        return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(
         FunctionModel(request_with_enqueue),
@@ -2933,6 +2969,10 @@ async def test_prefect_non_streaming_model_request_rejects_enqueue() -> None:
 
     with pytest.raises(UserError, match='enqueued messages would be dropped'):
         await run_agent()
+
+    # Outside a flow the model runs inline and enqueueing keeps working.
+    enqueued = False
+    assert (await agent.run('run')).output == 'done'
 
 
 async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:

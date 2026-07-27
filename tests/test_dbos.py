@@ -72,7 +72,6 @@ try:
         DBOSModel,
         StepConfig,
     )
-    from pydantic_ai.durable_exec.dbos._dynamic_toolset import dbosify_dynamic_toolset
     from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
     from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
@@ -2329,32 +2328,28 @@ async def test_dbos_dynamic_tool_model_retry_crosses_step_without_engine_retries
     """`ModelRetry` from a `DynamicToolset` tool crosses the step as a value, like MCP and function tools."""
     calls = 0
 
-    async def raise_model_retry() -> str:
+    async def retry_once() -> str:
         nonlocal calls
         calls += 1
-        raise ModelRetry('try again')
+        if calls == 1:
+            raise ModelRetry('try again')
+        return 'done'
 
-    dynamic = DynamicToolset[None](lambda ctx: FunctionToolset([raise_model_retry]), id='retry_dynamic')
-    durable = dbosify_dynamic_toolset(
-        dynamic,
-        step_name_prefix='retry_dynamic_agent',
-        step_config=StepConfig(retries_allowed=True, max_attempts=3),
-    )
-    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-    tool = ToolsetTool(
-        toolset=durable,
-        tool_def=ToolDefinition(name='raise_model_retry'),
-        max_retries=1,
-        args_validator=TOOL_SCHEMA_VALIDATOR,
+    agent = Agent(
+        TestModel(),
+        name='retry_dynamic_agent',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([retry_once]), id='retry_dynamic')],
+        capabilities=[DBOSDurability(mcp_step_config=StepConfig(retries_allowed=True, max_attempts=3))],
     )
 
     @DBOS.workflow()
-    async def run_workflow() -> int:
-        with pytest.raises(ModelRetry, match='try again'):
-            await durable.call_tool('raise_model_retry', {}, run_context, tool)
-        return calls
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
 
-    assert await run_workflow() == 1
+    await run_workflow()
+    # The step recorded the `ModelRetry` as a value, so DBOS never re-ran it: exactly one
+    # retry, driven by the model, not `max_attempts=3`.
+    assert calls == 2
 
 
 async def test_dbos_mcp_step_rejects_enqueue_in_workflow(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2421,11 +2416,17 @@ async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None
 
 
 async def test_dbos_non_streaming_model_request_rejects_enqueue(dbos: DBOS) -> None:
+    enqueued = False
+
     def request_with_enqueue(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        nonlocal enqueued
         ctx = get_current_run_context()
         assert ctx is not None
-        ctx.enqueue('later')
-        return ModelResponse(parts=[TextPart('unreachable')])
+        if not enqueued:
+            # Only the first request enqueues, so the outside-workflow run below terminates.
+            enqueued = True
+            ctx.enqueue('later')
+        return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(
         FunctionModel(request_with_enqueue),
@@ -2439,6 +2440,10 @@ async def test_dbos_non_streaming_model_request_rejects_enqueue(dbos: DBOS) -> N
 
     with pytest.raises(UserError, match='enqueued messages would be dropped'):
         await run_agent()
+
+    # Outside a workflow the step degrades to an inline call and enqueueing keeps working.
+    enqueued = False
+    assert (await agent.run('run')).output == 'done'
 
 
 async def test_dbos_durability_parallel_mode_applies_inside_run(dbos: DBOS) -> None:

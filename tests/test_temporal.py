@@ -269,12 +269,15 @@ def workflow_activity_raises(exc_type: type[Exception], exc_message: str) -> Gen
     """Assert an activity failure preserves the user exception through Temporal's cause chain."""
     with pytest.raises(WorkflowFailureError) as exc_info:
         yield
+    causes: list[BaseException] = []
     error: BaseException | None = exc_info.value
     while error is not None:
-        if isinstance(error, ApplicationError) and error.type == exc_type.__name__ and error.message == exc_message:
-            return
+        causes.append(error)
         error = error.__cause__
-    pytest.fail(f'{exc_type.__name__}({exc_message!r}) not found in the workflow failure cause chain')
+    assert any(
+        isinstance(cause, ApplicationError) and cause.type == exc_type.__name__ and cause.message == exc_message
+        for cause in causes
+    ), f'{exc_type.__name__}({exc_message!r}) not found in the workflow failure cause chain: {causes}'
 
 
 TEMPORAL_PORT = 7243
@@ -6371,16 +6374,26 @@ async def _enqueue_guard_handler(ctx: RunContext[object], stream: AsyncIterable[
         _enqueue_handler_boundaries.add(boundary)
 
 
+_enqueue_guard_tool_queue: list[str] = []
+_enqueue_guard_model_queue: list[str] = []
+
+
 async def _enqueue_guard_tool(ctx: RunContext[Deps]) -> str:
-    ctx.enqueue('later')
-    return 'unreachable'
+    # An enqueued message keeps the run going, so drain a one-shot queue to make the
+    # outside-workflow run below terminate.
+    while _enqueue_guard_tool_queue:
+        ctx.enqueue(_enqueue_guard_tool_queue.pop())
+    return 'done'
 
 
 def _enqueue_guard_model_request(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
     ctx = get_current_run_context()
     assert ctx is not None
-    ctx.enqueue('later')
-    return ModelResponse(parts=[TextPart('unreachable')])
+    # An enqueued message keeps the run going, so drain a one-shot queue to make the
+    # outside-workflow run below terminate after a second request.
+    while _enqueue_guard_model_queue:
+        ctx.enqueue(_enqueue_guard_model_queue.pop())
+    return ModelResponse(parts=[TextPart('done')])
 
 
 class _EnqueueOnCancelModel(ScriptedContinuationModel):
@@ -6499,6 +6512,7 @@ async def test_temporal_event_stream_handler_rejects_enqueue(client: Client) -> 
 
 
 async def test_temporal_tool_rejects_enqueue(client: Client) -> None:
+    _enqueue_guard_tool_queue[:] = ['later']
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -6512,8 +6526,14 @@ async def test_temporal_tool_rejects_enqueue(client: Client) -> None:
                 task_queue=TASK_QUEUE,
             )
 
+    # Outside a workflow the capability is transparent, so the tool runs inline and enqueueing works.
+    _enqueue_guard_tool_queue[:] = ['later']
+    await _enqueue_tool_agent.run('run', deps=Deps(country='test'))
+    assert not _enqueue_guard_tool_queue
+
 
 async def test_temporal_non_streaming_model_request_rejects_enqueue(client: Client) -> None:
+    _enqueue_guard_model_queue[:] = ['later']
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -6526,6 +6546,11 @@ async def test_temporal_non_streaming_model_request_rejects_enqueue(client: Clie
                 id=EnqueueGuardModelWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+    # Outside a workflow the capability is transparent, so the model runs inline and enqueueing works.
+    _enqueue_guard_model_queue[:] = ['later']
+    assert (await _enqueue_model_agent.run('run')).output == 'done'
+    assert not _enqueue_guard_model_queue
 
 
 async def test_temporal_cancellation_rejects_enqueue(client: Client) -> None:
