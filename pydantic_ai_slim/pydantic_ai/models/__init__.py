@@ -1307,6 +1307,18 @@ def infer_model(  # noqa: C901
 
         model_kind = normalize_gateway_provider(model_kind)
 
+    if provider_name == 'bedrock-mantle':
+        from ..providers.bedrock_mantle import BedrockMantleProvider, bedrock_mantle_model_profile
+        from .bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
+
+        if not isinstance(provider, BedrockMantleProvider):
+            raise UserError('Bedrock Mantle models require a `BedrockMantleProvider`.')
+        # The profile carries the endpoint family (and raises for non-OpenAI models), so routing reads
+        # it rather than re-deriving the interface here.
+        if bedrock_mantle_model_profile(model_name).get('bedrock_mantle_interface') == 'chat':
+            return BedrockMantleChatModel(model_name, provider=provider)
+        return BedrockMantleResponsesModel(model_name, provider=provider)
+
     # OpenRouter, Cerebras, Ollama and Z.AI need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
