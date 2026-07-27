@@ -1,6 +1,7 @@
 import os
 import re
-from typing import Any, Literal
+from types import SimpleNamespace
+from typing import Any, Literal, cast
 from unittest.mock import patch
 from urllib.parse import urlparse
 
@@ -13,6 +14,8 @@ from .._inline_snapshot import raises, snapshot
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
+    from google.genai import Client
+
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.models.google import GoogleModel
@@ -21,7 +24,11 @@ with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
-    from pydantic_ai.providers.gateway import gateway_provider, is_gateway_provider
+    from pydantic_ai.providers.gateway import (
+        _set_google_ws_gateway_auth,  # pyright: ignore[reportPrivateUsage]
+        gateway_provider,
+        is_gateway_provider,
+    )
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -69,6 +76,28 @@ def test_gateway_google_sets_static_ws_bearer_auth():
     provider = gateway_provider('google', api_key='gw-key', base_url=GATEWAY_BASE_URL)
     headers = provider.client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
     assert headers is not None and headers['Authorization'] == 'Bearer gw-key'
+
+
+def test_gateway_google_ws_bearer_auth_skips_unusable_clients():
+    # The bearer is set by reaching into the SDK's private http options, so the helper has to tolerate a
+    # client that doesn't have them (a fake or a future SDK layout) and must not clobber an
+    # `Authorization` header the caller set deliberately. Both cases leave the client untouched.
+    class _NoHttpOptions:
+        pass
+
+    _set_google_ws_gateway_auth(cast('Client', _NoHttpOptions()), 'gw-key')  # no attribute chain: no-op
+
+    class _Client:
+        def __init__(self, headers: dict[str, str]) -> None:
+            self._api_client = SimpleNamespace(_http_options=SimpleNamespace(headers=headers))
+
+    preset = {'Authorization': 'Bearer caller-supplied'}
+    _set_google_ws_gateway_auth(cast('Client', _Client(preset)), 'gw-key')
+    assert preset == {'Authorization': 'Bearer caller-supplied'}
+
+    empty: dict[str, str] = {}
+    _set_google_ws_gateway_auth(cast('Client', _Client(empty)), 'gw-key')
+    assert empty == {'Authorization': 'Bearer gw-key'}
 
 
 def test_init_gateway_without_api_key_raises_error(env: TestEnv):

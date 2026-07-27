@@ -60,7 +60,11 @@ from pydantic_ai.realtime import (
     TurnDetection,
 )
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput, merge_realtime_profile
-from pydantic_ai.realtime._openai_protocol import map_conversation_event, realtime_websocket_url
+from pydantic_ai.realtime._openai_protocol import (
+    RealtimeHandshakeError,
+    map_conversation_event,
+    realtime_websocket_url,
+)
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     CancelResponse,
@@ -421,6 +425,14 @@ def test_map_error_event_without_message_serializes_payload() -> None:
 
 def test_map_error_event_non_dict_payload() -> None:
     assert map_event({'type': 'error', 'error': 'plain'}) == SessionErrorEvent(message='plain')
+
+
+def test_handshake_error_message_falls_back_to_repr() -> None:
+    # `map_event` always hands `_error_message` a parsed `RealtimeError`, but `RealtimeHandshakeError`
+    # takes whatever the handshake produced. A payload that is neither a `RealtimeError` nor a dict with
+    # a string `message` still has to yield *something* readable rather than blowing up on access.
+    assert str(RealtimeHandshakeError({'code': 'x'})) == snapshot("{'code': 'x'}")
+    assert str(RealtimeHandshakeError(None)) == snapshot('None')
 
 
 def test_map_error_event_with_type_and_code_is_recoverable() -> None:
