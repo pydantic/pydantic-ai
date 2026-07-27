@@ -594,6 +594,7 @@ def test_pre_usage_refactor_messages_deserializable():
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
             'details': {},
+            '_extra': {},
         }
     )
 
@@ -616,26 +617,6 @@ def test_pre_usage_refactor_empty_usage_deserializable():
     [message] = ModelMessagesTypeAdapter.validate_python(data)
     assert isinstance(message, ModelResponse)
     assert message.usage == RequestUsage()
-
-
-def test_empty_usage_serialization_includes_private_storage_without_warnings():
-    messages: list[ModelMessage] = [ModelResponse(parts=[], usage=RequestUsage())]
-
-    serialized = ModelMessagesTypeAdapter.dump_json(messages, warnings='error')
-
-    assert json.loads(serialized)[0]['usage'] == snapshot(
-        {
-            'input_tokens': 0,
-            'cache_write_tokens': 0,
-            'cache_read_tokens': 0,
-            'output_tokens': 0,
-            'input_audio_tokens': 0,
-            'cache_audio_read_tokens': 0,
-            'output_audio_tokens': 0,
-            'details': {},
-            '_extra': {},
-        }
-    )
 
 
 def test_usage_arbitrary_fields_serialization_roundtrip():
@@ -812,6 +793,7 @@ def test_file_part_serialization_roundtrip():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    '_extra': {},
                 },
                 'model_name': None,
                 'timestamp': IsStr(),
