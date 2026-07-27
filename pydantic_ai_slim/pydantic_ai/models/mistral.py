@@ -116,7 +116,9 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         yield
     except SDKError as e:
         if (status_code := e.status_code) >= 400:
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.body) from e
+            raise ModelHTTPError(
+                status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.headers)
+            ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
 
 
