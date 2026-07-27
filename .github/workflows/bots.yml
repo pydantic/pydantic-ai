@@ -215,7 +215,7 @@ jobs:
           NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY: ${{ needs.category-classify.outputs.category }}
 
   review:
-    name: Review
+    name: douwebot (label)
     needs: [size-label, category-apply]
     if: >-
       !failure() && !cancelled() &&
