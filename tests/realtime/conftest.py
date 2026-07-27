@@ -69,10 +69,10 @@ def _ws_cassette(
     name = sanitize_filename(cast('str', request.node.name), 240)  # pyright: ignore[reportUnknownMemberType]
     path = CASSETTES_DIR / module / f'{name}.yaml'
     plan = realtime_cassette_plan(cassette_exists=path.exists(), record_mode=_record_mode(request))
-    if plan == 'error_missing':  # pragma: no cover - only when a cassette is missing offline
+    if plan == 'error_missing':
         if skip_if_missing:
             pytest.skip(f'Missing realtime WebSocket cassette (record with `--record-mode=rewrite`): {path}')
-        raise RuntimeError(
+        raise RuntimeError(  # pragma: no cover - a cassette we expect to exist has gone missing
             f'Missing realtime WebSocket cassette: {path}\n'
             'Record it with: uv run --env-file .env pytest --record-mode=rewrite <test> -q'
         )
