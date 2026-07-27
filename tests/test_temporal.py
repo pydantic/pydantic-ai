@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import os
 import re
+import sys
 import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
@@ -160,7 +161,6 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
-import sys
 
 if sys.version_info >= (3, 14):
     pytest.skip(
@@ -431,6 +431,10 @@ class CancellationBackstopWorkflow:
         return (await _cancellation_agent.run(prompt)).output
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason='the cancellation backstop needs `Task.cancelling()` (Python 3.11+); on 3.10 the absorbed cancel legitimately completes',
+)
 async def test_temporal_cancellation_backstop_survives_absorbed_activity_cancel(client: Client) -> None:
     """A cancelled workflow cannot complete after its streaming model activity absorbs cancellation."""
     global _cancellation_activity_cancel_absorbed, _cancellation_activity_started
