@@ -698,6 +698,34 @@ async def test_interrupted_turn_keeps_partial_transcript() -> None:
     )
 
 
+async def test_explicit_interrupt_records_audio_offset_on_last_speech_part() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            Transcript(text='first', is_final=True, item_id='item-1'),
+            Transcript(text='second', is_final=True, item_id='item-2'),
+            TurnCompleteEvent(interrupted=True),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='m')
+
+    await session.interrupt(audio_end_ms=640)
+    _ = await collect_events(session)
+
+    assert session.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    SpeechPart(speaker='assistant', transcript='first', id='item-1'),
+                    SpeechPart(speaker='assistant', transcript='second', interrupted_at_ms=640, id='item-2'),
+                ],
+                model_name='m',
+                timestamp=IsDatetime(),
+                state='interrupted',
+            )
+        ]
+    )
+
+
 async def test_speech_part_provider_item_id_and_gemini_fallback() -> None:
     openai = RealtimeSession(
         FakeRealtimeConnection([Transcript(text='hello', is_final=True, item_id='item-a'), TurnCompleteEvent()]),

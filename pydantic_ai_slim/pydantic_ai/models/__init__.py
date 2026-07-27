@@ -1678,10 +1678,18 @@ def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) 
                 new_messages.append(replace(message, parts=request_parts))
         else:
             response_parts: list[ModelResponsePart] = []
-            for part in message.parts:
+            for index, part in enumerate(message.parts):
                 if isinstance(part, SpeechPart):
-                    if part.transcript:
-                        response_parts.append(TextPart(content=part.transcript))
+                    marker = (
+                        f'[Interrupted after {part.interrupted_at_ms} ms]'
+                        if part.interrupted_at_ms is not None
+                        else '[Interrupted]'
+                        if message.state == 'interrupted'
+                        and not any(isinstance(p, SpeechPart) for p in message.parts[index + 1 :])
+                        else None
+                    )
+                    if part.transcript or marker:
+                        response_parts.append(TextPart(content='\n'.join(filter(None, (part.transcript, marker)))))
                     # Assistant audio without a transcript has nothing to send.
                 else:
                     response_parts.append(part)

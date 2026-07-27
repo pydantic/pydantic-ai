@@ -265,6 +265,15 @@ caller's responsibility. Explicit `interrupt()` and manual turn-taking require p
 `audio_end_ms` truncation additionally needs [`supports_output_truncation`](#model-profile-reference), which xAI Grok
 Voice lacks — call `interrupt()` without `audio_end_ms` there.
 
+Realtime history records the cut-off point on the last assistant
+[`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms] of the turn.
+The value is an offset into that part's output audio, in milliseconds. It stays `None` when the
+provider reports an interruption without an offset; [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state]
+still records the turn as `'interrupted'`. When this history is passed to a non-speech model,
+Pydantic AI appends `[Interrupted after N ms]` to a transcript with a known offset, or
+`[Interrupted]` when only the interrupted response state is known. This note is generated while
+preparing the model request and is not persisted in message history.
+
 #### Push-to-talk (manual turn-taking)
 
 Automatic detection is **on by default**; disable it with `turn_detection=False` for push-to-talk.

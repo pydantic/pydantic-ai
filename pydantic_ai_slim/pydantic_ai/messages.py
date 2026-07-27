@@ -1962,6 +1962,14 @@ class SpeechPart:
     (see the `audio_retention` setting), so this is usually `None`.
     """
 
+    interrupted_at_ms: int | None = None
+    """The offset into this part's audio where playback was interrupted, in milliseconds.
+
+    `None` when the part was not interrupted. It may also be `None` for an interrupted turn when
+    the provider reported the interruption without an offset. This is relative to this part's audio,
+    not wall-clock or session-relative time.
+    """
+
     id: str | None = None
     """The provider item ID, used to correlate the part with provider-side conversation items."""
 

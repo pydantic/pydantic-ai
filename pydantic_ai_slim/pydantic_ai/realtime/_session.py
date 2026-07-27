@@ -391,6 +391,7 @@ class RealtimeSession:
         self._pending_response_usage = RequestUsage()
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
+        self._pending_interrupted_at_ms: int | None = None
         self._response_finalized_before_terminal = False
         # User requests sent while a response is in flight are held until that response is finalized,
         # so the pump remains the sole writer for that portion of history and a caller cannot splice a
@@ -783,6 +784,7 @@ class RealtimeSession:
                 )
             await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
         await self._connection.send(CancelResponse())
+        self._pending_interrupted_at_ms = audio_end_ms
         # Mark the barge-in in the trace. When the caller supplied `audio_end_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
         # the user cut in; it's dropped when absent (a cancel without truncation).
@@ -894,6 +896,7 @@ class RealtimeSession:
         finish_reason: FinishReason | None = None,
         provider_details: dict[str, Any] | None = None,
         interrupted: bool = False,
+        interrupted_at_ms: int | None = None,
         response_occurred: bool = False,
     ) -> None:
         """Finalize the current assistant response's parts into a `ModelResponse` in history."""
@@ -904,6 +907,11 @@ class RealtimeSession:
         # Native tool parts (web grounding / code execution) lead the response (call+return, then
         # speech), matching the classic `GoogleModel`, which prepends them ahead of the assistant's text.
         parts = [*self._native_tool_parts, *self._response_parts]
+        if interrupted:
+            for index in range(len(parts) - 1, -1, -1):
+                if isinstance(part := parts[index], SpeechPart):
+                    parts[index] = replace(part, interrupted_at_ms=interrupted_at_ms)
+                    break
         # Parts prove a response happened. For an output-less response, only terminal/pending provider
         # metadata (or an interruption) does; a bare logical turn boundary must not invent a response.
         response_occurred = bool(
@@ -969,7 +977,7 @@ class RealtimeSession:
 
         The `logfire.json_schema` declarations that make the serialized blobs render as objects (rather
         than raw strings) are added at span *finalization*: the session span's in `_finalize_span`, the
-        `chat` span's by `handle_messages` (which re-declares `model_request_parameters`) — both rebuild
+        `chat` span's by `handle_messages` (which redeclares `model_request_parameters`) — both rebuild
         `logfire.json_schema` at the end, so declaring it here would be overwritten. See
         `_request_config_schema_properties`.
         """
@@ -1039,7 +1047,7 @@ class RealtimeSession:
         if self._provider_name:
             attributes.update(provider_attributes(self._provider_name, self._provider_url))
         # The session-wide request config, duplicated here so Logfire's per-step rendering fires (see
-        # `_request_config_attributes`). `_end_chat_span`'s `handle_messages` re-declares
+        # `_request_config_attributes`). `_end_chat_span`'s `handle_messages` redeclares
         # `model_request_parameters` in the span's `logfire.json_schema`, so it stays richly rendered.
         attributes.update(self._request_config_attributes(settings))
         name = f'chat {self._model_name}' if self._model_name else 'chat'
@@ -1106,6 +1114,7 @@ class RealtimeSession:
             or (None if event.interrupted or event.provider_details is not None else 'stop'),
             provider_details=event.provider_details,
             interrupted=event.interrupted,
+            interrupted_at_ms=self._pending_interrupted_at_ms,
             response_occurred=bool(
                 not already_finalized
                 and (
@@ -1116,6 +1125,7 @@ class RealtimeSession:
                 )
             ),
         )
+        self._pending_interrupted_at_ms = None
         events.append(event)
         self._record_lifecycle_event('turn complete', interrupted=event.interrupted or None)
         return events
