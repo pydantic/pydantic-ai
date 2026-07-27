@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import assert_never
 
 from . import exceptions, messages
-from ._mcp_compat import get_mcp_field
+from ._mcp_compat import mcp_field, mcp_optional_field
 
 if TYPE_CHECKING:
     from mcp import types as mcp_types
@@ -28,8 +28,8 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
     """Convert from MCP create message request parameters to pydantic-ai messages."""
     pai_messages: list[messages.ModelMessage] = []
     request_parts: list[messages.ModelRequestPart] = []
-    if system_prompt := get_mcp_field(params, 'systemPrompt', 'system_prompt'):
-        request_parts.append(messages.SystemPromptPart(content=cast(str, system_prompt)))
+    if system_prompt := mcp_optional_field(params, 'systemPrompt', 'system_prompt', str):
+        request_parts.append(messages.SystemPromptPart(content=system_prompt))
     response_parts: list[messages.ModelResponsePart] = []
     for msg in params.messages:
         content = msg.content
@@ -46,7 +46,7 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
                 user_part_content = [
                     messages.BinaryContent(
                         data=base64.b64decode(content.data),
-                        media_type=cast(str, get_mcp_field(content, 'mimeType', 'mime_type')),
+                        media_type=mcp_field(content, 'mimeType', 'mime_type', str),
                     )
                 ]
             elif isinstance(content, list):

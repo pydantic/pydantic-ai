@@ -145,11 +145,6 @@ class TestMCPToolsetConstruction:
 
     def test_http_client_kwarg_uses_factory(self):
         client = httpx.AsyncClient()
-        if MCP_SDK_V2:
-            with pytest.raises(ValueError, match=r'`http_client`.*`httpx2`'):
-                MCPToolset('https://example.com/mcp', http_client=client)
-            return
-
         toolset = MCPToolset('https://example.com/mcp', http_client=client)
         assert isinstance(toolset.client.transport, StreamableHttpTransport)
         assert toolset.client.transport.httpx_client_factory is not None
@@ -161,24 +156,12 @@ class TestMCPToolsetConstruction:
 
     def test_sse_url_with_http_client_uses_factory(self):
         client = httpx.AsyncClient()
-        if MCP_SDK_V2:
-            with pytest.raises(ValueError, match=r'`http_client`.*`httpx2`'):
-                MCPToolset('https://example.com/sse', http_client=client)
-            return
-
         toolset = MCPToolset('https://example.com/sse', http_client=client)
         assert isinstance(toolset.client.transport, SSETransport)
         assert toolset.client.transport.httpx_client_factory is not None
         assert toolset.client.transport.httpx_client_factory() is client
         factory = _make_httpx_client_factory(client)
         assert factory(follow_redirects=True) is client
-
-    def test_httpx_auth_rejected_by_modern_transport(self):
-        if not MCP_SDK_V2:
-            pytest.skip('FastMCP 3 transports use httpx')
-
-        with pytest.raises(ValueError, match=r'`auth`.*`httpx2`'):
-            MCPToolset('https://example.com/mcp', auth=httpx.BasicAuth('user', 'password'))
 
     def test_http_kwargs_with_non_url_input_raises(self):
         """HTTP-only kwargs (headers/auth/verify/http_client) must error out when the connection
@@ -1611,19 +1594,6 @@ class TestMCPToolsetBackgroundTasks:
         async with toolset:
             result = await toolset.direct_call_tool('task_required_tool', {}, use_task=True)
         assert result == 'task_required_completed'
-
-    async def test_prebuilt_modern_client_without_task_extension_errors(self, task_server: FastMCP[None]) -> None:
-        if not MCP_SDK_V2:
-            pytest.skip('FastMCP 3 registers tasks directly on the client')
-
-        client = Client(task_server)
-        session_kwargs = cast(dict[str, Any], getattr(client, '_session_kwargs'))
-        cast(dict[str, Any], session_kwargs['extensions']).pop('io.modelcontextprotocol/tasks')
-        cast(dict[str, Any], session_kwargs['result_claims']).pop('io.modelcontextprotocol/tasks')
-        toolset = MCPToolset(client)
-        async with toolset:
-            with pytest.raises(UserError, match=r'pre-built FastMCP 4 client.*task extension'):
-                await toolset.direct_call_tool('task_required_tool', {}, use_task=True)
 
     async def test_modern_client_in_legacy_mode_rejects_tasks(self, task_server: FastMCP[None]) -> None:
         if not MCP_SDK_V2:

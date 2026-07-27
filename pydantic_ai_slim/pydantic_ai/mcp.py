@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, Protocol, T
 import anyio
 import httpx
 import pydantic_core
-from pydantic import AnyUrl, Field
+from pydantic import AnyUrl, Field, TypeAdapter
 from typing_extensions import Self, assert_never
 
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -94,10 +94,12 @@ else:
 
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
-from ._mcp_compat import get_mcp_field, is_mcp_sdk_v2
+from ._mcp_compat import is_mcp_sdk_v2, mcp_field, mcp_optional_field, mcp_validated_field
 from .settings import ModelSettings
 
 _MCP_SDK_V2 = is_mcp_sdk_v2(mcp_types)
+_JSON_SCHEMA_ADAPTER = TypeAdapter[dict[str, Any]](dict[str, Any])
+_STOP_SEQUENCES_ADAPTER = TypeAdapter[list[str]](list[str])
 
 
 class _ToolTask(Protocol):
@@ -130,14 +132,9 @@ async def _call_tool_as_task(
                 'FastMCP 4 task execution requires the `fastmcp-tasks` package; '
                 'install it with `pip install "fastmcp[tasks]"`'
             )
-        session_kwargs = cast('dict[str, Any]', getattr(client, '_session_kwargs', {}))
-        extensions = cast('dict[str, Any]', session_kwargs.get('extensions', {}))
-        if 'io.modelcontextprotocol/tasks' not in extensions:
-            raise exceptions.UserError(
-                'This pre-built FastMCP 4 client was created before its task extension was registered; '
-                'import `pydantic_ai.mcp` before constructing the client, then try again'
-            )
-        call_tool_task = cast('Callable[..., Awaitable[_ToolTask]]', _fastmcp_tasks.call_tool_task)
+        # A client built before `fastmcp_tasks` was imported has no task extension registered;
+        # FastMCP raises on the call itself, as there's no public way to detect it up front.
+        call_tool_task: Callable[..., Awaitable[_ToolTask]] = _fastmcp_tasks.call_tool_task
         tool_task = await call_tool_task(
             client,
             name=name,
@@ -241,7 +238,7 @@ class ResourceAnnotations:
             priority=mcp_annotations.priority,
             # `lastModified` is in the 2025-11-25 spec on `Annotations` but absent from `mcp` v1.25.0;
             # read defensively so we pick it up as soon as the SDK catches up.
-            last_modified=cast('str | None', get_mcp_field(mcp_annotations, 'lastModified', 'last_modified', None)),
+            last_modified=mcp_optional_field(mcp_annotations, 'lastModified', 'last_modified', str),
         )
 
 
@@ -314,7 +311,7 @@ class Resource(BaseResource):
             name=mcp_resource.name,
             title=mcp_resource.title,
             description=mcp_resource.description,
-            mime_type=cast('str | None', get_mcp_field(mcp_resource, 'mimeType', 'mime_type')),
+            mime_type=mcp_optional_field(mcp_resource, 'mimeType', 'mime_type', str),
             size=mcp_resource.size,
             annotations=ResourceAnnotations.from_mcp_sdk(mcp_resource.annotations)
             if mcp_resource.annotations
@@ -322,7 +319,7 @@ class Resource(BaseResource):
             icons=[
                 Icon(
                     src=icon.src,
-                    mime_type=cast('str | None', get_mcp_field(icon, 'mimeType', 'mime_type')),
+                    mime_type=mcp_optional_field(icon, 'mimeType', 'mime_type', str),
                     sizes=icon.sizes,
                 )
                 for icon in mcp_resource.icons
@@ -351,18 +348,18 @@ class ResourceTemplate(BaseResource):
             mcp_template: The MCP SDK ResourceTemplate object.
         """
         return cls(
-            uri_template=cast(str, get_mcp_field(mcp_template, 'uriTemplate', 'uri_template')),
+            uri_template=mcp_field(mcp_template, 'uriTemplate', 'uri_template', str),
             name=mcp_template.name,
             title=mcp_template.title,
             description=mcp_template.description,
-            mime_type=cast('str | None', get_mcp_field(mcp_template, 'mimeType', 'mime_type')),
+            mime_type=mcp_optional_field(mcp_template, 'mimeType', 'mime_type', str),
             annotations=ResourceAnnotations.from_mcp_sdk(mcp_template.annotations)
             if mcp_template.annotations
             else None,
             icons=[
                 Icon(
                     src=icon.src,
-                    mime_type=cast('str | None', get_mcp_field(icon, 'mimeType', 'mime_type')),
+                    mime_type=mcp_optional_field(icon, 'mimeType', 'mime_type', str),
                     sizes=icon.sizes,
                 )
                 for icon in mcp_template.icons
@@ -427,7 +424,7 @@ class ResourceLink:
             name=mcp_resource_link.name,
             title=mcp_resource_link.title,
             description=mcp_resource_link.description,
-            mime_type=cast('str | None', get_mcp_field(mcp_resource_link, 'mimeType', 'mime_type')),
+            mime_type=mcp_optional_field(mcp_resource_link, 'mimeType', 'mime_type', str),
             size=mcp_resource_link.size,
             annotations=ResourceAnnotations.from_mcp_sdk(mcp_resource_link.annotations)
             if mcp_resource_link.annotations
@@ -435,7 +432,7 @@ class ResourceLink:
             icons=[
                 Icon(
                     src=icon.src,
-                    mime_type=cast('str | None', get_mcp_field(icon, 'mimeType', 'mime_type')),
+                    mime_type=mcp_optional_field(icon, 'mimeType', 'mime_type', str),
                     sizes=icon.sizes,
                 )
                 for icon in mcp_resource_link.icons
@@ -519,7 +516,7 @@ class Prompt:
             icons=[
                 Icon(
                     src=icon.src,
-                    mime_type=cast('str | None', get_mcp_field(icon, 'mimeType', 'mime_type')),
+                    mime_type=mcp_optional_field(icon, 'mimeType', 'mime_type', str),
                     sizes=icon.sizes,
                 )
                 for icon in mcp_prompt.icons
@@ -575,7 +572,7 @@ class EmbeddedResource:
         return cls(
             uri=str(part.resource.uri),
             content=content,
-            mime_type=cast('str | None', get_mcp_field(part.resource, 'mimeType', 'mime_type')),
+            mime_type=mcp_optional_field(part.resource, 'mimeType', 'mime_type', str),
             annotations=ResourceAnnotations.from_mcp_sdk(part.annotations) if part.annotations else None,
             metadata=part.meta,
             resource_metadata=part.resource.meta,
@@ -665,15 +662,17 @@ class ServerCapabilities:
             experimental=list(mcp_capabilities.experimental.keys()) if mcp_capabilities.experimental else None,
             logging=mcp_capabilities.logging is not None,
             prompts=prompts_cap is not None,
-            prompts_list_changed=bool(get_mcp_field(prompts_cap, 'listChanged', 'list_changed'))
+            prompts_list_changed=bool(mcp_optional_field(prompts_cap, 'listChanged', 'list_changed', bool))
             if prompts_cap
             else False,
             resources=resources_cap is not None,
-            resources_list_changed=bool(get_mcp_field(resources_cap, 'listChanged', 'list_changed'))
+            resources_list_changed=bool(mcp_optional_field(resources_cap, 'listChanged', 'list_changed', bool))
             if resources_cap
             else False,
             tools=tools_cap is not None,
-            tools_list_changed=bool(get_mcp_field(tools_cap, 'listChanged', 'list_changed')) if tools_cap else False,
+            tools_list_changed=bool(mcp_optional_field(tools_cap, 'listChanged', 'list_changed', bool))
+            if tools_cap
+            else False,
             completions=mcp_capabilities.completions is not None,
         )
 
@@ -1176,20 +1175,23 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 # session that got torn down mid-setup.
                 async with AsyncExitStack() as exit_stack:
                     await exit_stack.enter_async_context(self.client)
-                    server_info = cast('mcp_types.Implementation | None', getattr(self.client, 'server_info', None))
-                    raw_server_capabilities = cast(
-                        'mcp_types.ServerCapabilities | None', getattr(self.client, 'server_capabilities', None)
-                    )
-                    instructions = cast('str | None', getattr(self.client, 'instructions', None))
-                    if server_info is None or raw_server_capabilities is None:
+                    # A modern (sessionless) session has no `initialize` handshake, so server
+                    # metadata comes from era-neutral client properties; older clients only
+                    # populate `initialize_result`.
+                    server_info = getattr(self.client, 'server_info', None)
+                    capabilities = getattr(self.client, 'server_capabilities', None)
+                    instructions = getattr(self.client, 'instructions', None)
+                    if isinstance(server_info, mcp_types.Implementation) and isinstance(
+                        capabilities, mcp_types.ServerCapabilities
+                    ):
+                        instructions = instructions if isinstance(instructions, str) else None
+                    else:
                         init_result = self.client.initialize_result
                         assert init_result is not None, 'FastMCP Client initialization returned no result'
-                        server_info = cast(
-                            'mcp_types.Implementation', get_mcp_field(init_result, 'serverInfo', 'server_info')
-                        )
-                        raw_server_capabilities = init_result.capabilities
+                        server_info = mcp_field(init_result, 'serverInfo', 'server_info', mcp_types.Implementation)
+                        capabilities = init_result.capabilities
                         instructions = init_result.instructions
-                    server_capabilities = ServerCapabilities.from_mcp_sdk(raw_server_capabilities)
+                    server_capabilities = ServerCapabilities.from_mcp_sdk(capabilities)
                     if self.log_level is not None:
                         if self.client.initialize_result is None:
                             raise exceptions.UserError(
@@ -1255,26 +1257,29 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         max_retries = self.max_retries if self.max_retries is not None else ctx.max_retries
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in await self.list_tools():
-            task_support = cast(
-                "Literal['required', 'optional', 'forbidden'] | None",
-                get_mcp_field(mcp_tool.execution, 'taskSupport', 'task_support') if mcp_tool.execution else None,
+            # FastMCP 4 omits `execution` from tool listings entirely, so task support reads as
+            # unknown and a task-only tool is called on the ordinary path. `direct_call_tool(...,
+            # use_task=True)` stays available as the explicit escape hatch until it advertises this.
+            task_support = (
+                mcp_optional_field(mcp_tool.execution, 'taskSupport', 'task_support', str)
+                if mcp_tool.execution
+                else None
             )
+            input_schema = mcp_validated_field(mcp_tool, 'inputSchema', 'input_schema', _JSON_SCHEMA_ADAPTER)
+            assert input_schema is not None, 'MCP tools always carry an input schema'
+            output_schema = mcp_validated_field(mcp_tool, 'outputSchema', 'output_schema', _JSON_SCHEMA_ADAPTER)
             tools[mcp_tool.name] = ToolsetTool[AgentDepsT](
                 toolset=self,
                 tool_def=ToolDefinition(
                     name=mcp_tool.name,
                     description=mcp_tool.description,
-                    parameters_json_schema=cast(
-                        'dict[str, Any]', get_mcp_field(mcp_tool, 'inputSchema', 'input_schema')
-                    ),
+                    parameters_json_schema=input_schema,
                     metadata={
                         'meta': mcp_tool.meta,
                         'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
                         'task': task_support in ('required', 'optional'),
                     },
-                    return_schema=cast(
-                        'dict[str, Any] | None', get_mcp_field(mcp_tool, 'outputSchema', 'output_schema') or None
-                    ),
+                    return_schema=output_schema or None,
                     include_return_schema=self.include_return_schema,
                 ),
                 max_retries=max_retries,
@@ -1584,16 +1589,6 @@ def _build_transport(
             '`headers`, `http_client`, `auth`, and `verify` only apply to HTTP transports built '
             'from a URL string. Pass them on your transport / `fastmcp.Client` directly instead.'
         )
-    if _MCP_SDK_V2 and http_client is not None:
-        raise ValueError(
-            '`http_client` uses `httpx`, which is incompatible with FastMCP 4 transports using `httpx2`; '
-            'pass a pre-built `fastmcp.Client` instead'
-        )
-    if _MCP_SDK_V2 and isinstance(auth, httpx.Auth):
-        raise ValueError(
-            '`auth` as an `httpx.Auth` instance is incompatible with FastMCP 4 transports using `httpx2`; '
-            'pass a token string, `"oauth"`, or a pre-built `fastmcp.Client` instead'
-        )
     if not needs_explicit_http:
         return client
     url = str(client)
@@ -1647,11 +1642,12 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
         ctx: Any,
     ) -> mcp_types.CreateMessageResult:
         pai_messages = _mcp.map_from_mcp_params(params)
-        model_settings = ModelSettings(max_tokens=cast(int, get_mcp_field(params, 'maxTokens', 'max_tokens')))
+        model_settings = ModelSettings(max_tokens=mcp_field(params, 'maxTokens', 'max_tokens', int))
         if (temperature := params.temperature) is not None:  # pragma: no branch
             model_settings['temperature'] = temperature
-        if (stop_sequences := get_mcp_field(params, 'stopSequences', 'stop_sequences')) is not None:
-            model_settings['stop_sequences'] = cast('list[str]', stop_sequences)
+        stop_sequences = mcp_validated_field(params, 'stopSequences', 'stop_sequences', _STOP_SEQUENCES_ADAPTER)
+        if stop_sequences is not None:
+            model_settings['stop_sequences'] = stop_sequences
 
         model_response = await model_request(sampling_model, pai_messages, model_settings=model_settings)
         return mcp_types.CreateMessageResult(
@@ -1727,12 +1723,12 @@ def _map_mcp_tool_result(part: mcp_types.ContentBlock) -> str | messages.BinaryC
     elif isinstance(part, mcp_types.ImageContent):
         return messages.BinaryImage(
             data=base64.b64decode(part.data),
-            media_type=cast(str, get_mcp_field(part, 'mimeType', 'mime_type')),
+            media_type=mcp_field(part, 'mimeType', 'mime_type', str),
         )
     elif isinstance(part, mcp_types.AudioContent):
         return messages.BinaryContent(  # pragma: no cover
             data=base64.b64decode(part.data),
-            media_type=cast(str, get_mcp_field(part, 'mimeType', 'mime_type')),
+            media_type=mcp_field(part, 'mimeType', 'mime_type', str),
         )
     elif isinstance(part, mcp_types.EmbeddedResource):
         return _resource_content_to_pai(part.resource)
@@ -1761,12 +1757,12 @@ def _map_mcp_binary_content(part: mcp_types.ImageContent | mcp_types.AudioConten
     if isinstance(part, mcp_types.ImageContent):
         return messages.BinaryImage(
             data=data,
-            media_type=cast(str, get_mcp_field(part, 'mimeType', 'mime_type')),
+            media_type=mcp_field(part, 'mimeType', 'mime_type', str),
             vendor_metadata=vendor_metadata,
         )
     return messages.BinaryContent(
         data=data,
-        media_type=cast(str, get_mcp_field(part, 'mimeType', 'mime_type')),
+        media_type=mcp_field(part, 'mimeType', 'mime_type', str),
         vendor_metadata=vendor_metadata,
     )
 
@@ -1793,7 +1789,7 @@ def _resource_content_to_pai(
         return messages.BinaryContent.narrow_type(
             messages.BinaryContent(
                 data=base64.b64decode(resource.blob),
-                media_type=cast(str, get_mcp_field(resource, 'mimeType', 'mime_type') or 'application/octet-stream'),
+                media_type=mcp_optional_field(resource, 'mimeType', 'mime_type', str) or 'application/octet-stream',
             )
         )
     else:
