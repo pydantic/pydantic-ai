@@ -34,6 +34,7 @@ from pydantic_ai import (
     RunUsage,
     TextPart,
     TextPartDelta,
+    Tool,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -3260,6 +3261,44 @@ async def test_dbos_durability_dynamic_capability_tool_runs_in_step(dbos: DBOS) 
     step_names = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
     assert 'dbos_dynamic_capability__dynamic_toolset__dyn.get_tools' in step_names
     assert 'dbos_dynamic_capability__dynamic_toolset__dyn.call_tool' in step_names
+
+
+async def test_dbos_durability_ignores_per_tool_metadata(dbos: DBOS) -> None:
+    """DBOS takes no per-tool config: tool metadata never opts a tool out of its step.
+
+    DBOS registers a step once per name and its tool-call step names carry no tool name, so
+    per-tool config can't be honored. Metadata that other engines read (`{'dbos': False}` would
+    be an opt-out under Prefect/Temporal's `_tool_config_key`) must leave the step in place --
+    dropping it would both un-checkpoint the call and shift the recorded step sequence, breaking
+    recovery of workflows recorded before this capability existed.
+    """
+    calls: list[str] = []
+
+    def opted_out_tool() -> str:
+        calls.append('called')
+        return 'dynamic result'
+
+    def factory(ctx: RunContext[Any]) -> Capability[Any]:
+        return Capability(tools=[Tool(opted_out_tool, metadata={'dbos': False})])
+
+    agent = Agent(
+        TestModel(),
+        name='dbos_metadata_ignored',
+        capabilities=[DynamicCapability(factory, id='dyn'), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Call the tool')).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_agent()
+
+    assert output == '{"opted_out_tool":"dynamic result"}'
+    assert calls == ['called']
+    step_names = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+    assert 'dbos_metadata_ignored__dynamic_toolset__dyn.call_tool' in step_names
 
 
 def test_dbos_durability_dynamic_capability_requires_id(dbos: DBOS) -> None:

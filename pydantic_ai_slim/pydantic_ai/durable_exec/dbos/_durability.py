@@ -58,7 +58,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset({'mcp', 'dynamic'})
     _wrapped_toolset_kinds: ClassVar[frozenset[ToolsetKind]] = frozenset({'mcp', 'dynamic'})
     _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
-        'function': 'enter-never',
         'mcp': 'enter-never',
         'dynamic': 'enter-never',
     }
@@ -67,7 +66,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
     _durable_unit_noun = 'step'
     _durable_container_noun = 'workflow'
-    _tool_config_key = 'dbos'
+    # No `_tool_config_key`: DBOS takes no per-tool config, and tool metadata is ignored (as it was
+    # before this capability existed). It can't be supported without changing durable history: a step
+    # is registered once per name, and DBOS tool-call step names deliberately carry no tool name
+    # (every tool in a toolset shares one step), so per-tool config would be first-tool-wins.
 
     def __init__(
         self,
