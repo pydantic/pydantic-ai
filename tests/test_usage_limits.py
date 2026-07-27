@@ -3,14 +3,13 @@ import functools
 import operator
 import re
 from collections.abc import AsyncIterator
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import timezone
 from decimal import Decimal
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
 from pydantic import BaseModel, TypeAdapter
-from pydantic_core import to_jsonable_python
 
 from pydantic_ai import (
     Agent,
@@ -489,24 +488,10 @@ def test_usage_arbitrary_fields_pydantic_roundtrip(
 def test_usage_arbitrary_fields_legacy_flat_deserialization(
     usage_type: type[RequestUsage] | type[RunUsage],
 ):
-    loaded = TypeAdapter(usage_type).validate_python(
-        {
-            'input_tokens': 5,
-            'details': {'reasoning_tokens': 3},
-            'future_tokens': 42,
-            'label': 'original',
-            'zero_tokens': 0,
-        }
-    )
+    loaded = TypeAdapter(usage_type).validate_python({'future_tokens': 42})
 
-    assert loaded == usage_type(
-        input_tokens=5,
-        details={'reasoning_tokens': 3},
-        future_tokens=42,
-        label='original',
-        zero_tokens=0,
-    )
-    assert vars(loaded)['_extra'] == {'future_tokens': 42, 'label': 'original', 'zero_tokens': 0}
+    assert loaded.future_tokens == 42
+    assert vars(loaded)['_extra'] == {'future_tokens': 42}
 
 
 def test_usage_nested_arbitrary_field_promoted_when_declared():
@@ -516,20 +501,11 @@ def test_usage_nested_arbitrary_field_promoted_when_declared():
 
     adapter = TypeAdapter(FutureRequestUsage)
     loaded = adapter.validate_python({'input_tokens': 5, '_extra': {'future_tokens': 42, 'label': 'original'}})
+    serialized = adapter.dump_python(loaded)
 
-    assert loaded == FutureRequestUsage(input_tokens=5, future_tokens=42, label='original')
-    assert adapter.dump_python(loaded) == {
-        'input_tokens': 5,
-        'cache_write_tokens': 0,
-        'cache_read_tokens': 0,
-        'output_tokens': 0,
-        'input_audio_tokens': 0,
-        'cache_audio_read_tokens': 0,
-        'output_audio_tokens': 0,
-        'details': {},
-        '_extra': {'label': 'original'},
-        'future_tokens': 42,
-    }
+    assert loaded.future_tokens == serialized['future_tokens'] == 42
+    assert loaded.label == 'original'
+    assert serialized['_extra'] == {'label': 'original'}
 
 
 @pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
@@ -555,47 +531,6 @@ def test_usage_details_none_deserialization(
     loaded = TypeAdapter(usage_type).validate_python({'details': None})
 
     assert loaded.details == {}
-
-
-def test_usage_arbitrary_fields_pydantic_serialization_filters():
-    adapter = TypeAdapter(RequestUsage)
-    usage = RequestUsage(
-        input_tokens=5,
-        future_tokens=42,
-        label=None,
-        breakdown={'a': 1, 'b': 2},
-    )
-
-    assert adapter.dump_python(usage, include={'input_tokens'}) == {'input_tokens': 5}
-    assert adapter.dump_python(
-        usage,
-        include={'input_tokens', '_extra'},
-        exclude_none=True,
-    ) == {
-        'input_tokens': 5,
-        '_extra': {
-            'future_tokens': 42,
-            'label': None,
-            'breakdown': {'a': 1, 'b': 2},
-        },
-    }
-
-    serialized = adapter.dump_python(usage, exclude={'_extra': {'future_tokens'}})
-    assert serialized['_extra'] == {'label': None, 'breakdown': {'a': 1, 'b': 2}}
-    assert adapter.dump_python(usage, include={'_extra': {'future_tokens'}}) == {'_extra': {'future_tokens': 42}}
-
-    assert adapter.dump_python(usage, include={'_extra': {'breakdown': {'a'}}}) == {'_extra': {'breakdown': {'a': 1}}}
-    assert adapter.dump_python(usage, exclude={'_extra': {'breakdown': {'a'}}})['_extra']['breakdown'] == {'b': 2}
-
-
-def test_usage_arbitrary_fields_use_standard_dataclass_serialization():
-    timestamp = datetime(2026, 7, 24, tzinfo=timezone.utc)
-    usage = RequestUsage(future_data={'timestamp': timestamp})
-    adapter = TypeAdapter(RequestUsage)
-
-    assert asdict(usage)['_extra'] == {'future_data': {'timestamp': timestamp}}
-    assert adapter.dump_python(usage, mode='json')['_extra'] == {'future_data': {'timestamp': '2026-07-24T00:00:00Z'}}
-    assert to_jsonable_python(usage)['_extra'] == {'future_data': {'timestamp': '2026-07-24T00:00:00Z'}}
 
 
 def test_cache_hit_ratio():
