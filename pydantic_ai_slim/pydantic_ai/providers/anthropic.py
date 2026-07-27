@@ -35,6 +35,17 @@ AsyncAnthropicClient: TypeAlias = (
     AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle | AsyncAnthropicFoundry | AsyncAnthropicVertex
 )
 
+_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-4-8',
+    'claude-sonnet-5',
+)
+"""Models that accept a `{'role': 'system'}` entry inside the Messages API's `messages` array.
+
+Older models reject it with `role 'system' is not supported on this model`.
+"""
+
 
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
     """Provider for Anthropic API."""
@@ -62,7 +73,17 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         if bedrock_provider == 'anthropic':
             model_name = base_model_name
         profile = anthropic_model_profile(model_name)
-        return merge_profile(AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer), profile)
+        return merge_profile(
+            AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer),
+            profile,
+            # Inline system prompts are a fact about the Messages API rather than about the model
+            # family, so they're set here instead of in `anthropic_model_profile()`: the Bedrock
+            # Converse API and the OpenAI-compatible gateways that route the same models hoist a
+            # non-leading system prompt into their own top-level system field, losing its position.
+            AnthropicModelProfile(
+                supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES)
+            ),
+        )
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...

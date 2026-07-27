@@ -494,6 +494,31 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 - Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
 
+## Mid-conversation system messages
+
+Adding an instruction to the agent's `system_prompt` partway through a long session rewrites the front of the prompt, which invalidates every cached prefix behind it. Anthropic avoids that by accepting a system message *inside* the conversation, at the instruction's own position in the history rather than ahead of it, so everything cached up to that point stays cached.
+
+Any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] outside the first [`ModelRequest`][pydantic_ai.messages.ModelRequest] is a mid-conversation instruction — whether it came from a stored `message_history` or from [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] during a run. There's nothing extra to turn on:
+
+```python {title="mid_conversation_system_prompt.py"}
+from pydantic_ai import Agent, RunContext, SystemPromptPart
+
+agent = Agent('anthropic:claude-opus-4-8', system_prompt='You are a code reviewer.')
+
+
+@agent.tool
+def require_type_annotations(ctx: RunContext[None]) -> str:
+    ctx.enqueue(SystemPromptPart(content='Every suggestion must include explicit type annotations.'))
+    return 'rule added'
+```
+
+**Claude Opus 4.8**, **Claude Sonnet 5**, **Claude Fable 5**, and **Claude Mythos 5** accept the `system` role, and only on the direct Anthropic API and Claude Platform on AWS. There the instruction carries system-level authority for the turns that follow it, and takes precedence over the top-level system prompt where the two disagree. On every other model or client — including the [AWS Bedrock](#aws-bedrock), [Google Cloud](#google-cloud), and [Microsoft Foundry](#microsoft-foundry) integrations — it's sent as a `<system>`-tagged user message at the same position instead, so it still applies where you put it, as a strong preference rather than an operator rule.
+
+See the [message history docs](../message-history.md#using-messages-as-input-for-further-agent-runs) for how mid-conversation system prompts behave across providers generally.
+
+!!! note "Placement"
+    Anthropic requires a system message to follow a user turn, so on a supported model an instruction that arrives with no user content alongside it — an enqueued instruction on a run that then ends, say — falls back to the `<system>`-tagged rendering too. Pair the instruction with the turn it should govern where the distinction matters.
+
 ## Fast mode
 
 Fast mode provides higher output tokens per second and is currently supported on **Claude Opus 4.6**, **Claude Opus 4.7**, and **Claude Opus 4.8**. It is a research preview. Set [`anthropic_speed`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_speed] to `'fast'` to enable it; Pydantic AI automatically adds the required `fast-mode-2026-02-01` beta. On unsupported models, `anthropic_speed='fast'` is ignored with a `UserWarning`. For pricing, rate limits, and the latest list of supported models, see the [Anthropic fast mode docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode).

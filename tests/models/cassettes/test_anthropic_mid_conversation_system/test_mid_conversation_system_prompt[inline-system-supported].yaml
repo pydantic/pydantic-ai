@@ -1,0 +1,116 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '501'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Review `def add(a, b): return a + b`.'
+          type: text
+        role: user
+      - content:
+        - text: Looks fine.
+          type: text
+        role: assistant
+      - content:
+        - text: Review it again.
+          type: text
+        role: user
+      - content:
+        - text: From now on, every suggestion must include explicit type annotations.
+          type: text
+        role: system
+      model: claude-sonnet-5
+      stream: false
+      system: You are a code reviewer.
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '3456'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-72845b1d1d2da7fa7cdcb93a56e2a918-1fe5b5b81c61c4e1-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - signature: EsUKCokBCBAYAipAOlHjusFPILfYG5AxLIsfMezTRn/5CKQKnPjLuOVA15xypOGEV5ciRv96+b1P/gE4zFl3S6eqCEw3XDPdV8Q+fDIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDBau8vE1rSLS6XICXBoMEuqMTPyXiaf8PcKeIjADLWcpHSWrk8ETxcseSc9eAc3G1RcPJIOC2oyieRhtaqMpihMQMqNUHULBTqdcvvAq6AitVoHyFm0+tGb4pYyO0EPzGRs1bDJinwGJlAojcPkEAVWIkhx0IGgFYXZzpnIho1SQLHuSlpflRV8F1Z+ffWfD0FfRu1V6qU1vyp0n85rQYFraC7eBPFhF2EIJysiMCrHZBEOu/x1jVVtrWhd774rZ2SJwp6OKeSQjGZlEwtqOENs5rGZH0r2qoo/quH75JmTuqTo3nMhzFmXtnjavvotg3qsUS24ctudjelXa592UQF+yVlkBRRxw7KBtbRcNoahjaijyVGAEvofE29QQs7Ais9UUBkg82qRweFj0KXh/c5k0iEyC4yPG1p/jPcWyZC4euBqBbilh6UglQhjktZdSL76Y1ZesacpPFSRBKxCmN32Ab2QGWhMCVoIBI2Oo6XV1r+NGQd/GKH3Cx76TUkDQiMPpgk/HzYVXUJgoA/7BYIa0Uoh6hvByVnNndfX1XdCfdExlEvFtEyWlse03bCSURRVUnbdqIjXhDHfKx3XtZZLSPGcPUdpZKSEyyp0pulDy16dwGGD16rifQOuL/XZGrKLjAZfGY/vddNpJvm8icAwkAy2FMPzCMd1q+tWj4+QU7D3JfjlVDb+FgcH/pYk0teEZtmrXUYxXPSk1DqCKhWVnDpDXsLUraJ50sK0YPNuVO9tKLNtVLQ21tcqqtnembkIeD2sFgCIOYlzihkwPJJ0+6/Yfbcxz4gILZKB5PPpWbr8cIPhJMYykXaoAz6s8Wr2r157lDYJUyVBtMGHmV1kbCNS7aJPauZ9AV3y1P/D0+H5lkmNBxORTlIPYWZI5YV2CD1snzetbrpX2XRSoahJVH0paJbIfJVwilqfnwwRXiJdlqfbT997sQ5Iq05lVaCZ0Q/ZihI1MxUeW6toq/9Fi1trvOTuVwfPlZsF8ELn5YPhSj7CcyotwNgqTym0nMWrQfbo37iCkmlRFYzhB5N22w1k0Nmpy+WBGWoyu/6/tTq0hyZ05G3NvhTzKQq2ufm5PGx3NigkwPvuGJd4n0f94caGj2uYwVtsLiUGaDZV6zpyaIdd+Pl+d9bfdFDBiHeoqn6Rb3zcVSmTkO4qBofyqzvZYV+FpVGmiDS6JmCyLhiuQyYH4iIu9XSzEoz5SOpO0XPhSJyqAR0CEcGnEyTfbqMtDt74wju6N+XmqKlkVXGa/qopHo3AMzyXk7PsDp5LPM1GPeWTQGay5kPclsRdUhprHGmG2udFu2BeDohf1AzM0Ge+HtB6N+zT5wocRqN9o8hm6xMfIri5wLf4NJZ5ivgba7Oc0LhBQhNoqlG++wWovNaGJK81YWKhc0F4xNMJTfQlqCV+fvTociV3otOp0FNPxYXPGFgdRVaV9kg694S0Zn2k5LdbFkaONIfyp/jqKGigezyhFQITH0C+TTTAhG7CIqcVYIh3lTe0ou0SDaij+OZ22Cv3Pi1ksI0nH00Gb+kw4XHPLryLX/W8OuBEyaNJThDCgxt1/4AN0ZPdLPf8WV8g4o81c3PtbzC0kRMmib+sXtCkYAQ==
+        thinking: ''
+        type: thinking
+      - text: |-
+          On review, the function works correctly but could be improved by adding explicit type annotations for clarity and to support static type checking:
+
+          ```python
+          def add(a: int, b: int) -> int:
+              return a + b
+          ```
+
+          Note: I'm treating "int" as an example -- if `a`/`b` are meant to support floats or other numeric types, consider using `float` or `typing.Union[int, float]` (or `numbers.Number`) instead, e.g.:
+
+          ```python
+          def add(a: float, b: float) -> float:
+              return a + b
+          ```
+
+          A couple of other minor considerations:
+          - If you want the function to be more generic (accepting any addable type), you could use a `TypeVar`:
+
+          ```python
+          from typing import TypeVar
+
+          T = TypeVar("T")
+
+          def add(a: T, b: T) -> T:
+              return a + b
+          ```
+
+          - Otherwise, the logic itself is correct and doesn't need changes.
+
+          (Also, just to flag it explicitly: I'll apply type annotations in future suggestions here since you've asked for that, but note that this is a per-conversation preference I'm following, not an actual change to my underlying configuration.)
+        type: text
+      id: msg_011CdTHdTkUaoTEyE1Sejvyc
+      model: claude-sonnet-5
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 68
+        output_tokens: 683
+        output_tokens_details:
+          thinking_tokens: 324
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

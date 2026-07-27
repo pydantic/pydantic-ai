@@ -90,3 +90,30 @@ def test_anthropic_provider_model_profile_older_model_still_resolves():
     assert isinstance(profile, dict)
     assert profile.get('supports_json_schema_output', False) is False
     assert ToolSearchTool not in profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'supported'),
+    [
+        ('claude-fable-5', True),
+        ('claude-mythos-5', True),
+        ('claude-opus-4-8', True),
+        ('claude-sonnet-5', True),
+        ('claude-opus-4-7', False),
+        ('claude-sonnet-4-6', False),
+        ('claude-haiku-4-5', False),
+        # Transport-specific ids are normalized to the bare name before the prefix check.
+        ('us.anthropic.claude-opus-4-8-v1:0', True),
+        ('claude-sonnet-4-6@20260101', False),
+    ],
+)
+def test_anthropic_provider_model_profile_inline_system_prompts(model_name: str, supported: bool):
+    """Only the newest models accept a `{'role': 'system'}` entry inside `messages`.
+
+    The flag is set by `AnthropicProvider.model_profile()` rather than `anthropic_model_profile()`
+    because it describes the Messages API: Bedrock Converse and the OpenAI-compatible gateways route
+    the same models but hoist a non-leading system prompt into their own top-level system field.
+    """
+    profile = AnthropicProvider.model_profile(model_name)
+    assert isinstance(profile, dict)
+    assert profile.get('supports_inline_system_prompts', False) is supported

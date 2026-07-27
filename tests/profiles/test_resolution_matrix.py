@@ -89,6 +89,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'supports_json_schema_output': False,
     'supports_json_object_output': False,
     'supports_image_output': False,
+    'supports_inline_system_prompts': False,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': dedent(
         """

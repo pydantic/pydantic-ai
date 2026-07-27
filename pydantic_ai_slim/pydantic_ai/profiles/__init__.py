@@ -78,6 +78,10 @@ class ModelProfile(TypedDict, total=False):
     When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
     `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
     provider's top-level system parameter.
+
+    APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
+    to follow a user turn) still set this to `True`; their model adapters fall back to the same
+    `<system>...</system>` rendering for the positions the API rejects.
     """
 
     default_structured_output_mode: StructuredOutputMode

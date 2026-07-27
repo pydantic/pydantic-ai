@@ -576,9 +576,10 @@ def enter_incident_mode(ctx: RunContext[None]) -> str:
 The `'asap'` message is appended to the agent's message history and is visible to the
 model on the next request, alongside any tool returns from the same step. A
 [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is delivered the same way; on
-providers that hoist system prompts (e.g. Anthropic, Google) a non-leading one is sent as a
-`<system>`-tagged user-role message, so it keeps its mid-conversation position rather than being
-lifted to the top.
+providers that hoist system prompts (e.g. Google, and Anthropic outside the models that support
+[mid-conversation system messages](models/anthropic.md#mid-conversation-system-messages)) a
+non-leading one is sent as a `<system>`-tagged user-role message, so it keeps its mid-conversation
+position rather than being lifted to the top.
 
 ### From external code driving `agent.iter()`
 

@@ -267,6 +267,10 @@ _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropic
 # Foundry. `AsyncAnthropicBedrockMantle` isn't a subclass of `AsyncAnthropicBedrock`, so the plain
 # isinstance tuple keeps it supported.
 _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, AsyncAnthropicFoundry)
+# Mid-conversation `{'role': 'system'}` messages are available on the direct Anthropic API and Claude
+# Platform on AWS (`AsyncAnthropicBedrockMantle`) only, so on the other transports a non-leading
+# `SystemPromptPart` keeps the `<system>`-tagged user rendering it gets on every other model.
+_INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, AsyncAnthropicFoundry)
 
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
@@ -1504,12 +1508,27 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # name still lives in history; it just isn't worth replaying as a tool reference.
         available_tool_names = {t.name for t in model_request_parameters.function_tools}
         orphan_tool_search_call_ids = _collect_orphan_tool_search_call_ids(messages)
+        # `SystemPromptPart`s in the first request are the run's own system prompt and always hoist to the
+        # top-level `system` parameter. Later ones are mid-conversation operator instructions: when the
+        # profile advertises `supports_inline_system_prompts` they reach us verbatim (rather than
+        # `<system>`-tagged by `prepare_messages`) and it's on us to render them, as a `{'role': 'system'}`
+        # entry where the API takes one, so that adding an instruction leaves the cached prefix the
+        # top-level `system` parameter sits in untouched.
+        inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
+        client_supports_inline_system_prompts = not isinstance(self.client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS)
+        leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
+                # Mid-conversation system prompts, each with the index in `user_content_params` it'd be
+                # rendered at if it has to fall back to the `<system>`-tagged shape.
+                mid_conversation_system_prompts: list[tuple[int, str]] = []
                 for request_part in m.parts:
                     if isinstance(request_part, SystemPromptPart):
-                        system_prompt_parts.append(request_part.content)
+                        if not inline_system_prompts or m is leading_request:
+                            system_prompt_parts.append(request_part.content)
+                        else:
+                            mid_conversation_system_prompts.append((len(user_content_params), request_part.content))
                     elif isinstance(request_part, UserPromptPart):
                         async for content in self._map_user_prompt(request_part):
                             if isinstance(content, CachePoint):
@@ -1592,8 +1611,31 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 is_error=True,
                             )
                         user_content_params.append(retry_param)
+                if mid_conversation_system_prompts and not (
+                    client_supports_inline_system_prompts and user_content_params
+                ):
+                    # The API requires a system entry to follow a user turn (and rejects one in leading
+                    # position), so without a user turn from this request — e.g. a system prompt enqueued
+                    # after the model's last response — the instruction degrades to the `<system>`-tagged
+                    # text that models without inline system prompt support get, as it does on the
+                    # transports that don't serve the `system` role at all.
+                    for offset, (index, content) in enumerate(mid_conversation_system_prompts):
+                        user_content_params.insert(
+                            index + offset, BetaTextBlockParam(text=f'<system>{content}</system>', type='text')
+                        )
+                    mid_conversation_system_prompts = []
                 if len(user_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
+                if mid_conversation_system_prompts:
+                    anthropic_messages.append(
+                        BetaMessageParam(
+                            role='system',
+                            content=[
+                                BetaTextBlockParam(text=content, type='text')
+                                for _, content in mid_conversation_system_prompts
+                            ],
+                        )
+                    )
             elif isinstance(m, ModelResponse):
                 assistant_content_params: list[
                     BetaTextBlockParam
