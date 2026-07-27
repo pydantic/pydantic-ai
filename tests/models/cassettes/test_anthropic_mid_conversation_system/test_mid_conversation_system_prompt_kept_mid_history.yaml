@@ -1,0 +1,108 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '709'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Review `def add(a, b): return a + b`.'
+          type: text
+        role: user
+      - content:
+        - text: Looks fine.
+          type: text
+        role: assistant
+      - content:
+        - text: Review it again.
+          type: text
+        role: user
+      - content:
+        - text: From now on, every suggestion must include explicit type annotations.
+          type: text
+        role: system
+      - content:
+        - text: 'def add(a: int, b: int) -> int: return a + b'
+          type: text
+        role: assistant
+      - content:
+        - text: 'Now do `def mul(a, b): return a * b`.'
+          type: text
+        role: user
+      model: claude-sonnet-5
+      stream: false
+      system: You are a code reviewer.
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '3266'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-a784e255485b102964aed88ef847d527-1797cccf3a848d25-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - signature: 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
+        thinking: ''
+        type: thinking
+      - text: |-
+          ```python
+          def mul(a: int, b: int) -> int: return a * b
+          ```
+
+          Review notes:
+          - Logic is correct -- straightforward multiplication.
+          - I added type annotations per your earlier request, but note: restricting to `int` means this won't type-check cleanly if you ever pass `float`s. If you want it to work for both, consider `int | float` (or just `float`, since `int` is a subtype-compatible in practice for arithmetic):
+
+          ```python
+          def mul(a: float, b: float) -> float: return a * b
+          ```
+
+          Let me know which behavior you actually want (strict `int`-only vs. numeric-general) and I'll finalize the signature.
+        type: text
+      id: msg_011CdTQddvE91JjAXzsaHBFp
+      model: claude-sonnet-5
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 109
+        output_tokens: 585
+        output_tokens_details:
+          thinking_tokens: 373
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

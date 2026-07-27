@@ -1517,7 +1517,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
         client_supports_inline_system_prompts = not isinstance(self.client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS)
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
-        for message_index, m in enumerate(messages):
+        # Each emitted `system` entry's index, paired with the `<system>`-tagged blocks that replace
+        # it if it turns out not to be followed by an assistant turn.
+        system_message_fallbacks: list[tuple[int, list[BetaTextBlockParam]]] = []
+        for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
                 # Mid-conversation system prompts, each with the index in `user_content_params` it'd be
@@ -1611,20 +1614,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 is_error=True,
                             )
                         user_content_params.append(retry_param)
-                next_message = messages[message_index + 1] if message_index + 1 < len(messages) else None
                 if mid_conversation_system_prompts and not (
-                    client_supports_inline_system_prompts
-                    and user_content_params
-                    # A system entry has to be followed by an assistant turn, or end the array and feed
-                    # the generation; another request following this one would put a user turn after it.
-                    and not isinstance(next_message, ModelRequest)
+                    client_supports_inline_system_prompts and user_content_params
                 ):
                     # The API only takes a system entry sandwiched between a user turn and an assistant
-                    # turn (or the end of the array), so where this request can't provide that — e.g. a
-                    # system prompt enqueued after the model's last response, leaving no user turn to
-                    # follow — the instruction degrades to the `<system>`-tagged text that models without
-                    # inline system prompt support get, as it does on the transports that don't serve the
-                    # `system` role at all.
+                    # turn (or the end of the array), so without a user turn from this request — e.g. a
+                    # system prompt enqueued after the model's last response — the instruction degrades
+                    # to the `<system>`-tagged text that models without inline system prompt support get,
+                    # as it does on the transports that don't serve the `system` role at all. The other
+                    # half of the placement rule (what *follows* the entry) can't be judged from here and
+                    # is settled by `_relocate_unfollowed_system_messages` once everything is rendered.
                     for offset, (index, content) in enumerate(mid_conversation_system_prompts):
                         user_content_params.insert(
                             index + offset, BetaTextBlockParam(text=f'<system>{content}</system>', type='text')
@@ -1633,6 +1632,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if len(user_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
                 if mid_conversation_system_prompts:
+                    system_message_fallbacks.append(
+                        (
+                            len(anthropic_messages),
+                            [
+                                BetaTextBlockParam(text=f'<system>{content}</system>', type='text')
+                                for _, content in mid_conversation_system_prompts
+                            ],
+                        )
+                    )
                     anthropic_messages.append(
                         BetaMessageParam(
                             role='system',
@@ -1929,6 +1937,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
+
+        _relocate_unfollowed_system_messages(anthropic_messages, system_message_fallbacks)
 
         if pending_container_uploads:
             upload_blocks = [
@@ -3056,6 +3066,33 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             provider_details=_anthropic_caller_provider_details(item.caller) or None,
         )
     assert_never(item.name)
+
+
+def _relocate_unfollowed_system_messages(
+    anthropic_messages: list[BetaMessageParam], fallbacks: list[tuple[int, list[BetaTextBlockParam]]]
+) -> None:
+    """Fold back any `system` entry that didn't end up followed by an assistant turn.
+
+    A `{'role': 'system'}` entry is only accepted between a user turn and an assistant turn, or at
+    the end of the array where it feeds the generation. Whether an assistant turn follows can't be
+    decided while mapping: a `ModelResponse` whose parts all drop out (an empty `TextPart`, an
+    orphan tool-search call) renders to nothing, so reading ahead in the message list would call
+    the placement legal where the wire says otherwise. Deciding it here, against what was actually
+    rendered, is the only way to get it right.
+
+    `fallbacks` pairs each emitted entry's index with the `<system>`-tagged blocks to put in its
+    place — the same degradation unsupported models get. Walking it in reverse keeps the earlier
+    indexes valid as later entries are removed.
+    """
+    for index, fallback_blocks in reversed(fallbacks):
+        if index + 1 < len(anthropic_messages) and anthropic_messages[index + 1]['role'] == 'assistant':
+            continue
+        # A system entry is only ever emitted directly after a user message with content, so the
+        # merge target is there and holds a block list rather than a bare string.
+        preceding_content = anthropic_messages[index - 1]['content']
+        assert not isinstance(preceding_content, str)
+        anthropic_messages[index - 1]['content'] = [*preceding_content, *fallback_blocks]
+        del anthropic_messages[index]
 
 
 def _collect_orphan_tool_search_call_ids(messages: list[ModelMessage]) -> set[str]:

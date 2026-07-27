@@ -278,6 +278,89 @@ async def test_mid_conversation_system_prompt_before_another_request(
     )
 
 
+async def test_mid_conversation_system_prompt_kept_mid_history(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    """An instruction with a real response after it keeps the native entry, mid-history.
+
+    This is the shape a stored conversation replays on every later turn — the entry sits between the
+    user turn it arrived with and the assistant turn it governed, and stays there as the history
+    grows past it. The cheap alternative (only allow the entry in trailing position) would
+    re-render the whole conversation's instructions on every request, which is the cache churn the
+    feature exists to avoid.
+    """
+    model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    history = message_history()
+    # Pair the instruction with a user turn, so it takes the native entry rather than the fallback.
+    history[-1] = ModelRequest(
+        parts=[SystemPromptPart(content=INSTRUCTION), UserPromptPart(content='Review it again.')]
+    )
+
+    response = await model.request(
+        [
+            *history,
+            ModelResponse(parts=[TextPart(content='def add(a: int, b: int) -> int: return a + b')]),
+            ModelRequest(parts=[UserPromptPart(content='Now do `def mul(a, b): return a * b`.')]),
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+    reply = response.parts[-1]
+    assert isinstance(reply, TextPart)
+    assert 'def mul(a: int, b: int) -> int:' in reply.content
+
+    body = single_request_body(vcr)
+    assert [message['role'] for message in body['messages']] == snapshot(
+        ['user', 'assistant', 'user', 'system', 'assistant', 'user']
+    )
+    assert body['messages'][3] == snapshot(
+        {
+            'content': [
+                {'text': 'From now on, every suggestion must include explicit type annotations.', 'type': 'text'}
+            ],
+            'role': 'system',
+        }
+    )
+
+
+async def test_mid_conversation_system_prompt_before_empty_response(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    """A `ModelResponse` that renders to nothing doesn't count as the assistant turn to follow.
+
+    A response whose parts all drop out — here an empty `TextPart` — appends no assistant message,
+    so a request after it lands directly behind the system entry and the API rejects the whole
+    thing. Reading ahead in the message list would call this placement legal; only checking what was
+    actually rendered gets it right, which is why the decision is a pass over the wire messages.
+    """
+    model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    response = await model.request(
+        [
+            *message_history(),
+            ModelResponse(parts=[TextPart(content='')]),
+            ModelRequest(parts=[UserPromptPart(content='Review it once more.')]),
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+    reply = response.parts[-1]
+    assert isinstance(reply, TextPart)
+    assert 'def add(a: int, b: int) -> int:' in reply.content
+
+    body = single_request_body(vcr)
+    assert [message['role'] for message in body['messages']] == snapshot(['user', 'assistant', 'user', 'user'])
+    assert body['messages'][2]['content'] == snapshot(
+        [
+            {
+                'text': '<system>From now on, every suggestion must include explicit type annotations.</system>',
+                'type': 'text',
+            }
+        ]
+    )
+
+
 async def test_mid_conversation_system_prompt_unsupported_client(
     allow_model_requests: None, anthropic_bedrock_client: AsyncAnthropicBedrock, vcr: Cassette
 ):
