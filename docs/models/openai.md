@@ -384,6 +384,40 @@ The mode is inferred from which parameters you pass: supplying `message_count_th
 
 For lower-level use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model.
 
+### Text phases
+
+Models that support it label each assistant message with a `phase`: `commentary` for the preamble the model writes while it works, and `final_answer` for the answer itself. Pydantic AI surfaces it as `'phase'` in [`TextPart.provider_details`][pydantic_ai.messages.TextPart.provider_details], and sends it back on the next request so the model keeps the distinction across turns.
+
+When [streaming](../agent.md#streaming-all-events), the phase is set on the [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] that opens each text part (including its first content chunk), so you can route commentary and the final answer differently as they're generated. Prefer [`run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events] for this: [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] treats the first text part as the final output, which is often `commentary` on models that emit a preamble.
+
+```python {title="openai_phase.py"}
+from pydantic_ai import Agent, PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta
+
+agent = Agent('openai:gpt-5.5')
+
+
+async def main():
+    final_answer_indexes: set[int] = set()
+    async with agent.run_stream_events('What is the capital of France?') as events:
+        async for event in events:
+            if isinstance(event, PartStartEvent):
+                # Indexes are scoped to a single model response and start over on the
+                # next one, so a new part at an index supersedes what was there before.
+                final_answer_indexes.discard(event.index)
+                if isinstance(event.part, TextPart):
+                    phase = (event.part.provider_details or {}).get('phase')
+                    if phase == 'final_answer':
+                        final_answer_indexes.add(event.index)
+                        print(event.part.content)
+            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                if event.index in final_answer_indexes:
+                    print(event.delta.content_delta)
+```
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+On models that don't label their output, per [`OpenAIModelProfile.openai_supports_phase`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_phase], `provider_details` has no `'phase'` key and nothing is sent back.
+
 ### Background mode
 
 For long-running requests, such as large reasoning or tool-heavy jobs that may exceed the practical duration of a synchronous request, OpenAI's Responses API offers a [background mode](https://platform.openai.com/docs/guides/background) that runs the request server-side and lets you retrieve the result once it's ready. Enable it with [`openai_background`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_background]:
