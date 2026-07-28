@@ -34,6 +34,11 @@ safe-outputs:
   jobs:
     record-attention-decision:
       description: "Classify one bounded candidate for deterministic host-side policy."
+      # One decision per candidate, and the host script rejects any run that does
+      # not classify every candidate exactly once. Must stay >= `_CANDIDATE_LIMIT`
+      # in .github/scripts/issue_pr_attention_monitor.py — the default of 1 silently
+      # drops the other 9 classifications and fails the run.
+      max: 10
       runs-on: ubuntu-latest
       if: needs.detection.result == 'success' && needs.detection.outputs.detection_success == 'true'
       permissions:

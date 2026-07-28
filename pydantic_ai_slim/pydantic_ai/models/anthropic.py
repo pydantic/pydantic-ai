@@ -291,11 +291,11 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 LatestAnthropicModelNames = ModelParam
 """Anthropic model names from the installed SDK."""
 
-# TODO(anthropic): drop the `claude-sonnet-5` literal once the `anthropic` floor is bumped past the
-# SDK release that adds it to `ModelParam` (installed 0.109.0 still lags). See
+# TODO(anthropic): drop these literals once the `anthropic` floor is bumped past the SDK release
+# that adds them to `ModelParam` (installed 0.109.0 still lags). See
 # https://github.com/pydantic/pydantic-ai/pull/5849 for the same
 # bridge-then-drop pattern applied to `claude-fable-5`.
-AnthropicModelName = LatestAnthropicModelNames | Literal['claude-sonnet-5']
+AnthropicModelName = LatestAnthropicModelNames | Literal['claude-sonnet-5', 'claude-opus-5']
 """Possible Anthropic model names.
 
 The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
@@ -414,11 +414,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
     anthropic_task_budget: AnthropicTaskBudget
-    """Task budget configuration for Claude Opus 4.7 / 4.8 beta requests.
+    """Task budget configuration for Anthropic beta requests.
 
-    Maps to `output_config.task_budget`. This setting is currently only supported on
-    `claude-opus-4-7` and `claude-opus-4-8`, and Pydantic AI automatically enables
-    Anthropic's required task-budget beta when it is present.
+    Maps to `output_config.task_budget`. Supported models are gated by the
+    [`anthropic_supports_task_budgets`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_task_budgets]
+    profile flag, and Pydantic AI automatically enables Anthropic's required task-budget beta when
+    this setting is present.
 
     Omit `remaining` unless you are intentionally carrying a budget across compaction
     or other rewritten context.
@@ -466,7 +467,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     anthropic_speed: Literal['standard', 'fast']
     """The inference speed mode for this request.
 
-    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6, 4.7, and 4.8).
+    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6, 4.7, 4.8, and 5).
     On unsupported models or clients, `anthropic_speed='fast'` is ignored with a `UserWarning`.
     Fast mode is a research preview and only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
     see [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for details.
@@ -635,6 +636,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> usage.RequestUsage:
+        check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -2317,6 +2319,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False),
             )
 
+        if effort is not None:
+            self._validate_effort_vs_disabled_thinking(effort, model_settings)
+
         task_budget = self._get_task_budget(model_settings)
 
         if output_format is None and effort is None and task_budget is None:
@@ -2331,6 +2336,27 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             config['task_budget'] = task_budget
         return config
 
+    def _validate_effort_vs_disabled_thinking(
+        self, effort: AnthropicEffort, model_settings: AnthropicModelSettings
+    ) -> None:
+        """Reject `xhigh`/`max` effort combined with explicitly disabled thinking.
+
+        Claude Opus 5 caps effort at `high` once thinking is disabled, while Claude Opus 4.8 accepts
+        every effort level in that combination. Fail fast with a helpful message rather than letting
+        the API return an opaque 400.
+        """
+        if effort not in ('xhigh', 'max'):
+            return
+        if not self.profile.get('anthropic_disallows_top_effort_when_thinking_disabled', False):
+            return
+        thinking = model_settings.get('anthropic_thinking')
+        if thinking is None or thinking.get('type') != 'disabled':
+            return
+        raise UserError(
+            f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while '
+            "`anthropic_thinking={'type': 'disabled'}`. Use an effort of 'high' or below, or enable thinking."
+        )
+
     def _get_task_budget(self, model_settings: AnthropicModelSettings) -> AnthropicTaskBudget | None:
         task_budget = model_settings.get('anthropic_task_budget')
         if task_budget is None:
@@ -2340,7 +2366,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not profile.get('anthropic_supports_task_budgets', False):
             raise UserError(
                 f'Model {self.model_name!r} does not support `anthropic_task_budget`. '
-                'Anthropic task budgets are currently only supported on `claude-opus-4-7` and `claude-opus-4-8`.'
+                'See https://platform.claude.com/docs/en/build-with-claude/task-budgets for the supported models.'
             )
 
         return task_budget
@@ -2456,6 +2482,13 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
     for key in _COMPACTION_TOKEN_KEYS:
         if isinstance((value := getattr(response_usage, key, None)), int):
             details[key] = value
+
+    # Anthropic bills thinking tokens inside `output_tokens`, so this is a readable subset of the
+    # output total rather than an additive one, matching `reasoning_tokens` on OpenAI and
+    # `thoughts_tokens` on Google.
+    output_tokens_details = response_usage.output_tokens_details
+    if output_tokens_details is not None and (thinking_tokens := output_tokens_details.thinking_tokens):
+        details['thinking_tokens'] = thinking_tokens
 
     iterations = response_usage.iterations
     if not iterations:
