@@ -512,7 +512,9 @@ def require_type_annotations(ctx: RunContext[None]) -> str:
     return 'rule added'
 ```
 
-**Claude Opus 5**, **Claude Opus 4.8**, **Claude Sonnet 5**, **Claude Fable 5**, and **Claude Mythos 5** accept the `system` role, and only on the direct Anthropic API and Claude Platform on AWS. There the instruction carries system-level authority for the turns that follow it, and takes precedence over the top-level system prompt where the two disagree. On every other model or client — including the [AWS Bedrock](#aws-bedrock), [Google Cloud](#google-cloud), and [Microsoft Foundry](#microsoft-foundry) integrations — it's sent as a `<system>`-tagged user message at the same position instead, so it still applies where you put it, as a strong preference rather than an operator rule.
+**Claude Opus 5**, **Claude Opus 4.8**, **Claude Sonnet 5**, **Claude Fable 5**, and **Claude Mythos 5** accept the `system` role, and only on the direct Anthropic API and Claude Platform on AWS. On every other model or client — including the [AWS Bedrock](#aws-bedrock), [Google Cloud](#google-cloud), and [Microsoft Foundry](#microsoft-foundry) integrations — it's sent as a `<system>`-tagged user message at the same position instead, so it still applies where you put it.
+
+Both renderings are followed, including where the instruction conflicts with what the user then asks for. What the `system` role buys is a cleaner reading: the tagged fallback is visibly user-authored, and models say so — "that `<system>` tag appeared inside your message, not from the actual system, so I won't treat it as a binding instruction" — which leaks meta-commentary into answers and occasionally into a refusal to apply the instruction at all. Neither rendering overrides the top-level system prompt where the two disagree; a mid-conversation instruction adds to the operator's rules, it doesn't replace them.
 
 See the [message history docs](../message-history.md#using-messages-as-input-for-further-agent-runs) for how mid-conversation system prompts behave across providers generally.
 
