@@ -26,12 +26,14 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     SpeechPart,
+    SpeechPartDelta,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.realtime import (
+    PartDeltaEvent,
     PartStartEvent,
     RealtimeModelProfile,
     ReconnectedEvent,
@@ -128,6 +130,10 @@ async def test_audio_in_server_vad_turn(
 
     The default microphone workflow — no explicit turn control, input transcription on by default —
     must land the user's turn in history, not just the assistant's reply (the dropped-user-turn guard).
+
+    It also pins how xAI's cumulative partials reach a live transcript: they arrive *while* the user is
+    still speaking (before `InputSpeechEndEvent`), and a snapshot that revises earlier words rather than
+    extending them is surfaced as a replacement, since an append-only delta cannot unsay text.
     """
     provider, _ = xai_ws_cassette
     model = XaiRealtimeModel(MODEL, provider=provider)
@@ -149,8 +155,9 @@ async def test_audio_in_server_vad_turn(
     assert collapse_event_types(events) == snapshot(
         [
             'InputSpeechStartEvent',
-            'InputSpeechEndEvent',
             'PartStartEvent',
+            'PartDeltaEvent',
+            'InputSpeechEndEvent',
             'PartDeltaEvent',
             'PartEndEvent',
             'PartStartEvent',
@@ -160,12 +167,30 @@ async def test_audio_in_server_vad_turn(
         ]
     )
 
+    # Replaying the deltas in order reproduces the final transcript, so a UI rendering nothing but the
+    # deltas stays correct through the revision — provided it honours `replaces_transcript`.
+    user_deltas = [
+        event.delta
+        for event in events
+        if isinstance(event, PartDeltaEvent)
+        and isinstance(event.delta, SpeechPartDelta)
+        and event.delta.speaker == 'user'
+    ]
+    assert [(delta.transcript_delta, delta.replaces_transcript) for delta in user_deltas] == snapshot(
+        [('Hello?', False), ('Hello, my name is', True), (' Marcelo.', False)]
+    )
+    rendered = ''
+    for delta in user_deltas:
+        text = delta.transcript_delta or ''
+        rendered = text if delta.replaces_transcript else rendered + text
+
     messages = session.all_messages()
     user_speech = [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
     assert len(user_speech) == 1
     user_part = user_speech[0]
     assert isinstance(user_part, SpeechPart) and user_part.speaker == 'user'
     assert user_part.transcript == snapshot('Hello, my name is Marcelo.')
+    assert rendered.strip() == user_part.transcript
     responses = [message for message in messages if isinstance(message, ModelResponse)]
     assert responses and isinstance(responses[-1].parts[0], SpeechPart)
 

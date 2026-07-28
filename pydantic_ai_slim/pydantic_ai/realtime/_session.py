@@ -207,6 +207,30 @@ def _accumulate_transcript(accumulated: str, text: str) -> tuple[str, str]:
     return accumulated + text, text
 
 
+def _user_transcript_update(previous: str, text: str, *, cumulative: bool) -> tuple[str, SpeechPartDelta | None]:
+    """Fold a user transcript event into the running text, returning it with the delta to emit.
+
+    An incremental piece is accumulated by [`_accumulate_transcript`][pydantic_ai.realtime._session._accumulate_transcript]
+    and surfaced as an appended delta. A cumulative snapshot is adopted wholesale, because a provider
+    that sends snapshots may revise earlier words rather than only extend them: when it merely extends,
+    the new suffix is still an appended delta (what a live transcript wants), but a revision can't be
+    expressed by appending, so it goes out as a replacement instead. `None` when nothing changed.
+    """
+    if not cumulative:
+        transcript, appended = _accumulate_transcript(previous, text)
+        return transcript, SpeechPartDelta(speaker='user', transcript_delta=appended) if appended else None
+    if text == previous:
+        return previous, None
+    if previous and text.startswith(previous):
+        return text, SpeechPartDelta(speaker='user', transcript_delta=text[len(previous) :])
+    stripped = previous.strip()
+    if stripped and (stripped_text := text.strip()).startswith(stripped):
+        return text, SpeechPartDelta(speaker='user', transcript_delta=stripped_text[len(stripped) :])
+    if not previous:
+        return text, SpeechPartDelta(speaker='user', transcript_delta=text)
+    return text, SpeechPartDelta(speaker='user', transcript_delta=text, replaces_transcript=True)
+
+
 def _parse_tool_args(raw: str) -> tuple[dict[str, Any] | None, str | None]:
     """Parse a tool call's raw JSON arguments.
 
@@ -1389,7 +1413,9 @@ class RealtimeSession:
             # invariant fallback: keep the history complete rather than dropping the tool result.
             self._history.append(request)
 
-    def _handle_input_transcript(self, text: str, is_final: bool, *, item_id: str | None = None) -> list[RealtimeEvent]:
+    def _handle_input_transcript(
+        self, text: str, is_final: bool, *, item_id: str | None = None, cumulative: bool = False
+    ) -> list[RealtimeEvent]:
         if item_id is not None:
             # Once an item is closed (finalized or its transcription failed), ignore any stray later event
             # for it — re-creating it would duplicate the turn or resurrect a discarded failed one.
@@ -1409,16 +1435,13 @@ class RealtimeSession:
                 self._user_item_order.append(item_id)
                 self._user_indexes_by_id[item_id] = self._take_part_index()
                 events.append(PartStartEvent(index=self._user_indexes_by_id[item_id], part=part))
-            transcript, appended = _accumulate_transcript(self._user_transcripts_by_id[item_id], text)
+            transcript, delta = _user_transcript_update(
+                self._user_transcripts_by_id[item_id], text, cumulative=cumulative
+            )
             self._user_transcripts_by_id[item_id] = transcript
             self._active_users_by_id[item_id] = replace(self._active_users_by_id[item_id], transcript=transcript)
-            if appended:
-                events.append(
-                    PartDeltaEvent(
-                        index=self._user_indexes_by_id[item_id],
-                        delta=SpeechPartDelta(speaker='user', transcript_delta=appended),
-                    )
-                )
+            if delta is not None:
+                events.append(PartDeltaEvent(index=self._user_indexes_by_id[item_id], delta=delta))
             if is_final:
                 events.extend(self._finalize_user(item_id=item_id))
             return events
@@ -1431,15 +1454,11 @@ class RealtimeSession:
             self._user_transcript = ''
             self._active_user_index = self._take_part_index()
             events.append(PartStartEvent(index=self._active_user_index, part=part))
-        self._user_transcript, appended = _accumulate_transcript(self._user_transcript, text)
+        self._user_transcript, delta = _user_transcript_update(self._user_transcript, text, cumulative=cumulative)
         assert self._active_user is not None
         self._active_user = replace(self._active_user, transcript=self._user_transcript)
-        if appended:
-            events.append(
-                PartDeltaEvent(
-                    index=self._active_user_index, delta=SpeechPartDelta(speaker='user', transcript_delta=appended)
-                )
-            )
+        if delta is not None:
+            events.append(PartDeltaEvent(index=self._active_user_index, delta=delta))
         if is_final:
             events.extend(self._finalize_user())
         return events
@@ -1679,7 +1698,9 @@ class RealtimeSession:
         if isinstance(event, InputTranscript):
             if not self._accept_item(event.item_id):
                 return []
-            return self._handle_input_transcript(event.text, event.is_final, item_id=event.item_id)
+            return self._handle_input_transcript(
+                event.text, event.is_final, item_id=event.item_id, cumulative=event.cumulative
+            )
         if isinstance(event, InputSpeechEndEvent):
             # The user's speech segment ended (server VAD). With transcription enabled and input audio
             # retained, cut the rolling buffer into this item's own segment so a later out-of-order
@@ -2089,14 +2110,19 @@ class RealtimeSession:
                 for queue in self._audio_taps:
                     _put_tap(queue, delta.audio_chunk)
             if delta.transcript_delta and delta.speaker is not None:
-                transcript = self._transcript_so_far.get(event.index, '') + delta.transcript_delta
+                # A revision supersedes what was accumulated; an ordinary delta extends it. Either way
+                # `transcript` ends up the turn's full text, which is what a caption UI renders — so a
+                # revision reaches it instead of being dropped as an unrecognized shape.
+                text = delta.transcript_delta
+                transcript = text if delta.replaces_transcript else self._transcript_so_far.get(event.index, '') + text
                 self._transcript_so_far[event.index] = transcript
                 if self._transcript_delta_taps:
                     update = TranscriptUpdate(
                         index=event.index,
                         speaker=delta.speaker,
-                        delta=delta.transcript_delta,
+                        delta=text,
                         transcript=transcript,
+                        replaces_transcript=delta.replaces_transcript,
                     )
                     for queue in self._transcript_delta_taps:
                         _put_tap(queue, update)

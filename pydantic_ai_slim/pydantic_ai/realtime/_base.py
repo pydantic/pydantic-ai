@@ -47,7 +47,8 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..models import AbstractModel, ModelRequestParameters, download_item
+from ..models import ModelRequestParameters, download_item
+from ..models._abstract import AbstractModel
 from ..native_tools import AbstractNativeTool
 from ..settings import ThinkingLevel, ToolChoice
 from ..usage import RequestUsage
@@ -369,6 +370,16 @@ class InputTranscript:
     """Whether this is the final transcript for the user's turn."""
     item_id: str | None = None
     """Provider item ID for the user's turn, when available."""
+    cumulative: bool = False
+    """Whether `text` is the whole transcript so far rather than an incremental piece.
+
+    Speech recognition is revisable, and a provider that streams cumulative snapshots may correct
+    what it already transcribed instead of only extending it. Setting this lets the session adopt
+    each snapshot as authoritative rather than guessing from prefixes whether the text appends;
+    it surfaces the difference to callers as a
+    [`SpeechPartDelta.replaces_transcript`][pydantic_ai.messages.SpeechPartDelta.replaces_transcript]
+    update. Leave `False` for incremental deltas.
+    """
 
 
 @dataclass
@@ -444,13 +455,23 @@ class TranscriptUpdate:
     """Who is speaking."""
 
     delta: str
-    """The new text, to append to what you already rendered for this `index`."""
+    """The new text, to append to what you already rendered for this `index` — or to replace it with,
+    if `replaces_transcript` is set."""
 
     transcript: str
     """The full transcript of this turn so far, including `delta`.
 
     Provided so a renderer can replace rather than append, which avoids having to accumulate
-    correctly (and to recover if an update was dropped because the consumer fell behind).
+    correctly (and to recover if an update was dropped because the consumer fell behind). Rendering
+    from this field alone is always correct, whatever the provider does.
+    """
+
+    replaces_transcript: bool = False
+    """Whether this update *revises* the turn's text rather than extending it.
+
+    Speech recognition is revisable: later audio can change how earlier audio is read, so a provider
+    may correct words it already transcribed. Appending `delta` would then duplicate the corrected
+    text. Renderers that use `transcript` never need this; only those appending `delta` do.
     """
 
 
