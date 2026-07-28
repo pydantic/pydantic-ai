@@ -216,9 +216,11 @@ class CohereEmbeddingModel(EmbeddingModel):
         return _MAX_INPUT_TOKENS.get(self.model_name)
 
     async def count_tokens(self, text: str) -> int:
-        check_allow_model_requests()
+        # The guard goes below the capability check, not above it: without a v1 client this path never reaches
+        # Cohere, so it should report that token counting is unsupported regardless of `ALLOW_MODEL_REQUESTS`.
         if self._v1_client is None:
             raise NotImplementedError('Counting tokens requires the Cohere v1 client')
+        check_allow_model_requests()
         try:
             result = await self._v1_client.tokenize(
                 model=self.model_name,

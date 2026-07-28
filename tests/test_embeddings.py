@@ -161,6 +161,37 @@ async def test_cohere_embedding_model_blocks_count_tokens_when_disabled():
             await model.count_tokens('hello')
 
 
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_embedder_blocks_requests_when_disabled():
+    """Pins the guard on the public `Embedder` surface, which is what issue #6763 reports as leaking.
+
+    A guard that fires before the request is made can't be exercised through a VCR recording.
+    The per-model tests above prove each `embed()` guards; this proves the wrapper chain
+    (`Embedder` -> `InstrumentedEmbeddingModel` / `WrapperEmbeddingModel` -> concrete model)
+    surfaces the `RuntimeError` rather than swallowing or wrapping it.
+    """
+    embedder = Embedder(OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key='test-key')))
+
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await embedder.embed_query('hello')
+
+
+async def test_test_embedding_model_is_exempt_from_request_guard():
+    """`ALLOW_MODEL_REQUESTS`'s docstring promises `TestEmbeddingModel` is unaffected; pin that promise.
+
+    Without this, adding the guard to `TestEmbeddingModel.embed` would break every user's test
+    suite while the whole file still passed, since the module-level `allow_model_requests`
+    fixture keeps the flag on for every other test here.
+    """
+    embedder = Embedder(TestEmbeddingModel())
+
+    with pydantic_ai.models.override_allow_model_requests(False):
+        result = await embedder.embed_query('hello')
+
+    assert result.embeddings == snapshot([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]])
+
+
 STSB_BERT_TINY_MODEL = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
 # Pinned so a warm HF cache is served without revalidating files against the Hub.
 # Keep in sync with the HF cache keys and warmup commands in .github/workflows/ci.yml;
@@ -1889,6 +1920,16 @@ class TestSentenceTransformers:
     @pytest.fixture
     def embedder(self, stsb_bert_tiny_model: Any) -> Embedder:
         return Embedder(SentenceTransformerEmbeddingModel(stsb_bert_tiny_model))
+
+    async def test_embed_is_exempt_from_request_guard(self, embedder: Embedder):
+        """`ALLOW_MODEL_REQUESTS`'s docstring promises this model is unaffected; pin that promise.
+
+        Inference is local, so there's no provider call to block and no recording to make.
+        """
+        with pydantic_ai.models.override_allow_model_requests(False):
+            result = await embedder.embed_query('hello')
+
+        assert result.embeddings
 
     async def test_infer_model(self):
         model = infer_embedding_model('sentence-transformers:all-MiniLM-L6-v2')
