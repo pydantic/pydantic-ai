@@ -455,7 +455,18 @@ class _NovaEmbeddingHandler(_BedrockEmbeddingHandler):
         settings: BedrockEmbeddingSettings,
     ) -> dict[str, Any]:
         assert len(texts) == 1, 'Nova only supports single text per request'
-        return self.prepare_part_request(texts[0], input_type, settings)
+
+        # Get truncation mode - Nova requires this field
+        # Model-specific truncate takes precedence, then base truncate setting
+        # Nova accepts: START, END, NONE (default: NONE)
+        if truncate := settings.get('bedrock_nova_truncate'):
+            pass  # Use the model-specific setting
+        elif settings.get('truncate'):
+            truncate = 'END'
+        else:
+            truncate = 'NONE'
+
+        return self._request({'text': {'value': texts[0], 'truncationMode': truncate}}, input_type, settings)
 
     def prepare_part_request(
         self,
@@ -468,13 +479,36 @@ class _NovaEmbeddingHandler(_BedrockEmbeddingHandler):
         A `FileUrl` has to be downloaded to `BinaryContent` first: Nova takes bytes inline (or an S3
         URI, which we don't map), never an arbitrary URL.
         """
+        if isinstance(part, str | TextContent):
+            return self.prepare_request([part if isinstance(part, str) else part.content], input_type, settings)
+
+        if (mapped := _NOVA_FORMATS.get(part.media_type)) is None:
+            raise UserError(
+                f'`{self.model_name}` does not accept `{part.media_type}` content. '
+                f'Supported media types: {", ".join(sorted(_NOVA_FORMATS))}.'
+            )
+        modality, file_format = mapped
+        params: dict[str, Any] = {'format': file_format, 'source': {'bytes': base64.b64encode(part.data).decode()}}
+        if modality == 'video':
+            # Always combined: `AUDIO_VIDEO_SEPARATE` returns a vector for each stream, and every input
+            # here has to yield exactly one.
+            params['embeddingMode'] = 'AUDIO_VIDEO_COMBINED'
+        return self._request({modality: params}, input_type, settings)
+
+    def _request(
+        self,
+        modality_params: dict[str, Any],
+        input_type: EmbedInputType,
+        settings: BedrockEmbeddingSettings,
+    ) -> dict[str, Any]:
+        """Wrap one modality's params in the envelope every Nova request shares."""
         # Nova requires embeddingPurpose - default based on input_type
         # - queries default to GENERIC_RETRIEVAL (optimized for search)
         # - documents default to GENERIC_INDEX (optimized for indexing)
         default_purpose = 'GENERIC_RETRIEVAL' if input_type == 'query' else 'GENERIC_INDEX'
         single_embedding_params: dict[str, Any] = {
             'embeddingPurpose': settings.get('bedrock_nova_embedding_purpose', default_purpose),
-            **self._map_part(part, settings),
+            **modality_params,
         }
 
         # Nova: Apply dimensions if provided
@@ -485,32 +519,6 @@ class _NovaEmbeddingHandler(_BedrockEmbeddingHandler):
             'taskType': 'SINGLE_EMBEDDING',
             'singleEmbeddingParams': single_embedding_params,
         }
-
-    def _map_part(self, part: str | TextContent | BinaryContent, settings: BedrockEmbeddingSettings) -> dict[str, Any]:
-        if isinstance(part, str | TextContent):
-            # Get truncation mode - Nova requires this field
-            # Model-specific truncate takes precedence, then base truncate setting
-            # Nova accepts: START, END, NONE (default: NONE)
-            if truncate := settings.get('bedrock_nova_truncate'):
-                pass  # Use the model-specific setting
-            elif settings.get('truncate'):
-                truncate = 'END'
-            else:
-                truncate = 'NONE'
-            return {'text': {'value': part if isinstance(part, str) else part.content, 'truncationMode': truncate}}
-
-        if (mapped := _NOVA_FORMATS.get(part.media_type)) is None:
-            raise UserError(
-                f'`{self.model_name}` does not accept `{part.media_type}` content. '
-                f'Supported media types: {", ".join(sorted(_NOVA_FORMATS))}.'
-            )
-        modality, file_format = mapped
-        source = {'bytes': base64.b64encode(part.data).decode()}
-        if modality == 'video':
-            # Always combined: `AUDIO_VIDEO_SEPARATE` returns a vector for each stream, and every input
-            # here has to yield exactly one.
-            return {'video': {'format': file_format, 'source': source, 'embeddingMode': 'AUDIO_VIDEO_COMBINED'}}
-        return {modality: {'format': file_format, 'source': source}}
 
     def parse_response(
         self,
