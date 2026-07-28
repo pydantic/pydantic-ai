@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1059'
+      - '1056'
       content-type:
       - application/json
       host:
@@ -21,7 +21,7 @@ interactions:
         - text: First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.
           type: text
         role: user
-      model: claude-sonnet-4-6
+      model: claude-fable-5
       stream: false
       system:
       - text: |-
@@ -59,7 +59,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '723'
+      - '642'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -67,24 +67,22 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-ef115916839fc320a47cfaa0c860a7b6-8cef42f7d6b6ac02-01
+      - 00-06984371faeecd362571e55ba2ede5a1-54cdd980cea8d46d-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: I'll load the refunds capability and then immediately use it -- let me start by loading it first.
-        type: text
       - caller:
           type: direct
-        id: toolu_01JzwQ18FJQr29z9vLFKFBao
+        id: toolu_019FvycgJmpyX9PYJc6HFJCd
         input:
           id: refunds
         name: load_capability
         type: tool_use
-      id: msg_011CdTWAUh3Xe2kTmKEneh8S
-      model: claude-sonnet-4-6
+      id: msg_011CdTWBYUH9Gkc6kYoMZQsz
+      model: claude-fable-5
       role: assistant
       stop_details: null
       stop_reason: tool_use
@@ -97,8 +95,10 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 658
-        output_tokens: 76
+        input_tokens: 594
+        output_tokens: 50
+        output_tokens_details:
+          thinking_tokens: 0
         service_tier: standard
     status:
       code: 200
@@ -112,7 +112,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1859'
+      - '1729'
       content-type:
       - application/json
       host:
@@ -126,9 +126,7 @@ interactions:
           type: text
         role: user
       - content:
-        - text: I'll load the refunds capability and then immediately use it -- let me start by loading it first.
-          type: text
-        - id: toolu_01JzwQ18FJQr29z9vLFKFBao
+        - id: toolu_019FvycgJmpyX9PYJc6HFJCd
           input:
             id: refunds
           name: load_capability
@@ -139,7 +137,7 @@ interactions:
           - text: '{}'
             type: text
           is_error: false
-          tool_use_id: toolu_01JzwQ18FJQr29z9vLFKFBao
+          tool_use_id: toolu_019FvycgJmpyX9PYJc6HFJCd
           type: tool_result
         role: user
       - content:
@@ -158,7 +156,7 @@ interactions:
           tool_use_id: auto_load_0f10f8b659c3c105
           type: tool_result
         role: user
-      model: claude-sonnet-4-6
+      model: claude-fable-5
       stream: false
       system:
       - text: |-
@@ -196,7 +194,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '751'
+      - '655'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -204,24 +202,22 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-3b1d7e9d487ed8ce151b4824f837c541-16e071096319617e-01
+      - 00-3dadb687dc76ba9c1aa2bfea9366c3c6-c0f8771983e130c5-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: The refunds capability is loaded and the `lookup_refund_policy` tool is available. Now calling it for order-123!
-        type: text
       - caller:
           type: direct
-        id: toolu_01E6sWawGHGNL2fn7tzCNqF6
+        id: toolu_01HDpW2LphuDFwNjWmhSfyRm
         input:
           order_id: order-123
         name: lookup_refund_policy
         type: tool_use
-      id: msg_011CdTWAh1hh2Jt1NW6cJo3p
-      model: claude-sonnet-4-6
+      id: msg_011CdTWBr3DCt28gSoHjdj4e
+      model: claude-fable-5
       role: assistant
       stop_details: null
       stop_reason: tool_use
@@ -234,8 +230,10 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 880
-        output_tokens: 89
+        input_tokens: 797
+        output_tokens: 57
+        output_tokens_details:
+          thinking_tokens: 0
         service_tier: standard
     status:
       code: 200
@@ -249,7 +247,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2359'
+      - '2087'
       content-type:
       - application/json
       host:
@@ -263,9 +261,7 @@ interactions:
           type: text
         role: user
       - content:
-        - text: I'll load the refunds capability and then immediately use it -- let me start by loading it first.
-          type: text
-        - id: toolu_01JzwQ18FJQr29z9vLFKFBao
+        - id: toolu_019FvycgJmpyX9PYJc6HFJCd
           input:
             id: refunds
           name: load_capability
@@ -276,7 +272,7 @@ interactions:
           - text: '{}'
             type: text
           is_error: false
-          tool_use_id: toolu_01JzwQ18FJQr29z9vLFKFBao
+          tool_use_id: toolu_019FvycgJmpyX9PYJc6HFJCd
           type: tool_result
         role: user
       - content:
@@ -296,9 +292,7 @@ interactions:
           type: tool_result
         role: user
       - content:
-        - text: The refunds capability is loaded and the `lookup_refund_policy` tool is available. Now calling it for order-123!
-          type: text
-        - id: toolu_01E6sWawGHGNL2fn7tzCNqF6
+        - id: toolu_01HDpW2LphuDFwNjWmhSfyRm
           input:
             order_id: order-123
           name: lookup_refund_policy
@@ -309,10 +303,10 @@ interactions:
           - text: 'order-123: refund allowed'
             type: text
           is_error: false
-          tool_use_id: toolu_01E6sWawGHGNL2fn7tzCNqF6
+          tool_use_id: toolu_01HDpW2LphuDFwNjWmhSfyRm
           type: tool_result
         role: user
-      model: claude-sonnet-4-6
+      model: claude-fable-5
       stream: false
       system:
       - text: |-
@@ -350,7 +344,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '504'
+      - '550'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -358,7 +352,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-456d2008235ea3f1682d8d021b397f3e-32d50ce6f21f5335-01
+      - 00-42154f23681da58a164b940a4afdc44c-7dfb5348f5176f8c-01
       transfer-encoding:
       - chunked
       vary:
@@ -367,8 +361,8 @@ interactions:
       content:
       - text: 'order-123: refund allowed'
         type: text
-      id: msg_011CdTWAtfvwuVV4ARiSWPFr
-      model: claude-sonnet-4-6
+      id: msg_011CdTWCPofXAyvXsCVCks5M
+      model: claude-fable-5
       role: assistant
       stop_details: null
       stop_reason: end_turn
@@ -381,8 +375,10 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 988
-        output_tokens: 10
+        input_tokens: 868
+        output_tokens: 11
+        output_tokens_details:
+          thinking_tokens: 0
         service_tier: standard
     status:
       code: 200

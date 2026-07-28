@@ -77,6 +77,7 @@ from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
 
@@ -11118,81 +11119,12 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
     assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
 
 
-@pytest.mark.parametrize('explicit_tool_search', [False, True])
-async def test_anthropic_deferred_capability_without_tool_search_surface(
-    allow_model_requests: None, explicit_tool_search: bool
+@pytest.mark.vcr()
+async def test_anthropic_explicit_tool_search_keeps_search_surface(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
 ):
-    """A capability-only corpus must not advertise a search surface, regardless of injection path."""
-    responses = [
-        completion_message(
-            [BetaToolUseBlock(id='load-1', input={'id': 'refunds'}, name='load_capability', type='tool_use')],
-            BetaUsage(input_tokens=5, output_tokens=10),
-        ),
-        completion_message(
-            [
-                BetaToolUseBlock(
-                    id='lookup-1',
-                    input={'order_id': 'order-123'},
-                    name='lookup_refund_policy',
-                    type='tool_use',
-                )
-            ],
-            BetaUsage(input_tokens=5, output_tokens=10),
-        ),
-        completion_message(
-            [BetaTextBlock(text='Refund allowed.', type='text')],
-            BetaUsage(input_tokens=5, output_tokens=10),
-        ),
-    ]
-    mock_client = MockAnthropic.create_mock(responses)
-    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
-    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
-
-    @refunds.tool_plain
-    def lookup_refund_policy(order_id: str) -> str:
-        return f'{order_id}: refund allowed'
-
-    capabilities = [refunds, ToolSearch()] if explicit_tool_search else [refunds]
-    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=capabilities)
-    result = await agent.run('Can I get a refund?')
-
-    assert result.output == 'Refund allowed.'
-    requests = get_mock_chat_completion_kwargs(mock_client)
-    for request in requests:
-        assert not any(
-            tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'}
-            for tool in request['tools']
-        )
-    [initial_lookup] = [tool for tool in requests[0]['tools'] if tool.get('name') == 'lookup_refund_policy']
-    assert initial_lookup['defer_loading'] is True
-    [revealed_lookup] = [tool for tool in requests[1]['tools'] if tool.get('name') == 'lookup_refund_policy']
-    assert revealed_lookup == initial_lookup
-    assert requests[1]['messages'][-1]['content'] == snapshot(
-        [
-            {
-                'tool_use_id': IsStr(regex='auto_load_[0-9a-f]+'),
-                'type': 'tool_result',
-                'content': [{'tool_name': 'lookup_refund_policy', 'type': 'tool_reference'}],
-                'is_error': False,
-            }
-        ]
-    )
-    [lookup_return] = [
-        part
-        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
-        if part.tool_name == 'lookup_refund_policy'
-    ]
-    assert lookup_return.content == 'order-123: refund allowed'
-
-
-async def test_anthropic_explicit_tool_search_keeps_search_surface(allow_model_requests: None):
-    """A mixed corpus retains the explicitly configured client-executed search callback."""
-    response = completion_message(
-        [BetaTextBlock(text='Done.', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(response)
-    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    """A mixed corpus retains explicit keyword search and can discover a standalone deferred tool."""
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
 
     @refunds.tool_plain
@@ -11208,10 +11140,45 @@ async def test_anthropic_explicit_tool_search_keeps_search_surface(allow_model_r
         tools=[Tool(search_only_tool, defer_loading=True)],
         capabilities=[refunds, ToolSearch(strategy='keywords')],
     )
-    await agent.run('Hello')
+    result = await agent.run(
+        'Use tool search to find search_only_tool, call it with query "recorded", then return only its result.'
+    )
 
-    [request] = get_mock_chat_completion_kwargs(mock_client)
-    assert any(tool.get('name') == 'search_tools' for tool in request['tools'])
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 2
+    for request_body in request_bodies:
+        assert any(tool.get('name') == 'search_tools' for tool in request_body['tools'])
+    [standalone_tool] = [tool for tool in request_bodies[0]['tools'] if tool.get('name') == 'search_only_tool']
+    assert standalone_tool['defer_loading'] is True
+    assert any(
+        part.tool_name == 'search_only_tool'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_always_on_capability_toolset_is_visible(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """An always-on capability contributes plainly visible tools without a search surface."""
+
+    def lookup_shipping(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: shipped'
+
+    toolset = FunctionToolset([lookup_shipping])
+    shipping = Capability[None](id='shipping', toolsets=[toolset])
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[shipping])
+    result = await agent.run('Reply with exactly: ready')
+
+    assert result.output.strip().lower() == 'ready'
+    request_body = single_request_body(vcr)
+    [lookup_tool] = [tool for tool in request_body['tools'] if tool.get('name') == 'lookup_shipping']
+    assert 'defer_loading' not in lookup_tool
+    assert not any(
+        tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'}
+        for tool in request_body['tools']
+    )
 
 
 @pytest.mark.vcr()
@@ -11236,20 +11203,72 @@ async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
     )
 
     request_bodies = [json.loads(request.body) for request in vcr.requests]
-    assert len(request_bodies) >= 2
+    assert len(request_bodies) >= 3
     for request_body in request_bodies:
         assert not any(
             tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'}
             for tool in request_body['tools']
         )
     [initial_lookup] = [tool for tool in request_bodies[0]['tools'] if tool.get('name') == 'lookup_refund_policy']
-    [revealed_lookup] = [tool for tool in request_bodies[1]['tools'] if tool.get('name') == 'lookup_refund_policy']
     assert initial_lookup['defer_loading'] is True
-    assert revealed_lookup == initial_lookup
+    assert all(
+        [tool for tool in request_body['tools'] if tool.get('name') == 'lookup_refund_policy'] == [initial_lookup]
+        for request_body in request_bodies[1:]
+    )
     assert any(
         part.tool_name == 'lookup_refund_policy'
         for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
     )
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'calls_revealed_tool'),
+    [
+        pytest.param('claude-haiku-4-5', False, id='claude-haiku-4-5'),
+        pytest.param('claude-fable-5', True, id='claude-fable-5'),
+    ],
+)
+@pytest.mark.vcr()
+async def test_anthropic_deferred_capability_without_tool_search_across_models(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    vcr: Any,
+    model_name: str,
+    calls_revealed_tool: bool,
+):
+    """Record model-specific behavior for standalone deferred capability reveals."""
+    model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools. Load this capability before looking up refund policy.',
+        defer_loading=True,
+    )
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[refunds])
+    result = await agent.run(
+        'First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.'
+    )
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 2
+    for request_body in request_bodies:
+        assert not any(
+            tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'}
+            for tool in request_body['tools']
+        )
+        [lookup_tool] = [tool for tool in request_body['tools'] if tool.get('name') == 'lookup_refund_policy']
+        assert lookup_tool['defer_loading'] is True
+    called_revealed_tool = any(
+        part.tool_name == 'lookup_refund_policy'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
+    assert called_revealed_tool is calls_revealed_tool
+    if not calls_revealed_tool:
+        assert 'unable to make the call' in result.output
 
 
 @pytest.mark.vcr()

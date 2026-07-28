@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1059'
+      - '2027'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.
+        - text: Use tool search to find search_only_tool, call it with query "recorded", then return only its result.
           type: text
         role: user
       model: claude-sonnet-4-6
@@ -26,7 +26,7 @@ interactions:
       system:
       - text: |-
           The following capabilities are deferred and can be loaded using the `load_capability` tool:
-          - refunds: Refund policy tools. Load this capability before looking up refund policy.
+          - refunds: Refund policy tools.
         type: text
       tool_choice:
         type: auto
@@ -47,19 +47,48 @@ interactions:
         input_schema:
           additionalProperties: false
           properties:
+            query:
+              type: string
+          required:
+          - query
+          type: object
+        name: search_only_tool
+      - defer_loading: true
+        description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
             order_id:
               type: string
           required:
           - order_id
           type: object
         name: lookup_refund_policy
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
+        input_schema:
+          additionalProperties: false
+          properties:
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
+          required:
+          - queries
+          type: object
+        name: search_tools
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '723'
+      - '701'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -67,23 +96,24 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-ef115916839fc320a47cfaa0c860a7b6-8cef42f7d6b6ac02-01
+      - 00-dfff63200d6b0aea98bf1870002acfd4-083634e75e6a632b-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: I'll load the refunds capability and then immediately use it -- let me start by loading it first.
+      - text: I'll start by searching for the `search_only_tool` right away!
         type: text
       - caller:
           type: direct
-        id: toolu_01JzwQ18FJQr29z9vLFKFBao
+        id: toolu_012vhSRCUoTpkR8JWcxJkw6M
         input:
-          id: refunds
-        name: load_capability
+          queries:
+          - search_only_tool
+        name: search_tools
         type: tool_use
-      id: msg_011CdTWAUh3Xe2kTmKEneh8S
+      id: msg_011CdTWA4JbUSj8vcxzwTJzA
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -97,8 +127,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 658
-        output_tokens: 76
+        input_tokens: 827
+        output_tokens: 77
         service_tier: standard
     status:
       code: 200
@@ -112,7 +142,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1859'
+      - '2483'
       content-type:
       - application/json
       host:
@@ -122,40 +152,25 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.
+        - text: Use tool search to find search_only_tool, call it with query "recorded", then return only its result.
           type: text
         role: user
       - content:
-        - text: I'll load the refunds capability and then immediately use it -- let me start by loading it first.
+        - text: I'll start by searching for the `search_only_tool` right away!
           type: text
-        - id: toolu_01JzwQ18FJQr29z9vLFKFBao
-          input:
-            id: refunds
-          name: load_capability
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{}'
-            type: text
-          is_error: false
-          tool_use_id: toolu_01JzwQ18FJQr29z9vLFKFBao
-          type: tool_result
-        role: user
-      - content:
-        - id: auto_load_0f10f8b659c3c105
+        - id: toolu_012vhSRCUoTpkR8JWcxJkw6M
           input:
             queries:
-            - refunds
+            - search_only_tool
           name: search_tools
           type: tool_use
         role: assistant
       - content:
         - content:
-          - tool_name: lookup_refund_policy
+          - tool_name: search_only_tool
             type: tool_reference
           is_error: false
-          tool_use_id: auto_load_0f10f8b659c3c105
+          tool_use_id: toolu_012vhSRCUoTpkR8JWcxJkw6M
           type: tool_result
         role: user
       model: claude-sonnet-4-6
@@ -163,7 +178,7 @@ interactions:
       system:
       - text: |-
           The following capabilities are deferred and can be loaded using the `load_capability` tool:
-          - refunds: Refund policy tools. Load this capability before looking up refund policy.
+          - refunds: Refund policy tools.
         type: text
       tool_choice:
         type: auto
@@ -184,19 +199,48 @@ interactions:
         input_schema:
           additionalProperties: false
           properties:
+            query:
+              type: string
+          required:
+          - query
+          type: object
+        name: search_only_tool
+      - defer_loading: true
+        description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
             order_id:
               type: string
           required:
           - order_id
           type: object
         name: lookup_refund_policy
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
+        input_schema:
+          additionalProperties: false
+          properties:
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
+          required:
+          - queries
+          type: object
+        name: search_tools
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '751'
+      - '704'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -204,23 +248,23 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-3b1d7e9d487ed8ce151b4824f837c541-16e071096319617e-01
+      - 00-4b711fb23583b0dfe65984c518a2b608-e7a7c71a0920d132-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: The refunds capability is loaded and the `lookup_refund_policy` tool is available. Now calling it for order-123!
+      - text: Found it! Now I'll call `search_only_tool` with the query `"recorded"`.
         type: text
       - caller:
           type: direct
-        id: toolu_01E6sWawGHGNL2fn7tzCNqF6
+        id: toolu_01V5JHSWnGroyx4jvSjndUev
         input:
-          order_id: order-123
-        name: lookup_refund_policy
+          query: recorded
+        name: search_only_tool
         type: tool_use
-      id: msg_011CdTWAh1hh2Jt1NW6cJo3p
+      id: msg_011CdTWABWvn8PBndKpCA5Rw
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -234,8 +278,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 880
-        output_tokens: 89
+        input_tokens: 977
+        output_tokens: 78
         service_tier: standard
     status:
       code: 200
@@ -249,7 +293,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2359'
+      - '2919'
       content-type:
       - application/json
       host:
@@ -259,57 +303,42 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.
+        - text: Use tool search to find search_only_tool, call it with query "recorded", then return only its result.
           type: text
         role: user
       - content:
-        - text: I'll load the refunds capability and then immediately use it -- let me start by loading it first.
+        - text: I'll start by searching for the `search_only_tool` right away!
           type: text
-        - id: toolu_01JzwQ18FJQr29z9vLFKFBao
-          input:
-            id: refunds
-          name: load_capability
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{}'
-            type: text
-          is_error: false
-          tool_use_id: toolu_01JzwQ18FJQr29z9vLFKFBao
-          type: tool_result
-        role: user
-      - content:
-        - id: auto_load_0f10f8b659c3c105
+        - id: toolu_012vhSRCUoTpkR8JWcxJkw6M
           input:
             queries:
-            - refunds
+            - search_only_tool
           name: search_tools
           type: tool_use
         role: assistant
       - content:
         - content:
-          - tool_name: lookup_refund_policy
+          - tool_name: search_only_tool
             type: tool_reference
           is_error: false
-          tool_use_id: auto_load_0f10f8b659c3c105
+          tool_use_id: toolu_012vhSRCUoTpkR8JWcxJkw6M
           type: tool_result
         role: user
       - content:
-        - text: The refunds capability is loaded and the `lookup_refund_policy` tool is available. Now calling it for order-123!
+        - text: Found it! Now I'll call `search_only_tool` with the query `"recorded"`.
           type: text
-        - id: toolu_01E6sWawGHGNL2fn7tzCNqF6
+        - id: toolu_01V5JHSWnGroyx4jvSjndUev
           input:
-            order_id: order-123
-          name: lookup_refund_policy
+            query: recorded
+          name: search_only_tool
           type: tool_use
         role: assistant
       - content:
         - content:
-          - text: 'order-123: refund allowed'
+          - text: recorded
             type: text
           is_error: false
-          tool_use_id: toolu_01E6sWawGHGNL2fn7tzCNqF6
+          tool_use_id: toolu_01V5JHSWnGroyx4jvSjndUev
           type: tool_result
         role: user
       model: claude-sonnet-4-6
@@ -317,7 +346,7 @@ interactions:
       system:
       - text: |-
           The following capabilities are deferred and can be loaded using the `load_capability` tool:
-          - refunds: Refund policy tools. Load this capability before looking up refund policy.
+          - refunds: Refund policy tools.
         type: text
       tool_choice:
         type: auto
@@ -338,19 +367,48 @@ interactions:
         input_schema:
           additionalProperties: false
           properties:
+            query:
+              type: string
+          required:
+          - query
+          type: object
+        name: search_only_tool
+      - defer_loading: true
+        description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
             order_id:
               type: string
           required:
           - order_id
           type: object
         name: lookup_refund_policy
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
+        input_schema:
+          additionalProperties: false
+          properties:
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
+          required:
+          - queries
+          type: object
+        name: search_tools
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '504'
+      - '507'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -358,16 +416,16 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-456d2008235ea3f1682d8d021b397f3e-32d50ce6f21f5335-01
+      - 00-8e66054c4d6b6e7672fee6bcb831a84b-4340380d537f6ce4-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: 'order-123: refund allowed'
+      - text: 'The result is: **recorded**'
         type: text
-      id: msg_011CdTWAtfvwuVV4ARiSWPFr
+      id: msg_011CdTWALmYMUHgqkijNtJPj
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -381,7 +439,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 988
+        input_tokens: 1068
         output_tokens: 10
         service_tier: standard
     status:
