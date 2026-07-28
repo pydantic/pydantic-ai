@@ -1786,6 +1786,34 @@ async def test_output_truncation_guard() -> None:
     assert conn.sent == [CancelResponse()]
 
 
+class SlowSendConnection(FakeRealtimeConnection):
+    """A connection that yields control inside `send`, so concurrent senders can interleave."""
+
+    async def send(self, content: RealtimeInput) -> None:
+        await asyncio.sleep(0)
+        await super().send(content)
+
+
+async def test_interrupt_truncate_and_cancel_cannot_be_split() -> None:
+    # `interrupt(audio_end_ms=...)` is two frames, and the cancel is only correct for the response the
+    # truncate targeted. On OpenAI-shaped providers a concurrent send starts a new response, so a frame
+    # landing in the gap would leave the cancel killing that one instead of the barge-in's target. The
+    # session's send lock has to keep the pair adjacent even when sends overlap.
+    conn = SlowSendConnection([])
+    session = RealtimeSession(conn, _noop_runner, model_name='m')
+
+    await asyncio.gather(
+        session.interrupt(audio_end_ms=100),
+        *(session.send('concurrent') for _ in range(3)),
+    )
+
+    kinds = [type(frame).__name__ for frame in conn.sent]
+    truncate = kinds.index('TruncateOutput')
+    assert kinds[truncate + 1] == 'CancelResponse', f'a frame was interleaved into the transaction: {kinds}'
+    # The concurrent sends still all got through, just never in the middle.
+    assert kinds.count('TextInput') == 3
+
+
 async def test_image_input_guard() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_image_input=False))

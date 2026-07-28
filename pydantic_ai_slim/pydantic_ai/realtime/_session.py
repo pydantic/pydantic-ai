@@ -81,6 +81,7 @@ from ._base import (
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeError,
+    RealtimeInput,
     RealtimeEvent,
     RealtimeModelProfile,
     RealtimeModelSettings,
@@ -437,6 +438,15 @@ class RealtimeSession:
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._pending_messages = _RealtimePendingMessages()
         self._pending_messages_lock = Lock()
+        # Serializes everything we send. Tool results go out from background tasks while the caller may
+        # be streaming audio or driving turn control, and a single operation can span several frames:
+        # a tool result creates the item and then asks for a response, and `interrupt()` truncates
+        # before it cancels. Without this, those sequences interleave — a barge-in's cancel can land on
+        # a response that a tool result started in the gap, killing the wrong turn.
+        # `asyncio.Lock` rather than anyio's: this class is asyncio-bound already (queue, tasks), and
+        # an uncontended acquire returns without a checkpoint, so serializing sends doesn't insert an
+        # event-loop tick into every audio frame.
+        self._send_lock = asyncio.Lock()
         if self._tool_manager.ctx is not None:
             self._tool_manager.ctx.pending_messages = self._pending_messages
         # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
@@ -633,7 +643,7 @@ class RealtimeSession:
             request = ModelRequest(parts=[UserPromptPart(content=content)], conversation_id=self._conversation_id)
             self._record_sent_request(request)
             try:
-                await self._connection.send(TextInput(text=content))
+                await self._send_frame(TextInput(text=content))
             except BaseException:
                 self._remove_sent_request(request)
                 raise
@@ -664,7 +674,7 @@ class RealtimeSession:
             request = ModelRequest(parts=[UserPromptPart(content=content.text)], conversation_id=self._conversation_id)
             self._record_sent_request(request)
             try:
-                await self._connection.send(content)
+                await self._send_frame(content)
             except BaseException:
                 self._remove_sent_request(request)
                 raise
@@ -695,7 +705,7 @@ class RealtimeSession:
     async def _send_image(self, content: BinaryContent) -> None:
         """Forward an image and retain it according to the session's sampling policy."""
         self._require_capability(self._profile.get('supports_image_input', False), 'send', 'image input')
-        await self._connection.send(ImageInput(data=content.data, media_type=content.media_type))
+        await self._send_frame(ImageInput(data=content.data, media_type=content.media_type))
         if self._sent_image_count % self._retain_images_every_n == 0:
             self._record_sent_request(
                 ModelRequest(parts=[UserPromptPart(content=[content])], conversation_id=self._conversation_id)
@@ -737,7 +747,7 @@ class RealtimeSession:
             previous_length = len(self._input_audio)
             self._input_audio.extend(data)
         try:
-            await self._connection.send(AudioInput(data=data))
+            await self._send_frame(AudioInput(data=data))
         except BaseException:
             self._user_turn_active = user_turn_was_active
             if previous_length is not None and len(self._input_audio) == previous_length + len(data):
@@ -749,7 +759,7 @@ class RealtimeSession:
         self._require_capability(
             self._profile.get('supports_manual_turn_control', False), 'commit_audio', 'manual turn-taking'
         )
-        await self._connection.send(CommitAudio())
+        await self._send_frame(CommitAudio())
         self._user_turn_active = True
         for event in self._finalize_untranscribed_user():
             await self._queue.put(event)
@@ -759,7 +769,7 @@ class RealtimeSession:
         self._require_capability(
             self._profile.get('supports_manual_turn_control', False), 'clear_audio', 'manual turn-taking'
         )
-        await self._connection.send(ClearAudio())
+        await self._send_frame(ClearAudio())
         # Drop the locally retained copy too (with `audio_retention='input_audio'`/`'all'`), or the discarded
         # audio would still be attached to the next finalized user turn.
         self._input_audio.clear()
@@ -770,7 +780,7 @@ class RealtimeSession:
         self._require_capability(
             self._profile.get('supports_manual_turn_control', False), 'create_response', 'manual turn-taking'
         )
-        await self._connection.send(CreateResponse())
+        await self._send_frame(CreateResponse())
 
     async def interrupt(self, *, audio_end_ms: int | None = None) -> None:
         """Barge-in: cancel the model's in-progress response, optionally truncating its audio first.
@@ -784,21 +794,34 @@ class RealtimeSession:
                 given, the output item is truncated to this point before the response is cancelled.
         """
         self._require_capability(self._profile.get('supports_interruption', False), 'interrupt', 'interruption')
+        if audio_end_ms is not None and not self._profile.get('supports_output_truncation', False):
+            raise UserError(
+                'This realtime model does not support output truncation, so `interrupt(audio_end_ms=...)` '
+                'is unavailable. Call `interrupt()` without `audio_end_ms` to cancel without truncating.'
+            )
         # Truncate before cancelling: cancellation triggers `response.done`, which clears the tracked
-        # output item, so a truncate sent afterwards could no-op.
-        if audio_end_ms is not None:
-            if not self._profile.get('supports_output_truncation', False):
-                raise UserError(
-                    'This realtime model does not support output truncation, so `interrupt(audio_end_ms=...)` '
-                    'is unavailable. Call `interrupt()` without `audio_end_ms` to cancel without truncating.'
-                )
-            await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
-        await self._connection.send(CancelResponse())
+        # output item, so a truncate sent afterwards could no-op. Both frames go out under one hold of
+        # the send lock, so a tool result completing in between can't start a new response for the
+        # cancel to hit instead.
+        async with self._send_lock:
+            if audio_end_ms is not None:
+                await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
+            await self._connection.send(CancelResponse())
         self._pending_interrupted_at_ms = audio_end_ms
         # Mark the barge-in in the trace. When the caller supplied `audio_end_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
         # the user cut in; it's dropped when absent (a cancel without truncation).
         self._record_lifecycle_event('interrupt', audio_end_ms=audio_end_ms)
+
+    async def _send_frame(self, content: RealtimeInput) -> None:
+        """Send one input to the provider, serialized against every other outbound frame.
+
+        A single input can expand to several protocol frames (a `ToolResult` creates the conversation
+        item and then asks for a response), so the lock is what makes each input indivisible on the
+        wire, not just ordered.
+        """
+        async with self._send_lock:
+            await self._connection.send(content)
 
     def _require_capability(self, supported: bool, method: str, feature: str) -> None:
         """Raise a clear `UserError` before sending when the model doesn't support `method`."""
@@ -1708,7 +1731,7 @@ class RealtimeSession:
             wire_content.extend(user_content)
         if call.tool_call_id not in self._tool_calls_awaiting_usage:
             await self._drain_pending_messages('asap')
-        await self._connection.send(
+        await self._send_frame(
             ToolResult(
                 tool_call_id=call.tool_call_id,
                 output=output,
