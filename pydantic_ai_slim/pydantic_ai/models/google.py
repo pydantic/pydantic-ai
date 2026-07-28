@@ -383,10 +383,12 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
 def _map_api_error(e: errors.APIError, model_name: str) -> ModelAPIError:
     """Map a `google.genai` API error to the pydantic-ai exception to raise in its place."""
     if (status_code := e.code) >= 400:
+        headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         return ModelHTTPError(
             status_code=status_code,
             model_name=model_name,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+            headers=headers,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
 

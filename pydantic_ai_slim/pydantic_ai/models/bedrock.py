@@ -120,9 +120,15 @@ def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except ClientError as e:
-        status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+        metadata = e.response.get('ResponseMetadata', {})
+        status_code = metadata.get('HTTPStatusCode')
         if isinstance(status_code, int):
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.response) from e
+            raise ModelHTTPError(
+                status_code=status_code,
+                model_name=model_name,
+                body=e.response,
+                headers=metadata.get('HTTPHeaders'),
+            ) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
 
