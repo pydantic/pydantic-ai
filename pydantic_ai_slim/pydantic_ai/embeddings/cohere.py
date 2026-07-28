@@ -193,7 +193,9 @@ class CohereEmbeddingModel(EmbeddingModel):
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+                raise ModelHTTPError(
+                    status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e  # pragma: no cover
 
         embeddings = response.embeddings.float_
@@ -227,7 +229,9 @@ class CohereEmbeddingModel(EmbeddingModel):
             )
         except ApiError as e:  # pragma: no cover
             if (status_code := e.status_code) and status_code >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+                raise ModelHTTPError(
+                    status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
         return len(result.tokens)
