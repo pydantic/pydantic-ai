@@ -113,9 +113,9 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
     assert session.usage == snapshot(
         RunUsage(
             input_tokens=5,
-            output_tokens=43,
-            output_audio_tokens=40,
-            details={'input_text_tokens': 5, 'output_text_tokens': 3},
+            output_tokens=42,
+            output_audio_tokens=39,
+            details={'input_text_tokens': 5, 'output_text_tokens': 3, 'billable_audio_seconds': 1},
             requests=1,
         )
     )
@@ -268,7 +268,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
             provider_name='xai',
         )
     ]
-    assert (tool_response.usage.input_tokens, tool_response.usage.output_tokens) == (7, 82)
+    assert (tool_response.usage.input_tokens, tool_response.usage.output_tokens) == (7, 113)
     tool_return = messages[2]
     assert isinstance(tool_return, ModelRequest)
     assert tool_return.parts == [
@@ -281,7 +281,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
     ]
     final = messages[3]
     assert isinstance(final, ModelResponse)
-    assert (final.usage.input_tokens, final.usage.output_tokens) == (0, 137)
+    assert (final.usage.input_tokens, final.usage.output_tokens) == (0, 269)
     final_part = final.parts[0]
     assert isinstance(final_part, SpeechPart)
     assert final_part.transcript is not None and 'fog' in final_part.transcript.lower()

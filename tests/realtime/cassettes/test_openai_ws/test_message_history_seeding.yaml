@@ -4,11 +4,11 @@ interactions:
   direction: received
   data:
     type: session.created
-    event_id: event_Dz3T3izBjaq0Jz4ZJjUwg
+    event_id: event_E6U142bTppiN1QIoFIF24
     session:
       type: realtime
       object: realtime.session
-      id: sess_Dz3T3ZktaKkd9TQoxX9xI
+      id: sess_E6U14WBtdqWWLvXhRdE9T
       model: gpt-realtime
       output_modalities:
       - audio
@@ -25,7 +25,7 @@ interactions:
       tracing: null
       truncation: auto
       prompt: null
-      expires_at: 1783447309
+      expires_at: 1785217658
       audio:
         input:
           format:
@@ -76,11 +76,11 @@ interactions:
   direction: received
   data:
     type: session.updated
-    event_id: event_Dz3T34sVdVsHiXHCpLktN
+    event_id: event_E6U14iYwa6kYoYj2klfmp
     session:
       type: realtime
       object: realtime.session
-      id: sess_Dz3T3ZktaKkd9TQoxX9xI
+      id: sess_E6U14WBtdqWWLvXhRdE9T
       model: gpt-realtime
       output_modalities:
       - text
@@ -97,7 +97,7 @@ interactions:
       tracing: null
       truncation: auto
       prompt: null
-      expires_at: 1783447309
+      expires_at: 1785217658
       audio:
         input:
           format:
@@ -161,10 +161,10 @@ interactions:
   direction: received
   data:
     type: conversation.item.added
-    event_id: event_Dz3T3HJYS96hIQArnsmxJ
+    event_id: event_E6U14I0EmESwPjdiD16HJ
     previous_item_id: null
     item:
-      id: item_Dz3T3hyKaeeODXVvEKmdy
+      id: item_E6U14t5zXCwTlap96gdtd
       type: message
       status: completed
       role: user
@@ -175,10 +175,10 @@ interactions:
   direction: received
   data:
     type: conversation.item.done
-    event_id: event_Dz3T3BvUxOCtkTtIKoYIN
+    event_id: event_E6U14PUKGMe3f73zoLdAB
     previous_item_id: null
     item:
-      id: item_Dz3T3hyKaeeODXVvEKmdy
+      id: item_E6U14t5zXCwTlap96gdtd
       type: message
       status: completed
       role: user
@@ -189,10 +189,10 @@ interactions:
   direction: received
   data:
     type: conversation.item.added
-    event_id: event_Dz3T3jjfaLytwMR4Nr5JO
-    previous_item_id: item_Dz3T3hyKaeeODXVvEKmdy
+    event_id: event_E6U14HLdd4XKTI8rFJW1a
+    previous_item_id: item_E6U14t5zXCwTlap96gdtd
     item:
-      id: item_Dz3T3o4P3bmXcX86D9ONL
+      id: item_E6U14UU5qxXZj87bQIgPY
       type: message
       status: completed
       role: assistant
@@ -203,10 +203,10 @@ interactions:
   direction: received
   data:
     type: conversation.item.done
-    event_id: event_Dz3T3BUKUXeG0BebS5uvs
-    previous_item_id: item_Dz3T3hyKaeeODXVvEKmdy
+    event_id: event_E6U14fJnT3jOEktHUi7gc
+    previous_item_id: item_E6U14t5zXCwTlap96gdtd
     item:
-      id: item_Dz3T3o4P3bmXcX86D9ONL
+      id: item_E6U14UU5qxXZj87bQIgPY
       type: message
       status: completed
       role: assistant
@@ -217,10 +217,10 @@ interactions:
   direction: received
   data:
     type: conversation.item.added
-    event_id: event_Dz3T3XT3YTNiZ7QlCbSk0
-    previous_item_id: item_Dz3T3o4P3bmXcX86D9ONL
+    event_id: event_E6U14SgVvtGTU4C1qa3CW
+    previous_item_id: item_E6U14UU5qxXZj87bQIgPY
     item:
-      id: item_Dz3T332jjMe5pBRKcDcfG
+      id: item_E6U14Fu3bTvRcwB0Zg04Z
       type: message
       status: completed
       role: user
@@ -231,10 +231,10 @@ interactions:
   direction: received
   data:
     type: conversation.item.done
-    event_id: event_Dz3T30CXyoRqu8NpHNDN6
-    previous_item_id: item_Dz3T3o4P3bmXcX86D9ONL
+    event_id: event_E6U14gfDb1p5glYnAWVZg
+    previous_item_id: item_E6U14UU5qxXZj87bQIgPY
     item:
-      id: item_Dz3T332jjMe5pBRKcDcfG
+      id: item_E6U14Fu3bTvRcwB0Zg04Z
       type: message
       status: completed
       role: user
@@ -245,14 +245,14 @@ interactions:
   direction: received
   data:
     type: response.created
-    event_id: event_Dz3T3NQXzOTRGcWoB5TDM
+    event_id: event_E6U14RFAounpAhViGT7gu
     response:
       object: realtime.response
-      id: resp_Dz3T3zIGA8DegZNiPeEg5
+      id: resp_E6U14YFe7U2EU95eQndMH
       status: in_progress
       status_details: null
       output: []
-      conversation_id: conv_Dz3T3viVTrS33IpNwUkSF
+      conversation_id: conv_E6U14phIylwXcXroTE5Kr
       output_modalities:
       - text
       max_output_tokens: inf
@@ -268,11 +268,11 @@ interactions:
   direction: received
   data:
     type: response.output_item.added
-    event_id: event_Dz3T3GnIc7k9gM8kt5LnM
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    event_id: event_E6U157n5ry5nhf3jEXhw9
+    response_id: resp_E6U14YFe7U2EU95eQndMH
     output_index: 0
     item:
-      id: item_Dz3T3xrfY93EGb4isy9I0
+      id: item_E6U14tdNtskbeBmYROQjH
       type: message
       status: in_progress
       role: assistant
@@ -281,10 +281,10 @@ interactions:
   direction: received
   data:
     type: conversation.item.added
-    event_id: event_Dz3T39iy3PVEuUKvmumsN
-    previous_item_id: item_Dz3T332jjMe5pBRKcDcfG
+    event_id: event_E6U15kyN1IqPvnzDmAjOP
+    previous_item_id: item_E6U14Fu3bTvRcwB0Zg04Z
     item:
-      id: item_Dz3T3xrfY93EGb4isy9I0
+      id: item_E6U14tdNtskbeBmYROQjH
       type: message
       status: in_progress
       role: assistant
@@ -293,9 +293,9 @@ interactions:
   direction: received
   data:
     type: response.content_part.added
-    event_id: event_Dz3T3wx5hzzgXmZU9tMiI
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U15oIb80vg3IDzAPUCE
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
     part:
@@ -305,275 +305,204 @@ interactions:
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz3T3UGV8mGvLMvlIcuRL
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U15MRPskSLwnIDT7jHM
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
     delta: Your
-    obfuscation: uTROEGxWIA4C
+    obfuscation: 7zleWRBBoD2B
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz3T3CXhFQVdx9AtBd1NZ
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U15O4RH2jjMig1EGoh1
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
     delta: ' name'
-    obfuscation: oNrPMMhgX6m
+    obfuscation: i8wzSfyf7g4
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz3T3jEratewsKM1L0kwE
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U15eNKiH2Y7KqiFedl7
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
     delta: ' is'
-    obfuscation: GTizArJS52s2e
+    obfuscation: s13TTwpcoIFsE
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz3T4vSIqERO7NAXuQaG9
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U15vAAKZTVjIIdVlAj9
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
     delta: ' Alice'
-    obfuscation: gA7LEKsE2t
+    obfuscation: QGUmwJaN4n
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz3T49BENwn4b39RB6e6k
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U15JeBYMaiW0zKUk9Av
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
     delta: ','
-    obfuscation: 0SjIWnHa7vOLbh5
+    obfuscation: fffpPABcHztcmW5
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz3T4try2eTNKDiSshNjF
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U15QFqsFi0bp8Tiocgw
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
     delta: ' and'
-    obfuscation: MmSVzRnq7JYh
+    obfuscation: w6YvZE1MOg8G
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz3T4JygbEmAS0A2wl0Uh
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U155KDe7BdcTJK0Jaa0
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
     delta: ' your'
-    obfuscation: mQYz9w129ci
+    obfuscation: qYvVJOSUV73
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz3T4jBOPQiSX7ATXaPSs
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U15Tw2EQBI1PlkXU4vd
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
     delta: ' favorite'
-    obfuscation: agwUnFj
+    obfuscation: M8uOSTs
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz3T4RRWdtALwWO8J2sDb
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U157EkatrCL57q1q7no
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
     delta: ' color'
-    obfuscation: ignZB9g4wg
+    obfuscation: 1k4AysIMld
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz3T4ypeZe8maDGHi8WcS
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U15b6p6TDJl1uJigHQ5
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
     delta: ' is'
-    obfuscation: 0veUXKWhKhti6
+    obfuscation: xhDumbWqoLVVh
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz3T422jxo0RuEy4UAdgV
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U15d025TM0E9wt44NEC
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
     delta: ' teal'
-    obfuscation: pXKEHoWDV6i
+    obfuscation: 5PwFYJtRLNS
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz3T4n6mhkmHSfOyA7VHW
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U15jy7UfsX8OMB03rIY
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
     delta: '!'
-    obfuscation: nmnevhpnfSTyRQS
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz3T4XQabImjL7C1TqoUt
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
-    output_index: 0
-    content_index: 0
-    delta: ' I''ve'
-    obfuscation: 5woTwHcBItY
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz3T4UmnPFyHod3oeBKLp
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
-    output_index: 0
-    content_index: 0
-    delta: ' got'
-    obfuscation: smmBFNQOwmqV
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz3T4ayRTHy0sHupxTpaq
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
-    output_index: 0
-    content_index: 0
-    delta: ' it'
-    obfuscation: NJkMq6ENkF5PW
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz3T46J54Mo0z1MP0zmFM
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
-    output_index: 0
-    content_index: 0
-    delta: ' locked'
-    obfuscation: PIfn4gTJV
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz3T4xRjwWP1mCcq51qUY
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
-    output_index: 0
-    content_index: 0
-    delta: ' in'
-    obfuscation: 31i9yiKwRjhEj
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz3T4ZUmKWuuyPSG4CLhc
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
-    output_index: 0
-    content_index: 0
-    delta: .
-    obfuscation: wACX5iwXfmMBYPO
+    obfuscation: 7AUWKaxenA7NGfB
 - kind: message
   direction: received
   data:
     type: response.output_text.done
-    event_id: event_Dz3T4SHculvzHLkm9xSEa
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U15QMSHWDM1KUDSjU9B
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
-    text: Your name is Alice, and your favorite color is teal! I've got it locked
-      in.
+    text: Your name is Alice, and your favorite color is teal!
 - kind: message
   direction: received
   data:
     type: response.content_part.done
-    event_id: event_Dz3T4chic6n5A7GVxmhsa
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
-    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    event_id: event_E6U15FIcFR2NrLVzxHFgR
+    response_id: resp_E6U14YFe7U2EU95eQndMH
+    item_id: item_E6U14tdNtskbeBmYROQjH
     output_index: 0
     content_index: 0
     part:
       type: text
-      text: Your name is Alice, and your favorite color is teal! I've got it locked
-        in.
+      text: Your name is Alice, and your favorite color is teal!
 - kind: message
   direction: received
   data:
     type: conversation.item.done
-    event_id: event_Dz3T4fqO2eCqmpQykZrVq
-    previous_item_id: item_Dz3T332jjMe5pBRKcDcfG
+    event_id: event_E6U15B3opfyB9KGS3KOTY
+    previous_item_id: item_E6U14Fu3bTvRcwB0Zg04Z
     item:
-      id: item_Dz3T3xrfY93EGb4isy9I0
+      id: item_E6U14tdNtskbeBmYROQjH
       type: message
       status: completed
       role: assistant
       content:
       - type: output_text
-        text: Your name is Alice, and your favorite color is teal! I've got it locked
-          in.
+        text: Your name is Alice, and your favorite color is teal!
 - kind: message
   direction: received
   data:
     type: response.output_item.done
-    event_id: event_Dz3T4ZjegtSg5cvc4LfYZ
-    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    event_id: event_E6U15QBA3s7w8QhMAzGyr
+    response_id: resp_E6U14YFe7U2EU95eQndMH
     output_index: 0
     item:
-      id: item_Dz3T3xrfY93EGb4isy9I0
+      id: item_E6U14tdNtskbeBmYROQjH
       type: message
       status: completed
       role: assistant
       content:
       - type: output_text
-        text: Your name is Alice, and your favorite color is teal! I've got it locked
-          in.
+        text: Your name is Alice, and your favorite color is teal!
 - kind: message
   direction: received
   data:
     type: response.done
-    event_id: event_Dz3T46sSfoipWf25J25Rw
+    event_id: event_E6U15A8jwNM1UqahekS8G
     response:
       object: realtime.response
-      id: resp_Dz3T3zIGA8DegZNiPeEg5
+      id: resp_E6U14YFe7U2EU95eQndMH
       status: completed
       status_details: null
       output:
-      - id: item_Dz3T3xrfY93EGb4isy9I0
+      - id: item_E6U14tdNtskbeBmYROQjH
         type: message
         status: completed
         role: assistant
         content:
         - type: output_text
-          text: Your name is Alice, and your favorite color is teal! I've got it locked
-            in.
-      conversation_id: conv_Dz3T3viVTrS33IpNwUkSF
+          text: Your name is Alice, and your favorite color is teal!
+      conversation_id: conv_E6U14phIylwXcXroTE5Kr
       output_modalities:
       - text
       max_output_tokens: inf
@@ -584,9 +513,9 @@ interactions:
             rate: 24000
           voice: alloy
       usage:
-        total_tokens: 169
+        total_tokens: 163
         input_tokens: 149
-        output_tokens: 20
+        output_tokens: 14
         input_token_details:
           text_tokens: 149
           audio_tokens: 0
@@ -597,6 +526,6 @@ interactions:
             audio_tokens: 0
             image_tokens: 0
         output_token_details:
-          text_tokens: 20
+          text_tokens: 14
           audio_tokens: 0
       metadata: null

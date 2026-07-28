@@ -137,7 +137,7 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
 
     # Reasoning (`thoughtsTokenCount`) is billed but left out of Gemini's response/total counts, so the
     # session captures it in `details` rather than dropping it.
-    assert response.usage.details.get('thoughts_tokens') == snapshot(23)
+    assert response.usage.details.get('thoughts_tokens') == snapshot(24)
 
 
 async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
@@ -242,10 +242,10 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     # must not be collapsed into the output total.
     assert final.usage == snapshot(
         RequestUsage(
-            input_tokens=1203,
-            output_tokens=80,
-            output_audio_tokens=68,
-            details={'input_text_tokens': 1203, 'output_text_tokens': 12},
+            input_tokens=1204,
+            output_tokens=81,
+            output_audio_tokens=69,
+            details={'input_text_tokens': 1204, 'output_text_tokens': 12},
         )
     )
     assert session.usage.total_tokens == final.usage.total_tokens
