@@ -1027,6 +1027,28 @@ agent = Agent(model)
 ...
 ```
 
+### Modelsell
+
+[Modelsell](https://modelsell.com/) provides an OpenAI-compatible Chat Completions API for models available to your account. Create an [API key](https://modelsell.com/console/token), get an available model ID from [`GET /v1/models`](https://modelsell.com/docs/api-reference), and configure [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] with the Modelsell API base:
+
+```python {test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    os.environ['MODELSELL_MODEL'],
+    provider=OpenAIProvider(
+        base_url='https://modelsell.com/v1',
+        api_key=os.environ['MODELSELL_API_KEY'],
+    ),
+)
+agent = Agent(model)
+...
+```
+
 ### Rapid-MLX (Apple Silicon)
 
 [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) is an OpenAI-compatible inference server for Apple Silicon, built on Apple's MLX framework.
