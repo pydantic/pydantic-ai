@@ -19,7 +19,9 @@ _SHIMS = [
     ('overflow', 'tool_output_limits', 'OverflowingToolOutput', 'ToolOutputLimits'),
     ('compaction', 'compaction', 'TieredCompaction', 'TieredCompaction'),
     ('context', 'repo_context', 'RepoContext', 'RepoContext'),
-    ('docs', 'pydantic_ai_docs', 'PyaiDocs', 'PydanticAIDocs'),
+    # `PyaiDocs` is a subclass (it keeps the old spec name), not an alias, so the
+    # identity check uses the toolset.
+    ('docs', 'pydantic_ai_docs', 'PyaiDocsToolset', 'PydanticAIDocsToolset'),
     ('dynamic_workflow', 'dynamic_workflow', 'DynamicWorkflow', 'DynamicWorkflow'),
     ('media', 'media', 'S3MediaStore', 'S3MediaStore'),
     ('planning', 'planning', 'Planning', 'Planning'),

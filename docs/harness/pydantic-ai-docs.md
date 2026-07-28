@@ -85,6 +85,11 @@ print(result.output)
 
 Pass `custom_capability_types` so the spec loader knows how to instantiate `PydanticAIDocs`.
 
+Specs saved before the rename from `PyaiDocs` use the old block name. To keep loading
+them, pass the deprecated `PyaiDocs` class (imported from `pydantic_ai_harness.docs`,
+which emits a deprecation warning) alongside or instead of `PydanticAIDocs` -- it keeps
+the `PyaiDocs` serialization name. Re-save with `PydanticAIDocs` to migrate.
+
 ## API reference
 
 ::: pydantic_ai_harness.pydantic_ai_docs.PydanticAIDocs

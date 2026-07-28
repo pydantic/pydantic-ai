@@ -6,12 +6,11 @@ emits a `DeprecationWarning`. Import from `pydantic_ai_harness.pydantic_ai_docs`
 
 from pydantic_ai_harness.experimental._warn import warn_moved
 from pydantic_ai_harness.pydantic_ai_docs import (
-    PydanticAIDocs,
     PydanticAIDocsToolset,
     PydanticAIDocsTopic,
 )
+from pydantic_ai_harness.pydantic_ai_docs._deprecated import PyaiDocs
 
-PyaiDocs = PydanticAIDocs
 PyaiDocsToolset = PydanticAIDocsToolset
 PyaiDocsTopic = PydanticAIDocsTopic
 

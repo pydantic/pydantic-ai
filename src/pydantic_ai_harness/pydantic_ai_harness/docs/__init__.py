@@ -6,12 +6,11 @@ This module was renamed; importing from here still works but emits a
 
 from pydantic_ai_harness._warn import warn_module_renamed
 from pydantic_ai_harness.pydantic_ai_docs import (
-    PydanticAIDocs,
     PydanticAIDocsToolset,
     PydanticAIDocsTopic,
 )
+from pydantic_ai_harness.pydantic_ai_docs._deprecated import PyaiDocs
 
-PyaiDocs = PydanticAIDocs
 PyaiDocsToolset = PydanticAIDocsToolset
 PyaiDocsTopic = PydanticAIDocsTopic
 
