@@ -50,11 +50,11 @@ from pydantic_ai.realtime import (
     AudioInput,
     InputSpeechEndEvent,
     InputSpeechStartEvent,
-    InputTranscriptionFailedEvent,
+    InputTranscriptionErrorEvent,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
-    ReconnectedEvent,
+    SessionReconnectEvent,
     SessionUsageEvent,
     TurnCompleteEvent,
     TurnDetection,
@@ -540,7 +540,7 @@ def test_map_unhandled_event_returns_none() -> None:
         ({'type': 'error', 'error': {'message': 'bad'}}, SessionErrorEvent('bad')),
         (
             {'type': 'conversation.item.input_audio_transcription.failed', 'error': {'message': 'bad'}},
-            InputTranscriptionFailedEvent(message='bad'),
+            InputTranscriptionErrorEvent(message='bad'),
         ),
         (
             {
@@ -549,7 +549,7 @@ def test_map_unhandled_event_returns_none() -> None:
                 'item_id': 'u',
                 'content_index': 2,
             },
-            InputTranscriptionFailedEvent(
+            InputTranscriptionErrorEvent(
                 message='bad',
                 type='transcription_error',
                 code='audio_unintelligible',
@@ -563,7 +563,7 @@ def test_map_unhandled_event_returns_none() -> None:
                 'type': 'conversation.item.input_audio_transcription.failed',
                 'error': {'message': 'x', 'type': 'server_error', 'code': 'DeploymentNotFound'},
             },
-            InputTranscriptionFailedEvent(
+            InputTranscriptionErrorEvent(
                 message=(
                     'x The transcription model is not deployed on this Azure OpenAI resource. Deploy one and '
                     'set `input_transcription_model` to its deployment name, or set it to `None` to disable '
@@ -579,7 +579,7 @@ def test_map_unhandled_event_returns_none() -> None:
                 'type': 'conversation.item.input_audio_transcription.failed',
                 'error': {'code': 'DeploymentNotFound'},
             },
-            InputTranscriptionFailedEvent(
+            InputTranscriptionErrorEvent(
                 message=(
                     'The transcription model is not deployed on this Azure OpenAI resource. Deploy one and '
                     'set `input_transcription_model` to its deployment name, or set it to `None` to disable '
@@ -2197,7 +2197,7 @@ async def test_clean_close_reconnects_when_a_policy_is_configured() -> None:
         reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
     )
     events = await collect_codec_events(conn)
-    assert events == [ReconnectedEvent(state_restored=False), Transcript(text='still here', is_final=True)]
+    assert events == [SessionReconnectEvent(state_restored=False), Transcript(text='still here', is_final=True)]
 
 
 @pytest.mark.anyio
@@ -2240,7 +2240,7 @@ async def test_reconnects_on_drop_and_resumes() -> None:
         reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
     )
     events = await collect_codec_events(conn)
-    assert events == [ReconnectedEvent(state_restored=False), Transcript(text='hi', is_final=True)]
+    assert events == [SessionReconnectEvent(state_restored=False), Transcript(text='hi', is_final=True)]
 
 
 class _DropAfterHandshake(FakeWebSocket):
@@ -2290,7 +2290,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [ReconnectedEvent(state_restored=False), Transcript(text='hi', is_final=True)]
+    assert events == [SessionReconnectEvent(state_restored=False), Transcript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
 
 

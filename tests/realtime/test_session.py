@@ -64,14 +64,14 @@ from pydantic_ai.realtime import (
     AudioInput,
     InputSpeechEndEvent,
     InputSpeechStartEvent,
-    InputTranscriptionFailedEvent,
+    InputTranscriptionErrorEvent,
     RealtimeError,
     RealtimeEvent,
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession as _RealtimeSession,
-    ReconnectedEvent,
+    SessionReconnectEvent,
     SessionUsageEvent,
     TranscriptUpdate,
     TurnCompleteEvent,
@@ -865,8 +865,8 @@ async def test_control_events_and_recoverable_error_pass_through() -> None:
 
 async def test_input_transcription_failure_passes_through_and_session_continues() -> None:
     # Failures finalize placeholder turns whether or not they identify their turn (`item_id` may be absent).
-    identified = InputTranscriptionFailedEvent(message='audio unintelligible', item_id='user-1', content_index=0)
-    anonymous = InputTranscriptionFailedEvent(message='transcription unavailable')
+    identified = InputTranscriptionErrorEvent(message='audio unintelligible', item_id='user-1', content_index=0)
+    anonymous = InputTranscriptionErrorEvent(message='transcription unavailable')
     conn = FakeRealtimeConnection([identified, anonymous, TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner)
 
@@ -874,10 +874,10 @@ async def test_input_transcription_failure_passes_through_and_session_continues(
     assert [type(event).__name__ for event in events] == [
         'PartStartEvent',
         'PartEndEvent',
-        'InputTranscriptionFailedEvent',
+        'InputTranscriptionErrorEvent',
         'PartStartEvent',
         'PartEndEvent',
-        'InputTranscriptionFailedEvent',
+        'InputTranscriptionErrorEvent',
         'TurnCompleteEvent',
     ]
     assert session.new_messages() == snapshot(
@@ -895,7 +895,7 @@ async def test_input_transcription_failure_after_partial_does_not_block_later_tu
         [
             InputTranscript(text='partial A', is_final=False, item_id='A'),
             InputTranscript(text='hello from B', is_final=True, item_id='B'),
-            InputTranscriptionFailedEvent(message='transcription failed', item_id='A'),
+            InputTranscriptionErrorEvent(message='transcription failed', item_id='A'),
             TurnCompleteEvent(),
         ]
     )
@@ -911,7 +911,7 @@ async def test_input_transcription_failure_after_partial_does_not_block_later_tu
 
 @pytest.mark.parametrize('item_id', [None, 'user-1'])
 async def test_input_transcription_failure_retained_audio_fallback(item_id: str | None) -> None:
-    conn = FakeRealtimeConnection([InputTranscriptionFailedEvent(message='failed', item_id=item_id)])
+    conn = FakeRealtimeConnection([InputTranscriptionErrorEvent(message='failed', item_id=item_id)])
     session = RealtimeSession(conn, _noop_runner, audio_retention='input_audio')
     if item_id is None:
         await session.send_audio(b'\xaa')
@@ -2460,7 +2460,7 @@ async def test_reconnect_response_state(state_restored: bool, expected: list[Mod
     conn = FakeRealtimeConnection(
         [
             Transcript(text='before', is_final=False),
-            ReconnectedEvent(state_restored=state_restored),
+            SessionReconnectEvent(state_restored=state_restored),
             Transcript(text='after', is_final=True),
             TurnCompleteEvent(),
         ]
@@ -2475,14 +2475,14 @@ async def test_reconnect_while_idle_passes_through() -> None:
     # passes through and the next turn is recorded normally.
     conn = FakeRealtimeConnection(
         [
-            ReconnectedEvent(state_restored=False),
+            SessionReconnectEvent(state_restored=False),
             Transcript(text='after', is_final=True),
             TurnCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn)
     events = await collect_events(session)
-    assert any(isinstance(e, ReconnectedEvent) for e in events)
+    assert any(isinstance(e, SessionReconnectEvent) for e in events)
     assert session.new_messages() == snapshot(
         [
             ModelResponse(
@@ -2505,7 +2505,7 @@ async def test_reconnect_finalizes_multiple_in_flight_user_items() -> None:
             InputTranscript(text='first turn', is_final=False, item_id='u1'),
             InputTranscript(text='second turn', is_final=False, item_id='u2'),
             InputTranscript(text='second turn', is_final=True, item_id='u2'),
-            ReconnectedEvent(state_restored=False),
+            SessionReconnectEvent(state_restored=False),
             Transcript(text='after', is_final=True),
             TurnCompleteEvent(),
         ]
@@ -2594,7 +2594,7 @@ async def test_retained_input_audio_kept_when_transcription_fails() -> None:
     conn = FakeRealtimeConnection(
         [
             InputSpeechEndEvent(item_id='A'),
-            InputTranscriptionFailedEvent(message='transcription failed', item_id='A'),
+            InputTranscriptionErrorEvent(message='transcription failed', item_id='A'),
             InputTranscript(text='hi', is_final=True, item_id='B'),
             TurnCompleteEvent(),
         ]

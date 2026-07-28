@@ -36,8 +36,8 @@ from pydantic_ai.realtime import (
     PartDeltaEvent,
     PartStartEvent,
     RealtimeModelProfile,
-    ReconnectedEvent,
     ReconnectPolicy,
+    SessionReconnectEvent,
     TurnCompleteEvent,
 )
 from pydantic_ai.realtime._base import SessionErrorEvent
@@ -393,7 +393,7 @@ async def test_session_resumption_after_drop(xai_ws_cassette: tuple[XaiProvider,
                 if isinstance(event, TurnCompleteEvent) and not disconnected:
                     disconnected = True
                     await cassette.disconnect()
-                elif isinstance(event, ReconnectedEvent):
+                elif isinstance(event, SessionReconnectEvent):
                     await session.send('What code word did I ask you to remember?')
                     sent_followup = True
                 elif sent_followup and isinstance(event, TurnCompleteEvent):
@@ -402,7 +402,7 @@ async def test_session_resumption_after_drop(xai_ws_cassette: tuple[XaiProvider,
     updates = sent_frames_containing(cassette, 'resumption')
     assert len(updates) == 2
     assert all(update['session']['resumption'] == {'enabled': True} for update in updates)
-    assert sum(isinstance(event, ReconnectedEvent) for event in events) == 1
+    assert sum(isinstance(event, SessionReconnectEvent) for event in events) == 1
 
     conversation_ids = [
         message.data['conversation']['id']

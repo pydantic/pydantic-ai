@@ -32,7 +32,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeModelProfile,
-    ReconnectedEvent,
+    SessionReconnectEvent,
     TurnDetection,
 )
 from pydantic_ai.realtime._base import ConversationCreated, ConversationItemCreated, SessionErrorEvent
@@ -615,7 +615,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [ReconnectedEvent(state_restored=True), Transcript(text='hi', is_final=True)]
+    assert events == [SessionReconnectEvent(state_restored=True), Transcript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]  # both the dropped and the current socket are closed
     # The last URL is the re-dial attempted after `good` hung up, which the stand-in refuses.
     assert connect.urls == [
@@ -689,7 +689,7 @@ async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
         await session.send('Hello.')
         events = await collect_session_events(session)
 
-    assert sum(isinstance(event, ReconnectedEvent) for event in events) == 1
+    assert sum(isinstance(event, SessionReconnectEvent) for event in events) == 1
     messages = session.all_messages()
     assert len(messages) == 2
     assert isinstance(messages[0], ModelRequest)

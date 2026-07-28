@@ -76,9 +76,9 @@ from ._base import (
     RealtimeInput,
     RealtimeModel,
     RealtimeModelSettings,
-    ReconnectedEvent,
     ReconnectPolicy,
     SessionErrorEvent,
+    SessionReconnectEvent,
     SessionUsageEvent,
     TextInput,
     ToolResult,
@@ -512,7 +512,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 )
                 return
             if await self._try_reconnect():
-                yield ReconnectedEvent(state_restored=self._restores_state_on_reconnect)
+                yield SessionReconnectEvent(state_restored=self._restores_state_on_reconnect)
                 continue
             yield SessionErrorEvent(
                 message=f'{self._provider_label} connection closed; reconnect failed: {closed}', recoverable=False
@@ -875,7 +875,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             with map_connect_errors(self.model):
                 ws = await dial()
                 # Seed prior conversation once, after the initial handshake. Reconnects deliberately don't
-                # re-seed: server state is lost on drop and a `ReconnectedEvent` starts a fresh turn.
+                # re-seed: server state is lost on drop and a `SessionReconnectEvent` starts a fresh turn.
                 for item in seed:
                     await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             yield OpenAIRealtimeConnection(

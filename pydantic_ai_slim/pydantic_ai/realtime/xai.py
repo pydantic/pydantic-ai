@@ -58,8 +58,8 @@ from ._base import (
     RealtimeCodecEvent,
     RealtimeModel,
     RealtimeModelSettings,
-    ReconnectedEvent,
     ReconnectPolicy,
+    SessionReconnectEvent,
     ToolCall,
     inject_trace_context,
 )
@@ -186,7 +186,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         async for event in super().__aiter__():
             yield event
-            if isinstance(event, ReconnectedEvent):
+            if isinstance(event, SessionReconnectEvent):
                 replayed_items = self._replayed_items[:]
                 self._replayed_items.clear()
                 for replayed_item in replayed_items:

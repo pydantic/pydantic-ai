@@ -102,9 +102,9 @@ from ._base import (
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
-    ReconnectedEvent,
     ReconnectPolicy,
     SessionErrorEvent,
+    SessionReconnectEvent,
     SessionUsageEvent,
     TextInput,
     ToolCall,
@@ -928,7 +928,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 raise RealtimeError(model_name=self.model, message=f'Could not reach the realtime API: {e}') from e
             # Seed prior conversation once, after the initial connect, as inactive context turns (no
             # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
-            # resumption restores server state, and a `ReconnectedEvent` starts a fresh turn.
+            # resumption restores server state, and a `SessionReconnectEvent` starts a fresh turn.
             if turns := await _seed_turns(messages, profile=self.profile, provider_name=self.system):
                 await session.send_client_content(turns=turns, turn_complete=False)
             yield GoogleRealtimeConnection(
@@ -1073,7 +1073,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     yield SessionErrorEvent(message=f'{self._provider_label} connection closed: {e}', recoverable=False)
                     return
                 if await self._try_reconnect():
-                    yield ReconnectedEvent(state_restored=True)
+                    yield SessionReconnectEvent(state_restored=True)
                     continue
                 yield SessionErrorEvent(
                     message=f'{self._provider_label} connection closed; reconnect failed: {e}', recoverable=False

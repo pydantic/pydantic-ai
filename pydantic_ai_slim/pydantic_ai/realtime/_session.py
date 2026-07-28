@@ -77,7 +77,7 @@ from ._base import (
     InputSpeechEndEvent,
     InputSpeechStartEvent,
     InputTranscript,
-    InputTranscriptionFailedEvent,
+    InputTranscriptionErrorEvent,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeError,
@@ -86,8 +86,8 @@ from ._base import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSessionInput,
-    ReconnectedEvent,
     SessionErrorEvent,
+    SessionReconnectEvent,
     SessionUsageEvent,
     TextInput,
     ToolCall,
@@ -157,8 +157,8 @@ _TranslatableEvent: TypeAlias = (
     | TurnCompleteEvent
     | InputSpeechStartEvent
     | InputSpeechEndEvent
-    | InputTranscriptionFailedEvent
-    | ReconnectedEvent
+    | InputTranscriptionErrorEvent
+    | SessionReconnectEvent
     | PartStartEvent
     | PartEndEvent
     | SessionErrorEvent
@@ -1617,7 +1617,7 @@ class RealtimeSession:
         """Return `False` for an xAI item that belongs to the resumption replay burst."""
         return not self._is_replayed_item(item_id, tool_call_id)
 
-    def _handle_reconnected(self, event: ReconnectedEvent) -> list[RealtimeEvent]:
+    def _handle_reconnected(self, event: SessionReconnectEvent) -> list[RealtimeEvent]:
         """Close state the provider lost before starting the reconnected turn."""
         if event.state_restored:
             return [event]
@@ -1644,8 +1644,8 @@ class RealtimeSession:
             self._finalize_response(interrupted=True)
         return [*events, event]
 
-    def _handle_control_event(self, event: InputSpeechStartEvent | ReconnectedEvent) -> list[RealtimeEvent]:
-        if isinstance(event, ReconnectedEvent):
+    def _handle_control_event(self, event: InputSpeechStartEvent | SessionReconnectEvent) -> list[RealtimeEvent]:
+        if isinstance(event, SessionReconnectEvent):
             return self._handle_reconnected(event)
         self._user_turn_active = True
         self._record_lifecycle_event('user speech started')
@@ -1700,13 +1700,13 @@ class RealtimeSession:
             return [event]
         if isinstance(event, PartEndEvent):
             return [event]
-        if isinstance(event, InputTranscriptionFailedEvent):
+        if isinstance(event, InputTranscriptionErrorEvent):
             return [*self._finalize_failed_user_item(event.item_id), event]
         # The remaining control-plane events pass through unchanged. `assert_never` makes pyright flag
         # any new non-pump `RealtimeEvent` variant that isn't handled here.
         if isinstance(
             event,
-            (InputSpeechStartEvent, ReconnectedEvent),
+            (InputSpeechStartEvent, SessionReconnectEvent),
         ):
             return self._handle_control_event(event)
         if isinstance(event, SessionErrorEvent):
