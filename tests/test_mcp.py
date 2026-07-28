@@ -578,15 +578,28 @@ class TestMCPToolsetIntegration:
 
         toolset = MCPToolset(fastmcp_server, stateless=True)
         async with toolset:
+            # Spy on the client.initialize to count calls
+            original_init = toolset.client.initialize
+            call_count = 0
+
+            async def counting_init(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                return await original_init(*args, **kwargs)
+
+            toolset.client.initialize = counting_init  # type: ignore[assignment]
+
             # Launch multiple concurrent list_tools (each triggers _ensure_initialized)
             results = await asyncio.gather(
                 toolset.list_tools(),
                 toolset.list_tools(),
                 toolset.list_tools(),
             )
-            # All should succeed with the same result
+            # All should succeed
             assert all(len(r) > 0 for r in results)
             assert toolset._initialized is True  # pyright: ignore[reportPrivateUsage]
+            # Only ONE initialize handshake was sent despite 3 concurrent callers
+            assert call_count == 1, f'Expected 1 initialize call, got {call_count}'
 
     # --- End stateless mode tests ---
 
