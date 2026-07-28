@@ -73,6 +73,11 @@ with try_import() as mistral_imports:
 with try_import() as xai_imports:
     from pydantic_ai.providers.xai import XaiProvider
 
+with try_import() as openai_imports:
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
 with try_import() as openrouter_google_imports:
     # OpenRouter installs its own Google transformer; importable so inline_snapshot can name it.
     from pydantic_ai.providers.openrouter import (
@@ -351,31 +356,28 @@ def test_azure_gpt_5_6_reasoning_mode(model_name: str):
     assert profile.get('openai_responses_supports_reasoning_mode') is True
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol'])
 def test_openai_gpt_5_reasoning_context(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
-    from pydantic_ai.providers.openai import OpenAIProvider
-
     profile = OpenAIProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_context') is True
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['openai/gpt-5.4', 'openai/gpt-5.5', 'openai/gpt-5.6-sol'])
 def test_openrouter_openai_gpt_5_reasoning_context(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
-
     profile = OpenRouterProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_context') is True
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol'])
 def test_azure_gpt_5_reasoning_context(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_context') is True
