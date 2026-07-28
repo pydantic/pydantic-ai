@@ -338,6 +338,35 @@ async def test_multi_agent_usage_no_incr():
         'gen_ai.usage.output_tokens': 13,
         'gen_ai.usage.details.custom1': 10,
         'gen_ai.usage.details.custom2': 20,
+        'gen_ai.usage.details.custom3': 0,
+    }
+
+
+def test_usage_opentelemetry_attributes_include_zero_details():
+    """A zero-valued detail is a real measurement and must survive the OTel mapping.
+
+    Providers report `reasoning_tokens=0` when a reasoning model didn't think on a given request;
+    dropping it makes "didn't reason" indistinguishable from "doesn't report reasoning tokens".
+    First-class token names stay excluded from `details.*` even at zero.
+    """
+    usage = RequestUsage(
+        input_tokens=100,
+        output_tokens=50,
+        details={'reasoning_tokens': 0, 'input_tokens': 0, 'output_tokens': 0},
+    )
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 100,
+        'gen_ai.usage.output_tokens': 50,
+        'gen_ai.usage.details.reasoning_tokens': 0,
+    }
+
+    # Provider data can put a `None` in `details` despite the `dict[str, int]` annotation, and `None` is
+    # not a valid OTel attribute value, so it's the one thing the guard still drops.
+    usage.details = {'reasoning_tokens': 0, 'unreported_tokens': None}  # pyright: ignore[reportAttributeAccessIssue]
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 100,
+        'gen_ai.usage.output_tokens': 50,
+        'gen_ai.usage.details.reasoning_tokens': 0,
     }
 
 
