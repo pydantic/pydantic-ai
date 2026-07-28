@@ -281,7 +281,10 @@ class GoogleEmbeddingModel(EmbeddingModel):
 
             if task != 'raw':
                 # Text that goes unconditioned lands in a different region of the space than text that
-                # doesn't, so warn even on the default task — unlike files, conditioning was meaningful here.
+                # doesn't, so warn even on the default task — for an all-text input, conditioning was
+                # meaningful and got skipped. An input that also holds a file is deliberately silent
+                # here: its vector is a multimodal one, which Google defines no task instruction for,
+                # and warning would fire on every caption-plus-image embed, the common case.
                 if skipped_text_conditioning:
                     warnings.warn(
                         f'`{self._model_name}` conditions on a task by prefixing the text, so an `EmbeddingContent` '

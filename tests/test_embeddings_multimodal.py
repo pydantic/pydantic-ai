@@ -23,7 +23,7 @@ from pydantic_ai.embeddings import (
     WrapperEmbeddingModel,
     embedding_parts,
 )
-from pydantic_ai.embeddings.input import embedding_modality
+from pydantic_ai.embeddings._modality import embedding_modality
 from pydantic_ai.embeddings.result import EmbedInputType
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
@@ -269,7 +269,8 @@ class _GoogleMultimodalCase:
     expected_warning: str | None = None
 
 
-_GOOGLE_MULTIMODAL_CASES = (
+# The GoogleEmbeddingSettings(...) calls are only evaluated when the google extra is installed.
+_GOOGLE_MULTIMODAL_CASES: list[_GoogleMultimodalCase] = (
     [
         _GoogleMultimodalCase(
             id='image-only',
@@ -363,12 +364,14 @@ async def test_google_multimodal(
     assert result.inputs == (inputs if isinstance(inputs, list) else [inputs])
 
 
-def _solid_png(red: int, size: int = 64) -> BinaryImage:
+def _solid_png(red: int) -> BinaryImage:
     """A solid-colour PNG, distinct per `red` value.
 
     Built rather than read from `tests/assets/`: seven copies of `kiwi.jpg` would put close to a
     megabyte of base64 in the cassette, where seven of these take a few hundred bytes.
     """
+
+    size = 64
 
     def chunk(kind: bytes, data: bytes) -> bytes:
         return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))

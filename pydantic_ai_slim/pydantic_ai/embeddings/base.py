@@ -4,7 +4,8 @@ from collections.abc import Sequence
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import TextContent
 
-from .input import EmbeddingContent, EmbeddingInput, EmbeddingModality, embedding_modality, embedding_parts
+from ._modality import embedding_modality
+from .input import EmbeddingContent, EmbeddingInput, EmbeddingModality, embedding_parts
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings, merge_embedding_settings
 
@@ -108,7 +109,10 @@ class EmbeddingModel(ABC):
             settings: Optional settings to merge with defaults.
 
         Returns:
-            A tuple of (normalized inputs list, merged settings).
+            A tuple of (normalized inputs list, merged settings). An item may be an
+            [`EmbeddingContent`][pydantic_ai.embeddings.EmbeddingContent] of several parts, which
+            `supported_modalities` can't refuse because it describes modalities rather than fusion —
+            embed its parts into one vector, or reject it, but don't pass it on as if it were one part.
 
         Raises:
             UserError: If an input uses a modality the model doesn't support.

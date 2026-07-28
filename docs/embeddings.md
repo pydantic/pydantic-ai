@@ -79,7 +79,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ## Multimodal inputs
 
-Some models embed more than text. Pass images, audio, video or documents using the same content types you'd use in a prompt — [`ImageUrl`][pydantic_ai.messages.ImageUrl], [`BinaryContent`][pydantic_ai.messages.BinaryContent], and friends — and each input yields one embedding, exactly like text.
+Some models embed more than text. Pass images, audio, video or documents using the same content types you'd use in a prompt — see [`EmbeddingContentPart`][pydantic_ai.embeddings.EmbeddingContentPart] for the accepted set — and each input yields one embedding, exactly like text.
 
 To combine several parts into a *single* vector — a page screenshot and its caption, say — wrap them in [`EmbeddingContent`][pydantic_ai.embeddings.EmbeddingContent]:
 
@@ -118,13 +118,22 @@ Support is per model, not per provider, and is declared by [`EmbeddingModel.supp
 !!! note "Looking up embeddings"
     `result['some text']` looks an embedding up by its text, whether you passed a `str` or a [`TextContent`][pydantic_ai.messages.TextContent]. Embeddings of files and of `EmbeddingContent` are accessed by index.
 
+    [`EmbeddingResult.inputs`][pydantic_ai.embeddings.EmbeddingResult.inputs] holds whatever you passed in, so it is now typed as `Sequence[EmbeddingInput]` rather than `Sequence[str]`. Code that treated it as text — `', '.join(result.inputs)`, say — needs to narrow to `str` first.
+
+!!! warning "Trust model for file URLs"
+    A file URL you pass here is fetched by *your server*, not by the provider, because embedding APIs take inline bytes. The download applies the same SSRF protection as the [chat models](input.md#user-side-download-vs-direct-file-url) — private and link-local addresses are blocked, redirects are re-validated, and only `http(s)` is allowed — but don't construct an [`ImageUrl`][pydantic_ai.messages.ImageUrl] and friends from untrusted user input without validating the scheme and scope, and only set `force_download='allow-local'` on server-authored URLs, since it permits local network access.
+
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] doesn't help here: it sanitizes message histories, and embedding inputs aren't messages. Validate them yourself, or embed the bytes as [`BinaryContent`][pydantic_ai.messages.BinaryContent] and never take a URL from a client.
+
 ### Google multimodal limits
 
-Files are sent to Google inline, so a URL is downloaded first: a [`VideoUrl`][pydantic_ai.messages.VideoUrl] pointing at YouTube or a `gs://` bucket — which the [chat models](models/google.md) pass to Google by reference — can't be embedded, and raises a [`UserError`][pydantic_ai.exceptions.UserError]. Pass the bytes as [`BinaryContent`][pydantic_ai.messages.BinaryContent] instead.
+Files are sent to Google inline, so a URL is downloaded first, and only `http(s)` URLs can be. A [`VideoUrl`][pydantic_ai.messages.VideoUrl] pointing at YouTube or a `gs://` bucket — which the [chat models](models/google.md) pass to Google by reference — can't be embedded: YouTube raises a [`UserError`][pydantic_ai.exceptions.UserError] and `gs://` a `ValueError`. Pass the bytes as [`BinaryContent`][pydantic_ai.messages.BinaryContent] instead.
 
-Google's [multimodal limits](https://ai.google.dev/gemini-api/docs/embeddings#multimodal) apply to a single input, not to the batch: 6 images, 1 document of up to 6 pages, 1 video of up to 120 frames, and 180 seconds of audio. So a batch may carry any number of images, but one `EmbeddingContent` may fuse at most 6. Pydantic AI doesn't enforce these, so exceeding one surfaces as a provider error. `document` means PDF — other binary media types are sent as-is and rejected by Google.
+Google documents [multimodal limits](https://ai.google.dev/gemini-api/docs/embeddings#multimodal) of 6 images, 1 document of up to 6 pages, 1 video of up to 120 seconds, and 180 seconds of audio. For images these bound a single input rather than the request: 7 separate images embed fine, while 7 fused into one `EmbeddingContent` are rejected. Pydantic AI doesn't enforce any of this, so exceeding a limit surfaces as a provider error. `document` means PDF, and the accepted image, audio and video formats are listed on the same page — other media types are sent as-is and rejected by Google.
 
 All modalities share one 8,192-token context window, and **Google silently truncates** anything over it rather than raising: a long document plus text can lose the tail without any error. [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens] only counts text, so there's no way to check a file's size up front.
+
+Two more things to know about `gemini-embedding-2`. On Vertex it accepts only one input per request, so embed a batch one input at a time there; on the Gemini API a batch is fine. And [`EmbeddingResult.usage`][pydantic_ai.embeddings.EmbeddingResult.usage] reports 0 tokens on the Gemini API — the API does return a per-modality token count, but `google-genai` discards it before Pydantic AI can read it, so cost comes out as 0. Vertex reports usage normally.
 
 ## Choosing a model
 

@@ -19,8 +19,9 @@ from pydantic_ai._instrumentation import (
 from pydantic_ai.messages import BinaryContent, TextContent
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
+from ._modality import embedding_modality
 from .base import EmbeddingModel
-from .input import EmbeddingContent, EmbeddingContentPart, EmbeddingInput, EmbeddingModality, embedding_modality
+from .input import EmbeddingContent, EmbeddingContentPart, EmbeddingInput, EmbeddingModality
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 from .wrapper import WrapperEmbeddingModel
