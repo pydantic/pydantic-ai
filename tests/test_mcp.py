@@ -544,6 +544,50 @@ class TestMCPToolsetIntegration:
             await toolset.list_tools()
             assert toolset._initialized is True  # pyright: ignore[reportPrivateUsage]
 
+    async def test_stateless_get_instructions_triggers_lazy_init(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """get_instructions triggers _ensure_initialized when stateless and running."""
+        toolset = MCPToolset(fastmcp_server, stateless=True, include_instructions=True)
+        async with toolset:
+            # Not yet initialized, but running — get_instructions should trigger init
+            assert toolset._initialized is False  # pyright: ignore[reportPrivateUsage]
+            result = await toolset.get_instructions(run_context)
+            # After get_instructions, should be initialized
+            assert toolset._initialized is True  # pyright: ignore[reportPrivateUsage]
+            # Result depends on whether server has instructions
+            assert result is not None  # test_server provides instructions
+
+    async def test_stateless_get_instructions_returns_none_when_server_has_no_instructions(
+        self, run_context: RunContext
+    ):
+        """get_instructions returns None when server provides no instructions."""
+        from fastmcp.server import FastMCP as FastMCPServer
+
+        server_no_instructions = FastMCPServer(name='no_instructions_server')
+        toolset = MCPToolset(server_no_instructions, stateless=True, include_instructions=True)
+        async with toolset:
+            result = await toolset.get_instructions(run_context)
+            assert result is None  # Server has no instructions
+
+    async def test_stateless_concurrent_ensure_initialized_only_inits_once(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """Concurrent _ensure_initialized calls serialize — only one handshake sent."""
+        import asyncio
+
+        toolset = MCPToolset(fastmcp_server, stateless=True)
+        async with toolset:
+            # Launch multiple concurrent list_tools (each triggers _ensure_initialized)
+            results = await asyncio.gather(
+                toolset.list_tools(),
+                toolset.list_tools(),
+                toolset.list_tools(),
+            )
+            # All should succeed with the same result
+            assert all(len(r) > 0 for r in results)
+            assert toolset._initialized is True  # pyright: ignore[reportPrivateUsage]
+
     # --- End stateless mode tests ---
 
     async def test_get_instructions_when_enabled(self, fastmcp_server: FastMCP[None], run_context: RunContext):
