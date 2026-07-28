@@ -125,8 +125,10 @@ class EmbeddingModel(ABC):
         for item in items:
             for part in embedding_parts(item):
                 if (modality := embedding_modality(part)) not in supported:
+                    # Attributed to Pydantic AI rather than to the model: some models we haven't
+                    # implemented the modality for, such as Bedrock's Nova-2, do support it.
                     raise UserError(
-                        f'`{self.model_name}` does not support {modality} inputs. '
+                        f'Pydantic AI does not support {modality} inputs for `{self.model_name}`. '
                         f'Supported modalities: {", ".join(sorted(supported))}.'
                     )
 

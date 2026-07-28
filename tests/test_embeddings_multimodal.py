@@ -6,7 +6,7 @@ import struct
 import zlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any, get_args, get_origin
 
 import pytest
 from vcr.cassette import Cassette
@@ -31,9 +31,12 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
+    CachePoint,
     DocumentUrl,
     ImageUrl,
     TextContent,
+    UploadedFile,
+    UserContent,
     VideoUrl,
 )
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -111,6 +114,30 @@ def test_embedding_parts():
     assert embedding_parts(EmbeddingContent(['hello', image])) == ['hello', image]
 
 
+def test_embedding_content_part_tracks_the_messages_union():
+    """`EmbeddingContentPart` re-spells `UserContent` minus two members, so it can't drift silently.
+
+    Unit rather than VCR: the failure this guards is a new `messages` content type nobody decided
+    about for embeddings, which no provider request can surface. Mirrors
+    `tests/test_messages.py::test_multi_modal_content_types_matches_union`.
+    """
+
+    def members(union: Any) -> set[Any]:
+        # `UserContent` nests `MultiModalContent`, itself an `Annotated` union, so flatten recursively:
+        # comparing one level deep leaves that whole union as a single opaque member.
+        flattened: set[Any] = set()
+        for member in get_args(union):
+            if get_origin(member) is Annotated:
+                member = get_args(member)[0]
+            if get_args(member):
+                flattened |= members(member)
+            else:
+                flattened.add(member)
+        return flattened
+
+    assert members(EmbeddingContentPart) == members(UserContent) - {CachePoint, UploadedFile}
+
+
 def test_embedding_content_rejects_bare_str():
     """A `str` is itself a sequence of parts, so this type-checks and would embed five characters."""
     with pytest.raises(UserError, match=r'`EmbeddingContent` takes a sequence of parts, not a single string\.'):
@@ -170,7 +197,10 @@ async def test_unsupported_modality_raises(gemini_api_key: str, tiny_image: Bina
     """A model that can't embed the input fails locally, rather than as a provider error."""
     model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
 
-    with pytest.raises(UserError, match=r'does not support image inputs\. Supported modalities: text\.'):
+    with pytest.raises(
+        UserError,
+        match=r'Pydantic AI does not support image inputs for `gemini-embedding-001`\. Supported modalities: text\.',
+    ):
         await Embedder(model).embed_documents(['a kiwi fruit', tiny_image])
 
 
