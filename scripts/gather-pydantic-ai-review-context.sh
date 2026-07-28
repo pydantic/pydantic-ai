@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# Gather PR context for the Pydantic AI PR Review agent into /tmp/gh-aw/.review-context/.
+# Gather PR context for the CI Review agent into $GITHUB_WORKSPACE/.review-context/.
 # Usage: scripts/gather-pydantic-ai-review-context.sh <pr-number> [repo]
 #
 # Examples:
 #   scripts/gather-pydantic-ai-review-context.sh 4269
 #   scripts/gather-pydantic-ai-review-context.sh 4269 pydantic/pydantic-ai
 #
-# Why outputs live under /tmp (not in the workspace): gh-aw's pre-agent flow
-# runs a "Save/Restore agent config folders from base branch" step that
-# touches `.github/` (a security feature to prevent PRs from rewriting the
-# agent's own configuration). Writing context inside `.github/` or any other
-# managed folder (`.agents`, `.claude`, `.codex`, …) is unreliable because
-# those snapshots can wipe or shadow what we wrote. `/tmp/gh-aw/...` is
-# under the runner's tmp tree, untouched by gh-aw's restore step.
+# Why outputs live at the workspace ROOT, and not under /tmp or `.github/`:
+# the agent's `Read` tool refuses any path outside the workspace, so a `/tmp`
+# destination makes every instructed read fail (#6766 measured ~15 failed
+# `Read` calls per run, in 80 of 80 sampled runs). But gh-aw's pre-agent flow
+# also runs a "Save/Restore agent config folders from base branch" step that
+# rewrites `.github/` (and `.agents`, `.claude`, `.codex`, …) from the BASE
+# branch, so anything written inside those is liable to be wiped or shadowed.
+# The workspace root satisfies both: readable by the agent, untouched by the
+# restore.
 #
 # TODO(consolidate): This is a fork of scripts/gather-review-context.sh used
 # by the legacy Claude-action workflow (.github/workflows/bots.yml). The two
@@ -24,7 +26,7 @@ set -euo pipefail
 
 PR_NUMBER="${1:?Usage: $0 <pr-number> [repo]}"
 REPO="${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
-CTX="/tmp/gh-aw/.review-context"
+CTX="${GITHUB_WORKSPACE:-$PWD}/.review-context"
 mkdir -p "$CTX"
 
 # Track every `mktemp` we allocate and unlink them on exit, including the

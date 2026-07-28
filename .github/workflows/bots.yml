@@ -215,11 +215,12 @@ jobs:
           NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY: ${{ needs.category-classify.outputs.category }}
 
   review:
-    name: douwebot (label)
-    needs: [size-label, category-apply]
-    if: >-
-      !failure() && !cancelled() &&
-      github.event.action == 'labeled' && github.event.label.name == 'douwebot'
+    name: douwebot
+    # No `needs:`. The labelling jobs above are gated on `action != 'labeled'`, so on
+    # the only event that starts this job they never run — depending on them bought
+    # nothing but a way for an unrelated labeller failure to suppress a requested
+    # review. The `douwebot` label is the sole trigger.
+    if: github.event.action == 'labeled' && github.event.label.name == 'douwebot'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -256,29 +257,6 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
-      - name: Select review model
-        id: model
-        run: |
-          LABELS=$(gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json labels --jq '.labels[].name')
-          echo "Labels: $LABELS"
-
-          CATEGORY=$(echo "$LABELS" | grep -E '^(bug|feature|docs|chore|dependency)$' | head -1)
-          SIZE=$(echo "$LABELS" | grep -E '^size: ' | head -1)
-
-          # Default to Opus for large/complex PRs
-          MODEL="claude-opus-4-6[1m]"
-
-          # Disabled for now because Sonnet reviews have been disappointing
-          # # Use Sonnet for docs, dependency, chore, or small/medium PRs
-          # if [ "$CATEGORY" = "docs" ] || [ "$CATEGORY" = "dependency" ] || [ "$CATEGORY" = "chore" ] || [ "$SIZE" = "size: S" ] || [ "$SIZE" = "size: M" ]; then
-          #   MODEL="claude-sonnet-4-5[1m]"
-          # fi
-
-          echo "model=$MODEL" >> $GITHUB_OUTPUT
-          echo "Selected model: $MODEL (category: $CATEGORY, size: $SIZE)"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Gather PR context
         run: |
           # Use the script from the base repo (main branch), not the fork
@@ -303,8 +281,13 @@ jobs:
           display_report: 'true'
           additional_permissions: |
             actions: read
+          # `[1m]` is Claude Code CLI syntax, not part of the model id — the CLI strips it
+          # and sends the canonical `claude-opus-4-8`. It is required here because
+          # ANTHROPIC_BASE_URL points at a gateway, and Claude Code cannot detect 1M-context
+          # support through a gateway, so without the suffix it budgets for 200K.
+          # https://code.claude.com/docs/en/model-config.md
           claude_args: |
-            --model ${{ steps.model.outputs.model }}
+            --model claude-opus-4-8[1m]
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(gh api repos/${{ github.repository }}/pulls/comments/:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),WebSearch,WebFetch"
 
           prompt: |
