@@ -103,15 +103,3 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.
 - **Exception — runtime-resolved prompts need no recompile.** Agent prompts under `shared/prompts/` are fetched at run time (via the `fetch-dynamic-prompt` action / a Logfire-managed variable), not baked into the lock, so editing one takes effect on the next run without recompiling.
-
-## Lock files are not reproducible right now
-
-`gh aw compile` cannot currently regenerate the committed `*.lock.yml` files. Dependabot
-(#6196) bumped the pinned action SHAs *inside* the generated locks — `actions/checkout`
-v6.0.2 → v7.0.0, `actions/setup-python` v6.2.0 → v6.3.0, `astral-sh/setup-uv` v8.1.0 →
-v8.2.0 — but the compiler pins those versions itself and overwrites `.github/aw/actions-lock.json`
-rather than reading it. So a recompile silently reverts all three bumps across every lock.
-
-Until that is resolved, **check `git diff` after any `gh aw compile`**: if the only changes
-are action SHA downgrades, the recompile is reverting a security bump, not applying your
-edit. Editing a `*.md` source is effectively blocked on this.

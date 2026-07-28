@@ -85,14 +85,6 @@ fork.) If you genuinely cannot attempt it, say "not attempted", never "we can't"
 **CI is green and there are no unresolved comments** — see the `pushing-commits-to-the-repo` skill
 for the full loop.
 
-**Consider a deep `douwebot` review as the final step.** Once CI is green and every comment is
-resolved, contributors with triage permission (Pydantic team members and their agents) should use
-their judgment to add the `douwebot` label, which triggers a one-shot in-depth review on a stronger
-model and removes itself after running. It is an addition to the automatic `CI Review`, not a
-replacement for it. Apply it last (it won't re-run on later pushes) and skip it only when you're
-highly confident there's nothing left to catch — see the `pushing-commits-to-the-repo` skill for
-the full criteria.
-
 **Do not leave work uncommitted.** Don't end a turn with unstaged or uncommitted local changes
 unless the user's own instructions say otherwise.
 
