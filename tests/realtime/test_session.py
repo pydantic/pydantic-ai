@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from threading import Event as ThreadEvent
 from typing import Any, Literal, TypeVar
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 from pydantic_core import SchemaValidator, core_schema
@@ -414,7 +415,7 @@ async def test_send_only_session_still_runs_tools() -> None:
     async with RealtimeSession(conn, runner) as session:
         await session.send('do the task')
         # No `async for` and no view: the agent still has to run the tool and return its result.
-        async with asyncio.timeout(5):
+        with anyio.fail_after(5):
             await ran.wait()
             while len(conn.sent) < 2:
                 await asyncio.sleep(0)
