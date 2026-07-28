@@ -246,7 +246,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
         if self._model_name in _MULTIMODAL_MODELS:
             items, merged_settings = self.prepare_embed(inputs, settings)
         else:
-            # The text is discarded: `_map_content_part()` maps a `str` to the same `Part`. What this
+            # The text is discarded: `_map_inline_part()` maps a `str` to the same `Part`. What this
             # buys over `prepare_embed()` is the rejection of anything that isn't a single text part.
             items, _, merged_settings = self.prepare_text_embed(inputs, settings)
         settings = cast(GoogleEmbeddingSettings, merged_settings)

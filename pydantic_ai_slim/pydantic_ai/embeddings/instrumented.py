@@ -231,7 +231,11 @@ _SPEC_MODALITIES: dict[EmbeddingModality, Literal['image', 'audio', 'video']] = 
 
 
 def _otel_input(item: EmbeddingInput, include_binary_content: bool) -> _OtelInput:
-    """Represent an input for the `inputs` span attribute, describing files instead of inlining their data."""
+    """Represent an input for the `inputs` span attribute.
+
+    A file is described by its media type and URI rather than by its bytes, which are attached only
+    when `include_binary_content` is set — as it is by default.
+    """
     if isinstance(item, EmbeddingGroup):
         return [_otel_input(part, include_binary_content) for part in item.content]
     elif isinstance(item, str):
