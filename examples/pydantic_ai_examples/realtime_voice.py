@@ -128,9 +128,11 @@ class PlaybackBuffer:
             self._buffered_bytes -= played
             self._played_bytes += played
 
-    def interrupt(self) -> int:
-        """Drop unheard audio and return milliseconds played in this turn."""
+    def interrupt(self) -> int | None:
+        """Drop unheard audio; return milliseconds played, or `None` if nothing was playing."""
         with self._lock:
+            if not self._chunks and not self._carry:
+                return None
             self._chunks.clear()
             self._carry.clear()
             self._buffered_bytes = 0
@@ -154,8 +156,12 @@ async def handle_event(
         case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
             playback.add(chunk)
         case InputSpeechStartEvent():
-            # Keep provider history aligned with what reached the speaker before barge-in.
-            await session.interrupt(audio_end_ms=playback.interrupt())
+            # The provider stops the model on its own when the user speaks; what it can't know is how
+            # much of its audio actually reached the speaker. Drop what didn't, and report the rest so
+            # the provider doesn't record a turn the user never heard. The event fires whenever the
+            # user starts speaking, including when nothing is playing, so only interrupt if it was.
+            if (played_ms := playback.interrupt()) is not None:
+                await session.interrupt(audio_end_ms=played_ms)
         case PartStartEvent(part=SpeechPart(speaker='assistant')):
             playback.start_turn()
         case PartEndEvent(part=SpeechPart(speaker='user', transcript=transcript)):

@@ -94,6 +94,7 @@ from ._base import (
     ToolCallCancelled,
     ToolResult,
     Transcript,
+    TranscriptUpdate,
     TruncateOutput,
     TurnCompleteEvent,
     seed_pcm_audio,
@@ -456,7 +457,10 @@ class RealtimeSession:
         self._tap_finished = object()
         self._audio_taps: set[asyncio.Queue[bytes | object]] = set()
         self._transcript_taps: set[asyncio.Queue[SpeechPart | object]] = set()
-        self._transcript_delta_taps: set[asyncio.Queue[SpeechPartDelta | object]] = set()
+        self._transcript_delta_taps: set[asyncio.Queue[TranscriptUpdate | object]] = set()
+        # Transcript accumulated per streamed part index, so a `TranscriptUpdate` can carry the whole
+        # turn so far and a renderer can replace rather than append.
+        self._transcript_so_far: dict[int, str] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._pending_messages = _RealtimePendingMessages()
         self._pending_messages_lock = Lock()
@@ -666,16 +670,19 @@ class RealtimeSession:
     def stream_transcripts(self, *, delta: Literal[False] = False) -> AsyncIterator[SpeechPart]: ...
 
     @overload
-    def stream_transcripts(self, *, delta: Literal[True]) -> AsyncIterator[SpeechPartDelta]: ...
+    def stream_transcripts(self, *, delta: Literal[True]) -> AsyncIterator[TranscriptUpdate]: ...
 
-    async def stream_transcripts(self, *, delta: bool = False) -> AsyncIterator[SpeechPart | SpeechPartDelta]:
+    async def stream_transcripts(self, *, delta: bool = False) -> AsyncIterator[SpeechPart | TranscriptUpdate]:
         """Stream speech transcripts for both the user and assistant.
 
-        By default, yields finalized [`SpeechPart`][pydantic_ai.messages.SpeechPart] instances.
-        Pass `delta=True` for live captions as self-describing
-        [`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta] instances carrying `speaker` and
-        `transcript_delta`. Empty transcript updates and finalized parts without a transcript are
-        omitted.
+        By default, yields finalized [`SpeechPart`][pydantic_ai.messages.SpeechPart] instances — one
+        per completed turn, carrying its `speaker` and full `transcript`.
+
+        Pass `delta=True` for live captions, which yields
+        [`TranscriptUpdate`][pydantic_ai.realtime.TranscriptUpdate]s carrying the new text, the turn's
+        full transcript so far, the speaker, and an `index` identifying the turn. Both speakers
+        stream at once, so that `index` is what lets a UI keep two turns apart instead of running
+        them together. Empty updates and finalized parts without a transcript are omitted.
 
         Final transcripts and deltas are separate subscriptions, so one never crowds out the other.
         Each iterator buffers up to 512 items; if its consumer falls behind, the oldest is dropped,
@@ -2044,12 +2051,23 @@ class RealtimeSession:
             if delta.audio_chunk:
                 for queue in self._audio_taps:
                     _put_tap(queue, delta.audio_chunk)
-            if delta.transcript_delta:
-                for queue in self._transcript_delta_taps:
-                    _put_tap(queue, delta)
-        elif isinstance(event, PartEndEvent) and isinstance(part := event.part, SpeechPart) and part.transcript:
-            for queue in self._transcript_taps:
-                _put_tap(queue, part)
+            if delta.transcript_delta and delta.speaker is not None:
+                transcript = self._transcript_so_far.get(event.index, '') + delta.transcript_delta
+                self._transcript_so_far[event.index] = transcript
+                if self._transcript_delta_taps:
+                    update = TranscriptUpdate(
+                        index=event.index,
+                        speaker=delta.speaker,
+                        delta=delta.transcript_delta,
+                        transcript=transcript,
+                    )
+                    for queue in self._transcript_delta_taps:
+                        _put_tap(queue, update)
+        elif isinstance(event, PartEndEvent) and isinstance(part := event.part, SpeechPart):
+            self._transcript_so_far.pop(event.index, None)
+            if part.transcript:
+                for queue in self._transcript_taps:
+                    _put_tap(queue, part)
 
     def _finish_taps(self, *, discard_pending: bool = False) -> None:
         for queue in (*self._audio_taps, *self._transcript_taps, *self._transcript_delta_taps):

@@ -410,6 +410,37 @@ class TurnCompleteEvent:
     """Event type identifier, used as a discriminator."""
 
 
+@dataclass(frozen=True)
+class TranscriptUpdate:
+    """One incremental transcript update, carrying everything needed to render it.
+
+    Yielded by [`RealtimeSession.stream_transcripts(delta=True)`][pydantic_ai.realtime.RealtimeSession.stream_transcripts].
+    A realtime session is duplex, so both speakers' transcripts stream at the same time and a caption
+    UI needs to know not just *what* was said but *which* turn to put it in — otherwise two
+    consecutive turns by the same speaker run together.
+    """
+
+    index: int
+    """Identifies the turn this update belongs to, stable for the life of the session.
+
+    Use it as the key for whatever you render a turn into: every update with the same `index` belongs
+    to the same speech part.
+    """
+
+    speaker: Literal['user', 'assistant']
+    """Who is speaking."""
+
+    delta: str
+    """The new text, to append to what you already rendered for this `index`."""
+
+    transcript: str
+    """The full transcript of this turn so far, including `delta`.
+
+    Provided so a renderer can replace rather than append, which avoids having to accumulate
+    correctly (and to recover if an update was dropped because the consumer fell behind).
+    """
+
+
 @dataclass
 class InputSpeechStartEvent:
     """The provider detected that the user started speaking.

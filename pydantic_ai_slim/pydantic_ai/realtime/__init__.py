@@ -48,6 +48,7 @@ from ._base import (
     SessionErrorEvent,
     SessionUsageEvent,
     TextInput,
+    TranscriptUpdate,
     TurnCompleteEvent,
     TurnDetection,
 )
@@ -154,6 +155,7 @@ __all__ = (
     'SessionErrorEvent',
     'SessionUsageEvent',
     'TextInput',
+    'TranscriptUpdate',
     'TurnDetection',
     'TurnCompleteEvent',
     'infer_realtime_model',

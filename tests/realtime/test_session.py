@@ -71,6 +71,7 @@ from pydantic_ai.realtime import (
     RealtimeSession as _RealtimeSession,
     ReconnectedEvent,
     SessionUsageEvent,
+    TranscriptUpdate,
     TurnCompleteEvent,
 )
 from pydantic_ai.realtime._base import (
@@ -350,10 +351,12 @@ async def test_consumption_views_run_concurrently_with_event_stream() -> None:
             SpeechPart(speaker='user', transcript='hello'),
             SpeechPart(speaker='assistant', transcript='hi there'),
         ]
+        # Each update names its turn, so a caption UI keeps the two speakers apart, and carries the
+        # turn's text so far so it can replace instead of accumulating itself.
         assert deltas == [
-            SpeechPartDelta(speaker='user', transcript_delta='hello'),
-            SpeechPartDelta(speaker='assistant', transcript_delta='hi'),
-            SpeechPartDelta(speaker='assistant', transcript_delta=' there'),
+            TranscriptUpdate(index=0, speaker='user', delta='hello', transcript='hello'),
+            TranscriptUpdate(index=1, speaker='assistant', delta='hi', transcript='hi'),
+            TranscriptUpdate(index=1, speaker='assistant', delta=' there', transcript='hi there'),
         ]
 
 

@@ -195,9 +195,18 @@ tool execution, turn tracking, or event stream.
 
 For captions, [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts]
 yields completed [`SpeechPart`][pydantic_ai.messages.SpeechPart]s for both speakers. Pass
-`delta=True` to receive live [`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta] updates
-instead; each update carries its own `speaker`. Transcript iterators use the same 32-item,
-drop-oldest overflow policy.
+`delta=True` to receive live [`TranscriptUpdate`][pydantic_ai.realtime.TranscriptUpdate]s instead.
+Each update carries its `speaker`, the new `delta` text, the turn's full `transcript` so far, and an
+`index` identifying the turn. Both speakers stream at the same time, so that `index` is what keeps
+two turns apart — without it, consecutive turns by the same speaker run together in a caption UI.
+Because each update also carries the whole turn, a renderer can replace rather than append:
+
+```python {test="skip"}
+async for update in session.stream_transcripts(delta=True):
+    bubbles[update.index] = (update.speaker, update.transcript)
+```
+
+Transcript iterators buffer up to 512 items, dropping the oldest if a renderer falls behind.
 
 Both views subscribe when iteration begins, so an unused view never buffers. Calling
 [`close()`][pydantic_ai.realtime.RealtimeSession.close] discards their pending items and ends every
@@ -274,12 +283,18 @@ shared setting. OpenAI's escape hatch also supports
 [Push-to-talk](#push-to-talk-manual-turn-taking) drives turns manually instead of by detection.
 Gemini's native-audio models can also decide on their own when to speak via `google_proactive_audio`.
 
-When the user barges in you get a [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] event; stop
-playing any buffered model audio immediately, and call
-[`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt] to cancel the model's in-progress
-response. Pass `audio_end_ms` (how many milliseconds of the model's output audio the user actually
-heard) so the provider truncates its record of the turn to that point — otherwise the model
-"remembers" saying words the user never heard:
+**Barge-in is automatic.** With server-side turn detection the provider stops the model as soon as it
+hears the user — OpenAI, Azure, and xAI default to `interrupt_response=True`, and Gemini's activity
+handling interrupts by default. You do not need to write anything for the model to stop talking.
+
+What you *do* own is the audio already sitting in your speaker buffer. You get an
+[`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] when the user starts speaking;
+flush your local playback there, or the user keeps hearing a sentence the model has already abandoned.
+
+Calling [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt] yourself is for the second half
+of that problem: the provider doesn't know how much of its audio actually reached the speaker, so
+without `audio_end_ms` it records the whole turn as heard and the model "remembers" saying words the
+user never heard. Pass the milliseconds you really played to keep its record honest:
 
 ```python {test="skip"}
 from typing import Any
@@ -295,6 +310,10 @@ async def handle_events(session: Any, speaker: Any):
             # Gemini and xAI handle barge-in themselves; see the model profile reference below.
             await session.interrupt(audio_end_ms=speaker.played_ms())
 ```
+
+Note the event means *the user started speaking*, not *the model is currently talking* — it also
+fires on an ordinary turn when nothing is playing. Track whether you have unplayed audio before
+calling `interrupt()`, rather than calling it on every event.
 
 `interrupt()` is server-side only — it does not flush your local playback buffer; that is the
 caller's responsibility. Explicit `interrupt()` and manual turn-taking require provider support (see
