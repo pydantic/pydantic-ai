@@ -4,7 +4,7 @@ import operator
 import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -487,12 +487,19 @@ def test_usage_details_none_deserialization(
 
 
 def test_usage_arbitrary_fields_pydantic_serialization_filters():
+    class ArbitraryValue(BaseModel):
+        included: int
+        excluded: int
+
     adapter = TypeAdapter(RequestUsage)
     usage = RequestUsage(
         input_tokens=5,
         future_tokens=42,
         label=None,
         breakdown={'a': 1, 'b': 2},
+        model=ArbitraryValue(included=1, excluded=2),
+        timestamp=datetime(2020, 1, 2),
+        unknown=object(),
     )
 
     assert adapter.dump_python(usage, include={'input_tokens'}) == {'input_tokens': 5}
@@ -513,6 +520,16 @@ def test_usage_arbitrary_fields_pydantic_serialization_filters():
 
     assert adapter.dump_python(usage, include={'breakdown': {'a'}}) == {'breakdown': {'a': 1}}
     assert adapter.dump_python(usage, exclude={'breakdown': {'a'}})['breakdown'] == {'b': 2}
+    assert adapter.dump_python(
+        usage,
+        mode='json',
+        include={'model': {'included'}, 'timestamp': True, 'unknown': True},
+        fallback=lambda _: 'fallback',
+    ) == {
+        'model': {'included': 1},
+        'timestamp': '2020-01-02T00:00:00',
+        'unknown': 'fallback',
+    }
 
 
 def test_usage_pydantic_core_serialization_subclass():

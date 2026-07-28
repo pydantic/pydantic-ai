@@ -27,8 +27,6 @@ _LEGACY_USAGE_KEYS = frozenset({'requests', 'request_tokens', 'response_tokens',
 
 _LEGACY_TOKEN_ALIASES = (('input_tokens', 'request_tokens'), ('output_tokens', 'response_tokens'))
 
-_SERIALIZATION_FILTER_MISSING = object()
-
 
 @cache
 def _usage_serializer(usage_type: type[object]) -> SchemaSerializer:
@@ -46,64 +44,41 @@ class _UsageSerializerMixin:
     __pydantic_serializer__ = _UsageSerializerDescriptor()
 
 
-def _usage_field_filter(
-    filter_: core_schema.IncExCall,
-    key: str,
-    *,
-    include: bool,
-) -> tuple[bool, core_schema.IncExCall]:
-    if filter_ is None:
-        return True, None
-    if isinstance(filter_, set):
-        selected = key in filter_
-        return (selected if include else not selected), None
-
-    item_filter = filter_.get(key, _SERIALIZATION_FILTER_MISSING)
-    if item_filter is _SERIALIZATION_FILTER_MISSING:
-        return not include, None
-    if item_filter is True or item_filter is Ellipsis:
-        return include, None
-    return True, cast(core_schema.IncExCall, item_filter)
-
-
 def _serialize_usage(
     value: UsageBase,
     inner: core_schema.SerializerFunctionWrapHandler,
     info: core_schema.SerializationInfo,
     *,
     reserved_names: frozenset[str],
-    arbitrary_value_serializer: SchemaSerializer,
+    extra_serializer: SchemaSerializer,
 ) -> dict[str, Any]:
     serialized = inner(value)
     assert isinstance(serialized, dict)
     result = cast(dict[str, Any], serialized).copy()
-    for key, item in value.__dict__.items():
-        if key in reserved_names:
-            continue
-        included, item_include = _usage_field_filter(info.include, key, include=True)
-        if not included:
-            continue
-        included, item_exclude = _usage_field_filter(info.exclude, key, include=False)
-        if not included:
-            continue
-        if info.exclude_none and item is None:
-            continue
-        if item_include is not None or item_exclude is not None:
-            item = arbitrary_value_serializer.to_python(
-                item,
-                mode=info.mode,
-                include=cast(Any, item_include),
-                exclude=cast(Any, item_exclude),
-                by_alias=info.by_alias,
-                exclude_unset=info.exclude_unset,
-                exclude_defaults=info.exclude_defaults,
-                exclude_none=info.exclude_none,
-                exclude_computed_fields=info.exclude_computed_fields,
-                round_trip=info.round_trip,
-                serialize_as_any=info.serialize_as_any,
-                context=info.context,
-            )
-        result[key] = item
+    extra = {
+        key: item
+        for key, item in value.__dict__.items()
+        if key not in reserved_names and (item is not None or not info.exclude_none)
+    }
+    extra = cast(
+        dict[str, Any],
+        extra_serializer.to_python(
+            extra,
+            # Apply selectors without consuming JSON fallback and warning handling from the outer serializer.
+            mode='python',
+            include=cast(Any, info.include),
+            exclude=cast(Any, info.exclude),
+            by_alias=info.by_alias,
+            exclude_unset=info.exclude_unset,
+            exclude_defaults=info.exclude_defaults,
+            exclude_none=info.exclude_none,
+            exclude_computed_fields=info.exclude_computed_fields,
+            round_trip=info.round_trip,
+            serialize_as_any=info.serialize_as_any,
+            context=info.context,
+        ),
+    )
+    result.update(extra)
     return result
 
 
@@ -162,7 +137,7 @@ class UsageBase(_UsageSerializerMixin):
         schema = handler(source_type)
         field_names = frozenset(field.name for field in dataclasses.fields(source_type))
         reserved_names = field_names | frozenset(dir(source_type)) | _LEGACY_USAGE_KEYS
-        arbitrary_value_serializer = SchemaSerializer(core_schema.any_schema())
+        extra_serializer = SchemaSerializer(core_schema.any_schema())
 
         def validate(value: Any, inner: core_schema.ValidatorFunctionWrapHandler) -> UsageBase:
             if isinstance(value, dict):
@@ -195,7 +170,7 @@ class UsageBase(_UsageSerializerMixin):
                 inner,
                 info,
                 reserved_names=reserved_names,
-                arbitrary_value_serializer=arbitrary_value_serializer,
+                extra_serializer=extra_serializer,
             )
 
         return core_schema.no_info_wrap_validator_function(
