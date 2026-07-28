@@ -84,9 +84,28 @@ def _connect(
 # --- event mapping: the one divergence from the OpenAI codec -------------------------------------
 
 
-def test_map_input_transcription_updated_is_dropped() -> None:
-    """xAI's cumulative `.updated` partials are dropped; the final `.completed` snapshot is authoritative."""
-    assert map_event({'type': 'conversation.item.input_audio_transcription.updated', 'delta': 'weath'}) is None
+def test_map_input_transcription_updated_is_a_cumulative_partial() -> None:
+    """xAI's `.updated` partials carry the whole transcript so far, not an incremental piece."""
+    assert map_event(
+        {
+            'type': 'conversation.item.input_audio_transcription.updated',
+            'transcript': 'Hello, my name is',
+            'item_id': 'item-1',
+        }
+    ) == InputTranscript(text='Hello, my name is', cumulative=True, item_id='item-1')
+
+
+@pytest.mark.parametrize(
+    'frame,expected',
+    [
+        pytest.param({}, InputTranscript(text='', cumulative=True), id='no-transcript'),
+        pytest.param({'transcript': None}, InputTranscript(text='', cumulative=True), id='null-transcript'),
+        pytest.param({'item_id': 7, 'transcript': 'hi'}, InputTranscript(text='hi', cumulative=True), id='bad-item-id'),
+    ],
+)
+def test_map_input_transcription_updated_tolerates_a_thin_frame(frame: dict[str, Any], expected: object) -> None:
+    """The `.updated` frame has no SDK model behind it, so it is read defensively off the wire."""
+    assert map_event({'type': 'conversation.item.input_audio_transcription.updated', **frame}) == expected
 
 
 def test_map_input_transcription_completed_delegates_to_openai_codec() -> None:
@@ -173,9 +192,11 @@ def test_map_conversation_resumption_events() -> None:
 
 
 def test_connection_map_event_override_matches_module() -> None:
-    """`XaiRealtimeConnection` routes frame decoding through the xAI `map_event` (dropping `.updated`)."""
+    """`XaiRealtimeConnection` routes frame decoding through the xAI `map_event` (cumulative `.updated`)."""
     conn = XaiRealtimeConnection.__new__(XaiRealtimeConnection)
-    assert conn._map_event({'type': 'conversation.item.input_audio_transcription.updated', 'delta': 'x'}) is None  # pyright: ignore[reportPrivateUsage]
+    assert conn._map_event(  # pyright: ignore[reportPrivateUsage]
+        {'type': 'conversation.item.input_audio_transcription.updated', 'transcript': 'x'}
+    ) == InputTranscript(text='x', cumulative=True)
     assert conn._map_event({'type': 'response.output_audio_transcript.delta', 'delta': 'hi'}) == Transcript(  # pyright: ignore[reportPrivateUsage]
         text='hi', is_final=False
     )
@@ -435,8 +456,11 @@ async def test_connect_captures_substituted_server_model(monkeypatch: pytest.Mon
 @pytest.mark.anyio
 async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """The URL, bearer auth, and `session.update` frame are derived from the xAI provider."""
-    # A dropped `.updated` partial followed by a real transcript proves the xAI codec is wired in.
-    updated_partial = json.dumps({'type': 'conversation.item.input_audio_transcription.updated', 'delta': 'ignore'})
+    # A cumulative `.updated` partial ahead of a real transcript proves the xAI codec is wired in:
+    # the shared OpenAI codec has no mapping for that frame and would drop it.
+    updated_partial = json.dumps(
+        {'type': 'conversation.item.input_audio_transcription.updated', 'transcript': 'partial'}
+    )
     transcript = json.dumps({'type': 'response.output_audio_transcript.done', 'transcript': 'hi'})
     ws = FakeWebSocket([_created(), _updated(), updated_partial, transcript])
     fake_connect = FakeConnect(ws)
@@ -451,7 +475,10 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
         assert isinstance(conn, XaiRealtimeConnection)
         events = await collect_codec_events(conn)
 
-    assert events == [Transcript(text='hi', is_final=True)]  # the `.updated` partial was dropped
+    assert events == [
+        InputTranscript(text='partial', cumulative=True),
+        Transcript(text='hi', is_final=True),
+    ]
     assert fake_connect.url == 'wss://api.x.ai/v1/realtime?model=grok-voice-latest'
     assert fake_connect.headers == {'Authorization': 'Bearer k'}
 

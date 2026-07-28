@@ -362,6 +362,72 @@ async def test_consumption_views_run_concurrently_with_event_stream() -> None:
         ]
 
 
+async def test_cumulative_transcripts_revise_the_turn_instead_of_doubling_up() -> None:
+    """A provider that revises its own partials reaches captions as a replacement, not an append.
+
+    xAI Grok Voice streams the user's transcript as cumulative snapshots and corrects earlier words
+    (`'Hello?'` becomes `'Hello, my name is'`). Appending that would double the corrected text, so the
+    session replaces — including on the `stream_transcripts` view, which is what captions render.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='Hello?', cumulative=True),
+            InputTranscript(text='Hello, my name is', cumulative=True),
+            InputTranscript(text='Hello, my name is Marcelo.', cumulative=True, is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        events, transcripts, deltas = await asyncio.gather(
+            drain_events(session),
+            aiter_to_list(session.stream_transcripts()),
+            aiter_to_list(session.stream_transcripts(delta=True)),
+        )
+
+    assert [event for event in events if isinstance(event, PartDeltaEvent)] == [
+        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='Hello?')),
+        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_replacement='Hello, my name is')),
+        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta=' Marcelo.')),
+    ]
+    # The revision reaches the caption view, and `transcript` is the turn's real text throughout.
+    assert deltas == [
+        TranscriptUpdate(index=0, speaker='user', delta='Hello?', transcript='Hello?'),
+        TranscriptUpdate(
+            index=0,
+            speaker='user',
+            delta='Hello, my name is',
+            transcript='Hello, my name is',
+            replaces_previous=True,
+        ),
+        TranscriptUpdate(index=0, speaker='user', delta=' Marcelo.', transcript='Hello, my name is Marcelo.'),
+    ]
+    assert transcripts == [SpeechPart(speaker='user', transcript='Hello, my name is Marcelo.')]
+
+
+async def test_cumulative_transcript_repeating_itself_emits_nothing() -> None:
+    """An unchanged snapshot is not news; re-emitting it would flicker a caption for no reason."""
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='Hello', cumulative=True),
+            InputTranscript(text='Hello', cumulative=True),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        events, deltas = await asyncio.gather(
+            drain_events(session), aiter_to_list(session.stream_transcripts(delta=True))
+        )
+
+    assert [event for event in events if isinstance(event, PartDeltaEvent)] == [
+        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='Hello'))
+    ]
+    assert deltas == [TranscriptUpdate(index=0, speaker='user', delta='Hello', transcript='Hello')]
+
+
 async def test_audio_view_drops_oldest_chunk_on_overflow() -> None:
     chunks = [bytes([index]) for index in range(40)]
     session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))

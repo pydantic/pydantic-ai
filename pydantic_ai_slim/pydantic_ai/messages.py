@@ -3429,6 +3429,17 @@ class SpeechPartDelta:
     transcript_delta: str | None = None
     """Incremental transcript text to append to the existing transcript, if any."""
 
+    transcript_replacement: str | None = None
+    """The full transcript so far, replacing what was accumulated, if any.
+
+    Some providers stream a user's transcript as cumulative snapshots that can *revise* earlier
+    words rather than only extend them (xAI Grok Voice turns `'Hello?'` into `'Hello, my name is'`).
+    An append-only [`transcript_delta`][pydantic_ai.messages.SpeechPartDelta.transcript_delta] cannot
+    unsay text, so a revision arrives here instead: replace the transcript rendered so far with this.
+
+    Only one of `transcript_delta` and `transcript_replacement` is ever set on a delta.
+    """
+
     audio_chunk: bytes | None = None
     """A raw audio chunk (e.g. PCM data), if any.
 
@@ -3443,10 +3454,11 @@ class SpeechPartDelta:
         """Apply this delta to an existing `SpeechPart`.
 
         `transcript_delta` is appended to the part's transcript (a part with `transcript=None` gets
-        `transcript=transcript_delta`). `audio_chunk` is appended to the part's retained audio data,
-        but only if the part already has `audio` set: a part with `audio=None` is not retaining audio,
-        so the chunk is intentionally not stored — it remains available on the delta itself for live
-        playback.
+        `transcript=transcript_delta`), while `transcript_replacement` overwrites it outright — that
+        is how a provider's revision of what it already transcribed is applied. `audio_chunk` is
+        appended to the part's retained audio data, but only if the part already has `audio` set: a
+        part with `audio=None` is not retaining audio, so the chunk is intentionally not stored — it
+        remains available on the delta itself for live playback.
 
         Args:
             part: The existing model response part, which must be a `SpeechPart`.
@@ -3460,7 +3472,9 @@ class SpeechPartDelta:
         if not isinstance(part, SpeechPart):
             raise ValueError('Cannot apply SpeechPartDeltas to non-SpeechParts')
         transcript = part.transcript
-        if self.transcript_delta:
+        if self.transcript_replacement is not None:
+            transcript = self.transcript_replacement
+        elif self.transcript_delta:
             transcript = (transcript or '') + self.transcript_delta
         audio = part.audio
         if self.audio_chunk and audio is not None:

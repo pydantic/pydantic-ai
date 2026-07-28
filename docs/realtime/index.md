@@ -591,8 +591,19 @@ and content-less user turns otherwise. If `google_output_transcription=False`, r
 keep assistant audio turns in history at all. Transcript-less assistant audio cannot be handed off to
 a text agent or seeded into another realtime session.
 
-OpenAI and Gemini may stream partial user transcripts. xAI suppresses revisable partial snapshots
-and emits the finalized user transcript at the end of the turn.
+All three providers may stream partial user transcripts, but they don't all only ever *add* to what
+they already transcribed. OpenAI and Gemini send incremental pieces; xAI sends cumulative snapshots
+and may revise earlier words, turning `'Hello?'` into `'Hello, my name is'`. Rendering captions with
+[`stream_transcripts(delta=True)`](#consuming-a-session) needs nothing extra for this: each
+[`TranscriptUpdate`][pydantic_ai.realtime.TranscriptUpdate] carries the turn's full `transcript`, so
+keying a bubble on `index` and replacing its text is correct either way.
+
+Consuming the raw event stream instead means handling both shapes: a revision can't be expressed by
+appending, so it arrives as
+[`SpeechPartDelta.transcript_replacement`][pydantic_ai.messages.SpeechPartDelta.transcript_replacement]
+carrying the whole transcript so far, rather than as an appended
+[`transcript_delta`][pydantic_ai.messages.SpeechPartDelta.transcript_delta]. Only one of the two is
+ever set.
 
 ### Images
 
