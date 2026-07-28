@@ -236,8 +236,9 @@ class UsageBase:
                 # under `gen_ai.usage.details.*` makes consumers like Langfuse sum the two and double-count.
                 if key in _FIRST_CLASS_TOKEN_DETAIL_KEYS:
                     continue
-                # Skipping check for value since spec implies all detail values are relevant
-                if value:
+                # Zero is a meaningful value, but a `None` would be an invalid OTel attribute value.
+                # Provider data can contain None despite the annotation.
+                if value is not None:  # pyright: ignore[reportUnnecessaryComparison]
                     result[prefix + key] = value
         return result
 
