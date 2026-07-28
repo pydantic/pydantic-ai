@@ -246,6 +246,7 @@ The remaining realtime control-plane events:
 | [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] | OpenAI/Azure/xAI detected speech onset, or Gemini reported activity that interrupted model output. |
 | [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | OpenAI/Azure/xAI detected the end of speech; Gemini does not emit this event. |
 | [`InputTranscriptionFailedEvent`][pydantic_ai.realtime.InputTranscriptionFailedEvent] | The provider could not transcribe a user audio turn. The session continues, and `item_id` and `content_index` identify the affected turn when available. |
+| [`OutputSpeechStartEvent`][pydantic_ai.realtime.OutputSpeechStartEvent] / [`OutputSpeechEndEvent`][pydantic_ai.realtime.OutputSpeechEndEvent] | The model became, or stopped being, audible. Only on a [WebRTC sideband](#browser-webrtc), where the provider holds the audio — see [Knowing when the model is speaking](#knowing-when-the-model-is-speaking). |
 | [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn. `interrupted` reflects cancellation or barge-in across all providers. |
 | [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] | The connection dropped and was automatically re-established. Conversation state is restored for Gemini and xAI; see [Reconnecting](#reconnecting). |
 | [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] | The provider reported a **recoverable** error mid-session; the session keeps running. Anything that ends the session raises instead — see [Errors](#errors). |
@@ -704,6 +705,9 @@ with `gen_ai.output.type` set to the same value, and each tool call gets an
 several response spans, since a turn that calls tools is split into a response per step; the
 zero-duration `turn complete` span marks the end of the turn itself, alongside `user speech started`
 and `interrupt`. A response cut off by a barge-in carries `pydantic_ai.response.state='interrupted'`.
+On a [WebRTC sideband](#browser-webrtc) a `speak {model}` span additionally covers how long the model
+was *audible*, which the response spans can't show: the provider generates audio far ahead of playing
+it, so this span routinely outlasts the `turn complete` that ended the response.
 
 The span *names* follow the OpenTelemetry GenAI conventions (`invoke_agent`, `chat`,
 `execute_tool`), so any OTel backend sees what it expects. The friendlier names in the parentheses
@@ -840,6 +844,26 @@ signaling mechanism they build on. Gemini Live and xAI
 Grok Voice are WebSocket-only and don't offer a WebRTC sideband; use a relay or media room for those.
 
 The runnable [realtime WebRTC example](../examples/realtime-webrtc.md) shows the whole flow end to end.
+
+#### Knowing when the model is speaking
+
+An ordinary session sees the model's audio go by, so it knows when the model is talking. A sideband
+doesn't — the media never reaches it — and *generation* is not a usable stand-in: the provider
+produces audio far faster than it plays, so a response can be complete while the listener still has
+many seconds of speech to hear.
+
+So the provider reports the boundary directly, as
+[`OutputSpeechStartEvent`][pydantic_ai.realtime.OutputSpeechStartEvent] and
+[`OutputSpeechEndEvent`][pydantic_ai.realtime.OutputSpeechEndEvent]. Drive a
+"speaking" indicator from these rather than from
+[`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent], which fires when the model stops
+*generating*. They also bracket a `speak {model}` span in
+[Logfire](#observability-with-logfire), so a trace shows how long the model was
+actually audible.
+
+[`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] handles the other half of the same
+problem: it drops the audio the provider has already produced but not yet played, so a barge-in stops
+the voice instead of only stopping generation.
 
 ## Reconnecting
 

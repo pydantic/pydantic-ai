@@ -509,6 +509,39 @@ class InputSpeechEndEvent:
 
 
 @dataclass
+class OutputSpeechStartEvent:
+    """The provider started playing the model's audio to the listener.
+
+    Only reported where the provider, rather than your code, holds the audio on its way to the
+    listener: on a [WebRTC sideband](../realtime/index.md#browser-webrtc) the media flows
+    browser ↔ provider, so the session never sees audio and this is its only signal that the model has
+    become audible. An ordinary session owns the audio and knows when it starts playing it, so no
+    provider reports this there.
+
+    This is about *playback*, not generation: the provider produces audio faster than it plays it, so
+    this can arrive well after the audio itself was generated.
+    """
+
+    event_kind: Literal['output_speech_start'] = 'output_speech_start'
+    """Event type identifier, used as a discriminator."""
+
+
+@dataclass
+class OutputSpeechEndEvent:
+    """The provider stopped playing the model's audio to the listener.
+
+    The counterpart to
+    [`OutputSpeechStartEvent`][pydantic_ai.realtime.OutputSpeechStartEvent], and the
+    honest end of a spoken turn: because the provider generates audio far ahead of playing it, it is
+    still talking long after [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] reports the
+    response finished. Drive a "speaking" indicator from this pair rather than from turn completion.
+    """
+
+    event_kind: Literal['output_speech_end'] = 'output_speech_end'
+    """Event type identifier, used as a discriminator."""
+
+
+@dataclass
 class InputTranscriptionFailedEvent:
     """The provider failed to transcribe a user audio input turn, but the session continues.
 
@@ -633,6 +666,8 @@ RealtimeCodecEvent = TypeAliasType(
     | TurnCompleteEvent
     | InputSpeechStartEvent
     | InputSpeechEndEvent
+    | OutputSpeechStartEvent
+    | OutputSpeechEndEvent
     | InputTranscriptionFailedEvent
     | SessionUsageEvent
     | ReconnectedEvent
@@ -672,6 +707,8 @@ RealtimeEvent = TypeAliasType(
     | TurnCompleteEvent
     | InputSpeechStartEvent
     | InputSpeechEndEvent
+    | OutputSpeechStartEvent
+    | OutputSpeechEndEvent
     | InputTranscriptionFailedEvent
     | ReconnectedEvent
     | SessionErrorEvent,

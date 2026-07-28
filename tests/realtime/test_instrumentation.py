@@ -51,6 +51,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     InputSpeechStartEvent,
+    OutputSpeechEndEvent,
+    OutputSpeechStartEvent,
     RealtimeEvent,
     RealtimeModel,
     RealtimeModelProfile,
@@ -208,6 +210,59 @@ async def test_owner_error_marks_active_chat_and_session_spans() -> None:
     assert spans['chat gpt-realtime'].status.is_ok is False
     assert spans['invoke_agent agent'].status.is_ok is False
     assert all(span.events for span in spans.values())
+
+
+async def test_playback_boundary_opens_a_speak_span_outlasting_the_response() -> None:
+    """A `speak` span measures audibility, which a WebRTC sideband's turn spans can't.
+
+    The provider generates audio far ahead of playing it, so `turn complete` lands while the listener
+    still has seconds of speech to hear. Without this span the trace claims the model stopped talking
+    long before it did.
+    """
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection(
+            [
+                OutputSpeechStartEvent(),
+                TurnCompleteEvent(),
+                OutputSpeechEndEvent(),
+            ]
+        ),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        events = [event async for event in session]
+
+    # The events reach the caller as well, so a UI can drive a 'speaking' indicator from them.
+    assert [type(event).__name__ for event in events] == [
+        'OutputSpeechStartEvent',
+        'TurnCompleteEvent',
+        'OutputSpeechEndEvent',
+    ]
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    speak = spans['speak gpt-realtime']
+    assert speak.end_time is not None and speak.start_time is not None
+    # It brackets the turn rather than nesting inside it: playback outlives the response.
+    assert speak.end_time >= spans['turn complete'].end_time  # type: ignore[operator]
+
+
+async def test_no_speak_span_without_playback_reporting() -> None:
+    """An ordinary session never reports playback, so its trace is unchanged."""
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection([Transcript(text='hi', is_final=True), TurnCompleteEvent()]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        _ = [event async for event in session]
+
+    assert not [span for span in exporter.get_finished_spans() if span.name.startswith('speak')]
 
 
 def _weather_agent(*, name: str | None = None, capabilities: list[Instrumentation] | None = None) -> Agent[None, str]:

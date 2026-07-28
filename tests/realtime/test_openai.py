@@ -51,6 +51,8 @@ from pydantic_ai.realtime import (
     InputSpeechEndEvent,
     InputSpeechStartEvent,
     InputTranscriptionFailedEvent,
+    OutputSpeechEndEvent,
+    OutputSpeechStartEvent,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
@@ -2629,12 +2631,13 @@ async def test_sideband_cancel_does_not_clear_when_playback_already_ended(ended_
 
 
 @pytest.mark.anyio
-async def test_playback_boundary_is_tracked_even_when_the_frame_is_suppressed() -> None:
-    """Playback state lands even when the straggler filter drops the frame that carries it.
+async def test_playback_boundary_survives_the_straggler_filter() -> None:
+    """A playback boundary outlives the response it belongs to, so the filter must not drop it.
 
     A cancelled response's buffered audio can start playing after the cancel, and that
-    `output_audio_buffer.started` carries the cancelled `response_id` — so it is suppressed from the
-    event stream. Tracking it after the filter would leave the connection unable to stop the audio.
+    `output_audio_buffer.started` carries the cancelled `response_id`. Whether the browser is being
+    spoken to is connection state, not that response's content: dropping it would both mislead a
+    'speaking' indicator and leave the audio unstoppable.
     """
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
@@ -2642,9 +2645,56 @@ async def test_playback_boundary_is_tracked_even_when_the_frame_is_suppressed() 
     await conn.send(CancelResponse())
     ws.sent.clear()
 
-    assert await conn._decode_frame(_playback('output_audio_buffer.started')) == []  # pyright: ignore[reportPrivateUsage]
+    assert await conn._decode_frame(_playback('output_audio_buffer.started')) == [  # pyright: ignore[reportPrivateUsage]
+        OutputSpeechStartEvent()
+    ]
     await conn.send(CancelResponse())
     assert [json.loads(frame)['type'] for frame in ws.sent] == ['output_audio_buffer.clear']
+
+
+@pytest.mark.anyio
+async def test_sideband_reports_the_playback_boundary_once_per_utterance() -> None:
+    """The pair brackets audibility, and a redundant `stopped`/`cleared` doesn't repeat the stop."""
+    ws = FakeWebSocket(
+        [
+            _playback('output_audio_buffer.started'),
+            _playback('output_audio_buffer.stopped'),
+            _playback('output_audio_buffer.cleared'),
+        ]
+    )
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    assert await collect_codec_events(conn) == [
+        OutputSpeechStartEvent(),
+        OutputSpeechEndEvent(),
+    ]
+
+
+@pytest.mark.anyio
+async def test_interrupt_still_reports_that_speech_ended() -> None:
+    """A barge-in ends the utterance, so the end event must still fire — or the indicator sticks on.
+
+    The clear we send is acknowledged with `output_audio_buffer.cleared`. Treating our own request as
+    the end of playback would swallow that frame's event, leaving a caller believing the model is
+    still talking after it interrupted it.
+    """
+    ws = FakeWebSocket([_playback('output_audio_buffer.started')])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    assert await collect_codec_events(conn) == [OutputSpeechStartEvent()]
+
+    await conn.send(CancelResponse())
+    # A second interrupt doesn't re-send the clear while the first is still unacknowledged.
+    await conn.send(CancelResponse())
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['output_audio_buffer.clear']
+
+    assert await conn._decode_frame(_playback('output_audio_buffer.cleared')) == [OutputSpeechEndEvent()]  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_websocket_session_reports_no_playback_boundary() -> None:
+    """An ordinary session owns the audio and knows when it plays it, so the provider's buffer is noise."""
+    ws = FakeWebSocket([_playback('output_audio_buffer.started'), _playback('output_audio_buffer.stopped')])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    assert await collect_codec_events(conn) == []
 
 
 @pytest.mark.anyio

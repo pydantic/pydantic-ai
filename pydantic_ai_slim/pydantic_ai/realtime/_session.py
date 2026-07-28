@@ -78,6 +78,8 @@ from ._base import (
     InputSpeechStartEvent,
     InputTranscript,
     InputTranscriptionFailedEvent,
+    OutputSpeechEndEvent,
+    OutputSpeechStartEvent,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeError,
@@ -157,6 +159,8 @@ _TranslatableEvent: TypeAlias = (
     | TurnCompleteEvent
     | InputSpeechStartEvent
     | InputSpeechEndEvent
+    | OutputSpeechStartEvent
+    | OutputSpeechEndEvent
     | InputTranscriptionFailedEvent
     | ReconnectedEvent
     | PartStartEvent
@@ -438,6 +442,9 @@ class RealtimeSession:
         self._native_tool_parts: list[ModelResponsePart] = []
         # The `chat {model}` span for the response currently being assembled (see `_ensure_chat_span`).
         self._chat_span: Span | None = None
+        # The `speak {model}` span covering how long the model is actually audible (see
+        # `_start_playback_span`). Only a sideband reports playback, so it stays `None` elsewhere.
+        self._playback_span: Span | None = None
         self._pending_response_usage = RequestUsage()
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
@@ -651,6 +658,9 @@ class RealtimeSession:
                 self._record_span_error(self._chat_span, error)
             self._chat_span.end()
             self._chat_span = None
+        # Closing mid-utterance is normal (the caller stopped listening), so the `speak` span is closed
+        # rather than left open; it isn't an error even when the session ended on one.
+        self._end_playback_span()
 
         settings = self._instrumentation
         span = self._session_span
@@ -1275,6 +1285,35 @@ class RealtimeSession:
             kind=SpanKind.CLIENT,
         )
 
+    def _start_playback_span(self) -> None:
+        """Open a `speak {model}` span covering how long the model is actually audible.
+
+        Distinct from the `chat`/`turn complete` spans, which measure *generation*: the provider produces
+        audio far faster than it plays, so a response can be complete while the listener still has many
+        seconds of speech to hear. That gap is what makes a barge-in feel broken, so it's worth its own
+        span. Only opened where the provider reports playback (a WebRTC sideband), so an ordinary
+        session's trace is unchanged.
+        """
+        settings = self._instrumentation
+        if settings is None or self._playback_span is not None:
+            return
+        context = self._session_span_context
+        assert context is not None
+        self._playback_span = settings.tracer.start_span(
+            f'speak {self._model_name}' if self._model_name else 'speak',
+            context=context,
+            attributes={
+                'pydantic_ai.realtime': True,
+                'logfire.msg': f'speak {self._model_name}' if self._model_name else 'speak',
+            },
+        )
+
+    def _end_playback_span(self) -> None:
+        """Close the `speak` span when the model stops being audible."""
+        if (span := self._playback_span) is not None:
+            self._playback_span = None
+            span.end()
+
     def _end_chat_span(self, input_messages: list[ModelMessage], response: ModelResponse | None) -> None:
         """Close the current `chat` span, attaching the response's messages, usage, and state."""
         settings = self._instrumentation
@@ -1662,9 +1701,19 @@ class RealtimeSession:
             self._finalize_response(interrupted=True)
         return [*events, event]
 
-    def _handle_control_event(self, event: InputSpeechStartEvent | ReconnectedEvent) -> list[RealtimeEvent]:
+    def _handle_control_event(
+        self,
+        event: InputSpeechStartEvent | ReconnectedEvent | OutputSpeechStartEvent | OutputSpeechEndEvent,
+    ) -> list[RealtimeEvent]:
         if isinstance(event, ReconnectedEvent):
             return self._handle_reconnected(event)
+        # The playback boundary brackets the `speak` span and is otherwise passed straight through.
+        if isinstance(event, OutputSpeechStartEvent):
+            self._start_playback_span()
+            return [event]
+        if isinstance(event, OutputSpeechEndEvent):
+            self._end_playback_span()
+            return [event]
         self._user_turn_active = True
         self._record_lifecycle_event('user speech started')
         return [event]
@@ -1724,7 +1773,12 @@ class RealtimeSession:
         # any new non-pump `RealtimeEvent` variant that isn't handled here.
         if isinstance(
             event,
-            (InputSpeechStartEvent, ReconnectedEvent),
+            (
+                InputSpeechStartEvent,
+                ReconnectedEvent,
+                OutputSpeechStartEvent,
+                OutputSpeechEndEvent,
+            ),
         ):
             return self._handle_control_event(event)
         if isinstance(event, SessionErrorEvent):
