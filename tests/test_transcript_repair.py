@@ -503,7 +503,7 @@ async def test_orphaned_result_emptying_last_request_keeps_placeholder():
         ModelRequest(parts=[ToolReturnPart('ghost_tool', 'x', tool_call_id='ghost', timestamp=TS)], timestamp=TS),
     ]
 
-    cleaned = _clean_message_history(message_history)
+    cleaned, _ = _clean_message_history(message_history)
 
     # The orphaned result is dropped, but its now-empty trailing request is retained as a placeholder
     # so the history still ends on a `ModelRequest`.
@@ -563,7 +563,7 @@ async def test_native_tool_calls_left_untouched():
     ]
     original = ModelMessagesTypeAdapter.dump_json(message_history)
 
-    cleaned = _clean_message_history(message_history, repair_last_response=True)
+    cleaned, _ = _clean_message_history(message_history, repair_last_response=True)
 
     assert cleaned == message_history
     assert ModelMessagesTypeAdapter.dump_json(cleaned) == original

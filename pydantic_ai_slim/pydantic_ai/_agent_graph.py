@@ -19,8 +19,10 @@ from typing_extensions import TypeVar, assert_never
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
+    HistoryRepairStats,
     capture_current_context,
     get_instructions as _get_history_instructions,
+    history_repair_stats_ctx,
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._tool_execution import process_tool_calls
@@ -487,7 +489,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx_messages.used = True
 
         # Replace the `capture_run_messages` list with the message history
-        messages[:] = _clean_message_history(ctx.state.message_history)
+        cleaned_messages, _ = _clean_message_history(ctx.state.message_history)
+        messages[:] = cleaned_messages
         # Use the `capture_run_messages` list as the message history so that new messages are added to it
         ctx.state.message_history = messages
         ctx.deps.new_message_index = len(messages)
@@ -505,7 +508,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             # synthesized returns. A 'complete' trailing request (e.g. from a run that ended in
             # `DeferredToolRequests`) is left alone: its response's open calls may still receive
             # `deferred_tool_results`.
-            messages[:] = _repair_dangling_tool_calls(messages, repair_last_response=True)
+            messages[:] = _repair_dangling_tool_calls(messages, repair_last_response=True)[0]
 
         next_message: _messages.ModelRequest | None = None
         is_resuming_without_prompt = False
@@ -581,7 +584,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         # The response was cut off (e.g. a cancelled stream), so its tool calls
                         # will never be executed; close them out with synthesized returns instead
                         # of refusing the new prompt.
-                        messages[:] = _repair_dangling_tool_calls(messages, repair_last_response=True)
+                        messages[:] = _repair_dangling_tool_calls(messages, repair_last_response=True)[0]
                     else:
                         raise exceptions.UserError(
                             'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
@@ -1452,7 +1455,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Run a first pass so `prepare_messages` sees a normalized history.
         # The history is definitively being sent to the model at this point, so even the last
         # response's dangling tool calls (e.g. left by a history processor) can be repaired.
-        messages = _clean_message_history(messages, repair_last_response=True)
+        messages, repair_stats = _clean_message_history(messages, repair_last_response=True)
 
         # Hand off to the model class for any history shapes the active provider can't
         # ship on the wire — currently typed `NativeToolSearch*Part` instances translated
@@ -1470,9 +1473,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # messages are merged. The default `prepare_messages` returns the input list
         # unchanged, so the identity check skips the redundant second pass.
         if prepared is not messages:
-            messages = _clean_message_history(prepared, repair_last_response=True)
-        else:
-            messages = prepared
+            messages, repair_stats = _clean_message_history(prepared, repair_last_response=True)
+
+        # Thread the repair counters to `open_model_request_span` so they can be recorded as
+        # OTel attributes on the model-request span. The span reads and clears the context var.
+        history_repair_stats_ctx.set(repair_stats)
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
@@ -2481,7 +2486,9 @@ def _is_tool_result_part(
     )
 
 
-def _drop_orphaned_tool_results(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
+def _drop_orphaned_tool_results(
+    messages: list[_messages.ModelMessage],
+) -> tuple[list[_messages.ModelMessage], int]:
     """REMOVE regular tool results whose call is missing.
 
     A `ToolReturnPart` or tool-bound `RetryPromptPart` (in a `ModelRequest`) whose `tool_call_id`
@@ -2503,10 +2510,13 @@ def _drop_orphaned_tool_results(messages: list[_messages.ModelMessage]) -> list[
     `_repair_dangling_tool_calls`). If dropping empties an interior `ModelRequest` the request is
     dropped; if it empties the last message an empty `ModelRequest` is kept so the history still ends
     on a request. Returns the input unchanged when there are no orphans.
+
+    The returned integer is the number of orphaned tool-result parts that were dropped.
     """
     seen_call_ids: set[str] = set()
     repaired: list[_messages.ModelMessage] = []
     changed = False
+    dropped_count = 0
     for index, message in enumerate(messages):
         for part in message.parts:
             if isinstance(part, _messages.ToolCallPart):
@@ -2518,17 +2528,18 @@ def _drop_orphaned_tool_results(messages: list[_messages.ModelMessage]) -> list[
         ]
         if len(kept_parts) == len(message.parts):
             repaired.append(message)
-            continue
-        changed = True
-        if kept_parts or (isinstance(message, _messages.ModelRequest) and index == len(messages) - 1):
-            repaired.append(replace(message, parts=kept_parts))
-        # else: interior emptied `ModelRequest` — drop the message
-    return repaired if changed else messages
+        else:
+            changed = True
+            dropped_count += len(message.parts) - len(kept_parts)
+            if kept_parts or index == len(messages) - 1:
+                repaired.append(replace(message, parts=kept_parts))
+            # else: interior emptied `ModelRequest` — drop the message
+    return (repaired if changed else messages, dropped_count)
 
 
 def _repair_dangling_tool_calls(
     messages: list[_messages.ModelMessage], *, repair_last_response: bool = False
-) -> list[_messages.ModelMessage]:
+) -> tuple[list[_messages.ModelMessage], int]:
     """Repair tool calls that are missing a matching result ("dangling" tool calls).
 
     A run that was cancelled or crashed mid-tool-execution — or a hand-built history — can contain
@@ -2560,6 +2571,8 @@ def _repair_dangling_tool_calls(
     If there is nothing to repair, the input list is returned unchanged. Repair is silent — like
     the other pipeline passes — with the `SYNTHESIZED_TOOL_RETURN_METADATA_KEY` marker as the
     mechanism for inspecting what was synthesized.
+
+    The returned integer is the number of synthesized `ToolReturnPart`s created.
     """
     dangling_by_response = _dangling_tool_calls_by_response(messages)
     if not repair_last_response:
@@ -2574,10 +2587,11 @@ def _repair_dangling_tool_calls(
         if last_response_index is not None:
             dangling_by_response.pop(last_response_index, None)
     if not dangling_by_response:
-        return messages
+        return messages, 0
 
     repaired: list[_messages.ModelMessage] = []
     synthesized: list[_messages.ToolReturnPart] = []
+    synthesized_count = 0
     for index, message in enumerate(messages):
         if isinstance(message, _messages.ModelResponse):
             if synthesized:
@@ -2598,6 +2612,7 @@ def _repair_dangling_tool_calls(
                             outcome='interrupted',
                         )
                     )
+                    synthesized_count += 1
             repaired.append(message)
         elif isinstance(message, _messages.ModelRequest):  # pragma: no branch
             if synthesized:
@@ -2608,10 +2623,12 @@ def _repair_dangling_tool_calls(
     if synthesized:
         repaired.append(_messages.ModelRequest(parts=synthesized))
 
-    return repaired
+    return repaired, synthesized_count
 
 
-def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
+def _merge_consecutive_messages(
+    messages: list[_messages.ModelMessage],
+) -> tuple[list[_messages.ModelMessage], int]:
     """Normalize the history's shape by merging consecutive same-role messages into one.
 
     Neither adds nor removes content — it only combines adjacent `ModelRequest`s (or adjacent
@@ -2619,8 +2636,11 @@ def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[
     hoists tool results ahead of user-facing parts (where providers require them). Runs last, after
     the repair passes have settled call/result pairing, so it operates on a valid history and never
     separates a result from the call it answers.
+
+    The returned integer is the number of merge operations performed.
     """
     clean_messages: list[_messages.ModelMessage] = []
+    merged_count = 0
     for message in messages:
         last_message = clean_messages[-1] if len(clean_messages) > 0 else None
 
@@ -2652,6 +2672,7 @@ def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[
                     timestamp=message.timestamp or last_message.timestamp,
                 )
                 clean_messages[-1] = merged_message
+                merged_count += 1
             else:
                 clean_messages.append(message)
         elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
@@ -2668,14 +2689,15 @@ def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[
             ):
                 merged_message = replace(last_message, parts=[*last_message.parts, *message.parts])
                 clean_messages[-1] = merged_message
+                merged_count += 1
             else:
                 clean_messages.append(message)
-    return clean_messages
+    return clean_messages, merged_count
 
 
 def _clean_message_history(
     messages: list[_messages.ModelMessage], *, repair_last_response: bool = False
-) -> list[_messages.ModelMessage]:
+) -> tuple[list[_messages.ModelMessage], HistoryRepairStats]:
     """Make the message history provider-valid and normalize its shape, out of the box.
 
     An ordered pipeline of pure `list[ModelMessage] -> list[ModelMessage]` passes over regular,
@@ -2695,8 +2717,16 @@ def _clean_message_history(
        the last response's still-answerable calls are left alone.
     3. `_merge_consecutive_messages` (normalize) — last, once call/result pairing is valid, so it
        never separates a result from its call.
+
+    Returns the cleaned message list alongside a `HistoryRepairStats` object reporting how many
+    silent changes the pipeline made. The stats are read by `open_model_request_span` and exposed
+    as OTel attributes on the model-request span.
     """
-    messages = _drop_orphaned_tool_results(messages)
-    messages = _repair_dangling_tool_calls(messages, repair_last_response=repair_last_response)
-    messages = _merge_consecutive_messages(messages)
-    return messages
+    messages, dropped = _drop_orphaned_tool_results(messages)
+    messages, synthesized = _repair_dangling_tool_calls(messages, repair_last_response=repair_last_response)
+    messages, merged = _merge_consecutive_messages(messages)
+    return messages, HistoryRepairStats(
+        dropped_orphaned_results=dropped,
+        synthesized_tool_returns=synthesized,
+        merged_messages=merged,
+    )

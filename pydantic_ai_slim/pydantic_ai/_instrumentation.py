@@ -85,6 +85,22 @@ public and holds only the *inputs* to `Model.request[_stream]`.
 """
 
 
+@dataclass(frozen=True, slots=True)
+class HistoryRepairStats:
+    """Counters for the silent message-history repair pass run before each model request."""
+
+    dropped_orphaned_results: int = 0
+    synthesized_tool_returns: int = 0
+    merged_messages: int = 0
+
+
+history_repair_stats_ctx: ContextVar[HistoryRepairStats | None] = ContextVar('history_repair_stats', default=None)
+"""Carries history-repair counters from `_clean_message_history` in the agent graph to
+`open_model_request_span`, where they're recorded as attributes on the model-request span.
+Read and cleared when the span opens so stale values don't leak across requests.
+"""
+
+
 @dataclass(slots=True)
 class CachedMessageJson:
     """A `MessageJsonCache` entry: one input message's serialized OTel JSON fragment."""
@@ -237,6 +253,20 @@ def model_settings_attributes(model_settings: ModelSettings | None) -> dict[str,
     return attributes
 
 
+def _add_history_repair_attributes(attributes: dict[str, AttributeValue]) -> None:
+    """Read and clear `history_repair_stats_ctx`, adding non-zero counters to `attributes`."""
+    repair_stats = history_repair_stats_ctx.get()
+    if repair_stats is None:
+        return
+    if repair_stats.synthesized_tool_returns:
+        attributes['pydantic_ai.history_repair.synthesized_tool_returns'] = repair_stats.synthesized_tool_returns
+    if repair_stats.dropped_orphaned_results:
+        attributes['pydantic_ai.history_repair.dropped_orphaned_results'] = repair_stats.dropped_orphaned_results
+    if repair_stats.merged_messages:
+        attributes['pydantic_ai.history_repair.merged_messages'] = repair_stats.merged_messages
+    history_repair_stats_ctx.set(None)
+
+
 def annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:
     """Copy OTel-relevant metadata from tool definitions onto matching tool call parts.
 
@@ -342,6 +372,8 @@ def open_model_request_span(
         attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
 
     attributes.update(model_settings_attributes(prepared_settings))
+
+    _add_history_repair_attributes(attributes)
 
     record_metrics: Callable[[], None] | None = None
     try:

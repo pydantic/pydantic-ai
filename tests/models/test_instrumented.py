@@ -36,7 +36,12 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai._instrumentation import MessageJsonCache, has_stale_message_json
+from pydantic_ai._instrumentation import (
+    HistoryRepairStats,
+    MessageJsonCache,
+    has_stale_message_json,
+    history_repair_stats_ctx,
+)
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
@@ -314,6 +319,36 @@ async def test_instrumented_model_not_recording():
             output_object=None,
         ),
     )
+
+
+async def test_history_repair_stats_recorded_on_model_request_span(capfire: CaptureLogfire):
+    """`history_repair_stats_ctx` counters are emitted as span attributes on the model request span."""
+    history_repair_stats_ctx.set(
+        HistoryRepairStats(dropped_orphaned_results=1, synthesized_tool_returns=2, merged_messages=3)
+    )
+    try:
+        model = InstrumentedModel(MyModel(), InstrumentationSettings())
+        await model.request(
+            [ModelRequest(parts=[UserPromptPart('hello')])],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(
+                function_tools=[],
+                allow_text_output=True,
+                output_tools=[],
+                output_mode='text',
+                output_object=None,
+            ),
+        )
+    finally:
+        history_repair_stats_ctx.set(None)
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    chat_spans = [s for s in spans if s['attributes'].get('gen_ai.operation.name') == 'chat']
+    assert len(chat_spans) == 1
+    attrs = chat_spans[0]['attributes']
+    assert attrs['pydantic_ai.history_repair.dropped_orphaned_results'] == 1
+    assert attrs['pydantic_ai.history_repair.synthesized_tool_returns'] == 2
+    assert attrs['pydantic_ai.history_repair.merged_messages'] == 3
 
 
 def test_input_messages_json_matches_whole_history_with_and_without_cache():
