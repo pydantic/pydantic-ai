@@ -184,6 +184,9 @@ requires_google = pytest.mark.skipif(GoogleProvider is None, reason='google-gena
 requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_task_cancelling = pytest.mark.skipif(
+    sys.version_info < (3, 11), reason='the backstop needs `Task.cancelling()` (Python 3.11+)'
+)
 
 # Wall-clock guard for the readiness `Event.wait()`s in the cancellation tests below. The events are set
 # near-instantly; the timeout only exists to fail fast on a genuine hang, since no global pytest timeout is
@@ -9962,6 +9965,7 @@ async def test_run_handoff_survives_absorbed_cancellation():
         pytest.fail('run completed instead of ending cancelled')
 
 
+@requires_task_cancelling
 async def test_streaming_handoff_survives_absorbed_cancellation():
     """Streaming counterpart of #6422: model request survives cancellation without deadlock.
 
@@ -10001,20 +10005,29 @@ async def test_streaming_handoff_survives_absorbed_cancellation():
 
     agent = Agent(SwallowOneCancelModel(TestModel()))
 
-    task = asyncio.create_task(agent.run('hello', event_stream_handler=event_stream_handler))
-    await asyncio.wait_for(in_flight.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    with capture_run_messages() as messages:
+        task = asyncio.create_task(agent.run('hello', event_stream_handler=event_stream_handler))
+        await asyncio.wait_for(in_flight.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
-    task.cancel()
-    try:
-        result = await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
-    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
-        pytest.fail('deadlock: run task still pending after cancellation (#6422)')
-    # The continuation composite opens each segment lazily on the consumer/run task, so the model
-    # consumes the injected cancellation on the run task itself. An absorbed cancel on the task then
-    # proceeds per asyncio semantics (faithful to Temporal `WAIT_CANCELLATION_COMPLETED`), so the run
-    # *completes* rather than ending cancelled — pydantic-ai never absorbs the caller's cancel itself.
-    # A strict "cancel always cancels" contract is deferred to the cancellation-redesign issue.
-    assert result.output == 'success (no tool calls)'
+        task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+        except (TimeoutError, asyncio.TimeoutError):
+            # fails only on regression
+            pytest.fail('deadlock: run task still pending after cancellation (#6422)')  # pragma: no cover
+        except asyncio.CancelledError:
+            # The continuation composite opens each segment lazily on the consumer/run task, so the
+            # model consumes the injected cancellation on the run task itself and completes normally
+            # (faithful to Temporal `WAIT_CANCELLATION_COMPLETED`). The level-triggered backstop then
+            # re-asserts the still-pending cancellation at the next step boundary: cancellation
+            # always cancels...
+            pass
+        else:  # pragma: no cover - fails only on regression
+            pytest.fail('run completed instead of ending cancelled')
+
+    # ...and never discards completed work: the absorbed cancel means the model request
+    # completed, so its response must be recorded before the cancellation propagates.
+    assert [type(m).__name__ for m in messages] == ['ModelRequest', 'ModelResponse']
 
 
 async def test_run_stream_events_aclose_survives_absorbed_cancellation():
