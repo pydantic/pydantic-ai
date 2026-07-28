@@ -5,12 +5,12 @@ import warnings
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, TypeAlias
 from urllib.parse import urlparse
 
 from opentelemetry.util.types import AttributeValue
-from pydantic import JsonValue
 
+from pydantic_ai import _otel_messages
 from pydantic_ai._instrumentation import (
     ANY_ADAPTER,
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,
@@ -20,12 +20,15 @@ from pydantic_ai.messages import BinaryContent, TextContent
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
 from .base import EmbeddingModel
-from .input import EmbeddingContent, EmbeddingInput, embedding_modality
+from .input import EmbeddingContent, EmbeddingContentPart, EmbeddingInput, EmbeddingModality, embedding_modality
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 from .wrapper import WrapperEmbeddingModel
 
 __all__ = 'instrument_embedding_model', 'InstrumentedEmbeddingModel'
+
+_OtelInput: TypeAlias = 'str | _otel_messages.BlobPart | _otel_messages.UriPart | list[_OtelInput]'
+"""How an embedding input is described in the `inputs` span attribute."""
 
 GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
 
@@ -217,7 +220,16 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                 return f'Unable to serialize: {e}'
 
 
-def _otel_input(item: EmbeddingInput, include_binary_content: bool) -> JsonValue:
+# The OTel GenAI spec only defines image, audio and video, so text and documents carry no modality.
+# Keeping to the spec's vocabulary means an embedding span describes a file exactly as an agent span does.
+_SPEC_MODALITIES: dict[EmbeddingModality, Literal['image', 'audio', 'video']] = {
+    'image': 'image',
+    'audio': 'audio',
+    'video': 'video',
+}
+
+
+def _otel_input(item: EmbeddingInput, include_binary_content: bool) -> _OtelInput:
     """Represent an input for the `inputs` span attribute, describing files instead of inlining their data."""
     if isinstance(item, EmbeddingContent):
         return [_otel_input(part, include_binary_content) for part in item.content]
@@ -226,18 +238,23 @@ def _otel_input(item: EmbeddingInput, include_binary_content: bool) -> JsonValue
     elif isinstance(item, TextContent):
         return item.content
     elif isinstance(item, BinaryContent):
-        blob: dict[str, JsonValue] = {
-            'type': 'blob',
-            'modality': embedding_modality(item),
-            'mime_type': item.media_type,
-        }
+        blob = _otel_messages.BlobPart(type='blob', mime_type=item.media_type)
+        if (modality := _otel_modality(item)) is not None:
+            blob['modality'] = modality
         if include_binary_content:
             blob['content'] = item.base64
         return blob
     else:
-        uri: dict[str, JsonValue] = {'type': 'uri', 'modality': embedding_modality(item), 'uri': item.url}
+        uri = _otel_messages.UriPart(type='uri', uri=item.url)
+        if (modality := _otel_modality(item)) is not None:
+            uri['modality'] = modality
         try:  # don't fail the whole request if the media type can't be inferred from the URL, just omit it
             uri['mime_type'] = item.media_type
         except ValueError:
             pass
         return uri
+
+
+def _otel_modality(part: EmbeddingContentPart) -> Literal['image', 'audio', 'video'] | None:
+    """The part's modality as the OTel GenAI spec names it, or `None` for one the spec doesn't define."""
+    return _SPEC_MODALITIES.get(embedding_modality(part))

@@ -6,6 +6,7 @@ from typing import Any, Literal
 from genai_prices import calc_price, types as genai_types
 
 from pydantic_ai._utils import now_utc as _now_utc
+from pydantic_ai.messages import TextContent
 from pydantic_ai.usage import RequestUsage
 
 from .input import EmbeddingInput
@@ -87,20 +88,23 @@ class EmbeddingResult:
     def __getitem__(self, item: int | str) -> Sequence[float]:
         """Get the embedding for an input by index or by the original input text.
 
-        Lookup by value is text-only; embeddings of non-text inputs are accessed by index.
+        Lookup by value is text-only; embeddings of files and of
+        [`EmbeddingContent`][pydantic_ai.embeddings.EmbeddingContent] are accessed by index.
 
         Args:
-            item: Either an integer index or the original input string.
+            item: Either an integer index or the original input text.
 
         Returns:
             The embedding vector for the specified input.
 
         Raises:
             IndexError: If the index is out of range.
-            ValueError: If the string is not found in the inputs.
+            ValueError: If the text is not found in the inputs.
         """
         if isinstance(item, str):
-            item = self.inputs.index(item)
+            # A text input may have been passed as a `TextContent`, which the result preserves.
+            texts = [input_.content if isinstance(input_, TextContent) else input_ for input_ in self.inputs]
+            item = texts.index(item)
 
         return self.embeddings[item]
 

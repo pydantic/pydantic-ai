@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import TextContent
 
-from .input import EmbeddingInput, EmbeddingModality, embedding_modality, embedding_parts
+from .input import EmbeddingContent, EmbeddingInput, EmbeddingModality, embedding_modality, embedding_parts
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings, merge_embedding_settings
 
@@ -113,7 +113,9 @@ class EmbeddingModel(ABC):
         Raises:
             UserError: If an input uses a modality the model doesn't support.
         """
-        items = list(inputs) if isinstance(inputs, Sequence) and not isinstance(inputs, str) else [inputs]
+        # Test for a single input rather than for a sequence: a batch is any iterable, including
+        # generators and the array types embedding callers commonly hold their corpus in.
+        items = [inputs] if isinstance(inputs, EmbeddingInput) else list(inputs)
 
         supported = self.supported_modalities
         for item in items:
@@ -146,7 +148,7 @@ class EmbeddingModel(ABC):
             metadata survives into the result, and the text to the provider.
 
         Raises:
-            UserError: If an input isn't plain text.
+            UserError: If an input isn't a single text part.
         """
         items, settings = self.prepare_embed(inputs, settings)
 
@@ -156,6 +158,13 @@ class EmbeddingModel(ABC):
                 texts.append(item)
             elif isinstance(item, TextContent):
                 texts.append(item.content)
+            elif isinstance(item, EmbeddingContent):
+                # An all-text `EmbeddingContent` clears the modality gate, so the reason it can't be
+                # embedded here is the fusion, not the modality — say that rather than "isn't text".
+                raise UserError(
+                    f'`{self.model_name}` cannot combine multiple parts into a single embedding; '
+                    'pass the parts as separate inputs to embed them separately.'
+                )
             else:
                 raise UserError(f'`{self.model_name}` only supports plain text inputs, got `{type(item).__name__}`.')
 

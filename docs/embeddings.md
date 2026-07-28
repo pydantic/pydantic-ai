@@ -116,7 +116,15 @@ Support is per model, not per provider, and is declared by [`EmbeddingModel.supp
 | [`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] | all of them, so you can test a multimodal pipeline without calling a provider |
 
 !!! note "Looking up embeddings"
-    `result['some text']` only works for text inputs; embeddings of files and of `EmbeddingContent` are accessed by index.
+    `result['some text']` looks an embedding up by its text, whether you passed a `str` or a [`TextContent`][pydantic_ai.messages.TextContent]. Embeddings of files and of `EmbeddingContent` are accessed by index.
+
+### Google multimodal limits
+
+Files are sent to Google inline, so a URL is downloaded first: a [`VideoUrl`][pydantic_ai.messages.VideoUrl] pointing at YouTube or a `gs://` bucket — which the [chat models](models/google.md) pass to Google by reference — can't be embedded, and raises a [`UserError`][pydantic_ai.exceptions.UserError]. Pass the bytes as [`BinaryContent`][pydantic_ai.messages.BinaryContent] instead.
+
+Google's [multimodal limits](https://ai.google.dev/gemini-api/docs/embeddings#multimodal) apply to a single input, not to the batch: 6 images, 1 document of up to 6 pages, 1 video of up to 120 frames, and 180 seconds of audio. So a batch may carry any number of images, but one `EmbeddingContent` may fuse at most 6. Pydantic AI doesn't enforce these, so exceeding one surfaces as a provider error. `document` means PDF — other binary media types are sent as-is and rejected by Google.
+
+All modalities share one 8,192-token context window, and **Google silently truncates** anything over it rather than raising: a long document plus text can lose the tail without any error. [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens] only counts text, so there's no way to check a file's size up front.
 
 ## Choosing a model
 
@@ -995,5 +1003,10 @@ async def main():
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+To accept more than text, override [`supported_modalities`][pydantic_ai.embeddings.EmbeddingModel.supported_modalities] so unsupported inputs are rejected before a request is made, then call [`prepare_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_embed] instead of `prepare_text_embed()` and map each input yourself. [`embedding_parts()`][pydantic_ai.embeddings.embedding_parts] gives you the parts of an input, so a single part and an [`EmbeddingContent`][pydantic_ai.embeddings.EmbeddingContent] of several parts can be handled alike — remembering that every input, however many parts it has, must yield exactly one embedding.
+
+!!! note "Upgrading an existing subclass"
+    `embed()` and `prepare_embed()` used to be typed in terms of `str`. They now take [`EmbeddingInput`][pydantic_ai.embeddings.EmbeddingInput], and `prepare_embed()` returns the inputs rather than plain strings, so a subclass written against the old signatures needs updating. Widen your `embed()` annotation to match the base class, and switch to `prepare_text_embed()` — which additionally returns the text to send — wherever you were passing `prepare_embed()`'s result straight to a text-only API.
 
 Use [`WrapperEmbeddingModel`][pydantic_ai.embeddings.WrapperEmbeddingModel] if you want to wrap an existing model to add custom behavior like caching or logging.

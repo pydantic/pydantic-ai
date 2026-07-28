@@ -620,7 +620,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
         max_concurrency = settings.get('bedrock_max_concurrency', 5)
         semaphore = anyio.Semaphore(max_concurrency)
 
-        results: list[tuple[Sequence[float], int]] = [None] * len(texts)  # type: ignore[list-item]
+        results: list[tuple[Sequence[float], int]] = [None] * len(texts)  # pyright: ignore[reportAssignmentType]
 
         async def embed_single(index: int, text: str) -> None:
             async with semaphore:

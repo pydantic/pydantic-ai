@@ -1,0 +1,70 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2174'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      requests:
+      - content:
+          parts:
+          - inline_data:
+              data: iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC-aJAAAAeElEQVR4nO3PQQkAMAzAwEqbtEmviD2OQSACLjP3_J0XNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWvDWAieDALXIBAOkAAAAAElFTkSuQmCC
+              mime_type: image/png
+          - inline_data:
+              data: iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC-aJAAAAeklEQVR4nO3PUQkAIBTAwBfFKEYzuiH8OITBAtxmnf11wwUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWPHYB-38A08LJhaoAAAAASUVORK5CYII=
+              mime_type: image/png
+          - inline_data:
+              data: iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC-aJAAAAeElEQVR4nO3PQQkAMAzAwEqrtEmfiD2OQSACLrNnv264oAEtaEALGtCCBrSgAS1oQAsa0IIGtKABLWhACxrQgga0oAEtaEALGtCCBrSgAS1oQAsa0IIGtKABLWhACxrQgga0oAEtaEALGtCCBrSgAS1oQAsa0ILHLs-KAPHWDxksAAAAAElFTkSuQmCC
+              mime_type: image/png
+          - inline_data:
+              data: iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC-aJAAAAeklEQVR4nO3PUQkAIBTAwBfNKEYxuiH8OITBAtxmn_V1wwUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWPHYBo5UBD2w1ZrsAAAAASUVORK5CYII=
+              mime_type: image/png
+          - inline_data:
+              data: iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC-aJAAAAeElEQVR4nO3PQQkAMAzAwEqbtEqfiD2OQSACLrN7vm64oAEtaEALGtCCBrSgAS1oQAsa0IIGtKABLWhACxrQgga0oAEtaEALGtCCBrSgAS1oQAsa0IIGtKABLWhACxrQgga0oAEtaEALGtCCBrSgAS1oQAsa0ILHLnegAS3vAC1lAAAAAElFTkSuQmCC
+              mime_type: image/png
+          - inline_data:
+              data: iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC-aJAAAAeklEQVR4nO3PUQkAIBTAwBfNaEYxqiH8OITBAtzm7PV1wwUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWPHYBS6sBS7_Pl1IAAAAASUVORK5CYII=
+              mime_type: image/png
+          - inline_data:
+              data: iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC-aJAAAAeklEQVR4nO3PUQkAIBTAwBfNaEYzmiH8OITBAtzm7PV1wwUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWPHYBH7YBaR2MDggAAAAASUVORK5CYII=
+              mime_type: image/png
+        model: models/gemini-embedding-2
+        outputDimensionality: 128
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '285'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=209
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      error:
+        code: 400
+        message: 'Unable to submit request because the model supports at most 6 image parts per input instance, but 7 were
+          provided. Learn more: https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/text-embeddings-api'
+        status: INVALID_ARGUMENT
+    status:
+      code: 400
+      message: Bad Request
+version: 1

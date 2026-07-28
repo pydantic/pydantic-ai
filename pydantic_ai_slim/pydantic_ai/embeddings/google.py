@@ -89,7 +89,10 @@ _SYMMETRIC_TASKS: frozenset[GoogleEmbeddingTask] = frozenset({'classification', 
 _TASK_PREFIX_MODEL = 'gemini-embedding-2'
 
 # Models that accept more than text. See https://ai.google.dev/gemini-api/docs/embeddings#multimodal
-_MULTIMODAL_MODELS: frozenset[str] = frozenset({'gemini-embedding-2'})
+# Derived from `_TASK_PREFIX_MODEL` because the branch of `embed()` that maps non-text parts is the
+# task-prefix branch: a model added here without a multimodal request mapping would advertise a
+# capability and then have `prepare_text_embed()` refuse it.
+_MULTIMODAL_MODELS: frozenset[str] = frozenset({_TASK_PREFIX_MODEL})
 
 _MULTIMODAL_MODALITIES: frozenset[EmbeddingModality] = frozenset({'text', 'image', 'audio', 'video', 'document'})
 
@@ -248,11 +251,12 @@ class GoogleEmbeddingModel(EmbeddingModel):
             task = google_task if google_task is not None else 'search result'
 
             contents = []
-            conditioned_all_inputs = True
+            skipped_file_conditioning = False
+            skipped_text_conditioning = False
             for item in items:
                 parts = embedding_parts(item)
                 # The prefix conditions text, so it only applies to an input that is a single text part;
-                # Google doesn't define task instructions for other modalities.
+                # Google doesn't define task instructions for other modalities, nor for a multi-part input.
                 # See https://ai.google.dev/gemini-api/docs/embeddings#multimodal
                 if len(parts) == 1 and isinstance(text_part := parts[0], str | TextContent):
                     text = text_part if isinstance(text_part, str) else text_part.content
@@ -269,16 +273,30 @@ class GoogleEmbeddingModel(EmbeddingModel):
                         text = f'task: {task} | query: {text}'
                     contents.append(Content(parts=[Part(text=text)]))
                 else:
-                    conditioned_all_inputs = False
+                    if all(isinstance(part, str | TextContent) for part in parts):
+                        skipped_text_conditioning = True
+                    else:
+                        skipped_file_conditioning = True
                     contents.append(Content(parts=[await _map_content_part(part) for part in parts]))
 
-            if google_task is not None and task != 'raw' and not conditioned_all_inputs:
-                warnings.warn(
-                    f'`google_task` only conditions inputs that are a single text part and is ignored for the others; '
-                    f'`{self._model_name}` has no task conditioning for other modalities.',
-                    UserWarning,
-                    stacklevel=2,
-                )
+            if task != 'raw':
+                # Text that goes unconditioned lands in a different region of the space than text that
+                # doesn't, so warn even on the default task — unlike files, conditioning was meaningful here.
+                if skipped_text_conditioning:
+                    warnings.warn(
+                        f'`{self._model_name}` conditions on a task by prefixing the text, so an `EmbeddingContent` '
+                        'of several text parts is embedded unconditioned; pass it as a single text part to condition '
+                        'it, or set `google_task` to `raw` to opt out of conditioning entirely.',
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                if google_task is not None and skipped_file_conditioning:
+                    warnings.warn(
+                        f'`google_task` only conditions inputs that are a single text part and is ignored for the '
+                        f'others; `{self._model_name}` has no task conditioning for other modalities.',
+                        UserWarning,
+                        stacklevel=2,
+                    )
 
             config = EmbedContentConfig(
                 task_type=None,
@@ -377,7 +395,10 @@ def _map_usage(
 ) -> RequestUsage:
     """Map Google embedding response to RequestUsage.
 
-    Note: The Gemini API doesn't return token usage information.
+    Note: the Gemini API does return usage — the recorded responses carry `usageMetadata.promptTokenCount`,
+    broken down per modality — but `google-genai` drops it: `EmbedContentResponse` exposes only
+    `embeddings` and a `metadata` holding `billable_character_count`. So usage is reported as 0 tokens
+    on the Gemini API, which matters most for images and documents, where tokens are not billed per character.
     Google Cloud (formerly known as Vertex AI) returns token_count in embedding statistics.
     """
     total_tokens = 0
