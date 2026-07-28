@@ -73,6 +73,11 @@ with try_import() as mistral_imports:
 with try_import() as xai_imports:
     from pydantic_ai.providers.xai import XaiProvider
 
+with try_import() as openai_imports:
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
 with try_import() as openrouter_google_imports:
     # OpenRouter installs its own Google transformer; importable so inline_snapshot can name it.
     from pydantic_ai.providers.openrouter import (
@@ -122,6 +127,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_reasoning_enabled_by_default': False,
     'openai_supports_reasoning_effort_none': False,
     'openai_responses_supports_reasoning_mode': False,
+    'openai_responses_supports_reasoning_context': False,
     'openai_responses_requires_function_call_status_none': False,
     'openai_supports_phase': False,
     'openai_supports_prompt_cache_breakpoints': False,
@@ -279,6 +285,7 @@ def test_openai_gpt_5_4():
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
         }
@@ -312,6 +319,7 @@ def test_openai_gpt_5_6():
             'openai_supports_reasoning': True,
             'openai_reasoning_enabled_by_default': True,
             'openai_supports_reasoning_effort_none': True,
+            'openai_responses_supports_reasoning_context': True,
             'openai_responses_supports_reasoning_mode': True,
             'openai_supports_phase': True,
             'openai_supports_prompt_cache_breakpoints': True,
@@ -350,6 +358,33 @@ def test_azure_gpt_5_6_reasoning_mode(model_name: str):
     profile = AzureProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_mode') is True
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol'])
+def test_openai_gpt_5_reasoning_context(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    profile = OpenAIProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_context') is True
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['openai/gpt-5.4', 'openai/gpt-5.5', 'openai/gpt-5.6-sol'])
+def test_openrouter_openai_gpt_5_reasoning_context(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_context') is True
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol'])
+def test_azure_gpt_5_reasoning_context(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    profile = AzureProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_context') is True
 
 
 def test_openai_gpt_4o():
@@ -825,6 +860,7 @@ def test_openrouter_openai_gpt_5_4():
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
+            'openai_responses_supports_reasoning_context': True,
             'openai_chat_supports_file_urls': True,
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -1060,6 +1096,7 @@ def test_azure_openai_gpt_5():
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
             'openai_chat_supports_document_input': False,
@@ -1347,6 +1384,7 @@ def test_litellm_openai_gpt():
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
         }
@@ -1506,6 +1544,7 @@ def test_github_openai_bare_name():
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
         }
@@ -1601,6 +1640,7 @@ def test_vercel_openai_gpt():
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
         }
