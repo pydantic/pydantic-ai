@@ -56,7 +56,7 @@ async def test_gateway_openai_text_in_audio_out(
     async with agent.realtime(model).session(audio_retention='output_audio') as session:
         await session.send('Say a short greeting.')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -69,7 +69,8 @@ async def test_gateway_openai_text_in_audio_out(
     assert any(isinstance(part, SpeechPart) for part in response.parts)
 
 
-async def test_gateway_gemini_text_in_audio_out(  # pragma: no cover - runs only while recording (route gated)
+# Runs only while recording (route gated).
+async def test_gateway_gemini_text_in_audio_out(  # pragma: no cover
     gateway_gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
     """A `gateway/google` session streams audio+transcript back through the gateway's Vertex relay.

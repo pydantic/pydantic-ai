@@ -1380,7 +1380,8 @@ async def test_upstream_error_propagates_to_consumer() -> None:
 
 async def test_upstream_error_does_not_wait_for_running_tool() -> None:
     class _ExplodingAfterTool(RealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover - tool is cancelled first
+        # Tool is cancelled first.
+        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover
             raise AssertionError
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
@@ -1513,7 +1514,8 @@ async def test_tool_call_cancellation_cancels_running_tool() -> None:
         except asyncio.CancelledError:
             cancelled.set()
             raise
-        return 'never'  # pragma: no cover - always cancelled first
+        # Always cancelled first.
+        return 'never'  # pragma: no cover
 
     class _CancelAfterStart(FakeRealtimeConnection):
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
@@ -2062,7 +2064,8 @@ async def test_early_break_cancels_pump() -> None:
         def __init__(self) -> None:
             self.iteration_task: asyncio.Task[Any] | None = None
 
-        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover - never sent to
+        # Never sent to.
+        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover
             raise AssertionError
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
@@ -2074,7 +2077,8 @@ async def test_early_break_cancels_pump() -> None:
             except asyncio.CancelledError:
                 cancelled.set()
                 raise
-            yield AudioDelta(data=b'\x01')  # pragma: no cover - unreachable while parked
+            # Unreachable while parked.
+            yield AudioDelta(data=b'\x01')  # pragma: no cover
 
     conn = _BlockAfterFirst()
     agent: Agent[None, str] = Agent()
@@ -2100,7 +2104,8 @@ def test_asap_notification_is_ignored_after_loop_closes() -> None:
 
 async def test_concurrent_iteration_raises() -> None:
     class _IdleConnection(RealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover - never sent to
+        # Never sent to.
+        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover
             raise AssertionError
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
@@ -2993,7 +2998,7 @@ async def test_agent_realtime_session_rejects_seeding_when_unsupported() -> None
     seed = [ModelRequest(parts=[UserPromptPart(content='earlier question')])]
     with pytest.raises(UserError, match='does not support seeding a session'):
         async with agent.realtime(model, message_history=seed).session():
-            pass  # pragma: no cover — enter raises before yielding
+            pass  # pragma: no cover
 
 
 async def test_agent_realtime_session_audio_retention_forwarded() -> None:
@@ -3121,8 +3126,9 @@ async def test_agent_realtime_session_validates_and_coerces_args() -> None:
 async def test_agent_realtime_session_invalid_args_return_retry_message() -> None:
     agent: Agent[None, str] = Agent()
 
+    # Never reached; validation fails first.
     @agent.tool_plain
-    def double(x: int) -> str:  # pragma: no cover — never reached; validation fails first
+    def double(x: int) -> str:  # pragma: no cover
         return str(x * 2)
 
     conn = FakeRealtimeConnection(
@@ -3454,7 +3460,8 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
         async def send(self, content: RealtimeInput) -> None:
             if isinstance(content, TextInput):
                 raise RuntimeError('drain send failed')
-            await super().send(content)  # pragma: no cover - this test only drives the drain's `TextInput` send
+            # This test only drives the drain's `TextInput` send.
+            await super().send(content)  # pragma: no cover
 
     conn = _FailingDrain([])
     session = RealtimeSession(conn)
@@ -3584,8 +3591,9 @@ async def test_agent_realtime_session_runs_args_validator() -> None:
     def guard(ctx: RunContext[Any], city: str) -> None:
         raise ModelRetry('not allowed')
 
+    # Never reached; the validator rejects first.
     @agent.tool_plain(args_validator=guard)
-    def weather(city: str) -> str:  # pragma: no cover — never reached; the validator rejects first
+    def weather(city: str) -> str:  # pragma: no cover
         return f'sunny in {city}'
 
     conn = FakeRealtimeConnection(
@@ -3949,8 +3957,9 @@ async def test_agent_realtime_session_response_without_usage_counts_toward_reque
 async def test_agent_realtime_session_tool_call_limit_raises() -> None:
     agent: Agent[None, str] = Agent()
 
+    # Never runs: the limit trips first.
     @agent.tool_plain
-    def greet() -> str:  # pragma: no cover - never runs: the limit trips first
+    def greet() -> str:  # pragma: no cover
         return 'hi'
 
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='greet', args='{}'), TurnCompleteEvent()])
@@ -4004,12 +4013,13 @@ async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
         match=r"not supported by this model.*WebSearch\(local='duckduckgo'\)",
     ):
         async with agent.realtime(model, capabilities=[NativeTool(WebSearchTool())]).session():
-            pass  # pragma: no cover - validation raises before yielding
+            pass  # pragma: no cover
 
 
 async def test_agent_realtime_session_local_capability_tool_declared() -> None:
     def fetch(url: str) -> str:
-        return f'content of {url}'  # pragma: no cover - not executed in this wiring test
+        # Not executed in this wiring test.
+        return f'content of {url}'  # pragma: no cover
 
     agent: Agent[None, str] = Agent(capabilities=[WebFetch(native=False, local=fetch)])
     conn = FakeRealtimeConnection([TurnCompleteEvent()])

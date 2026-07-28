@@ -196,7 +196,7 @@ async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
         match=r"'ImageGenerationTool'\] not supported by this model.*ImageGeneration\(local=my_func\)",
     ):
         async with agent.realtime(GoogleRealtimeModel(), capabilities=[NativeTool(ImageGenerationTool())]).session():
-            pass  # pragma: no cover - validation raises before yielding
+            pass  # pragma: no cover
 
 
 def test_config_combines_function_and_native_tools() -> None:
@@ -315,7 +315,7 @@ class _FakeWSConnect:
     async def __aenter__(self) -> None:
         raise _StopDial()
 
-    async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover - never entered
+    async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
         return False
 
 
@@ -346,7 +346,7 @@ async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect(captured))
     with pytest.raises(_StopDial):
         async with _connect(model, 'hi'):
-            pass  # pragma: no cover - the dial short-circuits before yielding
+            pass  # pragma: no cover
 
     # The SDK swaps https→wss and appends the Vertex BidiGenerateContent path onto the gateway base URL.
     # TEMPORARY: the gateway relay only routes the OpenAI-shaped `/v1/realtime?model=` upgrade path, not
@@ -397,7 +397,7 @@ async def test_non_gateway_handshake_has_no_bearer_auth(monkeypatch: pytest.Monk
     monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect(captured))
     with pytest.raises(_StopDial):
         async with _connect(model, 'hi'):
-            pass  # pragma: no cover - the dial short-circuits before yielding
+            pass  # pragma: no cover
 
     assert 'Authorization' not in captured['headers']
 
@@ -1043,7 +1043,7 @@ async def test_connect_maps_rejected_config_to_model_http_error() -> None:
         async def __aenter__(self) -> Any:
             raise genai_errors.APIError(1007, reason, None)
 
-        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover - never entered
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
             return False
 
     class _Live:
@@ -1054,7 +1054,7 @@ async def test_connect_maps_rejected_config_to_model_http_error() -> None:
     model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
     with pytest.raises(ModelHTTPError) as exc_info:
         async with _connect(model, 'x'):
-            pass  # pragma: no cover - connect raises before yielding
+            pass  # pragma: no cover
     assert exc_info.value.status_code == 1007
     assert exc_info.value.model_name == 'gemini-2.5-flash-native-audio-latest'
     assert exc_info.value.body == reason
@@ -1072,7 +1072,7 @@ async def test_connect_maps_websocket_invalid_status_to_model_http_error() -> No
         async def __aenter__(self) -> Any:
             raise InvalidStatus(Response(401, 'Unauthorized', Headers(), body=b'bad key'))
 
-        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover - never entered
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
             return False
 
     class _Live:
@@ -1083,7 +1083,7 @@ async def test_connect_maps_websocket_invalid_status_to_model_http_error() -> No
     model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
     with pytest.raises(ModelHTTPError) as exc_info:
         async with _connect(model, 'x'):
-            pass  # pragma: no cover - connect raises before yielding
+            pass  # pragma: no cover
     assert exc_info.value.status_code == 401
     assert exc_info.value.body == 'bad key'
 
@@ -1096,7 +1096,7 @@ async def test_connect_maps_other_websocket_errors_to_model_api_error() -> None:
         async def __aenter__(self) -> Any:
             raise WebSocketException('handshake went sideways')
 
-        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover - never entered
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
             return False
 
     class _Live:
@@ -1107,7 +1107,7 @@ async def test_connect_maps_other_websocket_errors_to_model_api_error() -> None:
     model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
     with pytest.raises(ModelAPIError) as exc_info:
         async with _connect(model, 'x'):
-            pass  # pragma: no cover - connect raises before yielding
+            pass  # pragma: no cover
     assert exc_info.value.message == snapshot('WebSocket error during connect: handshake went sideways')
 
 
@@ -1119,7 +1119,7 @@ async def test_connect_maps_unreachable_api_to_model_api_error() -> None:
         async def __aenter__(self) -> Any:
             raise ConnectionRefusedError('connection refused')
 
-        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover - never entered
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
             return False
 
     class _Live:
@@ -1130,7 +1130,7 @@ async def test_connect_maps_unreachable_api_to_model_api_error() -> None:
     model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
     with pytest.raises(ModelAPIError) as exc_info:
         async with _connect(model, 'x'):
-            pass  # pragma: no cover - connect raises before yielding
+            pass  # pragma: no cover
     assert exc_info.value.message == snapshot('Could not reach the realtime API: connection refused')
 
 

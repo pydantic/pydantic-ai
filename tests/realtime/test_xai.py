@@ -471,7 +471,7 @@ async def test_connect_surfaces_handshake_error(monkeypatch: pytest.MonkeyPatch)
     model = XaiRealtimeModel('grok-voice-latest', provider=XaiProvider(api_key='k'))
     with pytest.raises(ModelAPIError, match='bad voice') as exc_info:
         async with _connect(model, 'x'):
-            pass  # pragma: no cover - connect raises before yielding
+            pass  # pragma: no cover
     assert exc_info.value.model_name == 'grok-voice-latest'
 
 
@@ -507,7 +507,7 @@ async def test_agent_realtime_session_rejects_native_tools() -> None:
         match=r"not supported by this model.*WebSearch\(local='duckduckgo'\)",
     ):
         async with agent.realtime(_model(), capabilities=[NativeTool(WebSearchTool())]).session():
-            pass  # pragma: no cover - validation raises before yielding
+            pass  # pragma: no cover
 
 
 @pytest.mark.anyio
@@ -738,7 +738,7 @@ async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pyt
         async def __aenter__(self) -> Any:
             raise ConnectionError('refused')
 
-        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover — never entered
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
             return False
 
     monkeypatch.setattr(rt_xai.websockets, 'connect', _FailingConnect())

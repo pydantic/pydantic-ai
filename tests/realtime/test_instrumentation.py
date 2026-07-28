@@ -1235,7 +1235,8 @@ async def test_early_break_finishes_running_tool_span(caplog: pytest.LogCaptureF
     """Owner exit cancels a running tool and finishes every span before returning."""
 
     class _IdleAfterTool(RealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover - tool is cancelled first
+        # Tool is cancelled first.
+        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover
             raise AssertionError
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:

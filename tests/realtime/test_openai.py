@@ -934,7 +934,7 @@ async def test_connect_surfaces_http_upgrade_error(monkeypatch: pytest.MonkeyPat
         async def __aenter__(self) -> Any:
             raise InvalidStatus(Response(404, 'Not Found', Headers(), body=b'unknown model'))
 
-        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover — never entered
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
             return False
 
     monkeypatch.setattr(rt_openai.websockets, 'connect', _RejectingConnect())
@@ -1019,7 +1019,7 @@ async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pyt
         async def __aenter__(self) -> Any:
             raise ConnectionError('refused')
 
-        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover — never entered
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
             return False
 
     monkeypatch.setattr(rt_openai.websockets, 'connect', _FailingConnect())
@@ -2642,7 +2642,7 @@ async def test_agent_realtime_session_rejects_native_tools() -> None:
         async with agent.realtime(
             OpenAIRealtimeModel('gpt-realtime'), capabilities=[NativeTool(WebSearchTool())]
         ).session():
-            pass  # pragma: no cover - validation raises before yielding
+            pass  # pragma: no cover
 
 
 # --- provider resolution & capabilities -------------------------------------------------------

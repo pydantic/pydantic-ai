@@ -52,7 +52,8 @@ def _realtime_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
 def _record_mode(request: pytest.FixtureRequest) -> str | None:
     try:
         return cast('Any', request.config).getoption('record_mode')
-    except (ValueError, AttributeError):  # pragma: no cover - depends on pytest-recording being active
+    # Depends on pytest-recording being active.
+    except (ValueError, AttributeError):  # pragma: no cover
         return None
 
 
@@ -72,7 +73,8 @@ def _ws_cassette(
     if plan == 'error_missing':
         if skip_if_missing:
             pytest.skip(f'Missing realtime WebSocket cassette (record with `--record-mode=rewrite`): {path}')
-        raise RuntimeError(  # pragma: no cover - a cassette we expect to exist has gone missing
+        # A cassette we expect to exist has gone missing.
+        raise RuntimeError(  # pragma: no cover
             f'Missing realtime WebSocket cassette: {path}\n'
             'Record it with: uv run --env-file .env pytest --record-mode=rewrite <test> -q'
         )
@@ -83,7 +85,8 @@ def _ws_cassette(
     finally:
         # Persist recorded frames even if later assertions fail, so cassettes can be recorded first
         # and snapshots filled from replay afterwards (mirroring the VCR workflow).
-        if plan == 'record' and cassette.interactions:  # pragma: no cover - only runs while recording
+        # Only runs while recording.
+        if plan == 'record' and cassette.interactions:  # pragma: no cover
             cassette.dump(path)
 
 
@@ -129,7 +132,8 @@ def _gateway_realtime_provider(kind: str, api_key: str | None) -> Provider[Any]:
     user reaches. Offline (no key), the placeholder encodes no region, so pin an explicit base URL;
     replay never dials, so only its stability matters, not the host.
     """
-    if api_key:  # pragma: no cover - only while recording
+    # Only while recording.
+    if api_key:  # pragma: no cover
         return gateway_provider(kind, api_key=api_key)
     return gateway_provider(kind, api_key='mock-gateway-key', base_url='https://gateway.pydantic.info/proxy')
 
@@ -169,7 +173,8 @@ def gateway_gemini_ws_cassette(
         pytest.skip('google-genai / websockets not installed')
     provider = _gateway_realtime_provider('google', gateway_api_key)
     with _ws_cassette(request, 'gemini', skip_if_missing=True) as cassette:
-        yield provider, cassette  # pragma: no cover - no cassette to replay until the gateway routes Bidi
+        # No cassette to replay until the gateway routes Bidi.
+        yield provider, cassette  # pragma: no cover
 
 
 @pytest.fixture(scope='session')

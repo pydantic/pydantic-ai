@@ -113,7 +113,7 @@ class _RecordingModel(RealtimeModel):
 async def _drain(agent: Agent[None, str], model: _RecordingModel, **kwargs: object) -> list[RealtimeEvent]:
     events: list[RealtimeEvent] = []
     async with agent.realtime(model, **kwargs).session() as session:  # type: ignore[arg-type]
-        async for event in session:  # pragma: no branch - the fixed events end the stream
+        async for event in session:  # pragma: no branch
             events.append(event)
     return events
 

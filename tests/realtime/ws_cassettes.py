@@ -389,7 +389,8 @@ def patched_ws_connect(provider: ProviderName, cassette: RealtimeCassette, plan:
             # normalization across sockets in one logical realtime session.
             cassette.bind_disconnect(replay.close)
             yield replay
-        else:  # pragma: no cover - only runs while recording
+        # Only runs while recording.
+        else:  # pragma: no cover
             async with real_connect(*args, **kwargs) as ws:
                 recording = RecordingWebSocket(ws, cassette)
 

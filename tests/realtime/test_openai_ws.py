@@ -60,7 +60,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     async with agent.realtime(model).session(audio_retention='output_audio') as session:
         await session.send('Say a short greeting.')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -137,7 +137,7 @@ async def test_audio_in_server_vad_turn(
         for start in range(0, len(pcm), 4800):
             await session.send_audio(pcm[start : start + 4800])
         with anyio.fail_after(45):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -227,7 +227,7 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     async with agent.realtime(model).session() as session:
         await session.send('What is the weather in London?')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -333,7 +333,7 @@ async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], 
     async with agent.realtime(model, message_history=history).session() as session:
         await session.send('What is my name and favorite color?')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
