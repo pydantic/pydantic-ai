@@ -134,7 +134,6 @@ def test_durability_codecs() -> None:
     assert IDENTITY_CODEC.load(list[int], value) is value
     assert JSON_CODEC.dump(list[int], value) == value
     assert JSON_CODEC.load(list[int], value) == value
-    assert JSON_CODEC.dump(list[int], value) == value
 
 
 def test_durability_declarative_contract_validates_at_bind_time() -> None:
@@ -189,7 +188,7 @@ def test_durability_declarative_contract_rejects_other_invalid_fields(
         durability_type().for_agent(agent)
 
 
-async def test_durability_base_default_hooks() -> None:
+async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[AgentStreamEvent] = []
 
     class FunctionOnlyDurability(PrefectDurability):
@@ -271,9 +270,11 @@ async def test_durability_base_default_hooks() -> None:
         await BaseDurabilityCapability.run_durable_unit(base, 'unit', value, inputs=(), config=None)
 
     payload = await wrap_tool_call_result(value())
-    type(durability)._tool_call_result_upgrade_lenient = False  # pyright: ignore[reportPrivateUsage]
+    # `monkeypatch` restores these class attributes even if an assertion below raises; a bare
+    # assignment would leak the mutation into every later test that builds a `PrefectDurability`.
+    monkeypatch.setattr(type(durability), '_tool_call_result_upgrade_lenient', False)
     assert durability._unwrap_tool_result(payload) == 'value'  # pyright: ignore[reportPrivateUsage]
-    type(durability)._tool_call_result_upgrade_lenient = True  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.undo()
 
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     event = FinalResultEvent(tool_name=None, tool_call_id=None)
@@ -288,7 +289,7 @@ async def test_durability_base_default_hooks() -> None:
     agent = Agent(TestModel(), name='sequential-default', capabilities=[PrefectDurability()])
     bound = PrefectDurability.from_agent(agent)
     assert bound is not None
-    PrefectDurability._force_sequential_tools_in_durable_context = True  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(PrefectDurability, '_force_sequential_tools_in_durable_context', True)
 
     async def sequential_handler() -> Any:
         assert ToolManager(FunctionToolset()).get_parallel_execution_mode() == 'sequential'
@@ -299,7 +300,6 @@ async def test_durability_base_default_hooks() -> None:
         await BaseDurabilityCapability.wrap_run(bound, ctx, handler=sequential_handler)
 
     await force_sequential()
-    PrefectDurability._force_sequential_tools_in_durable_context = False  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_durability_base_serialization_failure_hook() -> None:
@@ -1836,6 +1836,45 @@ def test_cache_policy_excludes_non_serializable_deps():
     # Containers recurse per item: serializable members fork the key, unhashable members don't.
     assert key_for(['acme', threading.Lock()]) == key_for(['acme', threading.Lock()])
     assert key_for(('acme', threading.Lock())) != key_for(('globex', threading.Lock()))
+
+
+def test_cache_policy_projects_nested_run_context_and_tool():
+    """The projection reaches a `RunContext`/`ToolsetTool` nested in a container, not just a top-level one.
+
+    `PrefectDurability.run_durable_unit` passes an operation's logical inputs as a single `*args`
+    tuple (so nothing caps how many inputs an operation may have), which means neither ever
+    arrives as a top-level bound parameter. Without recursion the raw `RunContext` is hashed and
+    `compute_key` raises `Unable to create hash` for any agent whose `deps` hold a live resource.
+    """
+
+    @dataclass
+    class CacheDeps:
+        tenant: str
+        lock: threading.Lock = field(default_factory=threading.Lock)
+
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(tenant: str, tool_name: str) -> str | None:
+        ctx = RunContext(deps=CacheDeps(tenant=tenant), model=TestModel(), usage=RunUsage())
+        tool = ToolsetTool(
+            toolset=FunctionToolset(),
+            tool_def=ToolDefinition(name=tool_name),
+            max_retries=0,
+            args_validator=TOOL_SCHEMA_VALIDATOR,
+        )
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx,
+            inputs={'unit_name': 'unit', 'args': (tool_name, {}, ctx, tool)},
+            flow_parameters={},
+        )
+
+    # Hashable at all -- this is what regresses if the projection stops recursing.
+    assert key_for('acme', 'tool') is not None
+    assert key_for('acme', 'tool') == key_for('acme', 'tool')
+    # And still discriminating through the container.
+    assert key_for('acme', 'tool') != key_for('globex', 'tool')
+    assert key_for('acme', 'tool') != key_for('acme', 'other')
 
 
 async def test_cache_policy_with_tuples():

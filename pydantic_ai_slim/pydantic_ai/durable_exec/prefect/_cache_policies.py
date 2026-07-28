@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import fields, is_dataclass
 from typing import Any, TypeGuard
 
@@ -62,9 +63,18 @@ def _cacheable_deps(deps: Any) -> Any:
 def _replace_run_context(
     inputs: dict[str, Any],
 ) -> Any:
-    """Replace RunContext objects with a dict containing only hashable fields."""
+    """Replace RunContext objects with a dict containing only hashable fields.
+
+    Recurses into the containers a task's bound parameters may nest them in: the durable base
+    passes an operation's logical inputs as one `*args` tuple, so a `RunContext` is not always a
+    top-level parameter. It still has to be projected there -- hashing a raw `RunContext` fails
+    outright (`Unable to create hash`) whenever `deps` holds something unserializable like a
+    client, a pool, or a lock, which is exactly what `_cacheable_deps` exists to absorb.
+    """
     for key, value in inputs.items():
-        if _is_run_context(value):
+        if _is_container(value):
+            inputs[key] = _map_container(value, lambda item: _replace_run_context({'_': item})['_'])
+        elif _is_run_context(value):
             inputs[key] = {
                 'deps': _cacheable_deps(value.deps),
                 'agent': value.agent.name if value.agent is not None else None,
@@ -134,13 +144,31 @@ def _strip_cache_excluded_fields(
     return obj
 
 
+def _is_container(obj: Any) -> bool:
+    return _is_list(obj) or _is_tuple(obj) or _is_dict(obj)
+
+
+def _map_container(container: Any, project: Callable[[Any], Any]) -> Any:
+    """Apply `project` to each item of a list/tuple/dict, preserving the container type."""
+    if _is_dict(container):
+        return {key: project(item) for key, item in container.items()}
+    if _is_tuple(container):
+        return tuple(project(item) for item in container)
+    return [project(item) for item in container]
+
+
 def _replace_toolsets(
     inputs: dict[str, Any],
 ) -> Any:
-    """Replace Toolset objects with a dict containing only hashable fields."""
+    """Replace Toolset objects with a dict containing only hashable fields.
+
+    Recurses into containers for the same reason as [`_replace_run_context`][].
+    """
     inputs = inputs.copy()
     for key, value in inputs.items():
-        if _is_toolset_tool(value):
+        if _is_container(value):
+            inputs[key] = _map_container(value, lambda item: _replace_toolsets({'_': item})['_'])
+        elif _is_toolset_tool(value):
             inputs[key] = {field.name: getattr(value, field.name) for field in fields(value) if field.name != 'toolset'}
     return inputs
 

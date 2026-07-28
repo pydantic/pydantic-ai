@@ -81,20 +81,19 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     ) -> Any:
         """Run `fn` as a Prefect task.
 
-        `inputs` are passed as task arguments so the cache policy (`PrefectAgentInputs` -- hash-keyed) forks the cache key on them; `fn` (a closure) does the
-        real work. `name` is prepended to the hashed inputs so operations with identical inputs but
-        different identity keep distinct cache entries.
+        `inputs` are passed as task arguments so the cache policy (`PrefectAgentInputs` --
+        hash-keyed) forks the cache key on them; `fn` (a closure) does the real work. `name` is
+        prepended to the hashed inputs so operations with identical inputs but different identity
+        keep distinct cache entries.
+
+        They ride in one `*args` tuple, so no ceiling is imposed on how many inputs an operation
+        may have. `PrefectAgentInputs` recurses into that tuple to project the `RunContext` and
+        `ToolsetTool` it holds; without that projection, hashing a raw `RunContext` fails outright
+        whenever `deps` holds an unserializable resource (a client, a pool, a lock).
         """
 
         @task
-        async def _unit(
-            unit_name: str,
-            a0: Any = None,
-            a1: Any = None,
-            a2: Any = None,
-            a3: Any = None,
-            a4: Any = None,
-        ) -> Any:
+        async def _unit(unit_name: str, *args: Any) -> Any:
             return await fn()
 
         options = cast(TaskConfig, config or {})

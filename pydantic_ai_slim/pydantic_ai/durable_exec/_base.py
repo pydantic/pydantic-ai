@@ -625,7 +625,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         async def get_instructions_operation(ctx: RunContext[AgentDepsT]) -> Instructions:
             async def fn() -> Instructions:
                 with self._durable_run_context_scope(ctx) as durable_ctx:
-                    return await toolset.get_instructions(durable_ctx)
+                    # A server's instructions are captured during `__aenter__`, so it has to be
+                    # connected *inside* this unit: an engine whose lifecycle never enters the
+                    # toolset (DBOS's `enter-never`) would otherwise journal `None` and silently
+                    # drop the instructions. Entry is refcounted, so this is a no-op when the
+                    # toolset is already entered (`enter-always`/`enter-outside-durable`).
+                    async with toolset:
+                        return await toolset.get_instructions(durable_ctx)
 
             return await self._durable_operation(
                 self._unit_name('mcp_server', prefix=prefix, suffix='.get_instructions'),

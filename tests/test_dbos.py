@@ -3116,7 +3116,12 @@ async def test_dbos_durability_mcp_toolset_wrapping(dbos: DBOS) -> None:
 
 
 async def test_dbos_durability_mcp_operations_run_in_steps(dbos: DBOS) -> None:
+    seen_instructions: list[str] = []
+
     def call_then_answer(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        seen_instructions.extend(
+            message.instructions for message in messages if isinstance(message, ModelRequest) and message.instructions
+        )
         if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart('celsius_to_fahrenheit', {'celsius': 0}, tool_call_id='call-1')])
@@ -3147,6 +3152,10 @@ async def test_dbos_durability_mcp_operations_run_in_steps(dbos: DBOS) -> None:
     assert 'durability_mcp_operations__mcp_server__mcp.get_tools' in step_names
     assert 'durability_mcp_operations__mcp_server__mcp.get_instructions' in step_names
     assert 'durability_mcp_operations__mcp_server__mcp.call_tool' in step_names
+    # The instructions must actually reach the model, not just produce a step: they're captured
+    # during `__aenter__`, and DBOS's `enter-never` lifecycle means the step itself has to connect
+    # the server. Asserting only the step name let a silent `None` through.
+    assert 'Be a helpful assistant.' in seen_instructions
 
 
 async def test_dbos_durability_rejects_idless_mcp_toolset(dbos: DBOS) -> None:
