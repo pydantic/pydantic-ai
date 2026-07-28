@@ -512,7 +512,7 @@ def require_type_annotations(ctx: RunContext[None]) -> str:
     return 'rule added'
 ```
 
-**Claude Opus 4.8**, **Claude Sonnet 5**, **Claude Fable 5**, and **Claude Mythos 5** accept the `system` role, and only on the direct Anthropic API and Claude Platform on AWS. There the instruction carries system-level authority for the turns that follow it, and takes precedence over the top-level system prompt where the two disagree. On every other model or client — including the [AWS Bedrock](#aws-bedrock), [Google Cloud](#google-cloud), and [Microsoft Foundry](#microsoft-foundry) integrations — it's sent as a `<system>`-tagged user message at the same position instead, so it still applies where you put it, as a strong preference rather than an operator rule.
+**Claude Opus 5**, **Claude Opus 4.8**, **Claude Sonnet 5**, **Claude Fable 5**, and **Claude Mythos 5** accept the `system` role, and only on the direct Anthropic API and Claude Platform on AWS. There the instruction carries system-level authority for the turns that follow it, and takes precedence over the top-level system prompt where the two disagree. On every other model or client — including the [AWS Bedrock](#aws-bedrock), [Google Cloud](#google-cloud), and [Microsoft Foundry](#microsoft-foundry) integrations — it's sent as a `<system>`-tagged user message at the same position instead, so it still applies where you put it, as a strong preference rather than an operator rule.
 
 See the [message history docs](../message-history.md#using-messages-as-input-for-further-agent-runs) for how mid-conversation system prompts behave across providers generally.
 
