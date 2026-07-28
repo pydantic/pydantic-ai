@@ -108,6 +108,9 @@ class AnthropicModelProfile(ModelProfile, total=False):
     (or an explicit list of tools) raises a `UserError`.
     """
 
+    anthropic_supports_tool_availability_delta: bool
+    """Whether the model supports native mid-conversation tool additions and removals. Default: `False`."""
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,

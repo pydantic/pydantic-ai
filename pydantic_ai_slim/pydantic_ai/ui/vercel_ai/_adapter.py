@@ -34,6 +34,7 @@ from ...messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -360,8 +361,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 )
                         user_prompt_content.append(file)
                     elif isinstance(part, DataUIPart):
-                        # Contains custom data that shouldn't be sent to the model
-                        pass
+                        if part.type == 'data-tool-availability-delta' and _is_str_dict(part.data):
+                            builder.add(
+                                ToolAvailabilityDeltaPart(
+                                    added=[name for name in part.data.get('added', []) if isinstance(name, str)],
+                                    removed=[name for name in part.data.get('removed', []) if isinstance(name, str)],
+                                    tool_call_id=part.data.get('tool_call_id')
+                                    if isinstance(part.data.get('tool_call_id'), str)
+                                    else None,
+                                )
+                            )
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported user message part type: {type(part)}')
 
@@ -635,6 +644,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(part, ToolReturnPart):
                 # Tool returns are merged into the tool call in the assistant message
                 pass
+            elif isinstance(part, ToolAvailabilityDeltaPart):
+                user_ui_parts.append(
+                    DataUIPart(
+                        type='data-tool-availability-delta',
+                        data={
+                            'added': part.added,
+                            'removed': part.removed,
+                            'tool_call_id': part.tool_call_id,
+                        },
+                    )
+                )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name:
                     # Tool-related retries are handled when processing ToolCallPart in ModelResponse

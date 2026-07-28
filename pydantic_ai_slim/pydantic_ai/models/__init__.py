@@ -40,6 +40,7 @@ from ..messages import (
     InstructionPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
     ModelResponseState,
@@ -493,6 +494,9 @@ class Model(ABC, Generic[InterfaceClient]):
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
         """
+        if not self.profile.get('anthropic_supports_tool_availability_delta', False):
+            messages = _synthesize_tool_availability_delta_messages(messages)
+
         if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
             from .._tool_search import synthesize_local_tool_search_messages
 
@@ -1662,3 +1666,47 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
             new_messages.append(msg)
 
     return new_messages if changed else messages
+
+
+def _synthesize_tool_availability_delta_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Project tool availability changes to the local tool-search exchange supported by every model."""
+    import hashlib
+
+    from ..messages import ToolAvailabilityDeltaPart, ToolSearchCallPart, ToolSearchReturnPart
+
+    transformed: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
+        ):
+            transformed.append(message)
+            continue
+
+        changed = True
+        replacement_parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            if not isinstance(part, ToolAvailabilityDeltaPart):
+                replacement_parts.append(part)
+                continue
+
+            tool_call_id = part.tool_call_id
+            if tool_call_id is None:
+                digest = hashlib.blake2s(
+                    '\x00'.join([*part.added, '', *part.removed]).encode(),
+                    digest_size=8,
+                    usedforsecurity=False,
+                ).hexdigest()
+                tool_call_id = f'auto_load_{digest}'
+            transformed.append(
+                ModelResponse(parts=[ToolSearchCallPart(args={'queries': part.added}, tool_call_id=tool_call_id)])
+            )
+            replacement_parts.append(
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': name} for name in part.added]},
+                    tool_call_id=tool_call_id,
+                )
+            )
+        transformed.append(replace(message, parts=replacement_parts))
+
+    return transformed if changed else messages

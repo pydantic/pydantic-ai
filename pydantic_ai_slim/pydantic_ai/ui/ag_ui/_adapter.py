@@ -38,6 +38,7 @@ from ...messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolPartKind,
     ToolReturnPart,
@@ -88,6 +89,7 @@ try:
         FILE_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
+        TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
         UPLOADED_FILE_ACTIVITY_TYPE,
         dump_tool_return_content,
         parse_ag_ui_version,
@@ -539,7 +541,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
 
                 case ActivityMessage() as activity_msg:
-                    if activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
+                    if activity_msg.activity_type == TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE:
+                        content = activity_msg.content
+                        builder.add(
+                            ToolAvailabilityDeltaPart(
+                                added=[name for name in content.get('added', []) if isinstance(name, str)],
+                                removed=[name for name in content.get('removed', []) if isinstance(name, str)],
+                                tool_call_id=content.get('tool_call_id')
+                                if isinstance(content.get('tool_call_id'), str)
+                                else None,
+                            )
+                        )
+                    elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')
                         if not url:
@@ -684,6 +697,19 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         **tool_kind_encrypted_value_kwargs(
                             part.tool_kind, outcome=part.outcome, supported=use_encrypted_value
                         ),
+                    )
+                )
+            elif isinstance(part, ToolAvailabilityDeltaPart):
+                flush_user_content()
+                result.append(
+                    ActivityMessage(
+                        id=_new_message_id(),
+                        activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
+                        content={
+                            'added': part.added,
+                            'removed': part.removed,
+                            'tool_call_id': part.tool_call_id,
+                        },
                     )
                 )
             elif isinstance(part, RetryPromptPart):

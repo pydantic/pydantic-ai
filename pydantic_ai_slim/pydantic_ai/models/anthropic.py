@@ -42,6 +42,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     ToolSearchReturnPart,
@@ -588,11 +589,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
+        supports_tool_availability_delta = _profile.get(
+            'anthropic_supports_tool_availability_delta', False
+        ) and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS)
         _profile = merge_profile(
             _profile,
             AnthropicModelProfile(
                 supported_native_tools=supported_native_tools,
                 anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
+                anthropic_supports_tool_availability_delta=supports_tool_availability_delta,
             ),
         )
         return cast(AnthropicModelProfile, _profile)
@@ -899,6 +904,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         if self._messages_use_anthropic_uploaded_file(messages):
             betas.add(_ANTHROPIC_FILES_API_BETA)
+        if self.profile.get('anthropic_supports_tool_availability_delta', False) and any(
+            isinstance(part, ToolAvailabilityDeltaPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        ):
+            betas.add('mid-conversation-tool-changes-2026-07-01')
 
         return betas, extra_headers
 
@@ -1526,6 +1538,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 # Mid-conversation system prompts, each with the index in `user_content_params` it'd be
                 # rendered at if it has to fall back to the `<system>`-tagged shape.
                 mid_conversation_system_prompts: list[tuple[int, str]] = []
+                tool_availability_blocks: list[dict[str, Any]] = []
                 for request_part in m.parts:
                     if isinstance(request_part, SystemPromptPart):
                         if not inline_system_prompts or m is leading_request:
@@ -1538,6 +1551,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 self._add_cache_control_to_last_param(user_content_params, ttl=content.ttl)
                             else:
                                 user_content_params.append(content)
+                    elif isinstance(request_part, ToolAvailabilityDeltaPart):
+                        available_tool_names = {tool.name for tool in model_request_parameters.function_tools}
+                        assert all(name in available_tool_names for name in request_part.added)
+                        tool_availability_blocks.extend(
+                            {'type': 'tool_addition', 'tool': {'type': 'tool_reference', 'name': name}}
+                            for name in request_part.added
+                        )
+                        if request_part.removed:
+                            tool_availability_blocks.extend(
+                                {'type': 'tool_removal', 'tool': {'type': 'tool_reference', 'name': name}}
+                                for name in request_part.removed
+                            )
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
 
@@ -1631,23 +1656,40 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     mid_conversation_system_prompts = []
                 if len(user_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
-                if mid_conversation_system_prompts:
-                    system_message_fallbacks.append(
-                        (
-                            len(anthropic_messages),
-                            [
-                                BetaTextBlockParam(text=f'<system>{content}</system>', type='text')
-                                for _, content in mid_conversation_system_prompts
+                if tool_availability_blocks and not user_content_params:
+                    anthropic_messages.append(
+                        BetaMessageParam(
+                            role='user',
+                            content=[
+                                BetaTextBlockParam(
+                                    type='text',
+                                    text='<tool-availability-change>The available tool set changed.</tool-availability-change>',
+                                )
                             ],
                         )
                     )
+                if mid_conversation_system_prompts or tool_availability_blocks:
+                    if not tool_availability_blocks:
+                        system_message_fallbacks.append(
+                            (
+                                len(anthropic_messages),
+                                [
+                                    BetaTextBlockParam(text=f'<system>{content}</system>', type='text')
+                                    for _, content in mid_conversation_system_prompts
+                                ],
+                            )
+                        )
                     anthropic_messages.append(
-                        BetaMessageParam(
-                            role='system',
-                            content=[
-                                BetaTextBlockParam(text=content, type='text')
-                                for _, content in mid_conversation_system_prompts
-                            ],
+                        cast(
+                            BetaMessageParam,
+                            {
+                                'role': 'system',
+                                'content': [
+                                    BetaTextBlockParam(text=content, type='text')
+                                    for _, content in mid_conversation_system_prompts
+                                ]
+                                + tool_availability_blocks,
+                            },
                         )
                     )
             elif isinstance(m, ModelResponse):

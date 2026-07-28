@@ -52,6 +52,7 @@ from pydantic_ai.messages import (
     NativeToolSearchReturnPart,
     PartStartEvent,
     TextPart,
+    ToolAvailabilityDeltaPart,
     ToolPartKind,
     ToolReturnPart,
     ToolSearchCallPart,
@@ -2180,8 +2181,7 @@ async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(al
 
     assert result.output == 'Loaded.'
     assert any(
-        isinstance(part, ToolSearchReturnPart)
-        and [match['name'] for match in part.discovered_tools] == ['lookup_refund_policy']
+        isinstance(part, ToolAvailabilityDeltaPart) and part.added == ['lookup_refund_policy']
         for message in result.all_messages()
         for part in message.parts
     )
@@ -2401,6 +2401,8 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
                     'type': 'tool_search_return',
                     'tools': [tool['name'] for tool in part.content['discovered_tools']],
                 }
+            elif isinstance(part, ToolAvailabilityDeltaPart):
+                part_info = {'type': 'tool_availability_delta', 'added': part.added, 'removed': part.removed}
             elif isinstance(part, ToolCallPart):
                 # Normalize args from JSON string to dict so per-row snapshots don't
                 # pin on provider-specific whitespace or key ordering.
@@ -2443,8 +2445,7 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     }
                 ],
             ),
-            ('response', [{'type': 'tool_search_call', 'queries': ['refunds']}]),
-            ('request', [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}]),
+            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy'], 'removed': []}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -2475,8 +2476,7 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     }
                 ],
             ),
-            ('response', [{'type': 'tool_search_call', 'queries': ['refunds']}]),
-            ('request', [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}]),
+            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy'], 'removed': []}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -2507,8 +2507,7 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     }
                 ],
             ),
-            ('response', [{'type': 'tool_search_call', 'queries': ['refunds']}]),
-            ('request', [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}]),
+            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy'], 'removed': []}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -2545,8 +2544,7 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     }
                 ],
             ),
-            ('response', [{'type': 'tool_search_call', 'queries': ['refunds']}]),
-            ('request', [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}]),
+            ('request', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy'], 'removed': []}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -2762,6 +2760,8 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                         'type': 'tool_search_return',
                         'tools': [tool['name'] for tool in part.content['discovered_tools']],
                     }
+                elif isinstance(part, ToolAvailabilityDeltaPart):
+                    part_info = {'type': 'tool_availability_delta', 'added': part.added, 'removed': part.removed}
                 elif isinstance(part, ToolCallPart):
                     part_info = {'type': 'tool_call', 'tool_name': part.tool_name, 'args': part.args}
                 elif isinstance(part, ToolReturnPart):
@@ -2805,14 +2805,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                     }
                 ],
             ),
-            (
-                'ModelResponse',
-                [{'type': 'tool_search_call', 'queries': ['refunds']}],
-            ),
-            (
-                'ModelRequest',
-                [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}],
-            ),
+            ('ModelRequest', [{'type': 'tool_availability_delta', 'added': ['lookup_refund_policy'], 'removed': []}]),
             (
                 'ModelResponse',
                 [
@@ -6172,3 +6165,38 @@ def test_tool_search_namespace_synthesis_returns_none_for_unrelated_function_too
     regular_tool = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
     params = ModelRequestParameters(function_tools=[regular_tool])
     assert _tool_search_namespace_for_synthesis('get_weather', params) is None
+
+
+def test_tool_availability_delta_reconstructs_available_tools_in_order():
+    """Availability history is an ordered reduction while old search returns remain compatible."""
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'old_tool'}, {'name': 'kept_tool'}]},
+                    tool_call_id='search-1',
+                )
+            ]
+        ),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], removed=['old_tool'])]),
+    ]
+
+    assert parse_discovered_tools(messages) == {'kept_tool', 'new_tool'}
+
+
+def test_tool_availability_delta_falls_back_to_tool_search_messages():
+    """Profiles without native tool changes receive the established local tool-search wire shape."""
+    model = TestModel()
+    prepared = model.prepare_messages(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])]
+    )
+
+    assert len(prepared) == 2
+    assert isinstance(prepared[0], ModelResponse)
+    assert prepared[0].parts == [ToolSearchCallPart(args={'queries': ['new_tool']}, tool_call_id='load-1')]
+    assert isinstance(prepared[1], ModelRequest)
+    assert len(prepared[1].parts) == 1
+    return_part = prepared[1].parts[0]
+    assert isinstance(return_part, ToolSearchReturnPart)
+    assert return_part.content == {'discovered_tools': [{'name': 'new_tool'}]}
+    assert return_part.tool_call_id == 'load-1'

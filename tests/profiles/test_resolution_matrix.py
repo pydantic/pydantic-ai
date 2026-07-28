@@ -1778,3 +1778,14 @@ def test_huggingface_unknown_provider_returns_none():
     """Unknown provider prefix → `None` (no fallback overlay like other gateways)."""
 
     assert _normalize(HuggingFaceProvider.model_profile('unknown/some-model')) is None
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+def test_anthropic_tool_availability_delta_support():
+    """Only the model families verified for the beta advertise native tool changes."""
+    supported = AnthropicProvider.model_profile('claude-sonnet-5')
+    unsupported = AnthropicProvider.model_profile('claude-sonnet-4-6')
+    assert supported is not None
+    assert unsupported is not None
+    assert supported.get('anthropic_supports_tool_availability_delta') is True
+    assert unsupported.get('anthropic_supports_tool_availability_delta') is None

@@ -45,6 +45,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     NativeToolSearchReturnPart,
+    ToolAvailabilityDeltaPart,
     ToolReturnPart,
     ToolSearchReturnPart,
 )
@@ -199,7 +200,10 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     for msg in messages:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
-                if isinstance(part, ToolSearchReturnPart):
+                if isinstance(part, ToolAvailabilityDeltaPart):
+                    discovered.update(part.added)
+                    discovered.difference_update(part.removed)
+                elif isinstance(part, ToolSearchReturnPart):
                     _collect_typed(part.content, discovered)
                 elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
                     # Legacy histories carry discoveries on `metadata['discovered_tools']`

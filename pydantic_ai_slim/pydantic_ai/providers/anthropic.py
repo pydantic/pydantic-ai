@@ -41,6 +41,8 @@ _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-opus-4-8',
     'claude-sonnet-5',
 )
+
+_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = ('claude-opus-4-8', 'claude-sonnet-5')
 """Models that accept a `{'role': 'system'}` entry inside the Messages API's `messages` array.
 
 Older models reject it with `role 'system' is not supported on this model`.
@@ -73,6 +75,9 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         if bedrock_provider == 'anthropic':
             model_name = base_model_name
         profile = anthropic_model_profile(model_name)
+        tool_availability_profile = AnthropicModelProfile()
+        if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES):
+            tool_availability_profile = AnthropicModelProfile(anthropic_supports_tool_availability_delta=True)
         return merge_profile(
             AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer),
             profile,
@@ -83,8 +88,9 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             # flag stays `False` and `Model.prepare_messages` keeps applying the `<system>`-tagged
             # rendering, as it did before this was supported anywhere.
             AnthropicModelProfile(
-                supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES)
+                supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
             ),
+            tool_availability_profile,
         )
 
     @overload

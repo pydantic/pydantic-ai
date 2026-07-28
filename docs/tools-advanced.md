@@ -729,6 +729,8 @@ Pydantic AI prefers native search whenever available because the discovery excha
 
 Runs that include tools owned by [on-demand capabilities](capabilities/on-demand.md) trade hosted-search quality for capability gating and cache stability on native-supporting providers: deferred function tools are searched by Pydantic AI through the provider's client-executed native surface, so each `load_capability` reveal can keep the prompt-cache prefix warm without exposing tools from unloaded capabilities. Runs with only standalone deferred tools keep using the provider's hosted search.
 
+When an application-driven capability load changes the visible tool set, message history records that control event as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. The part stores tool names, not schemas; current tool definitions remain authoritative in the model request parameters. Models without a native tool-change format receive the same synthesized tool-search exchange used for compatibility.
+
 For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
 
 ```python {title="tool_search.py"}

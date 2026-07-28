@@ -26,6 +26,7 @@ from pydantic_ai import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
+    ToolAvailabilityDeltaPart,
     UserPromptPart,
 )
 
@@ -41,7 +42,9 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.tools import ToolDefinition
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -398,4 +401,73 @@ async def test_mid_conversation_system_prompt_unsupported_client(
                 'role': 'user',
             },
         ]
+    )
+
+
+async def test_native_tool_availability_delta(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    """Supported models accept a framework tool reveal and can call the newly available tool."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'order_id': {'type': 'string'}},
+            'required': ['order_id'],
+        },
+        defer_loading=True,
+        with_native='tool_search',
+    )
+    old_tool = ToolDefinition(
+        name='old_refund_tool',
+        description='Old refund lookup.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+
+    await model.request(
+        [
+            ModelRequest(parts=[UserPromptPart(content='I need help with a refund.')]),
+            ModelResponse(parts=[TextPart(content='I can check that.')]),
+            ModelRequest(
+                parts=[
+                    ToolAvailabilityDeltaPart(
+                        added=['lookup_refund_policy'],
+                        removed=['old_refund_tool'],
+                    )
+                ]
+            ),
+        ],
+        None,
+        ModelRequestParameters(function_tools=[tool, old_tool], native_tools=[ToolSearchTool()]),
+    )
+
+    body = single_request_body(vcr)
+    assert body['messages'][-2] == snapshot(
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'type': 'text',
+                    'text': '<tool-availability-change>The available tool set changed.</tool-availability-change>',
+                }
+            ],
+        }
+    )
+    assert body['messages'][-1] == snapshot(
+        {
+            'role': 'system',
+            'content': [
+                {
+                    'type': 'tool_addition',
+                    'tool': {
+                        'type': 'tool_reference',
+                        'name': 'lookup_refund_policy',
+                    },
+                },
+                {
+                    'type': 'tool_removal',
+                    'tool': {'type': 'tool_reference', 'name': 'old_refund_tool'},
+                },
+            ],
+        }
     )
