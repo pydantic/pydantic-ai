@@ -224,9 +224,16 @@ jobs:
             # the event, and again on the resolved PR below.
             [ "$RUN_HEAD_REPO" = "$REPO" ] || skip "CI ran on ${RUN_HEAD_REPO}, not ${REPO}"
             TRIGGER_SHA="$RUN_HEAD_SHA"
-            PR_NUMBER=$(gh api "repos/${REPO}/commits/${TRIGGER_SHA}/pulls" \
-              --jq "[.[] | select(.state == \"open\" and .head.ref == \"${RUN_HEAD_BRANCH}\")] | first | .number // empty")
-            [ -n "$PR_NUMBER" ] || skip "no open PR found for ${RUN_HEAD_BRANCH}@${TRIGGER_SHA}"
+            # `$ENV`, not string interpolation: `"` is legal in a branch name and
+            # would otherwise splice into the jq program and abort the step.
+            PRS=$(gh api "repos/${REPO}/commits/${TRIGGER_SHA}/pulls" \
+              --jq '[.[] | select(.state == "open" and .head.ref == $ENV.RUN_HEAD_BRANCH) | .number]')
+            # One branch can have several open PRs, each onto a different base.
+            # Reviewing an arbitrary one of them is worse than not reviewing.
+            MATCHES=$(printf '%s' "$PRS" | jq 'length')
+            [ "$MATCHES" -ne 0 ] || skip "no open PR found for ${RUN_HEAD_BRANCH}@${TRIGGER_SHA}"
+            [ "$MATCHES" -eq 1 ] || skip "${MATCHES} open PRs share ${RUN_HEAD_BRANCH}@${TRIGGER_SHA}; cannot tell which one CI ran for"
+            PR_NUMBER=$(printf '%s' "$PRS" | jq -r '.[0]')
           fi
 
           # --- Read the PR's live state, in one round trip --------------------
