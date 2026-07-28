@@ -272,9 +272,11 @@ jobs:
         # review, where injected text carries the authority of the system prompt
         # instead of having to argue against it.
         #
-        # Runs for ALL PRs, not just forks: a same-repo branch (e.g. an automated
-        # agent's branch built from an untrusted issue) can carry a poisoned
-        # instruction file just as a fork can.
+        # Runs for all PRs not authored by a repository maintainer: a same-repo
+        # branch (e.g. an automated agent's branch built from an untrusted issue)
+        # can carry a poisoned instruction file just as a fork can. Resolve the
+        # actual repository role rather than trusting `author_association`, which
+        # can report `CONTRIBUTOR` for maintainers with private org membership.
         #
         # The path list is that instruction layer, which is wider than what Claude
         # Code autoloads: the root `CLAUDE.md` (system prompt) and `.claude/`, but
@@ -291,6 +293,14 @@ jobs:
         # 300 entries, so it could hide an edit in a large PR). Paths with spaces
         # come through quoted, hence the `"` terminator.
         run: |
+          AUTHOR_ROLE=$(gh api "repos/${{ github.repository }}/collaborators/${PR_AUTHOR}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+          case "$AUTHOR_ROLE" in
+            write | maintain | admin)
+              echo "PR author ${PR_AUTHOR} has ${AUTHOR_ROLE} access; skipping agent-config guard."
+              exit 0
+              ;;
+          esac
+
           CHANGED=$(gh api "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" -H 'Accept: application/vnd.github.v3.diff' | grep '^diff --git ')
           if echo "$CHANGED" | grep -qiE '/(AGENTS\.md|CLAUDE\.md|CLAUDE\.local\.md|\.mcp\.json)( |"|$)|/(\.claude|\.agents|agent_docs)/'; then
             echo "::error::PR modifies agent config the reviewer loads (AGENTS.md, CLAUDE.md, CLAUDE.local.md, .mcp.json, .claude/, .agents/, agent_docs/). Skipping douwebot for security."
@@ -300,6 +310,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
 
       - name: Gather PR context
         # Runs from the workspace root, i.e. the BASE checkout, so the guidance

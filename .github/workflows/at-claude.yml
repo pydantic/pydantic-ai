@@ -36,6 +36,7 @@ jobs:
       pr_head_repo: ${{ steps.pr-info.outputs.pr_head_repo }}
       pr_head_sha: ${{ steps.pr-info.outputs.pr_head_sha }}
       pr_base_sha: ${{ steps.pr-info.outputs.pr_base_sha }}
+      pr_author_role: ${{ steps.pr-info.outputs.pr_author_role }}
     steps:
       - name: Get PR info
         if: github.event.issue.pull_request || github.event.pull_request
@@ -47,6 +48,9 @@ jobs:
           echo "pr_head_sha=$(echo "$PR_DATA" | jq -r '.head.sha')" >> $GITHUB_OUTPUT
           echo "pr_base_sha=$(echo "$PR_DATA" | jq -r '.base.sha')" >> $GITHUB_OUTPUT
           echo "is_fork=$(echo "$PR_DATA" | jq -r '.head.repo.fork')" >> $GITHUB_OUTPUT
+          PR_AUTHOR=$(echo "$PR_DATA" | jq -r '.user.login')
+          PR_AUTHOR_ROLE=$(gh api "repos/${{ github.repository }}/collaborators/${PR_AUTHOR}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+          echo "pr_author_role=${PR_AUTHOR_ROLE}" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -112,6 +116,10 @@ jobs:
           persist-credentials: false
 
       - name: Check for modified config files
+        # Maintainers are trusted to change agent config in their own PRs. Use
+        # their actual repository role rather than `author_association`, which can
+        # report `CONTRIBUTOR` for maintainers with private org membership.
+        #
         # Compare the exact immutable SHAs captured in get-pr-info (and checked
         # out above) rather than the live PR head. Using `gh pr diff` would read
         # whatever the PR points at now, so a force-push after get-pr-info could
@@ -125,6 +133,13 @@ jobs:
         # emits a `diff --git a/<old> b/<new>` header for every changed file,
         # including renames, so matching those lines cannot miss a path.
         run: |
+          case "$AUTHOR_ROLE" in
+            write | maintain | admin)
+              echo "PR author has ${AUTHOR_ROLE} access; skipping agent-config guard."
+              exit 0
+              ;;
+          esac
+
           CHANGED=$(gh api "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" -H 'Accept: application/vnd.github.v3.diff' | grep '^diff --git ')
           if echo "$CHANGED" | grep -qiE '/(AGENTS\.md|CLAUDE\.md)( |$)|/\.claude/'; then
             echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping for security."
@@ -134,6 +149,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BASE_SHA: ${{ needs.get-pr-info.outputs.pr_base_sha }}
           HEAD_SHA: ${{ needs.get-pr-info.outputs.pr_head_sha }}
+          AUTHOR_ROLE: ${{ needs.get-pr-info.outputs.pr_author_role }}
 
       - name: Install bubblewrap
         run: sudo apt-get install -y bubblewrap
