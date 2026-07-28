@@ -12913,21 +12913,20 @@ async def test_openai_responses_phase_streamed_on_part_start(allow_model_request
 
     text_part_starts: list[tuple[str, Any]] = []
     text_delta_count = 0
-    deltas_carrying_phase: list[dict[str, Any]] = []
+    delta_phases: set[Any] = set()
     async with agent.run_stream_events('What is the capital of PotatoLand?') as event_stream:
         async for event in event_stream:
             if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
                 text_part_starts.append((event.part.content, (event.part.provider_details or {}).get('phase')))
             elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
                 text_delta_count += 1
-                if event.delta.provider_details is not None:
-                    deltas_carrying_phase.append(event.delta.provider_details)
+                delta_phases.add((event.delta.provider_details or {}).get('phase'))
 
     # Each part's phase is known as it opens, and the content is only the first chunk, not the whole part.
     assert text_part_starts == snapshot([('I', 'commentary'), ('The', 'final_answer')])
     # The phase opens the part and is not repeated on any of the deltas that follow.
     assert text_delta_count == snapshot(23)
-    assert deltas_carrying_phase == []
+    assert delta_phases == snapshot({None})
 
 
 async def test_openai_responses_phase_streamed_without_deltas(allow_model_requests: None):
