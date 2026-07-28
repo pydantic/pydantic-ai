@@ -250,6 +250,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     colon-containing tool call IDs in follow-up requests.
     """
 
+    openai_responses_supports_tool_availability_delta: bool
+    """Whether the Responses API supports revealing function tools with `additional_tools`. Default: `False`."""
+
     openai_supports_phase: bool
     """Whether the Responses API supports the `phase` field on assistant messages. Default: `False`.
 

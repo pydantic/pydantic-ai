@@ -7,7 +7,8 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import create_async_http_client
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 
 try:
@@ -36,7 +37,21 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        return openai_model_profile(model_name)
+        profile = openai_model_profile(model_name)
+        # `additional_tools` support is not monotonic by model family: gpt-5.4-mini and gpt-5.1
+        # act on the item, while gpt-5.4 and gpt-5 silently ignore it. Keep these matches explicit
+        # so a broader `gpt-5` or `gpt-5.4` prefix does not turn a silent failure into the default.
+        supports_tool_availability_delta = (
+            model_name.startswith(('gpt-5.6', 'gpt-5.5', 'gpt-5.4-mini', 'gpt-5.1'))
+            or model_name == 'gpt-4.1'
+            or model_name.startswith('gpt-4.1-')
+        )
+        if supports_tool_availability_delta:
+            profile = merge_profile(
+                profile,
+                OpenAIModelProfile(openai_responses_supports_tool_availability_delta=True),
+            )
+        return profile
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

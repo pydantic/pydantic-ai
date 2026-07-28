@@ -310,6 +310,7 @@ def test_openai_gpt_5_6():
             'openai_reasoning_enabled_by_default': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_mode': True,
+            'openai_responses_supports_tool_availability_delta': True,
             'openai_supports_phase': True,
             'openai_supports_prompt_cache_breakpoints': True,
         }
@@ -1804,3 +1805,29 @@ def test_anthropic_tool_availability_delta_support(model_name: str, supported: b
     profile = AnthropicProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('anthropic_supports_tool_availability_delta') is (True if supported else None)
+
+
+@pytest.mark.parametrize(
+    'model_name,supported',
+    [
+        ('gpt-5.6', True),
+        ('gpt-5.6-sol', True),
+        ('gpt-5.5', True),
+        ('gpt-5.4-mini', True),
+        ('gpt-5.1', True),
+        ('gpt-4.1', True),
+        ('gpt-5.4', False),
+        ('gpt-5', False),
+    ],
+)
+def test_openai_tool_availability_delta_support(model_name: str, supported: bool):
+    """Pins the live-verified per-model matrix for Responses `additional_tools`.
+
+    Unsupported models accept the item but silently ignore it, so support must be opted in
+    explicitly rather than inferred from a broad family prefix.
+    """
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_tool_availability_delta') is (True if supported else None)

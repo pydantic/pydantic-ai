@@ -65,6 +65,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     ToolSearchCallPart,
@@ -928,6 +929,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if not _profile.get('openai_chat_supports_web_search', False):
             new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
+        _profile = merge_profile(
+            _profile,
+            OpenAIModelProfile(openai_responses_supports_tool_availability_delta=False),
+        )
         return cast(OpenAIModelProfile, _profile)
 
     def prepare_request(
@@ -1637,6 +1642,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            elif isinstance(part, ToolAvailabilityDeltaPart):
+                assert False, '`ToolAvailabilityDeltaPart` must be synthesized before Chat Completions mapping'
             else:
                 assert_never(part)
         if file_content:
@@ -3050,6 +3057,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         )
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
+                    elif isinstance(part, ToolAvailabilityDeltaPart):
+                        tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}
+                        additional_tools = [
+                            self._map_tool_definition(tool_defs_by_name[name])
+                            for name in part.added
+                            if name in tool_defs_by_name
+                        ]
+                        openai_messages.append(
+                            responses.response_input_item_param.AdditionalTools(
+                                type='additional_tools',
+                                role='developer',
+                                tools=additional_tools,
+                            )
+                        )
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
