@@ -24,6 +24,7 @@
       { "label": "Guardrails", "slug": "guardrails" },
       { "label": "Managed Prompt", "slug": "managed-prompt" },
       { "label": "LocalStack", "slug": "localstack" },
+      { "label": "Skills", "slug": "skills" },
       { "label": "ACP", "slug": "acp" }
     ]
   }
