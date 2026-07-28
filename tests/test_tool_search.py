@@ -4790,10 +4790,12 @@ def test_prepare_messages_translates_on_non_native_model() -> None:
     assert return_part.content == {'discovered_tools': [{'name': 'calculate_mortgage'}]}
 
 
-def test_prepare_messages_passes_through_on_native_model() -> None:
-    """A model whose profile *does* include `ToolSearchTool` in
-    `supported_native_tools` keeps the prior exchange as-is — the native adapter
-    knows how to ship the typed builtin parts back on the wire."""
+@pytest.mark.parametrize(
+    ('origin_provider_name', 'translated'),
+    [('test', False), ('anthropic', True), ('openai', True), (None, True)],
+)
+def test_prepare_messages_on_native_model(origin_provider_name: str | None, translated: bool) -> None:
+    """A native model preserves its own parts and translates foreign or untagged parts."""
 
     class NativeToolSearchTestModel(TestModel):
         @classmethod
@@ -4810,12 +4812,12 @@ def test_prepare_messages_passes_through_on_native_model() -> None:
                 NativeToolSearchCallPart(
                     args={'queries': ['mortgage']},
                     tool_call_id='c1',
-                    provider_name='anthropic',
+                    provider_name=origin_provider_name,
                 ),
                 NativeToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'calculate_mortgage'}]},
                     tool_call_id='c1',
-                    provider_name='anthropic',
+                    provider_name=origin_provider_name,
                 ),
             ],
         ),
@@ -4823,7 +4825,11 @@ def test_prepare_messages_passes_through_on_native_model() -> None:
 
     prepared = model.prepare_messages(history)
 
-    assert prepared is history
+    if translated:
+        assert isinstance(message_part(prepared, ToolSearchCallPart, message_index=1), ToolSearchCallPart)
+        assert isinstance(message_part(prepared, ToolSearchReturnPart, message_index=2), ToolSearchReturnPart)
+    else:
+        assert prepared is history
 
 
 def test_narrow_type_local_promotes_with_tool_kind_set() -> None:
@@ -5851,6 +5857,150 @@ async def test_openai_promotes_local_search_history_with_default_native_strategy
         for call in cast(list[ResponseFunctionToolCallParam], function_calls)
     )
     assert not function_outputs
+
+
+async def test_openai_replays_anthropic_native_search_history() -> None:
+    """Foreign native history is normalized before OpenAI renders its native replay."""
+    pytest.importorskip('openai')
+
+    model = OpenAIResponsesModel(
+        'gpt-5.4-mini',
+        provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='find a weather tool')]),
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(
+                    args={'queries': ['weather']}, tool_call_id='ant_1', provider_name='anthropic'
+                ),
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_weather'}]},
+                    tool_call_id='ant_1',
+                    provider_name='anthropic',
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+    ]
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='get_weather', defer_loading=True)],
+        native_tools=[ToolSearchTool()],
+        allow_text_output=True,
+    )
+
+    prepared = model.prepare_messages(history)
+    _system, openai_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, OpenAIResponsesModelSettings(), params
+    )
+    calls = [
+        item
+        for item in openai_messages
+        if isinstance(item, dict) and cast(dict[str, Any], item).get('type') == 'tool_search_call'
+    ]
+    outputs = [
+        item
+        for item in openai_messages
+        if isinstance(item, dict) and cast(dict[str, Any], item).get('type') == 'tool_search_output'
+    ]
+
+    assert len(calls) == len(outputs) == 1
+    assert calls[0].get('execution') == outputs[0].get('execution') == 'client'
+    assert [tool['name'] for tool in cast(list[dict[str, Any]], outputs[0].get('tools'))] == ['get_weather']
+
+
+async def test_anthropic_replays_openai_native_search_history() -> None:
+    """Foreign native history is normalized before Anthropic renders its native replay."""
+    pytest.importorskip('anthropic')
+
+    model = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(())),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='find a weather tool')]),
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='oa_1', provider_name='openai'),
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_weather'}]},
+                    tool_call_id='oa_1',
+                    provider_name='openai',
+                ),
+            ],
+            provider_name='openai',
+        ),
+    ]
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='get_weather', defer_loading=True)],
+        native_tools=[ToolSearchTool()],
+        allow_text_output=True,
+    )
+
+    prepared = model.prepare_messages(history)
+    _system, anthropic_messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        prepared, params, AnthropicModelSettings()
+    )
+    tool_uses: list[dict[str, Any]] = [
+        cast(dict[str, Any], block)
+        for message in anthropic_messages
+        if message['role'] == 'assistant' and isinstance(message['content'], list)
+        for block in cast(list[Any], message['content'])
+        if isinstance(block, dict)
+        and cast(dict[str, Any], block).get('type') == 'tool_use'
+        and cast(dict[str, Any], block).get('name') == _SEARCH_TOOLS_NAME
+    ]
+    tool_results: list[dict[str, Any]] = [
+        cast(dict[str, Any], block)
+        for message in anthropic_messages
+        if message['role'] == 'user' and isinstance(message['content'], list)
+        for block in cast(list[Any], message['content'])
+        if isinstance(block, dict) and cast(dict[str, Any], block).get('type') == 'tool_result'
+    ]
+
+    assert len(tool_uses) == len(tool_results) == 1
+    assert tool_results[0]['tool_use_id'] == tool_uses[0]['id']
+    assert tool_results[0]['content'] == [{'type': 'tool_reference', 'tool_name': 'get_weather'}]
+
+
+def test_native_search_history_replay_is_stable_across_a_b_a_switch() -> None:
+    """Preparing the same stored history for A → B → A never mutates its native shape."""
+    pytest.importorskip('openai')
+    pytest.importorskip('anthropic')
+
+    anthropic_model = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(())),
+    )
+    openai_model = OpenAIResponsesModel(
+        'gpt-5.4-mini',
+        provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='find a weather tool')]),
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(
+                    args={'queries': ['weather']}, tool_call_id='ant_1', provider_name='anthropic'
+                ),
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_weather'}]},
+                    tool_call_id='ant_1',
+                    provider_name='anthropic',
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+    ]
+
+    first_anthropic = anthropic_model.prepare_messages(history)
+    openai = openai_model.prepare_messages(history)
+    second_anthropic = anthropic_model.prepare_messages(history)
+
+    assert first_anthropic is second_anthropic is history
+    assert isinstance(message_part(history, NativeToolSearchCallPart, message_index=1), NativeToolSearchCallPart)
+    assert isinstance(message_part(openai, ToolSearchCallPart, message_index=1), ToolSearchCallPart)
+    assert isinstance(message_part(openai, ToolSearchReturnPart, message_index=2), ToolSearchReturnPart)
 
 
 # --- `strategy='keywords'` on natively-supporting providers ---

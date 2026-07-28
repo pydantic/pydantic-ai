@@ -481,12 +481,13 @@ class Model(ABC, Generic[InterfaceClient]):
     def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
         """Pre-process the message history before it's handed to the adapter's message-prep step.
 
-        Currently translates any typed `NativeToolSearch*Part` instances carried over from a
-        prior native turn (e.g. Anthropic / OpenAI Responses) into the local-shape
-        `ToolSearch*Part` instances when the active model's profile doesn't support
-        `ToolSearchTool` — splitting the single `ModelResponse(call+return)` carrying the
-        inline server-side result into `ModelResponse(call) + ModelRequest(return)` so the
-        adapter sees a normal function-call exchange against `search_tools`.
+        Translates typed `NativeToolSearch*Part` instances carried over from a
+        different provider (e.g. Anthropic to OpenAI Responses), or any native
+        provider when the active model doesn't support `ToolSearchTool`, into the
+        local-shape `ToolSearch*Part` instances. This splits the single
+        `ModelResponse(call+return)` carrying the inline server-side result into
+        `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
+        provider-agnostic exchange.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`.
@@ -515,10 +516,14 @@ class Model(ABC, Generic[InterfaceClient]):
         if not supports_tool_addition:
             messages = _synthesize_tool_availability_delta_messages(messages)
 
-        if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
-            from .._tool_search import synthesize_local_tool_search_messages
+        from .._tool_search import synthesize_local_tool_search_messages
 
-            messages = synthesize_local_tool_search_messages(messages)
+        target_provider_name = (
+            self.system
+            if ToolSearchTool in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+            else None
+        )
+        messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
 
         if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages)
