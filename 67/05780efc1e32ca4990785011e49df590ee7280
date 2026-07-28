@@ -1,0 +1,19 @@
+pydantic_ai_slim/pydantic_ai/usage.py
+  s_b97076dfa69464::t_dccecd8d236b7c 80-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "6705780efc1e32ca4990785011e49df590ee7280",
+  "prompts": {},
+  "sessions": {
+    "s_b97076dfa69464": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa3af-e09e-74b0-9e3b-3f82e321793b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
