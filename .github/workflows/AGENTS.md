@@ -103,3 +103,24 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.
 - **Exception — runtime-resolved prompts need no recompile.** Agent prompts under `shared/prompts/` are fetched at run time (via the `fetch-dynamic-prompt` action / a Logfire-managed variable), not baked into the lock, so editing one takes effect on the next run without recompiling.
+
+## Policy guard
+
+`.github/scripts/agentic_workflow_guard.py` statically checks these workflows in CI. Every check encodes a defect that actually reached `main` and burned model budget before anyone noticed (see #6766) — a failure here is a real bug, not a style nit:
+
+| Check | Rejects | Why it matters |
+|---|---|---|
+| `dangling-needs` | `if:`/`outputs:` referencing `needs.<job>` where `<job>` isn't a dependency | The expression evaluates to empty and the job skips. **A job skipped by `if:` reports success**, so the required check stays green while the agent never runs. |
+| `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |
+| `prompt-path-outside-workspace` | prompt text pointing at `/tmp/gh-aw/...` | Outside the agent's file-tool root — `Read` rejects it and the agent burns turns rediscovering the file. Stage context under `$GITHUB_WORKSPACE`. |
+| `timeout-declared` | a source with no `timeout-minutes:` | An unbounded agent can spend a full run and be killed with nothing to show. |
+| `compiler-version-drift` | locks built by different gh-aw versions | Catches a partial `gh aw compile`. |
+| `lock-not-regenerated` | a changed `*.md` (or `shared/*.md` import) without its recompiled lock | Enforces the rule above. |
+
+Run it locally before pushing:
+
+```
+uv run python .github/scripts/agentic_workflow_guard.py check --base-ref origin/main
+```
+
+When adding a check, pair it with a regression test in `test_agentic_workflow_guard.py` built from the configuration that actually broke — the existing cases are reconstructed from the parent commit of the PR that fixed each one.

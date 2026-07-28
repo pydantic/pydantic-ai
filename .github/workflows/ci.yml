@@ -57,6 +57,20 @@ jobs:
           uv run pytest
           .github/scripts/test_pydantic_ai_runner.py
           .github/scripts/test_issue_pr_attention_monitor.py
+          .github/scripts/test_agentic_workflow_guard.py
+
+      # Actions runs the `*.lock.yml`, never the `*.md`, so a source edited without
+      # its recompiled lock is a silent no-op. The checkout is shallow, so feed the
+      # guard the PR's file list rather than a `git diff` range.
+      - name: Check agentic workflow locks were regenerated
+        if: github.event_name == 'pull_request'
+        env:
+          UV_NO_SYNC: "1"
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json files --jq '.files[].path' > /tmp/changed-files.txt
+          uv run python .github/scripts/agentic_workflow_guard.py check --changed-file-list /tmp/changed-files.txt
 
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
