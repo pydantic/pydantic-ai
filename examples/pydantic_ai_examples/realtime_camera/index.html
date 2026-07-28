@@ -248,6 +248,7 @@
             <option value="google:gemini-2.5-flash-native-audio-latest"></option>
           </datalist>
           <label>Voice <span class="hint">Suggestions are Gemini voices; OpenAI also supports names such as marin and alloy.</span><input id="voice" class="in" list="voices" placeholder="default" autocomplete="off" /></label>
+          <label>Output modality<select id="modality" class="in"><option value="audio">audio</option><option value="text">text</option></select></label>
           <datalist id="voices">
             <option value="Puck"></option><option value="Charon"></option><option value="Kore"></option>
             <option value="Fenrir"></option><option value="Aoede"></option><option value="Leda"></option>
@@ -281,7 +282,7 @@
             </button>
           </div>
           <div class="board-body">
-            <iframe id="boardFrame" class="board-frame" sandbox="allow-same-origin" title="Redrawn diagram"></iframe>
+            <iframe id="boardFrame" class="board-frame" sandbox title="Redrawn diagram"></iframe>
             <div class="board-loading"><div class="board-spin"></div><div>Redrawing your diagram…</div></div>
           </div>
         </div>
@@ -289,8 +290,6 @@
     </div>
 
     <script>
-      const INPUT_RATE = 16000; // Gemini Live expects 16kHz PCM input
-      const OUTPUT_RATE = 24000; // and produces 24kHz output
       const FRAME_MS = 1000; // ~1 camera frame per second
       const FRAME_W = 512; // downscale streamed frames to keep bandwidth/cost low
       const WATCH_MS = 3500; // in Watch mode, check this often whether to nudge the model to report changes
@@ -307,6 +306,7 @@
       }
 
       const DEFAULTS = __DEFAULTS__;
+      let inputRate = null, outputRate = null;
       $('model').value = DEFAULTS.model || '';
       $('voice').value = DEFAULTS.voice || '';
       $('turn_coverage').value = DEFAULTS.turn_coverage || '';
@@ -315,6 +315,7 @@
       function settings() {
         return {
           model: $('model').value, voice: $('voice').value, language: $('language').value,
+          modality: $('modality').value,
           turn_coverage: $('turn_coverage').value,
           start_sensitivity: $('start_sensitivity').value, end_sensitivity: $('end_sensitivity').value,
           proactive: $('proactive').checked ? '1' : '0', affective: $('affective').checked ? '1' : '0',
@@ -366,8 +367,13 @@
         label.className = 'src-label'; label.textContent = 'Sources'; sourcesEl.appendChild(label);
         for (const src of sources.slice(0, 6)) {
           if (!src.url) continue;
+          let url;
+          try {
+            url = new URL(src.url);
+            if (url.protocol !== 'https:' && url.protocol !== 'http:') continue;
+          } catch (e) { continue; }
           const a = document.createElement('a');
-          a.href = src.url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.title = src.url;
+          a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.title = url.href;
           const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
           svg.setAttribute('class', 'favi'); svg.setAttribute('viewBox', '0 0 24 24');
           svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
@@ -387,12 +393,15 @@
       // iframe and let the user export it to PNG client-side (no extra dependencies).
       const board = $('board'), boardFrame = $('boardFrame'), boardSubtitle = $('boardSubtitle');
       let lastHtml = '';
+      const DRAWING_CSP = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:\">";
       function showDrawingLoading(request) {
         boardSubtitle.textContent = request ? '"' + request + '"' : 'from your sketch';
         boardFrame.srcdoc = ''; board.hidden = false; board.classList.add('loading');
       }
       function showDrawing(html) {
-        lastHtml = html; board.hidden = false; board.classList.remove('loading'); boardFrame.srcdoc = html;
+        // The opaque iframe sandbox blocks scripts and same-origin access; CSP also blocks network loads.
+        lastHtml = DRAWING_CSP + html;
+        board.hidden = false; board.classList.remove('loading'); boardFrame.srcdoc = lastHtml;
       }
       $('boardClose').onclick = () => {
         board.hidden = true; board.classList.remove('loading'); boardFrame.srcdoc = ''; lastHtml = '';
@@ -407,8 +416,8 @@
       async function saveDrawingPng() {
         if (!lastHtml) return;
         try {
-          const doc = boardFrame.contentDocument;
           const w = boardFrame.clientWidth, h = boardFrame.clientHeight, scale = 2;
+          const doc = new DOMParser().parseFromString(lastHtml, 'text/html');
           const xml = new XMLSerializer().serializeToString(doc.documentElement);
           const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><foreignObject x="0" y="0" width="100%" height="100%">${xml}</foreignObject></svg>`;
           const img = new Image();
@@ -427,8 +436,9 @@
 
       let playCtx = null, playHead = 0, scheduled = [], outAnalyser = null;
       function ensurePlayback() {
+        if (!outputRate) return;
         if (!playCtx) {
-          playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: OUTPUT_RATE });
+          playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: outputRate });
           outAnalyser = playCtx.createAnalyser(); outAnalyser.fftSize = 256; outAnalyser.smoothingTimeConstant = 0.8;
           outAnalyser.connect(playCtx.destination);
         }
@@ -439,7 +449,7 @@
         const i16 = new Int16Array(ab); if (!i16.length) return;
         const f32 = new Float32Array(i16.length);
         for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 0x8000;
-        const buf = playCtx.createBuffer(1, f32.length, OUTPUT_RATE); buf.getChannelData(0).set(f32);
+        const buf = playCtx.createBuffer(1, f32.length, outputRate); buf.getChannelData(0).set(f32);
         const node = playCtx.createBufferSource(); node.buffer = buf; node.connect(outAnalyser);
         const t = Math.max(playCtx.currentTime, playHead); node.start(t); playHead = t + buf.duration;
         scheduled.push(node); node.onended = () => { scheduled = scheduled.filter((n) => n !== node); };
@@ -482,23 +492,31 @@
       function connect() {
         const proto = location.protocol === 'https:' ? 'wss' : 'ws';
         setState('connecting');
-        sock = new WebSocket(`${proto}://${location.host}/ws?${query()}`);
-        sock.binaryType = 'arraybuffer';
-        sock.onopen = () => setState('listening');
-        sock.onclose = () => { if (running) setState('idle', 'disconnected'); };
-        sock.onerror = () => setState('error', 'connection error');
-        sock.onmessage = (ev) => {
+        return new Promise((resolve, reject) => {
+          sock = new WebSocket(`${proto}://${location.host}/ws?${query()}`);
+          sock.binaryType = 'arraybuffer';
+          sock.onclose = () => { if (running) setState('idle', 'disconnected'); reject(new Error('disconnected')); };
+          sock.onerror = () => { setState('error', 'connection error'); reject(new Error('connection error')); };
+          sock.onmessage = (ev) => {
           if (ev.data instanceof ArrayBuffer) { onSpeaking(); playPCM(ev.data); return; }
           const m = JSON.parse(ev.data);
+          if (m.type === 'session_config') {
+            inputRate = m.input_sample_rate; outputRate = m.output_sample_rate;
+            setState('listening'); resolve(); return;
+          }
           if (m.type === 'speech_started') { flushPlayback(); endTranscript(); setState('listening'); }
           else if (m.type === 'transcript') { appendTranscript(m.speaker, m.delta); }
           else if (m.type === 'sources') { showSources(m.sources); }
           else if (m.type === 'drawing_started') { showDrawingLoading(m.request); }
           else if (m.type === 'drawing') { showDrawing(m.html); }
           else if (m.type === 'drawing_error') { board.hidden = true; board.classList.remove('loading'); showCaption('Sorry, I could not redraw that.'); }
-          else if (m.type === 'error') { setState('error', m.message || 'the model rejected the session'); stop(); }
+          else if (m.type === 'error') {
+            const message = m.message || 'the model rejected the session';
+            stop(); setState('error', message); reject(new Error(message));
+          }
           else if (m.type === 'turn_complete') { endTranscript(); if (running && app.dataset.state === 'thinking') setState('listening'); }
-        };
+          };
+        });
       }
 
       let watching = false, watchTimer = null;
@@ -518,7 +536,6 @@
       let micCtx = null, mediaStream = null, micNode = null, frameTimer = null, canvas = null, running = false;
 
       async function start() {
-        ensurePlayback();
         mediaStream = await navigator.mediaDevices.getUserMedia({
           audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
           // Prefer the rear camera; frames are downscaled to FRAME_W before streaming to keep the
@@ -527,7 +544,8 @@
         });
         video.srcObject = mediaStream;
         app.dataset.cam = 'on';
-        connect();
+        await connect();
+        ensurePlayback();
         startMic();
         startFrames();
         startLoop();
@@ -535,7 +553,7 @@
       }
 
       function startMic() {
-        micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: INPUT_RATE });
+        micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: inputRate });
         const src = micCtx.createMediaStreamSource(mediaStream);
         micAnalyser = micCtx.createAnalyser(); micAnalyser.fftSize = 256; micAnalyser.smoothingTimeConstant = 0.75;
         src.connect(micAnalyser);

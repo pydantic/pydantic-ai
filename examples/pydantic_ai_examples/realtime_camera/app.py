@@ -1,10 +1,8 @@
-"""Realtime camera + voice assistant — talk to a realtime model and show it your camera.
+"""Realtime camera + voice assistant.
 
-The browser streams microphone audio (PCM16, 16kHz) and ~1 fps JPEG camera frames into a Gemini,
-OpenAI, or Azure OpenAI realtime session and plays the model's audio back: point your camera at
-something and ask about it. xAI realtime is not supported because it has no image input.
-The assistant can also ground answers with web search and redraw a hand-drawn sketch into a clean
-diagram (see the tool and capability notes below).
+The reference implementation's spine is the WebSocket bridge in `_run_session`: browser audio,
+camera frames, and text go into one realtime session while model audio and typed events stream back.
+The model profile tells the browser which PCM sample rates to use.
 
 Set the credentials for the selected provider: `GOOGLE_API_KEY` for Gemini, `OPENAI_API_KEY` for
 OpenAI, or the `AZURE_OPENAI_*` variables for Azure OpenAI. Where org policy disallows Google API
@@ -14,20 +12,13 @@ the config in a `.env` at the repo root, then:
 
     uv run --all-packages uvicorn pydantic_ai_examples.realtime_camera.app:app
 
-Open http://localhost:8000 on the same machine (localhost is a secure context, so camera/mic work).
-To use it from your phone you need HTTPS — expose the local server with a Cloudflare quick tunnel
-(no account needed):
-
-    cloudflared tunnel --url http://localhost:8000
-
-then open the printed `https://<...>.trycloudflare.com` URL on the phone and allow camera + mic.
+Open http://localhost:8000 on the same machine. Do not expose this development example directly to
+the internet: it has basic origin, model, connection, and message-size limits, but no authentication.
 
 `CAMERA_REALTIME_MODEL` (default `google:gemini-3.1-flash-live-preview`) and
 `CAMERA_REALTIME_VOICE` (default: the provider's own default voice) set the fallback defaults. Model
-IDs must include the provider prefix, for example `google:gemini-3.1-flash-live-preview`,
-`openai:gpt-realtime-2.1`, or `azure:<deployment>`. The UI's model, voice, and output modality settings
-work across providers. Leaving the voice empty uses each provider's default, so you don't need to
-change it when switching between Gemini and OpenAI (whose voice names differ).
+IDs must be one of `ALLOWED_MODELS` below; set `CAMERA_REALTIME_MODEL` to add a configured deployment
+to that list. The UI's model, voice, and output modality settings work across providers.
 Language, turn coverage, start/end VAD sensitivity, proactive audio, and affective dialog are
 Gemini-only; OpenAI/Azure map either sensitivity control to cross-provider turn detection instead.
 
@@ -71,7 +62,8 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, TypeGuard, cast
+from urllib.parse import urlsplit
 
 import anyio
 import logfire
@@ -90,14 +82,12 @@ from pydantic_ai.realtime import (
     InputSpeechStartEvent,
     PartDeltaEvent,
     PartEndEvent,
-    PartStartEvent,
     RealtimeError,
     RealtimeEvent,
     RealtimeModel,
     RealtimeModelSettings,
     RealtimeSession,
     ReconnectPolicy,
-    SpeechPart,
     SpeechPartDelta,
     TurnCompleteEvent,
     TurnDetection,
@@ -130,6 +120,17 @@ def _truthy(value: str | None) -> bool:
 # where org policy disallows API keys. Needs `gcloud auth application-default login` + project/location.
 USE_VERTEX = _truthy(os.environ.get('GOOGLE_GENAI_USE_VERTEXAI'))
 MODEL = os.environ.get('CAMERA_REALTIME_MODEL', 'google:gemini-3.1-flash-live-preview')
+ALLOWED_MODELS = frozenset(
+    {
+        MODEL,
+        'google:gemini-3.1-flash-live-preview',
+        'google:gemini-2.5-flash-native-audio-latest',
+        'openai:gpt-realtime-2.1',
+        'openai:gpt-realtime-2.1-mini',
+        'openai:gpt-realtime',
+        'azure:gpt-realtime',
+    }
+)
 # Empty by default so each provider picks its own default voice — no need to change it when switching
 # between Gemini and OpenAI, whose voice names differ (Gemini rejects `alloy`, OpenAI rejects `Puck`).
 VOICE = os.environ.get('CAMERA_REALTIME_VOICE', '')
@@ -162,6 +163,31 @@ WATCH_PROMPT = os.environ.get(
     'if nothing notable changed, stay silent.',
 )
 _INDEX_PATH = Path(__file__).parent / 'index.html'
+MAX_CONNECTIONS = 8
+MAX_AUDIO_MESSAGE_BYTES = 64 * 1024
+MAX_JSON_MESSAGE_BYTES = 1024 * 1024
+_connection_slots = anyio.Semaphore(MAX_CONNECTIONS)
+
+
+def _is_output_modality(value: str) -> TypeGuard[Literal['audio', 'text']]:
+    return value in ('audio', 'text')
+
+
+def _is_message_data(value: object) -> TypeGuard[dict[str, object]]:
+    if not isinstance(value, dict):
+        return False
+    # JSON object keys are strings; this cast exposes the unchecked runtime shape for validation.
+    return all(isinstance(key, str) for key in cast('dict[object, object]', value))
+
+
+def _same_origin(socket: WebSocket) -> bool:
+    """Accept browser WebSockets only when `Origin` names the HTTP host serving this page."""
+    origin = socket.headers.get('origin')
+    host = socket.headers.get('host')
+    if not origin or not host:
+        return False
+    parsed = urlsplit(origin)
+    return parsed.scheme in ('http', 'https') and parsed.netloc == host
 
 
 def _instructions(*, web_search: bool) -> str:
@@ -233,7 +259,7 @@ def _draw_agent() -> Agent[None, str]:
 
 
 def _extract_html(text: str) -> str:
-    """Strip a ```html ... ``` fence if the model wrapped its output in one."""
+    """Strip a Markdown HTML fence if the model wrapped its output in one."""
     text = text.strip()
     match = _FENCE_RE.match(text)
     return (match.group(1) if match else text).strip()
@@ -321,6 +347,10 @@ async def index() -> HTMLResponse:
 def _build_model(params: Mapping[str, str]) -> RealtimeModel:
     """Build the selected realtime model with provider-appropriate UI settings."""
     model_id = params.get('model') or MODEL
+    if model_id not in ALLOWED_MODELS:
+        raise ValueError(
+            f'Realtime model {model_id!r} is not available in this example'
+        )
     if USE_VERTEX and model_id.startswith('google:'):
         model = GoogleRealtimeModel(
             model_id.removeprefix('google:'),
@@ -330,11 +360,10 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
         model = infer_realtime_model(model_id)
 
     start, end = params.get('start_sensitivity'), params.get('end_sensitivity')
-    common_settings = RealtimeModelSettings(
-        output_modality=cast(
-            "Literal['audio', 'text']", params.get('modality', 'audio')
-        ),
-    )
+    modality = params.get('modality', 'audio')
+    if not _is_output_modality(modality):
+        raise ValueError(f'Output modality {modality!r} must be "audio" or "text"')
+    common_settings = RealtimeModelSettings(output_modality=modality)
     # Only set a voice when one is given; an empty voice lets each provider use its own default, so the
     # same settings work across Gemini and OpenAI without swapping voice names.
     if voice := (params.get('voice') or VOICE):
@@ -379,7 +408,7 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
 def _grounding_sources(content: object) -> list[dict[str, object]]:
     """Extract `{url, title}` source chips from a grounding `NativeToolReturnPart.content`.
 
-    Google Search grounding returns its cited pages as a list of `{'uri', 'title', ...}` chunks; keep
+    Google Search grounding returns cited pages as a list of provider-shaped chunks; keep
     the ones with a usable URL. Typed defensively (the content is provider-shaped) so an unexpected
     shape degrades to no chips rather than an error.
     """
@@ -427,15 +456,25 @@ async def _dispatch_text(session: RealtimeSession, text: str) -> None:
     try:
         # Decode and validate the message. A malformed frame is ignored here, but a genuine send
         # failure must surface, so `session.send()` stays outside this guard.
-        data = json.loads(text)
+        raw_data: object = json.loads(text)
+        if not _is_message_data(raw_data):
+            return
+        data = raw_data
         match data.get('type'):
             case 'image':
+                image_data = data.get('data')
+                media_type = data.get('mime', 'image/jpeg')
+                if not isinstance(image_data, str) or not isinstance(media_type, str):
+                    return
                 content: str | BinaryContent = BinaryContent(
-                    data=base64.b64decode(data['data']),
-                    media_type=data.get('mime') or 'image/jpeg',
+                    data=base64.b64decode(image_data),
+                    media_type=media_type,
                 )
             case 'text':
-                content = data['text']
+                text_content = data.get('text')
+                if not isinstance(text_content, str):
+                    return
+                content = text_content
             case 'nudge':
                 # Watch mode: trigger a turn so the model reports visual changes.
                 content = WATCH_PROMPT
@@ -447,13 +486,34 @@ async def _dispatch_text(session: RealtimeSession, text: str) -> None:
     await session.send(content)
 
 
+async def _forward_browser_message(
+    session: RealtimeSession, socket: WebSocket, message: Mapping[str, object]
+) -> bool:
+    """Forward one size-limited browser message; return whether the pump should continue."""
+    if (chunk := message.get('bytes')) is not None:
+        if not isinstance(chunk, bytes):
+            return True
+        if len(chunk) > MAX_AUDIO_MESSAGE_BYTES:
+            await socket.close(code=1009, reason='Audio message is too large')
+            return False
+        await session.send_audio(chunk)
+    elif (text := message.get('text')) is not None:
+        if not isinstance(text, str):
+            return True
+        if len(text.encode()) > MAX_JSON_MESSAGE_BYTES:
+            await socket.close(code=1009, reason='JSON message is too large')
+            return False
+        await _dispatch_text(session, text)
+    return True
+
+
 async def _run_session(
     session: RealtimeSession,
     socket: WebSocket,
     emit: Callable[[dict[str, object]], Awaitable[None]],
     send_lock: anyio.Lock,
 ) -> None:
-    """Bridge a live session to the browser: model output out, mic audio and camera frames in.
+    """The realtime bridge: model output goes out while browser input goes in.
 
     Two concurrent pumps run until either side ends; when one stops (a disconnect or a provider drop)
     it cancels the task group so the other unwinds and the session closes.
@@ -461,10 +521,6 @@ async def _run_session(
     async with anyio.create_task_group() as tg:
 
         async def pump_events() -> None:
-            # Transcript deltas carry only the part index, not the speaker, so we remember which
-            # speaker each index belongs to from its `PartStartEvent`. (A known ergonomic wrinkle of
-            # the current realtime event API.)
-            speakers: dict[int, str] = {}
             try:
                 async for event in session:
                     match event:
@@ -474,28 +530,29 @@ async def _run_session(
                             # Model audio goes back as raw binary frames.
                             async with send_lock:
                                 await socket.send_bytes(chunk)
-                        case PartStartEvent(
-                            index=index, part=SpeechPart(speaker=speaker)
-                        ):
-                            speakers[index] = speaker
                         case PartDeltaEvent(
-                            index=index, delta=SpeechPartDelta(transcript_delta=delta)
+                            delta=SpeechPartDelta(
+                                speaker=speaker, transcript_delta=delta
+                            )
                         ) if delta:
-                            # Stream the transcript into the browser bubble as it arrives.
+                            # Stream the transcript into the browser bubble as it arrives. Both
+                            # speakers' transcripts stream at once, so each delta names its own
+                            # speaker rather than needing to be tied back to a `PartStartEvent`.
                             await emit(
                                 {
                                     'type': 'transcript',
-                                    'speaker': speakers.get(index, 'assistant'),
+                                    'speaker': speaker or 'assistant',
                                     'delta': delta,
                                 }
                             )
                         case _:
                             if (message := _json_message(event)) is not None:
                                 await emit(message)
-            except Exception:
-                # Log before tearing down so a pump failure (e.g. a provider error surfaced through the
-                # session) is diagnosable instead of a silent disconnect.
+            except Exception as exc:
                 logfire.exception('Realtime event pump failed')
+                await emit(
+                    {'type': 'error', 'message': f'Realtime provider failed: {exc}'}
+                )
             finally:
                 tg.cancel_scope.cancel()
 
@@ -505,16 +562,17 @@ async def _run_session(
                     message = await socket.receive()
                     if message.get('type') == 'websocket.disconnect':
                         break
-                    if (chunk := message.get('bytes')) is not None:
-                        await session.send_audio(chunk)  # raw PCM16 mic audio
-                    elif (text := message.get('text')) is not None:
-                        await _dispatch_text(session, text)
+                    if not await _forward_browser_message(session, socket, message):
+                        break
             except WebSocketDisconnect:
                 pass
-            except (RealtimeError, websockets.exceptions.ConnectionClosed):
+            except (RealtimeError, websockets.exceptions.ConnectionClosed) as exc:
                 # Send-side recovery is not reconnect-aware yet; a provider drop ends this session and
                 # lets the browser reconnect. See https://github.com/pydantic/pydantic-ai/issues/6703.
                 logfire.exception('Realtime inbound pump failed')
+                await emit(
+                    {'type': 'error', 'message': f'Realtime provider failed: {exc}'}
+                )
             finally:
                 tg.cancel_scope.cancel()
 
@@ -524,7 +582,20 @@ async def _run_session(
 
 @app.websocket('/ws')
 async def ws(socket: WebSocket) -> None:
-    await socket.accept()
+    if not _same_origin(socket):
+        await socket.close(code=1008, reason='WebSocket origin does not match Host')
+        return
+    try:
+        _connection_slots.acquire_nowait()
+    except anyio.WouldBlock:
+        await socket.close(code=1013, reason='Too many active camera sessions')
+        return
+
+    try:
+        await socket.accept()
+    except BaseException:
+        _connection_slots.release()
+        raise
 
     # A lock serializes WebSocket sends, since a tool's `emit` can race the event pump.
     send_lock = anyio.Lock()
@@ -533,29 +604,39 @@ async def ws(socket: WebSocket) -> None:
         async with send_lock:
             await socket.send_json(message)
 
-    deps = CameraDeps(emit=emit)
-
     try:
-        model = _build_model(socket.query_params)
-    except (UserError, ValueError) as exc:
-        # Unknown provider prefix, or a model that can't take camera frames.
-        logfire.exception('Could not build realtime model')
-        await emit({'type': 'error', 'message': str(exc)})
-        return
+        try:
+            model = _build_model(socket.query_params)
+        except (UserError, ValueError) as exc:
+            logfire.exception('Could not build realtime model')
+            await emit({'type': 'error', 'message': str(exc)})
+            return
 
-    # Enable web search only when the selected model supports it natively, so it and the drawing tool can
-    # both be active on a model that supports both (e.g. Gemini 3.1) without failing on one that doesn't.
-    agent = _build_agent(web_search=WEB_SEARCH and _web_search_supported(model))
+        # This handshake must precede mic capture: raw PCM does not carry its sample rate.
+        await emit(
+            {
+                'type': 'session_config',
+                'input_sample_rate': model.profile.get(
+                    'audio_input_sample_rate', 24_000
+                ),
+                'output_sample_rate': model.profile.get(
+                    'audio_output_sample_rate', 24_000
+                ),
+            }
+        )
 
-    try:
-        async with agent.realtime(model, deps=deps).session() as session:
-            await _run_session(session, socket, emit, send_lock)
-    except ModelAPIError as exc:
-        # The provider rejected the session at connect time — e.g. a voice this model doesn't support, or
-        # an unknown model/deployment. Log the full error (with its chained cause) so the underlying
-        # reason is visible in Logfire, and surface a message to the browser instead of a bare disconnect.
-        logfire.exception('Realtime session failed to connect')
-        await emit({'type': 'error', 'message': str(exc)})
+        # Optional demo features are configured around, but do not obscure, `_run_session`.
+        agent = _build_agent(web_search=WEB_SEARCH and _web_search_supported(model))
+        try:
+            async with agent.realtime(
+                model, deps=CameraDeps(emit=emit)
+            ).session() as session:
+                await _run_session(session, socket, emit, send_lock)
+        except ModelAPIError as exc:
+            logfire.exception('Realtime session failed to connect')
+            await emit({'type': 'error', 'message': str(exc)})
+    finally:
+        _connection_slots.release()
 
 
 if __name__ == '__main__':
