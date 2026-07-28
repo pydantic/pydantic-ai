@@ -1897,10 +1897,23 @@ async def test_transport_failure_while_sending_becomes_a_realtime_error() -> Non
     assert isinstance(exc_info.value.__cause__, ConnectionResetError)
     assert isinstance(exc_info.value, ModelAPIError)
 
-    # `interrupt()` sends its truncate and cancel under one hold of the send lock rather than through
-    # the ordinary path, so it needs the same mapping.
+    # `interrupt()` sends a truncate and a cancel as one group, so the link can also drop *between*
+    # them; the second send is mapped like the first, and the interruption is not recorded as having
+    # happened. A connection that failed on the first send would never reach the cancel at all.
+    class _DisconnectedAfterTruncate(FakeRealtimeConnection):
+        transport_errors = (ConnectionResetError,)
+
+        async def send(self, content: RealtimeInput) -> None:
+            if isinstance(content, CancelResponse):
+                raise ConnectionResetError('connection reset by peer')
+            self.sent.append(content)
+
+    interrupted = _DisconnectedAfterTruncate([])
+    session = RealtimeSession(interrupted, model_name='gpt-realtime')
     with pytest.raises(RealtimeError, match='failed while sending'):
         await session.interrupt(audio_end_ms=120)
+    assert interrupted.sent == [TruncateOutput(audio_end_ms=120)]
+    assert session._pending_interrupted_at_ms is None  # pyright: ignore[reportPrivateUsage]
 
     # A session built straight from a connection may not know any model id to attribute this to.
     anonymous = RealtimeSession(_DisconnectedConnection([]))

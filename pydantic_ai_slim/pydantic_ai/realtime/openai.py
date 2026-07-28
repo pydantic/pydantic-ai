@@ -380,6 +380,18 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             )
             await self._request_response()
         elif isinstance(content, ToolResult):
+            # Normalize any follow-up content (downloading and re-encoding media) before the first
+            # frame goes out, so content this provider can't carry fails with nothing sent rather than
+            # leaving the result on the wire without the material that explains it.
+            item = (
+                await user_message_item(
+                    content.content,
+                    provider_name=self._provider_name,
+                    supports_images=self._supports_tool_result_images,
+                )
+                if content.content
+                else None
+            )
             await self._send_event(
                 {
                     'type': 'conversation.item.create',
@@ -390,13 +402,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     },
                 }
             )
-            if content.content and (
-                item := await user_message_item(
-                    content.content,
-                    provider_name=self._provider_name,
-                    supports_images=self._supports_tool_result_images,
-                )
-            ):
+            if item:
                 await self._send_event({'type': 'conversation.item.create', 'item': item})
             await self._request_response()
         elif isinstance(content, ImageInput):
@@ -831,6 +837,10 @@ class OpenAIRealtimeModel(RealtimeModel):
         instructions = get_instructions(messages) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
+        # Convert the history to seed items before dialing. Content this provider can't replay is the
+        # caller's mistake, not the API's, so it should surface as a `UserError` without a socket ever
+        # being opened -- and stay outside `map_connect_errors`, which is only about reaching the API.
+        seed = await seed_items(messages, profile=self.profile, provider_name=self.system)
 
         # `dial` opens and configures a fresh connection. A reconnect closes the previous connection
         # (including one left half-open by a failed handshake) before opening the next, so sockets
@@ -866,7 +876,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 ws = await dial()
                 # Seed prior conversation once, after the initial handshake. Reconnects deliberately don't
                 # re-seed: server state is lost on drop and a `ReconnectedEvent` starts a fresh turn.
-                for item in await seed_items(messages, profile=self.profile, provider_name=self.system):
+                for item in seed:
                     await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             yield OpenAIRealtimeConnection(
                 ws,

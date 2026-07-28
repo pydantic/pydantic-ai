@@ -777,6 +777,11 @@ class RealtimeConnection(ABC):
     [`RealtimeError`][pydantic_ai.realtime.RealtimeError] so a failed send surfaces as the same typed
     error as a failed receive, instead of leaking a `websockets` or provider-SDK exception the caller
     has no reason to expect from a model call. Leave empty if `send` already raises typed errors.
+
+    The mapping covers the whole of [`send`][pydantic_ai.realtime.codec.RealtimeConnection.send], so
+    anything it does *besides* writing to the transport — converting content, downloading media —
+    must not raise these types, or a local failure would be reported as a lost connection. Do that
+    work before the first frame goes out.
     """
 
     @abstractmethod

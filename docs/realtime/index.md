@@ -791,7 +791,7 @@ realtime vocabulary to learn:
 | --- | --- |
 | [`UserError`][pydantic_ai.exceptions.UserError] | The app got something wrong: an operation the model doesn't support (`interrupt()` without truncation support), an invalid settings combination, missing credentials, or misusing the session (iterating before `async with`, sending after `close()`). |
 | [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] | The provider rejected the connection with an HTTP status — a bad key (401), an unknown model (404). Only the WebSocket upgrade can carry a status; once the socket is open there is no HTTP response left to report. |
-| [`RealtimeError`][pydantic_ai.realtime.RealtimeError] | The connection failed or ended: the handshake was rejected or timed out, the provider hung up, a send failed, or [reconnecting](#reconnecting) gave up. It subclasses [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so `except ModelAPIError` covers this and the HTTP case together. |
+| [`RealtimeError`][pydantic_ai.realtime.RealtimeError] | The connection failed or ended without an HTTP status to report: the API was unreachable, the open socket rejected the session configuration or returned a frame we couldn't read, the handshake timed out, the provider hung up, a send failed, or [reconnecting](#reconnecting) gave up. It subclasses [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so `except ModelAPIError` covers this and the HTTP case together. |
 | [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | A [`usage_limits`](#usage-and-cost) cap tripped. |
 
 Failures that leave the session usable are events instead: a provider error scoped to one operation

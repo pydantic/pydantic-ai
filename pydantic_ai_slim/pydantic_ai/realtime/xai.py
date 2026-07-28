@@ -301,6 +301,10 @@ class XaiRealtimeModel(RealtimeModel):
         instructions = get_instructions(messages) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
+        # Convert the history to seed items before dialing. Content this provider can't replay is the
+        # caller's mistake, not the API's, so it should surface as a `UserError` without a socket ever
+        # being opened -- and stay outside `map_connect_errors`, which is only about reaching the API.
+        seed = await seed_items(messages, profile=self.profile, provider_name=self.system)
 
         # `dial` opens and configures a connection. A reconnect closes the previous connection
         # (including one left half-open by a failed handshake), then resumes the captured conversation,
@@ -365,7 +369,7 @@ class XaiRealtimeModel(RealtimeModel):
                 ws = await dial()
                 # Seed prior conversation once, after the initial handshake. Reconnects don't re-seed:
                 # xAI restores the server-side conversation and replays its item lifecycle events instead.
-                for item in await seed_items(messages, profile=self.profile, provider_name=self.system):
+                for item in seed:
                     await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             connection = XaiRealtimeConnection(
                 ws,
