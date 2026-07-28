@@ -4,11 +4,10 @@ interactions:
   direction: received
   data:
     type: session.created
-    event_id: c22dd60d-295d-4b65-a621-a1868408a22e
+    event_id: 5299a728-79ca-4b75-9359-8f19c4470b4e
     session:
-      id: f56666ca-2794-44f0-8872-723104df5498
+      id: 7f6185aea7b747eba81c148c942221cc
       object: realtime.session
-      model: grok-voice-latest
       instructions: ''
       voice: ara
       modalities:
@@ -16,6 +15,7 @@ interactions:
       turn_detection:
         type: null
       tools: []
+      model: grok-voice-latest
 - kind: message
   direction: sent
   data:
@@ -41,52 +41,33 @@ interactions:
   direction: received
   data:
     type: conversation.created
-    event_id: c89553cd-3b03-43ac-bf74-070d5b36787a
+    event_id: 89489eb5-fdcd-4395-bfa5-8579e86eb851
     conversation:
-      id: f56666ca-2794-44f0-8872-723104df5498
+      id: 8d525b4d-a514-4e6c-a3ba-4894a19873e8
       object: realtime.conversation
     previous_item_id: null
 - kind: message
   direction: received
   data:
     type: ping
-    event_id: 42f17041-1665-4bc5-9989-4e6228019e55
-    timestamp: 1783466053446
+    event_id: c63c9f6c-c969-4ba4-aa80-bff6ed4fa532
+    timestamp: 1785214080296
     previous_item_id: null
 - kind: message
   direction: received
   data:
     session:
       instructions: Answer in two or three words.
-      voice: human_Ara
       enable_noise_suppression: true
-      enable_echo_detection_filtering: false
-      echo_detection_threshold_ms: 3000
-      echo_detection_match_types:
-      - exact
-      - partial
-      - char_overlap
-      asr_validation_ignore_list:
-      - ah
-      - er
-      - hmm
-      - mhm
-      - mmm
-      - oh
-      - uh
-      - um
-      asr_validation_backchannel_ignore_list:
-      - i see
       turn_detection:
         type: server_vad
         create_response: true
         interrupt_response: true
-      xvad_settings: <scrubbed>
-      asr_classifier: <scrubbed>
-      response_patient_starter_config: <scrubbed>
       model: grok-voice-latest
       keep_context: false
       enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
       modalities:
       - audio
       input_audio_format: not specified
@@ -99,14 +80,16 @@ interactions:
           format:
             type: audio/pcm
             rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
         output:
           format:
             type: audio/pcm
             rate: 24000
-      is_kids_mode: false
-      input_audio_transcription: null
+          transport: json
     type: session.updated
-    event_id: feb0b8a3-372a-43e5-b802-c41d66391b1b
+    event_id: e51b1f80-dcc7-44e4-873a-b26a0595c505
     previous_item_id: null
 - kind: message
   direction: sent
@@ -126,9 +109,9 @@ interactions:
   direction: received
   data:
     type: conversation.item.added
-    event_id: f7d82732-13ed-47be-a05e-19f7d45013f1
+    event_id: a1e52878-9c62-4b68-93f8-3dc863476a0b
     item:
-      id: 4d2d71ba-dd02-40b3-80c3-681002e7d084
+      id: d7f61d68-2d0e-4fee-8621-4658f75153c2
       object: realtime.item
       type: message
       status: completed
@@ -141,9 +124,9 @@ interactions:
   direction: received
   data:
     type: response.created
-    event_id: 351eaa9f-df94-4c96-a878-78cb897846cf
+    event_id: ca8d934a-7408-4b74-9a9e-7069029e7d05
     response:
-      id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+      id: 1424e44c-2aa2-4309-8100-a69dc832a391
       object: realtime.response
       output: []
       status: in_progress
@@ -154,106 +137,106 @@ interactions:
   direction: received
   data:
     type: response.output_item.added
-    event_id: bf3fa605-2425-490e-90f0-197ecca99d50
+    event_id: 47780a1d-3686-4747-828a-e0c3065a4f09
     item:
-      id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+      id: 73235c8c-89df-4be3-938b-6d53b04c54fc
       object: realtime.item
       type: message
       status: in_progress
       role: assistant
-    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    response_id: 1424e44c-2aa2-4309-8100-a69dc832a391
     output_index: 0
     previous_item_id: null
 - kind: message
   direction: received
   data:
     type: conversation.item.added
-    event_id: c989f271-aec8-471f-9966-8ec9912e3e9f
+    event_id: e71d4472-4303-4a03-bf9e-f064d900ddae
     item:
-      id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+      id: 73235c8c-89df-4be3-938b-6d53b04c54fc
       object: realtime.item
       type: message
       status: in_progress
       role: assistant
       content: []
-    previous_item_id: 4d2d71ba-dd02-40b3-80c3-681002e7d084
+    previous_item_id: d7f61d68-2d0e-4fee-8621-4658f75153c2
 - kind: message
   direction: received
   data:
     type: response.content_part.added
-    event_id: 534adbe8-9295-459e-95a7-50e938773c8c
-    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+    event_id: c4e58fc6-efb8-4128-8a5d-0f4438e8d7d7
+    item_id: 73235c8c-89df-4be3-938b-6d53b04c54fc
     previous_item_id: '0'
     part:
       type: audio
       transcript: ''
-    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    response_id: 1424e44c-2aa2-4309-8100-a69dc832a391
     content_index: 0
     output_index: 0
 - kind: message
   direction: received
   data:
     type: response.output_audio.delta
-    event_id: 2f6d9cb1-88e4-442e-b486-caf0bbef5290
-    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
-    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
-    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    event_id: 10c9589b-0f2a-4af1-bf27-700fba2d077d
+    item_id: 73235c8c-89df-4be3-938b-6d53b04c54fc
+    response_id: 1424e44c-2aa2-4309-8100-a69dc832a391
+    delta: EQAbAB8AGwAOAAMA///9////BwARABUAEwASAA8ACwAH
     content_index: 0
     output_index: 0
-    rid: 7bc405ea-12e7-427c-a207-265c97783100
-    latency: '0.59'
-    audio_duration_ms: 560
-    ts: 1783466054222
+    rid: 417c5cb6-96ff-43bb-86c5-ceacabc8fac9
+    latency: '0.53'
+    audio_duration_ms: 642
+    ts: 1785214081361
     previous_item_id: null
 - kind: message
   direction: received
   data:
     type: response.output_audio_transcript.delta
-    event_id: 7bc405ea-12e7-427c-a207-265c97783100
-    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
-    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    event_id: 417c5cb6-96ff-43bb-86c5-ceacabc8fac9
+    item_id: 73235c8c-89df-4be3-938b-6d53b04c54fc
+    response_id: 1424e44c-2aa2-4309-8100-a69dc832a391
     delta: Hello there!
     content_index: 0
     output_index: 0
-    rid: 7bc405ea-12e7-427c-a207-265c97783100
+    rid: 417c5cb6-96ff-43bb-86c5-ceacabc8fac9
     start_time: 0.0
     previous_item_id: null
 - kind: message
   direction: received
   data:
     type: response.output_audio.delta
-    event_id: be5e57db-4403-46f6-8ac9-449c48e1738c
-    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
-    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
-    delta: fv9Y/7H/LQDAADIBPgEHAaUAGwDe/8P/pv+4/7T/4v8v
+    event_id: e5f99611-26a4-4489-a47e-2019827390ef
+    item_id: 73235c8c-89df-4be3-938b-6d53b04c54fc
+    response_id: 1424e44c-2aa2-4309-8100-a69dc832a391
+    delta: MAHPAFQA2/94/0f/T/+C/8n/CAArACUA8f+M/wT/cf7v
     content_index: 0
     output_index: 0
-    rid: 7bc405ea-12e7-427c-a207-265c97783100
-    audio_duration_ms: 150
-    ts: 1783466054299
+    rid: 417c5cb6-96ff-43bb-86c5-ceacabc8fac9
+    audio_duration_ms: 31
+    ts: 1785214081366
     previous_item_id: null
 - kind: message
   direction: received
   data:
     type: response.output_audio.delta
-    event_id: 0d25fdd0-c756-4482-93ab-1767da0c885e
-    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
-    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
-    delta: JAAdABYADgAHAAIAAQAAAAEAAwAGAAcACAAIAAgABgAE
+    event_id: 0c9e7277-c7fe-414c-9fc4-e9571c476a25
+    item_id: 73235c8c-89df-4be3-938b-6d53b04c54fc
+    response_id: 1424e44c-2aa2-4309-8100-a69dc832a391
+    delta: 6P/d/8T/o/+J/33/h/+l/9f/DwBEAGkAdQBqAEgAFwDk
     content_index: 0
     output_index: 0
-    rid: 7bc405ea-12e7-427c-a207-265c97783100
-    audio_duration_ms: 80
-    ts: 1783466054300
+    rid: 417c5cb6-96ff-43bb-86c5-ceacabc8fac9
+    audio_duration_ms: 97
+    ts: 1785214081367
     previous_item_id: null
 - kind: message
   direction: received
   data:
     type: response.output_audio_transcript.done
-    event_id: 579bd412-8ceb-40e6-9e46-75c5cd363334
-    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+    event_id: b6b13735-63c2-4096-8f2c-445d7c8ae2c7
+    item_id: 73235c8c-89df-4be3-938b-6d53b04c54fc
     transcript: Hello there!
-    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    response_id: 1424e44c-2aa2-4309-8100-a69dc832a391
     content_index: 0
     output_index: 0
     previous_item_id: null
@@ -261,9 +244,9 @@ interactions:
   direction: received
   data:
     type: response.content_part.done
-    event_id: 99cd3344-ee2c-4c78-8d5e-7a1529922e59
-    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
-    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    event_id: 2631c59c-ee3e-492b-b4f8-262a28f16695
+    item_id: 73235c8c-89df-4be3-938b-6d53b04c54fc
+    response_id: 1424e44c-2aa2-4309-8100-a69dc832a391
     content_index: 0
     output_index: 0
     previous_item_id: null
@@ -271,9 +254,9 @@ interactions:
   direction: received
   data:
     type: response.output_audio.done
-    event_id: 0196cc0d-c725-4d95-aee0-0e4ee4f1c021
-    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
-    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    event_id: 5c9a270f-647c-4c4f-bd1a-5adfd470250e
+    item_id: 73235c8c-89df-4be3-938b-6d53b04c54fc
+    response_id: 1424e44c-2aa2-4309-8100-a69dc832a391
     content_index: 0
     output_index: 0
     previous_item_id: null
@@ -281,26 +264,26 @@ interactions:
   direction: received
   data:
     type: response.output_item.done
-    event_id: b78852a1-ac0f-4d00-90a7-c2fa6ef50450
+    event_id: e104f8de-042e-463a-a326-913333a18afa
     item:
-      id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+      id: 73235c8c-89df-4be3-938b-6d53b04c54fc
       object: realtime.item
       type: message
       status: completed
       role: assistant
-    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    response_id: 1424e44c-2aa2-4309-8100-a69dc832a391
     output_index: 0
     previous_item_id: null
 - kind: message
   direction: received
   data:
     type: response.done
-    event_id: 88d2ef24-3dff-46fd-ad80-4ff13672946f
+    event_id: 99c3ea12-c893-4e7b-a11b-a7ffa0f16189
     response:
-      id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+      id: 1424e44c-2aa2-4309-8100-a69dc832a391
       object: realtime.response
       output:
-      - id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+      - id: 73235c8c-89df-4be3-938b-6d53b04c54fc
         object: realtime.item
         type: message
         status: completed
@@ -311,18 +294,19 @@ interactions:
       status: completed
       status_details: unimplemented
       usage: {}
-    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    response_id: 1424e44c-2aa2-4309-8100-a69dc832a391
     usage:
       input_tokens: 5
       input_token_details:
         text_tokens: 5
         audio_tokens: 0
         grok_tokens: 0
-      output_tokens: 43
+      output_tokens: 42
       output_token_details:
         text_tokens: 3
-        audio_tokens: 40
+        audio_tokens: 39
         grok_tokens: 0
-      total_tokens: 48
-      output_audio_seconds: 0.79
+      total_tokens: 47
+      output_audio_seconds: 0.7699999999999999
+      billable_audio_seconds: 1
     previous_item_id: null

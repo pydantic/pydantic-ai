@@ -33,12 +33,12 @@ interactions:
     serverContent:
       modelTurn:
         parts:
-        - text: '**Crafting Initial Greeting**
+        - text: '**Crafting a Greeting**
 
 
-            I''ve decided to move forward with a brief, common greeting. I''m focusing
-            on ensuring it''s concise, fitting the length constraints, and generally
-            usable for the purpose. I have provided a common greeting.
+            I''ve decided "Hello there" is the best fit for the user''s needs, given
+            the length constraints and general appropriateness for a wide audience.
+            It strikes a balance between being friendly and concise.
 
 
 
@@ -58,7 +58,7 @@ interactions:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: Bv0IAOYBMQJNAp4AdP/1/vP/iwD1AGYBxgB7AHn/HQCM
+            data: AwAaACYAHQA0ADMAAwALACsASQDY/7j/PQA3ABMA5v8U
 - kind: message
   direction: received
   data:
@@ -70,13 +70,13 @@ interactions:
     serverContent:
       turnComplete: true
     usageMetadata:
-      promptTokenCount: 1130
-      responseTokenCount: 27
+      promptTokenCount: 1131
+      responseTokenCount: 26
       totalTokenCount: 1157
       promptTokensDetails:
       - modality: TEXT
-        tokenCount: 1130
+        tokenCount: 1131
       responseTokensDetails:
       - modality: AUDIO
-        tokenCount: 27
-      thoughtsTokenCount: 23
+        tokenCount: 26
+      thoughtsTokenCount: 24

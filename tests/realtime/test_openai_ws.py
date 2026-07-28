@@ -102,7 +102,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     part = response.parts[0]
     assert isinstance(part, SpeechPart)
     assert part.speaker == 'assistant'
-    assert part.transcript == snapshot('Hey there! Great to chat with you.')
+    assert part.transcript == snapshot('Hi there!')
     assert isinstance(part.audio, BinaryContent)
     assert part.audio.media_type == 'audio/wav'
     assert len(part.audio.data) > 0
@@ -177,7 +177,7 @@ async def test_audio_in_server_vad_turn(
     # The model says a curly apostrophe, normalized here to a straight one: the smartquote
     # pre-commit hook rewrites a literal curly quote in source, which would break the comparison.
     assert streamed['assistant'].strip().replace('\u2019', "'") == snapshot(
-        "Hi Marcelo, it's great to meet you! How can I help you today?"
+        'Hello, Marcelo! Great to meet you. How can I help you today?'
     )
 
     messages = session.all_messages()
@@ -195,14 +195,14 @@ async def test_audio_in_server_vad_turn(
     assert session.usage == snapshot(
         RunUsage(
             input_tokens=41,
-            output_tokens=105,
+            output_tokens=164,
             input_audio_tokens=27,
-            output_audio_tokens=76,
+            output_audio_tokens=136,
             details={
                 'input_transcription_seconds': 3,
                 'input_text_tokens': 14,
                 'input_image_tokens': 0,
-                'output_text_tokens': 29,
+                'output_text_tokens': 28,
             },
             requests=1,
         )
@@ -302,7 +302,7 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     ]
     final = messages[3]
     assert isinstance(final, ModelResponse)
-    assert (final.usage.input_tokens, final.usage.output_tokens) == (96, 13)
+    assert (final.usage.input_tokens, final.usage.output_tokens) == (103, 13)
     final_part = final.parts[0]
     # The session runs in text-output modality, so the reply is a `TextPart`, not a `SpeechPart`.
     assert isinstance(final_part, TextPart)
