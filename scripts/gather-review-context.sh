@@ -13,6 +13,13 @@ REPO="${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
 CTX=".github/.review-context"
 mkdir -p "$CTX"
 
+# Where the PR head is checked out. Defaults to the current directory, which is
+# the case when a human runs this inside the PR's own worktree. `bots.yml` sets it
+# to a subdirectory instead: that job reviews untrusted fork code, so it keeps the
+# base ref at the workspace root and confines the head, and only the diff below
+# may read from the untrusted tree.
+PR_HEAD_DIR="${PR_HEAD_DIR:-.}"
+
 echo "Gathering context for PR #${PR_NUMBER} in ${REPO}..."
 
 # PR details (title, body, author, labels)
@@ -170,8 +177,8 @@ echo "  - Fetching base branch for function-context diffs"
 BASE_REF=$(jq -r '.baseRefName' "$CTX/pr-details.json")
 MERGE_BASE=""
 if [ -n "$BASE_REF" ]; then
-  if git fetch "https://github.com/${REPO}.git" "$BASE_REF" --quiet 2>/dev/null; then
-    MERGE_BASE=$(git merge-base HEAD FETCH_HEAD 2>/dev/null || echo "")
+  if git -C "$PR_HEAD_DIR" fetch "https://github.com/${REPO}.git" "$BASE_REF" --quiet 2>/dev/null; then
+    MERGE_BASE=$(git -C "$PR_HEAD_DIR" merge-base HEAD FETCH_HEAD 2>/dev/null || echo "")
   fi
 fi
 if [ -n "$MERGE_BASE" ]; then
@@ -187,7 +194,7 @@ if [ -n "$MERGE_BASE" ]; then
   # -W (--function-context) shows the full function body around each change,
   # so the reviewer can see the function signature and surrounding logic without
   # needing to read the full source file separately.
-  git diff -W --no-color "$MERGE_BASE" HEAD
+  git -C "$PR_HEAD_DIR" diff -W --no-color "$MERGE_BASE" HEAD
 else
   gh pr diff "$PR_NUMBER" --repo "$REPO"
 fi | awk -v dir="$CTX/diff" '
@@ -309,10 +316,17 @@ gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
     fi
   done > "$CTX/changed-files.txt"
 
-# Gather directory-specific AGENTS.md files for changed directories
+# Gather directory-specific AGENTS.md files for changed directories.
+# These are read as guidance the reviewer must enforce, so they must come from
+# the tree this script runs in -- never from $PR_HEAD_DIR, whose copies the PR
+# author controls. When that is a subdirectory, prune it.
 echo "  - Directory AGENTS.md files"
 > "$CTX/agents-md.txt"
-for agents_file in $(find . -name AGENTS.md -not -path './.venv/*' -not -path ./AGENTS.md | sed 's|^\./||' | sort); do
+find_args=(. -name AGENTS.md -not -path './.venv/*' -not -path ./AGENTS.md)
+if [ "$PR_HEAD_DIR" != "." ]; then
+  find_args+=(-not -path "./${PR_HEAD_DIR#./}/*")
+fi
+for agents_file in $(find "${find_args[@]}" | sed 's|^\./||' | sort); do
   dir=$(dirname "$agents_file")
   if grep -q "^${dir}/" "$CTX/changed-files.txt" 2>/dev/null && [ -f "$agents_file" ]; then
     echo "=== ${agents_file} ==="
