@@ -3827,6 +3827,100 @@ def test_google_gemini_api_sets_include_server_side_tool_invocations(
     assert tool_config.get('include_server_side_tool_invocations') is True
 
 
+@pytest.mark.vcr()
+async def test_google_vertex_web_search_omits_include_server_side_tool_invocations(
+    allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette
+):  # pragma: lax no cover
+    """Live proof that Vertex serves a Gemini 3+ web-search request once `include_server_side_tool_invocations` is dropped.
+
+    The SDK's Vertex `ToolConfig` converter raises `ValueError` when the field is present, so pre-fix this
+    request never reached the wire and was unrecordable. With the field omitted, Vertex returns grounding
+    metadata (not explicit `tool_call`/`tool_response` parts), which we reconstruct into
+    `NativeToolCallPart`/`NativeToolReturnPart` — the same path as the pre-Gemini-3 Gemini API.
+    """
+    model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
+    agent = Agent(model, instructions='You are a helpful chatbot.', capabilities=[NativeTool(WebSearchTool())])
+
+    result = await agent.run('What is the weather in San Francisco today?')
+
+    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    assert len(generate_requests) == 1  # pyright: ignore[reportUnknownArgumentType]
+    request_body = json.loads(generate_requests[0].body)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    # On the Gemini Developer API this same request carries `toolConfig.includeServerSideToolInvocations`;
+    # on Vertex the field is skipped, so it is absent from the actual request Vertex accepted.
+    assert 'includeServerSideToolInvocations' not in request_body.get('toolConfig', {})
+    assert request_body['tools'] == snapshot([{'googleSearch': {}}])
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful chatbot.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='web_search',
+                        args={'queries': ['weather San Francisco July 28 2026']},
+                        tool_call_id=IsStr(),
+                        provider_name='google-cloud',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        content=[
+                            {
+                                'domain': None,
+                                'title': 'google.com',
+                                'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                            }
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-cloud',
+                    ),
+                    TextPart(
+                        content="""\
+Today in San Francisco, the weather is sunny and mild. \n\
+
+As of midday on Tuesday, July 28, 2026, the temperature is approximately **65°F (18°C)**. The forecast for the rest of the day remains clear with no chance of rain.
+
+**Daily Summary:**
+*   **High:** 67°F (19°C)
+*   **Low:** 57°F (14°C)
+*   **Conditions:** Sunny throughout the day and clear at night.
+*   **Humidity:** Approximately 74%-78%.
+*   **Wind:** Light southwesterly breeze at about 10 mph (16 km/h).
+
+It is a typical July day in the city--comfortable for being outdoors, though as is common in San Francisco, it may feel cooler near the coast or as the evening approaches.\
+""",
+                        provider_name='google-cloud',
+                        provider_details={
+                            'thought_signature': 'AY89a18RPXSjar2Qb2lUWr+FiUkVpnTipaVNYecAUVIGQQ0R0Yy/auG1jFKDtObAieJ88UD6xKh/Upc663YAqWVjf91jBQfaWVI9DRvjGoR61ThoJVusol8noqRko6u2/fRymdx5wszI6OFZbbGI8rN3vJQTH4zml+7o2bzCVS5vMAkfPt1nZz2qLIrUAOyhvbztZ3z6ja/07v1z6m6/AXAuZginQ7r0hk1QNfgaFVRyDfnP/j5j9cEpovfn5dzP2gkdNT8Gg6e1VSmf29h4TuiCxH6M03bLM1GQvyz14HuqGl2vDUnsS8xTUFm3rynO52X7lAmiCw6XW2luJXj06taTcuzxkw/4QXWZxXZz/BKxAMEIx7S2Bujgf23fCAEWYmv+CpEOULpb5d1V/n9/oA7ucnEbU0rxXY9grH/PeeD7wh1y3Ou6cfbK/w5cdCFo2nNp+3Tz2DfaQNvheic8znajwAW8AsatGa6GRkLwOK5lc0LtD6Q2gJGlktYKwSvXGP+x4yLUvoe7Lx7+eYvdtT+c96D0sT7WLAhij4w00J7Tg8n1v3zrQv4+OBwgwM2wTWsmtbHHTvjG1+LWx3CSCQ9ETmSkAhUUpxZ/+Ml3xNbSCf9apOM9iceTS+vUd2L3B797WQeRrZnr2z4LNBbu8093I2Y34QuGC6LLk/6indS8KrL5OtuV4OhUVi4mgj3tdp9JCA1uvy90lSbLuRCYI/O9BzOra/5BWWrSHa6Hot/hzKB/vRYUZ429MoLyz/a30EQ9Bu/FjM87Mq51/bHxGhJyNIUqvwMY7lmqaHtfGcL3wfyxNHOu9mmgsDSQFFkt7ZDfBXjROo4R20rXCJcIT6VUi95Slb1yjcFRv7ODZZCA131O+jqYNeSpZDPcW/NMQ1oaN0VLwCUs3ofFmCdOyQdb3F1KAueTGrhTrYshX1ev5pyA0zmCnrSt2ROOQDicsks/BlK/lMOI/Cj30r7IqrKJTAFoI5XMmMBEFVjhbnF8Lb8pIbeVSh/EvKOjnDS/yaoXLt3zkHC4q8oS75aV8kKA3/VP1bfAmfV+sd4sLiLbBLaQRLrGS/BGoz116bJZZMXQSet34WEpk8zJR/gei9J2kSlQBhtgIFXt/GdaU7SHcSDm37xASd1bCZ7t+sqNWTw22vpLyBXBzizjzy+2v9BABpfAuZwdysT+/ntW4xiuTh7zKyzEmDF5BhCTijOXlTtm6Wev4ppHgyARouZD7UCuBQ5CK3BVhCLbhaStFAz0XhhvJ+EAWZVcc3zt7BQ1D9bfyduBIfE='
+                        },
+                    ),
+                ],
+                usage=RequestUsage(
+                    details={'thoughts_tokens': 626, 'text_prompt_tokens': 15, 'text_candidates_tokens': 193},
+                    input_tokens=15,
+                    output_tokens=819,
+                ),
+                model_name='gemini-3-flash-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-cloud',
+                provider_url='https://aiplatform.googleapis.com/',
+                provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
+                provider_response_id='yQNpaov9K66VjNsPu7LWiAI',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_google_vertexai_image_generation(
     allow_model_requests: None, vertex_provider: GoogleProvider
 ):  # pragma: lax no cover
