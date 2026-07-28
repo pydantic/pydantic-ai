@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import functools
 import json
 import re
@@ -12,11 +13,15 @@ import anyio
 import anyio.to_thread
 
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import BinaryContent, FileUrl, TextContent
+from pydantic_ai.models import download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import remove_bedrock_geo_prefix
 from pydantic_ai.usage import RequestUsage
 
 from .base import EmbeddingModel
+from .input import EmbeddingInput, EmbeddingModality, embedding_parts
+from .profile import DEFAULT_EMBEDDING_PROFILE, EmbeddingModelProfile
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
@@ -163,6 +168,10 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
         'GENERIC_INDEX',
         'GENERIC_RETRIEVAL',
         'TEXT_RETRIEVAL',
+        'IMAGE_RETRIEVAL',
+        'VIDEO_RETRIEVAL',
+        'AUDIO_RETRIEVAL',
+        'DOCUMENT_RETRIEVAL',
         'CLASSIFICATION',
         'CLUSTERING',
     ]
@@ -170,12 +179,13 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
 
     **Supported by:** `amazon.nova-2-multimodal-embeddings-v1:0`
 
-    By default, `embed_query()` uses `'GENERIC_RETRIEVAL'` and `embed_documents()` uses `'GENERIC_INDEX'`.
-    Also accepts `'TEXT_RETRIEVAL'`, `'CLASSIFICATION'`, or `'CLUSTERING'`.
+    By default, `embed_query()` uses `'GENERIC_RETRIEVAL'` and `embed_documents()` uses `'GENERIC_INDEX'`,
+    which is the pairing [Amazon documents](https://docs.aws.amazon.com/nova/latest/userguide/embeddings-schema.html).
 
-    Note: Multimodal-specific purposes (`'IMAGE_RETRIEVAL'`, `'VIDEO_RETRIEVAL'`,
-    `'DOCUMENT_RETRIEVAL'`, `'AUDIO_RETRIEVAL'`) are not supported as this
-    embedding client only accepts text input.
+    The purpose describes the *corpus*, not the input: index everything with `'GENERIC_INDEX'` whatever
+    its modality, then embed the query with the `*_RETRIEVAL` value matching what is being searched —
+    so a text query against a corpus of images uses `'IMAGE_RETRIEVAL'`. `'DOCUMENT_RETRIEVAL'` searches
+    a corpus of document *pages*, which Nova embeds as images.
     """
 
     bedrock_inference_profile: str
@@ -243,6 +253,11 @@ class _BedrockEmbeddingHandler(ABC):
     def supports_batch(self) -> bool:
         """Whether this handler supports batch embedding in a single request."""
         return False
+
+    @property
+    def profile(self) -> EmbeddingModelProfile:
+        """What the models this handler covers can accept."""
+        return DEFAULT_EMBEDDING_PROFILE
 
     @abstractmethod
     def prepare_request(
@@ -393,8 +408,45 @@ class _CohereEmbeddingHandler(_BedrockEmbeddingHandler):
         return embeddings, response_body.get('id')
 
 
+_NOVA_MODALITIES: frozenset[EmbeddingModality] = frozenset({'text', 'image', 'audio', 'video'})
+
+# Media type -> (the `singleEmbeddingParams` key, the `format` value that goes with it). Nova sniffs
+# the bytes and rejects the request when `format` disagrees, so this is keyed by media type rather
+# than by file extension. See https://docs.aws.amazon.com/nova/latest/userguide/embeddings-schema.html
+_NOVA_FORMATS: dict[str, tuple[Literal['image', 'audio', 'video'], str]] = {
+    'image/png': ('image', 'png'),
+    'image/jpeg': ('image', 'jpeg'),
+    'image/gif': ('image', 'gif'),
+    'image/webp': ('image', 'webp'),
+    'audio/mpeg': ('audio', 'mp3'),
+    'audio/mp3': ('audio', 'mp3'),
+    'audio/wav': ('audio', 'wav'),
+    'audio/x-wav': ('audio', 'wav'),
+    'audio/vnd.wave': ('audio', 'wav'),
+    'audio/ogg': ('audio', 'ogg'),
+    'video/mp4': ('video', 'mp4'),
+    'video/quicktime': ('video', 'mov'),
+    'video/x-matroska': ('video', 'mkv'),
+    'video/webm': ('video', 'webm'),
+    'video/x-flv': ('video', 'flv'),
+    'video/mpeg': ('video', 'mpeg'),
+    'video/x-ms-wmv': ('video', 'wmv'),
+    'video/3gpp': ('video', '3gp'),
+}
+
+
 class _NovaEmbeddingHandler(_BedrockEmbeddingHandler):
     """Handler for Amazon Nova embedding models on Bedrock."""
+
+    @property
+    def profile(self) -> EmbeddingModelProfile:
+        """Nova 2 embeds text, images, audio and video, but exactly one part per request.
+
+        `singleEmbeddingParams` takes exactly one of `text`/`image`/`audio`/`video`, so there is no
+        request that combines a caption and an image into one vector. PDFs aren't a modality here
+        either: Nova takes document *pages* as images, which the caller has to rasterize.
+        """
+        return {'supported_modalities': _NOVA_MODALITIES, 'supports_grouped_inputs': False}
 
     def prepare_request(
         self,
@@ -403,8 +455,6 @@ class _NovaEmbeddingHandler(_BedrockEmbeddingHandler):
         settings: BedrockEmbeddingSettings,
     ) -> dict[str, Any]:
         assert len(texts) == 1, 'Nova only supports single text per request'
-
-        text = texts[0]
 
         # Get truncation mode - Nova requires this field
         # Model-specific truncate takes precedence, then base truncate setting
@@ -416,33 +466,59 @@ class _NovaEmbeddingHandler(_BedrockEmbeddingHandler):
         else:
             truncate = 'NONE'
 
-        # Build text params
-        text_params: dict[str, Any] = {
-            'value': text,
-            'truncationMode': truncate,
-        }
+        return self._request({'text': {'value': texts[0], 'truncationMode': truncate}}, input_type, settings)
 
+    def prepare_part_request(
+        self,
+        part: str | TextContent | BinaryContent,
+        input_type: EmbedInputType,
+        settings: BedrockEmbeddingSettings,
+    ) -> dict[str, Any]:
+        """Build the request body for one input, which is one part of one modality.
+
+        A `FileUrl` has to be downloaded to `BinaryContent` first: Nova takes bytes inline (or an S3
+        URI, which we don't map), never an arbitrary URL.
+        """
+        if isinstance(part, str | TextContent):
+            return self.prepare_request([part if isinstance(part, str) else part.content], input_type, settings)
+
+        if (mapped := _NOVA_FORMATS.get(part.media_type)) is None:
+            raise UserError(
+                f'`{self.model_name}` does not accept `{part.media_type}` content. '
+                f'Supported media types: {", ".join(sorted(_NOVA_FORMATS))}.'
+            )
+        modality, file_format = mapped
+        params: dict[str, Any] = {'format': file_format, 'source': {'bytes': base64.b64encode(part.data).decode()}}
+        if modality == 'video':
+            # Always combined: `AUDIO_VIDEO_SEPARATE` returns a vector for each stream, and every input
+            # here has to yield exactly one.
+            params['embeddingMode'] = 'AUDIO_VIDEO_COMBINED'
+        return self._request({modality: params}, input_type, settings)
+
+    def _request(
+        self,
+        modality_params: dict[str, Any],
+        input_type: EmbedInputType,
+        settings: BedrockEmbeddingSettings,
+    ) -> dict[str, Any]:
+        """Wrap one modality's params in the envelope every Nova request shares."""
         # Nova requires embeddingPurpose - default based on input_type
         # - queries default to GENERIC_RETRIEVAL (optimized for search)
         # - documents default to GENERIC_INDEX (optimized for indexing)
         default_purpose = 'GENERIC_RETRIEVAL' if input_type == 'query' else 'GENERIC_INDEX'
-        embedding_purpose = settings.get('bedrock_nova_embedding_purpose', default_purpose)
-
         single_embedding_params: dict[str, Any] = {
-            'embeddingPurpose': embedding_purpose,
-            'text': text_params,
+            'embeddingPurpose': settings.get('bedrock_nova_embedding_purpose', default_purpose),
+            **modality_params,
         }
 
         # Nova: Apply dimensions if provided
         if (dims := settings.get('dimensions')) is not None:
             single_embedding_params['embeddingDimension'] = dims
 
-        body: dict[str, Any] = {
+        return {
             'taskType': 'SINGLE_EMBEDDING',
             'singleEmbeddingParams': single_embedding_params,
         }
-
-        return body
 
     def parse_response(
         self,
@@ -456,7 +532,7 @@ class _NovaEmbeddingHandler(_BedrockEmbeddingHandler):
                 str(response_body),
             )
 
-        # Extract the embedding vector from the first item
+        # One entry per request: the only shape that returns two is a video in `AUDIO_VIDEO_SEPARATE`.
         embedding = embeddings_list[0].get('embedding')
         if embedding is None:  # pragma: no cover
             raise UnexpectedModelBehavior(
@@ -465,6 +541,44 @@ class _NovaEmbeddingHandler(_BedrockEmbeddingHandler):
             )
 
         return [embedding], None
+
+
+async def _prepare_nova_requests(
+    handler: _NovaEmbeddingHandler,
+    items: Sequence[EmbeddingInput],
+    input_type: EmbedInputType,
+    settings: BedrockEmbeddingSettings,
+) -> list[dict[str, Any]]:
+    """Build one request body per input, downloading any URLs concurrently.
+
+    A batch here is a corpus rather than the handful of files a chat prompt carries, so downloading
+    one at a time would make latency linear in the number of URLs across the whole batch. The bound is
+    the same one the requests themselves run under.
+    """
+    # Nova's profile refuses a group of several parts, so every input is exactly one part.
+    parts = [embedding_parts(item)[0] for item in items]
+    resolved: dict[int, str | TextContent | BinaryContent] = {}
+    downloads: list[tuple[int, FileUrl]] = []
+
+    for index, part in enumerate(parts):
+        if isinstance(part, FileUrl):
+            downloads.append((index, part))
+        else:
+            resolved[index] = part
+
+    if downloads:
+        semaphore = anyio.Semaphore(settings.get('bedrock_max_concurrency', 5))
+
+        async def download(index: int, url: FileUrl) -> None:
+            async with semaphore:
+                downloaded = await download_item(url, data_format='bytes')
+                resolved[index] = BinaryContent(data=downloaded['data'], media_type=downloaded['data_type'])
+
+        async with anyio.create_task_group() as tg:
+            for index, url in downloads:
+                tg.start_soon(download, index, url)
+
+    return [handler.prepare_part_request(resolved[index], input_type, settings) for index in range(len(parts))]
 
 
 # Mapping of model name prefixes to handler classes
@@ -569,33 +683,50 @@ class BedrockEmbeddingModel(EmbeddingModel):
         """The embedding model provider."""
         return self._provider.name
 
+    @property
+    def profile(self) -> EmbeddingModelProfile:
+        """What the model accepts; the models this class covers differ, so the handler decides."""
+        return self._handler.profile
+
     async def embed(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        inputs_list, settings_dict = self.prepare_embed(inputs, settings)
+        if isinstance(self._handler, _NovaEmbeddingHandler):
+            items, settings_dict = self.prepare_embed(inputs, settings)
+            settings_typed = cast(BedrockEmbeddingSettings, settings_dict)
+            bodies = await _prepare_nova_requests(self._handler, items, input_type, settings_typed)
+            return await self._embed_concurrent(items, bodies, input_type, settings_typed)
+
+        items, texts, settings_dict = self.prepare_text_embed(inputs, settings)
         settings_typed = cast(BedrockEmbeddingSettings, settings_dict)
 
         if self._handler.supports_batch:
             # Models like Cohere support batch requests
-            return await self._embed_batch(inputs_list, input_type, settings_typed)
+            return await self._embed_batch(items, texts, input_type, settings_typed)
         else:
             # Models like Titan require individual requests
-            return await self._embed_concurrent(inputs_list, input_type, settings_typed)
+            bodies = [self._handler.prepare_request([text], input_type, settings_typed) for text in texts]
+            return await self._embed_concurrent(items, bodies, input_type, settings_typed)
 
     async def _embed_batch(
         self,
-        inputs: list[str],
+        items: list[EmbeddingInput],
+        texts: list[str],
         input_type: EmbedInputType,
         settings: BedrockEmbeddingSettings,
     ) -> EmbeddingResult:
         """Embed all inputs in a single batch request."""
-        body = self._handler.prepare_request(inputs, input_type, settings)
+        body = self._handler.prepare_request(texts, input_type, settings)
         response, input_tokens = await self._invoke_model(body, settings)
         embeddings, response_id = self._handler.parse_response(response)
 
         return EmbeddingResult(
             embeddings=embeddings,
-            inputs=inputs,
+            inputs=items,
             input_type=input_type,
             usage=RequestUsage(input_tokens=input_tokens),
             model_name=self.model_name,
@@ -605,7 +736,8 @@ class BedrockEmbeddingModel(EmbeddingModel):
 
     async def _embed_concurrent(
         self,
-        inputs: list[str],
+        items: list[EmbeddingInput],
+        bodies: list[dict[str, Any]],
         input_type: EmbedInputType,
         settings: BedrockEmbeddingSettings,
     ) -> EmbeddingResult:
@@ -613,25 +745,24 @@ class BedrockEmbeddingModel(EmbeddingModel):
         max_concurrency = settings.get('bedrock_max_concurrency', 5)
         semaphore = anyio.Semaphore(max_concurrency)
 
-        results: list[tuple[Sequence[float], int]] = [None] * len(inputs)  # type: ignore[list-item]
+        results: list[tuple[Sequence[float], int]] = [None] * len(bodies)  # pyright: ignore[reportAssignmentType]
 
-        async def embed_single(index: int, text: str) -> None:
+        async def embed_single(index: int, body: dict[str, Any]) -> None:
             async with semaphore:
-                body = self._handler.prepare_request([text], input_type, settings)
                 response, input_tokens = await self._invoke_model(body, settings)
                 embeddings, _ = self._handler.parse_response(response)
                 results[index] = (embeddings[0], input_tokens)
 
         async with anyio.create_task_group() as tg:
-            for i, text in enumerate(inputs):
-                tg.start_soon(embed_single, i, text)
+            for i, body in enumerate(bodies):
+                tg.start_soon(embed_single, i, body)
 
         all_embeddings = [embedding for embedding, _ in results]
         total_input_tokens = sum(tokens for _, tokens in results)
 
         return EmbeddingResult(
             embeddings=all_embeddings,
-            inputs=inputs,
+            inputs=items,
             input_type=input_type,
             usage=RequestUsage(input_tokens=total_input_tokens),
             model_name=self.model_name,

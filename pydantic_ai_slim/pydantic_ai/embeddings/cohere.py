@@ -7,6 +7,7 @@ from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
 from .base import EmbeddingModel
+from .input import EmbeddingInput
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
@@ -152,9 +153,13 @@ class CohereEmbeddingModel(EmbeddingModel):
         return self._provider.name
 
     async def embed(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        inputs, settings = self.prepare_embed(inputs, settings)
+        items, texts, settings = self.prepare_text_embed(inputs, settings)
         settings = cast(CohereEmbeddingSettings, settings)
 
         cohere_input_type = settings.get(
@@ -178,7 +183,7 @@ class CohereEmbeddingModel(EmbeddingModel):
         try:
             response = await self._client.embed(
                 model=self.model_name,
-                texts=inputs,
+                texts=texts,
                 output_dimension=settings.get('dimensions'),
                 input_type=cohere_input_type,
                 max_tokens=settings.get('cohere_max_tokens'),
@@ -202,7 +207,7 @@ class CohereEmbeddingModel(EmbeddingModel):
 
         return EmbeddingResult(
             embeddings=embeddings,
-            inputs=inputs,
+            inputs=items,
             input_type=input_type,
             usage=_map_usage(response, self.system, self.base_url, self.model_name),
             model_name=self.model_name,

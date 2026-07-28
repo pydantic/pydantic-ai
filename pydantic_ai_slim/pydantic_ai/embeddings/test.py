@@ -2,15 +2,21 @@ import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import get_args
 
+from pydantic_ai.messages import TextContent
 from pydantic_ai.usage import RequestUsage
 
 from .base import EmbeddingModel
+from .input import EmbeddingInput, EmbeddingModality, embedding_parts
+from .profile import EmbeddingModelProfile
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
 # Regex for splitting text into approximate tokens (matches FunctionModel approach)
 _TOKEN_SPLIT_RE = re.compile(r'[\s",.:]+')
+
+_ALL_MODALITIES: frozenset[EmbeddingModality] = frozenset(get_args(EmbeddingModality))
 
 
 def _estimate_tokens(text: str) -> int:
@@ -94,19 +100,35 @@ class TestEmbeddingModel(EmbeddingModel):
         """The embedding model provider."""
         return self._provider_name
 
+    @property
+    def profile(self) -> EmbeddingModelProfile:
+        """Every modality, and grouping, so multimodal code can be tested against this model."""
+        return {'supported_modalities': _ALL_MODALITIES, 'supports_grouped_inputs': True}
+
     async def embed(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
         inputs, settings = self.prepare_embed(inputs, settings)
         self.last_settings = settings
 
         dimensions = settings.get('dimensions') or self._dimensions
 
+        texts = [
+            part if isinstance(part, str) else part.content
+            for item in inputs
+            for part in embedding_parts(item)
+            if isinstance(part, str | TextContent)
+        ]
+
         return EmbeddingResult(
             embeddings=[[1.0] * dimensions] * len(inputs),
             inputs=inputs,
             input_type=input_type,
-            usage=RequestUsage(input_tokens=sum(_estimate_tokens(text) for text in inputs)),
+            usage=RequestUsage(input_tokens=sum(_estimate_tokens(text) for text in texts)),
             model_name=self.model_name,
             provider_name=self.system,
             provider_response_id=str(uuid.uuid4()),

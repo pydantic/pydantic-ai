@@ -5,24 +5,31 @@ import warnings
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, TypeAlias
 from urllib.parse import urlparse
 
 from opentelemetry.util.types import AttributeValue
 
+from pydantic_ai import _otel_messages
 from pydantic_ai._instrumentation import (
     ANY_ADAPTER,
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,
     CostCalculationFailedWarning,
 )
+from pydantic_ai.messages import BinaryContent, TextContent
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
+from ._modality import embedding_modality
 from .base import EmbeddingModel
+from .input import EmbeddingContentPart, EmbeddingGroup, EmbeddingInput, EmbeddingModality
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 from .wrapper import WrapperEmbeddingModel
 
 __all__ = 'instrument_embedding_model', 'InstrumentedEmbeddingModel'
+
+_OtelInput: TypeAlias = 'str | _otel_messages.BlobPart | _otel_messages.UriPart | list[_OtelInput]'
+"""How an embedding input is described in the `inputs` span attribute."""
 
 GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
 
@@ -57,18 +64,22 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
         self.instrumentation_settings = options or InstrumentationSettings()
 
     async def embed(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        inputs, settings = self.prepare_embed(inputs, settings)
-        with self._instrument(inputs, input_type, settings) as finish:
-            result = await super().embed(inputs, input_type=input_type, settings=settings)
+        items, settings = self.prepare_embed(inputs, settings)
+        with self._instrument(items, input_type, settings) as finish:
+            result = await super().embed(items, input_type=input_type, settings=settings)
             finish(result)
             return result
 
     @contextmanager
     def _instrument(
         self,
-        inputs: list[str],
+        inputs: list[EmbeddingInput],
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None,
     ) -> Generator[Callable[[EmbeddingResult], None]]:
@@ -88,7 +99,8 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
             attributes['embedding_settings'] = json.dumps(self.serialize_any(settings))
 
         if self.instrumentation_settings.include_content:
-            attributes['inputs'] = json.dumps(inputs)
+            include_binary = self.instrumentation_settings.include_binary_content
+            attributes['inputs'] = json.dumps([_otel_input(item, include_binary) for item in inputs])
 
         attributes['logfire.json_schema'] = json.dumps(
             {
@@ -207,3 +219,47 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                 return str(value)
             except Exception as e:
                 return f'Unable to serialize: {e}'
+
+
+# The OTel GenAI spec only defines image, audio and video, so text and documents carry no modality.
+# Keeping to the spec's vocabulary means an embedding span describes a file exactly as an agent span does.
+_SPEC_MODALITIES: dict[EmbeddingModality, Literal['image', 'audio', 'video']] = {
+    'image': 'image',
+    'audio': 'audio',
+    'video': 'video',
+}
+
+
+def _otel_input(item: EmbeddingInput, include_binary_content: bool) -> _OtelInput:
+    """Represent an input for the `inputs` span attribute.
+
+    A file is described by its media type and URI rather than by its bytes, which are attached only
+    when `include_binary_content` is set — as it is by default.
+    """
+    if isinstance(item, EmbeddingGroup):
+        return [_otel_input(part, include_binary_content) for part in item.content]
+    elif isinstance(item, str):
+        return item
+    elif isinstance(item, TextContent):
+        return item.content
+    elif isinstance(item, BinaryContent):
+        blob = _otel_messages.BlobPart(type='blob', mime_type=item.media_type)
+        if (modality := _otel_modality(item)) is not None:
+            blob['modality'] = modality
+        if include_binary_content:
+            blob['content'] = item.base64
+        return blob
+    else:
+        uri = _otel_messages.UriPart(type='uri', uri=item.url)
+        if (modality := _otel_modality(item)) is not None:
+            uri['modality'] = modality
+        try:  # don't fail the whole request if the media type can't be inferred from the URL, just omit it
+            uri['mime_type'] = item.media_type
+        except ValueError:
+            pass
+        return uri
+
+
+def _otel_modality(part: EmbeddingContentPart) -> Literal['image', 'audio', 'video'] | None:
+    """The part's modality as the OTel GenAI spec names it, or `None` for one the spec doesn't define."""
+    return _SPEC_MODALITIES.get(embedding_modality(part))

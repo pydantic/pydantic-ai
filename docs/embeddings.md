@@ -77,6 +77,79 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+## Multimodal inputs
+
+Some models embed more than text. Pass images, audio, video or documents using the same content types you'd use in a prompt — see [`EmbeddingContentPart`][pydantic_ai.embeddings.EmbeddingContentPart] for the accepted set — and each input yields one embedding, exactly like text.
+
+To combine several parts into a *single* vector — a page screenshot and its caption, say — wrap them in [`EmbeddingGroup`][pydantic_ai.embeddings.EmbeddingGroup]:
+
+```python {title="multimodal_embeddings.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings import EmbeddingGroup
+from pydantic_ai.messages import ImageUrl
+
+embedder = Embedder('google:gemini-embedding-2')
+
+
+async def main():
+    image = ImageUrl(url='https://iili.io/3Hs4FMg.png')
+
+    # Two inputs, two vectors
+    result = await embedder.embed_documents(['a kiwi fruit', image])
+    print(len(result.embeddings))
+    #> 2
+
+    # One input, one vector combining the caption and the image
+    result = await embedder.embed_documents(EmbeddingGroup(['a kiwi fruit', image]))
+    print(len(result.embeddings))
+    #> 1
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+Support is per model, not per provider, and is declared by [`EmbeddingModel.profile`][pydantic_ai.embeddings.EmbeddingModel.profile]. Passing an input a model can't take raises a [`UserError`][pydantic_ai.exceptions.UserError] before any request is made, rather than a provider error:
+
+| Model | Modalities | Combines a group into one vector |
+|-------|------------|----------------------------------|
+| `google:gemini-embedding-2`, `google:gemini-embedding-2-preview` | text, image, audio, video, document | yes |
+| `bedrock:amazon.nova-2-multimodal-embeddings-v1:0` | text, image, audio, video | no |
+| Every other built-in provider model | text | no |
+| [`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] | all of them, so you can test a multimodal pipeline without calling a provider | yes |
+
+The two capabilities are independent, which is why they're separate fields on [`EmbeddingModelProfile`][pydantic_ai.embeddings.EmbeddingModelProfile]: Nova 2 takes every modality Google does bar documents, and still embeds exactly one part per request, so an `EmbeddingGroup` of a caption and an image is refused there. A group holding a *single* part is accepted by every model, since there is nothing to combine — so code that builds inputs uniformly and only sometimes has more than one part keeps working.
+
+!!! note "Looking up embeddings"
+    `result['some text']` looks an embedding up by its text, whether you passed a `str` or a [`TextContent`][pydantic_ai.messages.TextContent]. Embeddings of files and of `EmbeddingGroup` are accessed by index.
+
+    [`EmbeddingResult.inputs`][pydantic_ai.embeddings.EmbeddingResult.inputs] holds whatever you passed in, so it is now typed as `Sequence[EmbeddingInput]` rather than `Sequence[str]`. Code that treated it as text — `', '.join(result.inputs)`, say — needs to narrow to `str` first.
+
+    To store an input next to its vector, validate an `EmbeddingInput` with a `TypeAdapter`: every member serializes, and `EmbeddingGroup` carries a `kind` of `'embedding-group'` so a stored group is distinguishable from a bare part.
+
+!!! warning "Trust model for file URLs"
+    A file URL you pass here is fetched by *your server*, not by the provider, because embedding APIs take inline bytes. The download applies the same SSRF protection as the [chat models](input.md#user-side-download-vs-direct-file-url) — private and link-local addresses are blocked, redirects are re-validated, and only `http(s)` is allowed — but don't construct an [`ImageUrl`][pydantic_ai.messages.ImageUrl] and friends from untrusted user input without validating the scheme and scope, and only set `force_download='allow-local'` on server-authored URLs, since it permits local network access.
+
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] doesn't help here: it sanitizes message histories, and embedding inputs aren't messages. Validate them yourself, or embed the bytes as [`BinaryContent`][pydantic_ai.messages.BinaryContent] and never take a URL from a client.
+
+### Google multimodal limits
+
+Files are sent to Google inline, so a URL is downloaded first, and only `http(s)` URLs can be. A [`VideoUrl`][pydantic_ai.messages.VideoUrl] pointing at YouTube or a `gs://` bucket — which the [chat models](models/google.md) pass to Google by reference — can't be embedded: YouTube raises a [`UserError`][pydantic_ai.exceptions.UserError] and `gs://` a `ValueError`. Pass the bytes as [`BinaryContent`][pydantic_ai.messages.BinaryContent] instead.
+
+Google documents [multimodal limits](https://ai.google.dev/gemini-api/docs/embeddings#multimodal) of 6 images, 1 document of up to 6 pages, 1 video of up to 120 seconds, and 180 seconds of audio. For images these bound a single input rather than the request: 7 separate images embed fine, while 7 fused into one `EmbeddingGroup` are rejected. Pydantic AI doesn't enforce any of this, so exceeding a limit surfaces as a provider error. `document` means PDF, and the accepted image, audio and video formats are listed on the same page — other media types are sent as-is and rejected by Google.
+
+Task conditioning interacts with multimodal inputs — see [Task Conditioning](#task-conditioning) for which inputs get a task prefix and which warn.
+
+### Bedrock Nova multimodal limits
+
+`amazon.nova-2-multimodal-embeddings-v1:0` takes exactly one part per request, so a batch of inputs fans out into one request each, bounded by [`bedrock_max_concurrency`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings.bedrock_max_concurrency]. Files are sent inline as base64, so URLs are downloaded first, under the same bound.
+
+Amazon documents a [25 MB ceiling per inline file](https://docs.aws.amazon.com/nova/latest/userguide/embeddings-schema.html) *after* base64 encoding (so roughly 18 MB of actual bytes), 30 seconds of audio or video, and 8192 characters of text. Nova accepts PNG, JPEG, GIF and WEBP images; MP3, WAV and OGG audio; and MP4, MOV, MKV, WEBM, FLV, MPEG, WMV and 3GP video — any other media type is refused locally, since Nova validates the format against the bytes it detects and there is no format to send. There is no document modality: Nova embeds document *pages* as images, so a PDF has to be rasterized by the caller.
+
+Video is always sent as `AUDIO_VIDEO_COMBINED`, so a clip with sound yields one vector covering both streams; the alternative mode returns a vector per stream, which would break the one-input-one-embedding guarantee.
+
+All modalities share one 8,192-token context window, and **Google silently truncates** anything over it rather than raising: a long document plus text can lose the tail without any error. [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens] only counts text, so there's no way to check a file's size up front.
+
+Two more things to know about `gemini-embedding-2`, both of which apply to `gemini-embedding-2-preview` too. On Vertex it accepts only one input per request, so embed a batch one input at a time there; on the Gemini API a batch is fine. And [`EmbeddingResult.usage`][pydantic_ai.embeddings.EmbeddingResult.usage] reports 0 tokens on the Gemini API — the API does return a per-modality token count, but `google-genai` discards it before Pydantic AI can read it, so cost comes out as 0. Vertex reports usage normally.
+
 ## Choosing a model
 
 The best embedding model depends on your language, domain, latency, deployment, and evaluation constraints. Use this table as a starting point, then check the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard), the model card on the [Hugging Face Hub](https://huggingface.co/models?library=sentence-transformers), and your own retrieval evaluation before committing to a model for a large index.
@@ -294,6 +367,8 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings) for available models.
 
+`gemini-embedding-2` also embeds images, audio, video and documents — see [Multimodal inputs](#multimodal-inputs).
+
 ##### Google Cloud
 
 To use Google's embedding models via Google Cloud (formerly known as Vertex AI) instead of the Gemini API, use the `google-cloud:` provider prefix:
@@ -357,6 +432,11 @@ embedder = Embedder(
 When you don't set `google_task`, `gemini-embedding-2` is conditioned as `'search result'`. Conditioning is on by default because Google recommends it for this model and it yields better retrieval performance than embedding raw text. To opt out and embed the text verbatim, pass `google_task='raw'`.
 
 `google_task` only applies to `gemini-embedding-2`; on any other model it is ignored with a warning (those models condition via `google_task_type` instead). Conversely, `google_task_type` is ignored on `gemini-embedding-2`, since that model conditions through the text prefix.
+
+Because the prefix conditions *text*, it applies only to an input that is exactly one text part. A file, or an [`EmbeddingGroup`][pydantic_ai.embeddings.EmbeddingGroup] of several parts (see [Multimodal inputs](#multimodal-inputs)), is embedded without one. Two cases warn:
+
+- Fusing several **text** parts into one `EmbeddingGroup` warns even on the default task, because the conditioning is silently lost and unconditioned text lands in a different region of the space than conditioned text. Pass the text as a single part to condition it, or `google_task='raw'` to opt out deliberately.
+- An input holding a **file** warns only if you set `google_task` explicitly — a reminder that it didn't apply there, since Google defines no task instruction for image, audio or video. On the default task this is silent, as it would otherwise fire on every caption-plus-image embed.
 
 #### Google-Specific Settings
 
@@ -858,6 +938,9 @@ embedder = Embedder('openai:text-embedding-3-small', instrument=True)
 Embedder.instrument_all()
 ```
 
+!!! note "Binary content in spans"
+    A file input is recorded by media type rather than by dumping its bytes into the span, but its data is still included as base64 while [`InstrumentationSettings.include_binary_content`][pydantic_ai.models.instrumented.InstrumentationSettings] is left at its default of `True`. Pass `instrument=InstrumentationSettings(include_binary_content=False)` to record the media type alone, or `include_content=False` to leave inputs out entirely.
+
 See the [Debugging and Monitoring guide](logfire.md) for more details on using Logfire with Pydantic AI.
 
 ## Two-stage retrieval with rerankers
@@ -903,7 +986,13 @@ To integrate a custom embedding provider, subclass [`EmbeddingModel`][pydantic_a
 ```python {title="custom_embedding_model.py"}
 from collections.abc import Sequence
 
-from pydantic_ai.embeddings import EmbeddingModel, EmbeddingResult, EmbeddingSettings
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings import (
+    EmbeddingInput,
+    EmbeddingModel,
+    EmbeddingResult,
+    EmbeddingSettings,
+)
 from pydantic_ai.embeddings.result import EmbedInputType
 
 
@@ -918,23 +1007,38 @@ class MyCustomEmbeddingModel(EmbeddingModel):
 
     async def embed(
         self,
-        inputs: str | Sequence[str],
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
         *,
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        inputs, settings = self.prepare_embed(inputs, settings)
+        # `prepare_text_embed()` gives you the text to send plus the original inputs to
+        # report back; use `prepare_embed()` instead if your model accepts more than text.
+        items, texts, settings = self.prepare_text_embed(inputs, settings)
 
         # Call your embedding API here
-        embeddings = [[0.1, 0.2, 0.3] for _ in inputs]  # Placeholder
+        embeddings = [[0.1, 0.2, 0.3] for _ in texts]  # Placeholder
 
         return EmbeddingResult(
             embeddings=embeddings,
-            inputs=inputs,
+            inputs=items,
             input_type=input_type,
             model_name=self.model_name,
             provider_name=self.system,
         )
+
+
+async def main():
+    result = await Embedder(MyCustomEmbeddingModel()).embed_documents('Hello world')
+    print(result.embeddings)
+    #> [[0.1, 0.2, 0.3]]
 ```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+To accept more than text, override [`profile`][pydantic_ai.embeddings.EmbeddingModel.profile] so inputs your mapping can't build are rejected before a request is made, then call [`prepare_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_embed] instead of [`prepare_text_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_text_embed] and map each input yourself. [`embedding_parts()`][pydantic_ai.embeddings.embedding_parts] gives you the parts of an input, so a single part and an [`EmbeddingGroup`][pydantic_ai.embeddings.EmbeddingGroup] of several parts can be handled alike — remembering that every input, however many parts it has, must yield exactly one embedding. Declare `supports_grouped_inputs` only if you can genuinely combine parts into one vector; leave it off and `prepare_embed()` refuses a multi-part group for you.
+
+!!! note "Upgrading an existing subclass"
+    `embed()` and `prepare_embed()` used to be typed in terms of `str`. They now take [`EmbeddingInput`][pydantic_ai.embeddings.EmbeddingInput], and `prepare_embed()` returns the inputs rather than plain strings, so a subclass written against the old signatures needs updating. Widen your `embed()` annotation to match the base class, and switch to [`prepare_text_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_text_embed] — which additionally returns the text to send — wherever you were passing `prepare_embed()`'s result straight to a text-only API.
 
 Use [`WrapperEmbeddingModel`][pydantic_ai.embeddings.WrapperEmbeddingModel] if you want to wrap an existing model to add custom behavior like caching or logging.

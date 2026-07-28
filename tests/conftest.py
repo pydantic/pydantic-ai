@@ -89,9 +89,11 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 if TYPE_CHECKING:
+    from google.genai import Client
     from pluggy import Result
     from vcr.cassette import Cassette
 
+    from pydantic_ai.providers import Provider
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
 
@@ -1004,6 +1006,30 @@ async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
     project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
     location = os.getenv('GOOGLE_LOCATION', 'global')
     yield GoogleCloudProvider(project=project, location=cast(GoogleCloudLocation, location))
+
+
+@pytest.fixture
+def google_embed_content_spy(monkeypatch: pytest.MonkeyPatch) -> Callable[[Provider[Client]], dict[str, Any]]:
+    """Capture what a `GoogleEmbeddingModel` sends to `embed_content`, while still calling the API.
+
+    Returns a function that patches a provider's client and hands back the dict the call's keyword
+    arguments (`contents`, `config`, `model`) land in once a request has been made. The payload is
+    otherwise only visible as base64 in the cassette, so assertions on it belong in the test body.
+    """
+
+    def spy_on(provider: Provider[Client]) -> dict[str, Any]:
+        captured: dict[str, Any] = {}
+        models = provider.client.aio.models
+        real_embed_content = models.embed_content
+
+        async def spy(**kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return await real_embed_content(**kwargs)
+
+        monkeypatch.setattr(models, 'embed_content', spy)
+        return captured
+
+    return spy_on
 
 
 @pytest.fixture()

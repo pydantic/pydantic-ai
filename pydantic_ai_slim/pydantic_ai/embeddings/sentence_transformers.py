@@ -9,6 +9,7 @@ import pydantic_ai._utils as _utils
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from .base import EmbeddingModel
+from .input import EmbeddingInput
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
@@ -122,9 +123,13 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
         return 'sentence-transformers'
 
     async def embed(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        inputs, settings = self.prepare_embed(inputs, settings)
+        items, texts, settings = self.prepare_text_embed(inputs, settings)
         settings = cast(SentenceTransformersEmbeddingSettings, settings)
 
         device = settings.get('sentence_transformers_device', None)
@@ -137,7 +142,7 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
 
         np_embeddings: np.ndarray[Any, float] = await _utils.run_in_executor(  # type: ignore[reportAssignmentType]
             encode_func,  # type: ignore[reportArgumentType]
-            inputs,
+            texts,
             show_progress_bar=False,
             convert_to_numpy=True,
             convert_to_tensor=False,
@@ -150,7 +155,7 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
 
         return EmbeddingResult(
             embeddings=embeddings,
-            inputs=inputs,
+            inputs=items,
             input_type=input_type,
             model_name=self.model_name,
             provider_name=self.system,

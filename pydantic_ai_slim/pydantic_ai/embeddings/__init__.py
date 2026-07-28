@@ -13,7 +13,15 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.providers import Provider, infer_provider
 
 from .base import EmbeddingModel
+from .input import (
+    EmbeddingContentPart,
+    EmbeddingGroup,
+    EmbeddingInput,
+    EmbeddingModality,
+    embedding_parts,
+)
 from .instrumented import InstrumentedEmbeddingModel, instrument_embedding_model
+from .profile import DEFAULT_EMBEDDING_PROFILE, EmbeddingModelProfile
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings, merge_embedding_settings
 from .test import TestEmbeddingModel
@@ -24,6 +32,13 @@ __all__ = [
     'EmbeddingModel',
     'EmbeddingSettings',
     'EmbeddingResult',
+    'EmbeddingGroup',
+    'EmbeddingContentPart',
+    'EmbeddingInput',
+    'EmbeddingModality',
+    'EmbeddingModelProfile',
+    'DEFAULT_EMBEDDING_PROFILE',
+    'embedding_parts',
     'merge_embedding_settings',
     'KnownEmbeddingModelName',
     'infer_embedding_model',
@@ -264,15 +279,15 @@ class Embedder:
                 self._override_model.reset(model_token)
 
     async def embed_query(
-        self, query: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+        self, query: EmbeddingInput | Sequence[EmbeddingInput], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
-        """Embed one or more query texts.
+        """Embed one or more queries.
 
         Use this method when embedding search queries that will be compared against document embeddings.
         Some models optimize embeddings differently based on whether the input is a query or document.
 
         Args:
-            query: A single query string or sequence of query strings to embed.
+            query: A single query or sequence of queries to embed, each yielding one embedding.
             settings: Optional settings to override the embedder's default settings for this call.
 
         Returns:
@@ -282,15 +297,15 @@ class Embedder:
         return await self.embed(query, input_type='query', settings=settings)
 
     async def embed_documents(
-        self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+        self, documents: EmbeddingInput | Sequence[EmbeddingInput], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
-        """Embed one or more document texts.
+        """Embed one or more documents.
 
         Use this method when embedding documents that will be stored and later searched against.
         Some models optimize embeddings differently based on whether the input is a query or document.
 
         Args:
-            documents: A single document string or sequence of document strings to embed.
+            documents: A single document or sequence of documents to embed, each yielding one embedding.
             settings: Optional settings to override the embedder's default settings for this call.
 
         Returns:
@@ -300,16 +315,20 @@ class Embedder:
         return await self.embed(documents, input_type='document', settings=settings)
 
     async def embed(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        """Embed text inputs with explicit input type specification.
+        """Embed inputs with explicit input type specification.
 
         This is the low-level embedding method. For most use cases, prefer
         [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query] or
         [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents].
 
         Args:
-            inputs: A single string or sequence of strings to embed.
+            inputs: A single input or sequence of inputs to embed, each yielding one embedding.
             input_type: The type of input, either `'query'` or `'document'`.
             settings: Optional settings to override the embedder's default settings for this call.
 
@@ -347,19 +366,23 @@ class Embedder:
         return await model.count_tokens(text)
 
     def embed_query_sync(
-        self, query: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+        self, query: EmbeddingInput | Sequence[EmbeddingInput], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         """Synchronous version of [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query]."""
         return _utils.run_until_complete(self.embed_query(query, settings=settings))
 
     def embed_documents_sync(
-        self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+        self, documents: EmbeddingInput | Sequence[EmbeddingInput], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         """Synchronous version of [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents]."""
         return _utils.run_until_complete(self.embed_documents(documents, settings=settings))
 
     def embed_sync(
-        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self,
+        inputs: EmbeddingInput | Sequence[EmbeddingInput],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
         """Synchronous version of [`embed()`][pydantic_ai.embeddings.Embedder.embed]."""
         return _utils.run_until_complete(self.embed(inputs, input_type=input_type, settings=settings))

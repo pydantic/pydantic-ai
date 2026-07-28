@@ -4,6 +4,10 @@
 
 ::: pydantic_ai.embeddings.base
 
+::: pydantic_ai.embeddings.input
+
+::: pydantic_ai.embeddings.profile
+
 ::: pydantic_ai.embeddings.result
 
 ::: pydantic_ai.embeddings.settings

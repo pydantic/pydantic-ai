@@ -3,11 +3,11 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlparse
 
@@ -93,6 +93,11 @@ with try_import() as sentence_transformers_imports_successful:
         SentenceTransformerEmbeddingModel,
         SentenceTransformersEmbeddingSettings,
     )
+
+if TYPE_CHECKING:
+    from google.genai import Client
+
+    from pydantic_ai.providers import Provider
 
 
 STSB_BERT_TINY_MODEL = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
@@ -1442,7 +1447,11 @@ _GOOGLE_TASK_PREFIX_CASES: list[_GoogleTaskPrefixCase] = (
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
 @pytest.mark.vcr
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in _GOOGLE_TASK_PREFIX_CASES])
-async def test_google_task_prefix(case: _GoogleTaskPrefixCase, gemini_api_key: str, monkeypatch: pytest.MonkeyPatch):
+async def test_google_task_prefix(
+    case: _GoogleTaskPrefixCase,
+    gemini_api_key: str,
+    google_embed_content_spy: Callable[[Provider[Client]], dict[str, Any]],
+):
     """`google_task` builds the right text prefix (and `task_type`) for `gemini-embedding-2`.
 
     Spies on `embed_content` to assert the exact text sent to the API for each
@@ -1453,15 +1462,7 @@ async def test_google_task_prefix(case: _GoogleTaskPrefixCase, gemini_api_key: s
     model = GoogleEmbeddingModel(case.model_name, provider=provider)
     embedder = Embedder(model)
 
-    captured: dict[str, Any] = {}
-    real_embed_content = provider.client.aio.models.embed_content
-
-    async def spy(**kwargs: Any) -> Any:
-        captured['contents'] = kwargs['contents']
-        captured['config'] = kwargs['config']
-        return await real_embed_content(**kwargs)
-
-    monkeypatch.setattr(provider.client.aio.models, 'embed_content', spy)
+    captured = google_embed_content_spy(provider)
 
     async def run() -> EmbeddingResult:
         if case.input_type == 'query':
@@ -1489,21 +1490,15 @@ async def test_google_task_prefix(case: _GoogleTaskPrefixCase, gemini_api_key: s
 )
 @pytest.mark.vcr
 async def test_google_task_prefix_vertex(
-    allow_model_requests: None, vertex_provider: GoogleCloudProvider, monkeypatch: pytest.MonkeyPatch
+    allow_model_requests: None,
+    vertex_provider: GoogleCloudProvider,
+    google_embed_content_spy: Callable[[Provider[Client]], dict[str, Any]],
 ):  # pragma: lax no cover
     """`google_task` builds the same `gemini-embedding-2` prefix against Google Cloud (Vertex) as against the Gemini API."""
     model = GoogleEmbeddingModel('gemini-embedding-2', provider=vertex_provider)
     embedder = Embedder(model)
 
-    captured: dict[str, Any] = {}
-    real_embed_content = vertex_provider.client.aio.models.embed_content
-
-    async def spy(**kwargs: Any) -> Any:
-        captured['contents'] = kwargs['contents']
-        captured['config'] = kwargs['config']
-        return await real_embed_content(**kwargs)
-
-    monkeypatch.setattr(vertex_provider.client.aio.models, 'embed_content', spy)
+    captured = google_embed_content_spy(vertex_provider)
 
     result = await embedder.embed_query(
         'Hello, world!', settings=GoogleEmbeddingSettings(google_task='question answering')
