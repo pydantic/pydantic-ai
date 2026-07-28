@@ -243,19 +243,32 @@ async def test_openai_responses_image_detail_vendor_metadata(allow_model_request
 @pytest.mark.parametrize(
     ('model_settings', 'expected_reasoning'),
     [
-        ({'openai_reasoning_mode': 'standard'}, {'mode': 'standard'}),
-        ({'openai_reasoning_mode': 'pro'}, {'mode': 'pro'}),
+        # `gpt-5.6-sol` supports reasoning context, so an unset `openai_reasoning_context`
+        # defaults to `all_turns`; an explicitly set value (including `auto`) wins over it.
+        ({'openai_reasoning_mode': 'standard'}, {'mode': 'standard', 'context': 'all_turns'}),
+        ({'openai_reasoning_mode': 'pro'}, {'mode': 'pro', 'context': 'all_turns'}),
+        ({'openai_reasoning_context': 'auto'}, {'context': 'auto'}),
+        ({'openai_reasoning_context': 'current_turn'}, {'context': 'current_turn'}),
+        ({'openai_reasoning_context': 'all_turns'}, {'context': 'all_turns'}),
         (
             {
                 'openai_reasoning_effort': 'high',
                 'openai_reasoning_mode': 'pro',
                 'openai_reasoning_summary': 'concise',
             },
-            {'effort': 'high', 'mode': 'pro', 'summary': 'concise'},
+            {'effort': 'high', 'mode': 'pro', 'summary': 'concise', 'context': 'all_turns'},
+        ),
+        (
+            {
+                'openai_reasoning_mode': 'pro',
+                'openai_reasoning_context': 'all_turns',
+                'openai_reasoning_summary': 'concise',
+            },
+            {'mode': 'pro', 'context': 'all_turns', 'summary': 'concise'},
         ),
     ],
 )
-async def test_openai_responses_reasoning_mode(
+async def test_openai_responses_reasoning_options(
     allow_model_requests: None,
     model_settings: 'OpenAIResponsesModelSettings',
     expected_reasoning: dict[str, str],
@@ -298,7 +311,7 @@ async def test_openrouter_responses_reasoning_mode(allow_model_requests: None) -
 
     await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_mode='pro')).run('Hello')
 
-    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == {'mode': 'pro'}
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == {'mode': 'pro', 'context': 'all_turns'}
 
 
 async def test_azure_responses_reasoning_mode(allow_model_requests: None) -> None:
@@ -321,12 +334,22 @@ async def test_azure_responses_reasoning_mode(allow_model_requests: None) -> Non
 
     await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_mode='pro')).run('Hello')
 
-    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == {'mode': 'pro'}
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == {'mode': 'pro', 'context': 'all_turns'}
 
 
-@pytest.mark.parametrize('provider_name', ['openai', 'openrouter'])
+@pytest.mark.parametrize(
+    'provider_name,expected_reasoning',
+    [
+        # `gpt-4o` doesn't reason at all, so the whole `reasoning` object is omitted.
+        pytest.param('openai', None, id='gpt-4o'),
+        # `gpt-5.4` reasons and so defaults to `context='all_turns'`, but has no `reasoning.mode`.
+        pytest.param('openrouter', {'context': 'all_turns'}, id='openrouter-gpt-5.4'),
+    ],
+)
 async def test_openai_responses_reasoning_mode_omitted_when_unsupported(
-    allow_model_requests: None, provider_name: Literal['openai', 'openrouter']
+    allow_model_requests: None,
+    provider_name: Literal['openai', 'openrouter'],
+    expected_reasoning: dict[str, str] | None,
 ):
     """Not a VCR test: unsupported paths must omit `reasoning.mode` before sending."""
     c = response_message(
@@ -348,7 +371,177 @@ async def test_openai_responses_reasoning_mode_omitted_when_unsupported(
 
     await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_mode='pro')).run('Hello')
 
-    assert 'reasoning' not in get_mock_responses_kwargs(mock_client)[0]
+    assert get_mock_responses_kwargs(mock_client)[0].get('reasoning') == expected_reasoning
+
+
+@pytest.mark.parametrize(
+    'provider_name,model_name,reasoning_context,expected_reasoning',
+    [
+        # `all_turns` rides `openai_responses_supports_reasoning_context`: sent for the GPT-5.4/5.5/5.6
+        # families, dropped for older reasoning models (o-series) that reject the value.
+        pytest.param('openai', 'gpt-5.6-sol', 'all_turns', {'effort': 'medium', 'context': 'all_turns'}, id='5.6-all'),
+        pytest.param('openai', 'gpt-5.4', 'all_turns', {'effort': 'medium', 'context': 'all_turns'}, id='5.4-all'),
+        pytest.param(
+            'openrouter', 'openai/gpt-5.4', 'all_turns', {'effort': 'medium', 'context': 'all_turns'}, id='or-5.4-all'
+        ),
+        pytest.param('openai', 'o3', 'all_turns', {'effort': 'medium'}, id='o3-all-dropped'),
+        # `auto` and `current_turn` are accepted by every reasoning model, so they ride
+        # `openai_supports_reasoning` and must survive on models without `all_turns` support.
+        pytest.param('openai', 'o3', 'auto', {'effort': 'medium', 'context': 'auto'}, id='o3-auto'),
+        pytest.param('openai', 'o3', 'current_turn', {'effort': 'medium', 'context': 'current_turn'}, id='o3-current'),
+        pytest.param(
+            'openrouter',
+            'openai/gpt-5.4',
+            'current_turn',
+            {'effort': 'medium', 'context': 'current_turn'},
+            id='or-5.4-current',
+        ),
+        # A model that doesn't reason at all takes no `reasoning.context` of any value.
+        pytest.param('openai', 'gpt-4o', 'current_turn', {'effort': 'medium'}, id='4o-dropped'),
+    ],
+)
+async def test_openai_responses_reasoning_context_gated_per_value(
+    allow_model_requests: None,
+    provider_name: Literal['openai', 'openrouter'],
+    model_name: str,
+    reasoning_context: Literal['auto', 'current_turn', 'all_turns'],
+    expected_reasoning: dict[str, str],
+):
+    """Not a VCR test: pins which `reasoning.context` values reach the wire for each model.
+
+    Support is per-value rather than per-field, so gating the whole field on the `all_turns`
+    profile flag would silently drop an `auto`/`current_turn` the user explicitly set.
+    """
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    if provider_name == 'openai':
+        model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+    else:
+        model = OpenAIResponsesModel(model_name, provider=OpenRouterProvider(openai_client=mock_client))
+
+    await Agent(
+        model,
+        model_settings=OpenAIResponsesModelSettings(
+            openai_reasoning_effort='medium', openai_reasoning_context=reasoning_context
+        ),
+    ).run('Hello')
+
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == expected_reasoning
+
+
+@pytest.mark.parametrize(
+    'model_name,expected_reasoning',
+    [
+        # Models that support `all_turns` get it without the user opting in.
+        pytest.param('gpt-5.6-sol', {'context': 'all_turns'}, id='5.6-defaults'),
+        pytest.param('gpt-5.4', {'context': 'all_turns'}, id='5.4-defaults'),
+        pytest.param('gpt-5.5', {'context': 'all_turns'}, id='5.5-defaults'),
+        # Models that don't support it get no `context` key at all — never `auto`, so the
+        # default can't resurrect the silent-drop the per-value gate fixes.
+        pytest.param('o3', None, id='o3-no-default'),
+        pytest.param('gpt-4o', None, id='4o-no-default'),
+    ],
+)
+async def test_openai_responses_reasoning_context_defaults_to_all_turns(
+    allow_model_requests: None, model_name: str, expected_reasoning: dict[str, str] | None
+):
+    """Not a VCR test: an unset `openai_reasoning_context` must default to `all_turns`.
+
+    Keeps earlier-turn reasoning available without opting in, matching how prior thinking is
+    sent back to every other model.
+    """
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model).run('Hello')
+
+    assert get_mock_responses_kwargs(mock_client)[0].get('reasoning') == expected_reasoning
+
+
+@pytest.mark.parametrize(
+    'model_name,model_settings,expected_reasoning',
+    [
+        # Unset + a supporting model: the default puts `all_turns` on the wire.
+        pytest.param('gpt-5.6-sol', {}, {'context': 'all_turns'}, id='default-supported'),
+        # Unset + a model without `all_turns` support: no `reasoning` object at all, so no
+        # `context` key is sent that the provider would reject.
+        pytest.param('o3', {}, None, id='default-unsupported'),
+        # An explicit value beats the default, including `auto` (which must not be overridden).
+        pytest.param(
+            'gpt-5.6-sol',
+            {'openai_reasoning_context': 'auto'},
+            {'context': 'auto'},
+            id='explicit-auto-wins',
+        ),
+    ],
+)
+async def test_openai_responses_reasoning_context_default_wire_contract(
+    allow_model_requests: None,
+    openai_api_key: str,
+    vcr: Cassette,
+    model_name: str,
+    model_settings: 'OpenAIResponsesModelSettings',
+    expected_reasoning: dict[str, str] | None,
+):
+    """VCR test: the real Responses API accepts the `reasoning.context` we default to.
+
+    The mock tests above pin the request shape; this records the real request and response so the
+    `reasoning.context` wire contract — including the `all_turns` default applied when the user
+    sets nothing — is validated against the provider rather than only against our own serializer.
+    """
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=model_settings)
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    # A successful answer proves the provider accepted the request we built.
+    assert 'Paris' in result.output
+    assert single_request_body(vcr).get('reasoning') == expected_reasoning
+
+
+@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4'])
+async def test_azure_responses_reasoning_context_default_wire_contract(
+    allow_model_requests: None, azure_api_key: str, vcr: Cassette, model_name: str
+):
+    """VCR test: Azure's Responses backend accepts the `all_turns` default, like OpenAI's.
+
+    `AzureProvider.model_profile` resolves unprefixed OpenAI model names through
+    `openai_model_profile`, so `openai_responses_supports_reasoning_context` survives to the
+    Azure-resolved profile and every Azure request for these families carries
+    `context='all_turns'` without the user opting in. Recorded against live Azure deployments so
+    that default rests on Azure's own backend rather than on OpenAI-direct behavior.
+    """
+    provider = AzureProvider(
+        azure_endpoint='https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/', api_key=azure_api_key
+    )
+    agent = Agent(model=OpenAIResponsesModel(model_name, provider=provider))
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    # A successful answer proves Azure accepted the request we built.
+    assert 'Paris' in result.output
+    assert single_request_body(vcr)['reasoning'] == {'context': 'all_turns'}
 
 
 async def test_openai_responses_reasoning_mode_pro(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
@@ -365,7 +558,7 @@ async def test_openai_responses_reasoning_mode_pro(allow_model_requests: None, o
     result = await agent.run('What is the capital of France? Answer in one word.')
 
     assert result.output == snapshot('Paris')
-    assert single_request_body(vcr)['reasoning'] == snapshot({'mode': 'pro'})
+    assert single_request_body(vcr)['reasoning'] == snapshot({'mode': 'pro', 'context': 'all_turns'})
 
 
 async def test_openai_responses_gpt_5_6_reasoning_off_keeps_sampling_params(
@@ -385,7 +578,7 @@ async def test_openai_responses_gpt_5_6_reasoning_off_keeps_sampling_params(
 
     assert result.output == snapshot('Paris')
     request_body = single_request_body(vcr)
-    assert request_body['reasoning'] == snapshot({'effort': 'none'})
+    assert request_body['reasoning'] == snapshot({'effort': 'none', 'context': 'all_turns'})
     assert request_body['temperature'] == 0.5
 
 

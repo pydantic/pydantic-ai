@@ -12,6 +12,7 @@ import anyio
 import anyio.to_thread
 
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import remove_bedrock_geo_prefix
 from pydantic_ai.usage import RequestUsage
@@ -572,6 +573,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        check_allow_model_requests()
         inputs_list, settings_dict = self.prepare_embed(inputs, settings)
         settings_typed = cast(BedrockEmbeddingSettings, settings_dict)
 

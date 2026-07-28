@@ -9,6 +9,7 @@ from typing import Annotated, Any, Literal, cast, get_args, get_origin
 
 import pytest
 from pydantic import TypeAdapter
+from pydantic_core import to_json, to_jsonable_python
 
 from pydantic_ai import (
     Agent,
@@ -584,6 +585,75 @@ def test_pre_usage_refactor_messages_deserializable():
             ),
         ]
     )
+    assert ModelMessagesTypeAdapter.dump_python(messages, mode='json')[1]['usage'] == snapshot(
+        {
+            'input_tokens': 13,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 76,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {},
+        }
+    )
+
+
+def test_pre_usage_refactor_empty_usage_deserializable():
+    data: list[dict[str, Any]] = [
+        {
+            'parts': [],
+            'usage': {
+                'requests': 0,
+                'request_tokens': None,
+                'response_tokens': None,
+                'total_tokens': None,
+                'details': None,
+            },
+            'kind': 'response',
+        }
+    ]
+
+    [message] = ModelMessagesTypeAdapter.validate_python(data)
+    assert isinstance(message, ModelResponse)
+    assert message.usage == RequestUsage()
+
+
+def test_usage_arbitrary_fields_serialization_roundtrip():
+    usage = RequestUsage(
+        input_tokens=5,
+        details={'reasoning_tokens': 3},
+        future_tokens=42,
+        label='original',
+        zero_tokens=0,
+    )
+    messages: list[ModelMessage] = [ModelResponse(parts=[], usage=usage)]
+
+    expected_usage = snapshot(
+        {
+            'input_tokens': 5,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 0,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {'reasoning_tokens': 3},
+            'future_tokens': 42,
+            'label': 'original',
+            'zero_tokens': 0,
+        }
+    )
+    assert to_jsonable_python(messages)[0]['usage'] == expected_usage
+    assert json.loads(to_json(messages))[0]['usage'] == expected_usage
+
+    serialized = ModelMessagesTypeAdapter.dump_json(messages)
+    assert json.loads(serialized)[0]['usage'] == expected_usage
+
+    [loaded] = ModelMessagesTypeAdapter.validate_json(serialized)
+    assert isinstance(loaded, ModelResponse)
+    assert loaded.usage == usage
+    assert loaded.usage.__dict__['future_tokens'] == 42
 
 
 @pytest.mark.anyio

@@ -39,12 +39,15 @@ _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-fable-5',
     'claude-mythos-5',
     'claude-opus-4-8',
+    'claude-opus-5',
     'claude-sonnet-5',
 )
-
 """Models that accept a `{'role': 'system'}` entry inside the Messages API's `messages` array.
 
-Older models reject it with `role 'system' is not supported on this model`.
+Older models reject it with `role 'system' is not supported on this model`. Verified per model against
+the API — it doesn't follow from release order, so don't extend this list by inference.
+`claude-mythos-5` is the exception: it isn't reachable with our credentials, so it's grouped with its
+`claude-fable-5` sibling on the assumption they share the capability.
 """
 
 _TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (

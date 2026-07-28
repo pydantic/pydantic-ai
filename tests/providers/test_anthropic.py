@@ -98,6 +98,7 @@ def test_anthropic_provider_model_profile_older_model_still_resolves():
         ('claude-fable-5', True),
         ('claude-mythos-5', True),
         ('claude-opus-4-8', True),
+        ('claude-opus-5', True),
         ('claude-sonnet-5', True),
         ('claude-opus-4-7', False),
         ('claude-sonnet-4-6', False),
