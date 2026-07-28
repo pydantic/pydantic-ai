@@ -558,11 +558,35 @@ def test_map_unhandled_event_returns_none() -> None:
             ),
         ),
         (
+            # Azure's `DeploymentNotFound` message names only the affected item, so the remedy is appended.
             {
                 'type': 'conversation.item.input_audio_transcription.failed',
                 'error': {'message': 'x', 'type': 'server_error', 'code': 'DeploymentNotFound'},
             },
-            InputTranscriptionFailedEvent(message='x', type='server_error', code='DeploymentNotFound'),
+            InputTranscriptionFailedEvent(
+                message=(
+                    'x The transcription model is not deployed on this Azure OpenAI resource. Deploy one and '
+                    'set `input_transcription_model` to its deployment name, or set it to `None` to disable '
+                    'transcription.'
+                ),
+                type='server_error',
+                code='DeploymentNotFound',
+            ),
+        ),
+        (
+            # A `DeploymentNotFound` with no message of its own still carries the remedy, without a leading space.
+            {
+                'type': 'conversation.item.input_audio_transcription.failed',
+                'error': {'code': 'DeploymentNotFound'},
+            },
+            InputTranscriptionFailedEvent(
+                message=(
+                    'The transcription model is not deployed on this Azure OpenAI resource. Deploy one and '
+                    'set `input_transcription_model` to its deployment name, or set it to `None` to disable '
+                    'transcription.'
+                ),
+                code='DeploymentNotFound',
+            ),
         ),
     ],
 )
