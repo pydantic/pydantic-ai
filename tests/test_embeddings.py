@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlparse
 
+import httpx
 import pytest
+from pytest_mock import MockerFixture
 
 from ._inline_snapshot import snapshot
 
@@ -81,9 +85,105 @@ with try_import() as voyageai_imports_successful:
     from pydantic_ai.providers.voyageai import VoyageAIProvider
 
 with try_import() as sentence_transformers_imports_successful:
+    import torch
     from sentence_transformers import SentenceTransformer
 
-    from pydantic_ai.embeddings.sentence_transformers import SentenceTransformerEmbeddingModel
+    import pydantic_ai.embeddings.sentence_transformers as sentence_transformers_module
+    from pydantic_ai.embeddings.sentence_transformers import (
+        SentenceTransformerEmbeddingModel,
+        SentenceTransformersEmbeddingSettings,
+    )
+
+
+STSB_BERT_TINY_MODEL = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
+# Pinned so a warm HF cache is served without revalidating files against the Hub.
+# Keep in sync with the HF cache keys and warmup commands in .github/workflows/ci.yml;
+# `test_stsb_model_pin_matches_ci` guards against drift.
+STSB_BERT_TINY_REVISION = 'f3cb857cba53019a20df283396bcca179cf051a4'
+
+
+def _hf_hub_unavailable(exc: BaseException) -> bool:
+    """Whether an exception from a SentenceTransformer load means the HF Hub is
+    unavailable (worth skipping the real-model smoke tests) rather than a genuine
+    integration defect or a bad model pin (which must fail loudly). Shapes verified
+    against real outage and bad-pin probes.
+    """
+    if isinstance(exc, httpx.TransportError):
+        # Transport-level httpx errors (e.g. connect timeouts) escape
+        # huggingface_hub 1.x unwrapped, and the only httpx traffic in a model
+        # load is Hub traffic. Status-level httpx errors are not outage proof.
+        return True
+    if isinstance(exc, RuntimeError):
+        # After a connection error, huggingface_hub 1.x retries on an httpx client
+        # it just closed, surfacing httpx's RuntimeError instead of its own error.
+        return 'client has been closed' in str(exc)
+    if type(exc).__module__.startswith('huggingface_hub'):
+        # huggingface_hub errors are OSError subclasses. Ones carrying an HTTP
+        # response are an outage only for transient statuses; 401/403/404 mean a
+        # bad pin or an auth problem. Ones without a response (e.g.
+        # LocalEntryNotFoundError) mean the Hub couldn't be reached at all.
+        status = getattr(getattr(exc, 'response', None), 'status_code', None)
+        return status is None or status == 429 or status >= 500
+    # transformers wraps connection failures in a plain OSError: "We couldn't
+    # connect to 'https://huggingface.co' to load the files [...]". Other OSError
+    # shapes (corrupt cache, invalid model identifier) must propagate.
+    return "couldn't connect" in str(exc).lower()
+
+
+def test_hf_hub_unavailable_classifier():
+    """Exercises the fixture's outage-classification guard on synthetic exceptions:
+    no HTTP is involved (hence no VCR), just shapes captured from real probes."""
+
+    class FakeResponse:
+        def __init__(self, status_code: int):
+            self.status_code = status_code
+
+    class FakeHubError(OSError):
+        def __init__(self, msg: str, status_code: int | None = None):
+            super().__init__(msg)
+            self.response = FakeResponse(status_code) if status_code is not None else None
+
+    FakeHubError.__module__ = 'huggingface_hub.errors'
+
+    # Hub unavailability: skip the real-model smoke tests.
+    assert _hf_hub_unavailable(httpx.ConnectTimeout('timed out'))
+    assert _hf_hub_unavailable(RuntimeError('Cannot send a request, as the client has been closed.'))
+    assert _hf_hub_unavailable(FakeHubError('504 Server Error', 504))
+    assert _hf_hub_unavailable(FakeHubError('429 Too Many Requests', 429))
+    assert _hf_hub_unavailable(FakeHubError('cannot find the requested files in the disk cache'))
+    assert _hf_hub_unavailable(OSError("We couldn't connect to 'https://huggingface.co' to load the files"))
+    # Anything else fails loudly: bad pins, auth problems, local defects.
+    assert not _hf_hub_unavailable(FakeHubError('401 Unauthorized', 401))
+    assert not _hf_hub_unavailable(FakeHubError('404 Repository Not Found', 404))
+    assert not _hf_hub_unavailable(
+        httpx.HTTPStatusError('404', request=httpx.Request('GET', 'https://x'), response=httpx.Response(404))
+    )
+    assert not _hf_hub_unavailable(RuntimeError('CUDA error: device-side assert triggered'))
+    assert not _hf_hub_unavailable(OSError('Unable to load weights from pytorch checkpoint file'))
+    assert not _hf_hub_unavailable(
+        OSError(
+            "xyz is not a local folder and is not a valid model identifier listed on 'https://huggingface.co/models'"
+        )
+    )
+
+
+def test_stsb_model_pin_matches_ci():
+    """Parses CI configuration only, no network or VCR involved: drift between this
+    pin and ci.yml silently reintroduces per-run Hub downloads, because the stale
+    cache key keeps exact-hitting, so CI never caches the new revision."""
+    ci_yml = Path(__file__).parent.parent / '.github' / 'workflows' / 'ci.yml'
+    if not ci_yml.is_file():  # pragma: lax no cover
+        pytest.skip('not running from a repo checkout')
+    stsb_lines = [line for line in ci_yml.read_text().splitlines() if 'stsb-bert-tiny' in line]
+    cache_keys = [line for line in stsb_lines if 'key:' in line]
+    warmups = [line for line in stsb_lines if 'snapshot_download' in line]
+    assert len(cache_keys) >= 2, 'expected a model cache key in both test jobs in ci.yml'
+    assert len(warmups) >= 2, 'expected a model warmup command in both test jobs in ci.yml'
+    assert all(STSB_BERT_TINY_MODEL in line for line in warmups)
+    for line in cache_keys + warmups:
+        assert STSB_BERT_TINY_REVISION in line, f'stale or missing revision pin in ci.yml: {line.strip()}'
+    stray = {sha for line in stsb_lines for sha in re.findall(r'[0-9a-f]{40}', line)} - {STSB_BERT_TINY_REVISION}
+    assert not stray, f'stale revision pins left in ci.yml: {stray}'
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -1117,12 +1217,19 @@ class TestBedrock:
             assert model.model_name == 'amazon.titan-embed-text-v2:0'
 
     async def test_client_error_with_status_code(self, bedrock_provider: BedrockProvider):
-        """Test error handling when ClientError is raised with HTTP status code."""
+        """Test error handling when ClientError is raised with HTTP status code.
+
+        ResponseMetadata.HTTPHeaders is the nested dict that BedrockEmbeddingModel extracts
+        via metadata.get('HTTPHeaders') — verify it reaches ModelHTTPError.headers unchanged.
+        """
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
 
         error_response = {
             'Error': {'Code': 'ValidationException', 'Message': 'Invalid input'},
-            'ResponseMetadata': {'HTTPStatusCode': 400},
+            'ResponseMetadata': {
+                'HTTPStatusCode': 400,
+                'HTTPHeaders': {'retry-after': '5', 'x-amzn-requestid': 'req-abc'},
+            },
         }
         with patch.object(
             model.client,
@@ -1132,8 +1239,12 @@ class TestBedrock:
             with pytest.raises(ExceptionGroup) as exc_info:
                 await model.embed(['test'], input_type='query')
             assert len(exc_info.value.exceptions) == 1
-            assert isinstance(exc_info.value.exceptions[0], ModelHTTPError)
-            assert exc_info.value.exceptions[0].status_code == 400
+            exc = exc_info.value.exceptions[0]
+            assert isinstance(exc, ModelHTTPError)
+            assert exc.status_code == 400
+            assert exc.headers is not None
+            assert exc.headers.get('retry-after') == '5'
+            assert exc.headers.get('x-amzn-requestid') == 'req-abc'
 
     async def test_client_error_without_status_code(self, bedrock_provider: BedrockProvider):
         """Test error handling when ClientError is raised without HTTP status code."""
@@ -1498,6 +1609,97 @@ class TestGoogle:
         with pytest.raises(ModelHTTPError, match='not found'):
             await embedder.count_tokens('Hello, world!')
 
+    async def test_embed_error_no_http_response(self, gemini_api_key: str, mocker: MockerFixture):
+        """An APIError with response=None (no HTTP response object) yields headers=None on ModelHTTPError.
+
+        This exercises the defensive `e.response is not None else None` branch in the embed
+        path of GoogleEmbeddingModel — the branch that handles non-HTTP errors where the SDK
+        raises an APIError without attaching an httpx.Response.
+        """
+        from google.genai import errors
+
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        error_without_response = errors.APIError(503, {'error': {'code': 503, 'message': 'Unavailable'}})
+        mocker.patch.object(model._client.aio.models, 'embed_content', side_effect=error_without_response)  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.embed(['test'], input_type='query')
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.headers is None
+
+    async def test_count_tokens_error_no_http_response(self, gemini_api_key: str, mocker: MockerFixture):
+        """Same as above for the count_tokens path."""
+        from google.genai import errors
+
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        error_without_response = errors.APIError(503, {'error': {'code': 503, 'message': 'Unavailable'}})
+        mocker.patch.object(model._client.aio.models, 'count_tokens', side_effect=error_without_response)  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.count_tokens('test')
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.headers is None
+
+    async def test_embed_error_with_http_response(self, gemini_api_key: str, mocker: MockerFixture):
+        """An APIError with a real httpx.Response propagates its headers to ModelHTTPError.
+
+        The positive path `headers=dict(e.response.headers) if e.response is not None else None`
+        converts httpx.Headers to a plain lowercased dict. Verify the value reaches
+        ModelHTTPError.headers so a wrong-attribute regression (e.g. swapping response for None)
+        would be caught.
+        """
+        import httpx
+        from google.genai import errors
+
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        req = httpx.Request('POST', 'https://generativelanguage.googleapis.com/v1beta/models')
+        resp = httpx.Response(429, headers={'retry-after': '10', 'x-goog-request-id': 'rid-1'}, request=req)
+        error_with_response = errors.APIError(429, {'error': {'code': 429, 'message': 'Rate limited'}})
+        error_with_response.response = resp
+        mocker.patch.object(model._client.aio.models, 'embed_content', side_effect=error_with_response)  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.embed(['test'], input_type='query')
+
+        exc = exc_info.value
+        assert exc.status_code == 429
+        assert exc.headers is not None
+        assert exc.headers.get('retry-after') == '10'
+        assert exc.headers.get('x-goog-request-id') == 'rid-1'
+
+    async def test_embed_error_low_status_code(self, gemini_api_key: str, mocker: MockerFixture):
+        """An APIError with code < 400 is re-raised verbatim, not wrapped in ModelHTTPError.
+
+        GoogleEmbeddingModel only wraps errors with status_code >= 400. A code below
+        400 is a non-HTTP-error signal from the SDK; the original exception propagates.
+        This covers the `raise` (else) branch of `if (status_code := e.code) >= 400`.
+        """
+        from google.genai import errors
+
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        low_code_error = errors.APIError(0, {'error': {'code': 0, 'message': 'Unknown'}})
+        mocker.patch.object(model._client.aio.models, 'embed_content', side_effect=low_code_error)  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(errors.APIError) as exc_info:
+            await model.embed(['test'], input_type='query')
+
+        assert exc_info.value is low_code_error
+
+    async def test_count_tokens_error_low_status_code(self, gemini_api_key: str, mocker: MockerFixture):
+        """Same as test_embed_error_low_status_code for the count_tokens path."""
+        from google.genai import errors
+
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        low_code_error = errors.APIError(0, {'error': {'code': 0, 'message': 'Unknown'}})
+        mocker.patch.object(model._client.aio.models, 'count_tokens', side_effect=low_code_error)  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(errors.APIError) as exc_info:
+            await model.count_tokens('test')
+
+        assert exc_info.value is low_code_error
+
     async def test_query_with_task_type(self, embedder: Embedder):
         result = await embedder.embed_query(
             'Hello, world!', settings=GoogleEmbeddingSettings(google_task_type='RETRIEVAL_QUERY')
@@ -1582,29 +1784,41 @@ class TestGoogle:
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
 class TestSentenceTransformers:
-    @pytest.fixture(scope='session')
-    def stsb_bert_tiny_model(self):
-        # Load offline so sentence-transformers never revalidates the model against
-        # the HF Hub (a recurring source of 429 flakes). Scoped to just this load:
-        # a job-wide HF_HUB_OFFLINE would also block the HuggingFace VCR tests, whose
-        # cassette replay still trips huggingface_hub's offline check. CI warms the
-        # cache out-of-band (see ci.yml) so the load hits disk.
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setenv('HF_HUB_OFFLINE', '1')
-            try:
-                model = SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')
-            except OSError as e:  # pragma: no cover
-                # A cold HF cache under offline mode (or an unreachable/rate-limited
-                # Hub) raises OSError; skip rather than fail so a HF outage never reds
-                # the whole suite. CI keeps the cache warm (see ci.yml) so this is a
-                # last-resort net, not the normal path.
-                pytest.skip(f'sentence-transformers test model unavailable (HF Hub): {e}')
-        # Under HF_HUB_OFFLINE the model card isn't fetched, so `model_id` is unset
-        # and the model would report its name as 'unknown'. Set it explicitly to
-        # match the name users get online (a no-op when the card did load).
-        model.model_card_data.model_id = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
+    def _load_stsb_bert_tiny_model(self):
+        # The pinned commit revision lets huggingface_hub serve every model file
+        # straight from a warm cache without revalidating it against the Hub.
+        # Construction still fires a few metadata requests (model card, repo tree,
+        # adapter probe); those tolerate Hub HTTP errors, and connection-level
+        # failures fall through to the skip below. CI warms the cache out-of-band
+        # (see ci.yml); a cold cache downloads the model here on first use.
+        try:
+            model = SentenceTransformer(STSB_BERT_TINY_MODEL, revision=STSB_BERT_TINY_REVISION)
+        except (OSError, RuntimeError, httpx.HTTPError) as e:
+            # Skip only when the Hub is unavailable (see `_hf_hub_unavailable`) so a
+            # HF outage never reds the whole suite; anything else (bad pin, auth
+            # problem, corrupt cache, dependency mismatch) fails loudly.
+            if not _hf_hub_unavailable(e):
+                raise
+            pytest.skip(f'sentence-transformers test model unavailable (HF Hub): {e}')
+        # If the model card didn't load, `model_id` is unset and the model reports
+        # its name as 'unknown'. Set it explicitly so the reported name is
+        # deterministic (a no-op when the card did load).
+        model.model_card_data.model_id = STSB_BERT_TINY_MODEL
         model.model_card_data.generate_widget_examples = False  # Disable widget examples generation for testing
         return model
+
+    @pytest.fixture(scope='session')
+    def stsb_bert_tiny_model(self):
+        return self._load_stsb_bert_tiny_model()
+
+    def test_model_unavailable(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(f'{__name__}.SentenceTransformer', MagicMock(side_effect=httpx.ConnectTimeout('offline')))
+        skip = MagicMock(side_effect=RuntimeError('skipped'))
+        monkeypatch.setattr(pytest, 'skip', skip)
+
+        with pytest.raises(RuntimeError, match='skipped'):
+            self._load_stsb_bert_tiny_model()
+        skip.assert_called_once_with('sentence-transformers test model unavailable (HF Hub): offline')
 
     @pytest.fixture
     def embedder(self, stsb_bert_tiny_model: Any) -> Embedder:
@@ -1616,6 +1830,87 @@ class TestSentenceTransformers:
         assert model.model_name == 'all-MiniLM-L6-v2'
         assert model.system == 'sentence-transformers'
         assert model.base_url is None
+
+    async def test_adapter_without_downloaded_model(self, monkeypatch: pytest.MonkeyPatch):
+        """VCR cannot exercise a local adapter, so cover it without a downloaded model."""
+        st_model = MagicMock(spec=SentenceTransformer)
+        st_model.model_card_data = MagicMock()
+        st_model.model_card_data.model_id = 'test-model'
+        st_model.encode_query.return_value.tolist.return_value = [[0.1, 0.2]]
+        st_model.encode_document.return_value.tolist.return_value = [[0.3, 0.4], [0.5, 0.6]]
+        st_model.get_max_seq_length.return_value = 512
+        st_model.tokenize.return_value = {'input_ids': torch.tensor([[1, 2, 3]])}
+
+        def preserve_model(model: SentenceTransformer) -> SentenceTransformer:
+            return model
+
+        monkeypatch.setattr(sentence_transformers_module, 'deepcopy', preserve_model)
+
+        model = SentenceTransformerEmbeddingModel(
+            st_model,
+            settings=SentenceTransformersEmbeddingSettings(
+                dimensions=2,
+                sentence_transformers_batch_size=2,
+                sentence_transformers_device='cpu',
+                sentence_transformers_normalize_embeddings=True,
+            ),
+        )
+        embedder = Embedder(model)
+
+        query_result = await embedder.embed_query('hello')
+        assert query_result == snapshot(
+            EmbeddingResult(
+                embeddings=[[0.1, 0.2]],
+                inputs=['hello'],
+                input_type='query',
+                model_name='test-model',
+                provider_name='sentence-transformers',
+                timestamp=IsDatetime(),
+            )
+        )
+        st_model.encode_query.assert_called_once_with(
+            ['hello'],
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            convert_to_tensor=False,
+            device='cpu',
+            normalize_embeddings=True,
+            truncate_dim=2,
+            batch_size=2,
+        )
+
+        documents_result = await embedder.embed_documents(['hello', 'world'])
+        assert documents_result == snapshot(
+            EmbeddingResult(
+                embeddings=[[0.3, 0.4], [0.5, 0.6]],
+                inputs=['hello', 'world'],
+                input_type='document',
+                model_name='test-model',
+                provider_name='sentence-transformers',
+                timestamp=IsDatetime(),
+            )
+        )
+        st_model.encode_document.assert_called_once_with(
+            ['hello', 'world'],
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            convert_to_tensor=False,
+            device='cpu',
+            normalize_embeddings=True,
+            truncate_dim=2,
+            batch_size=2,
+        )
+        assert await embedder.max_input_tokens() == 512
+        assert await embedder.count_tokens('hello') == 3
+
+        loaded_model = MagicMock(spec=SentenceTransformer)
+        loaded_model.get_max_seq_length.return_value = 256
+        constructor = MagicMock(return_value=loaded_model)
+        monkeypatch.setattr(sentence_transformers_module, 'SentenceTransformer', constructor)
+
+        lazy_embedder = Embedder(SentenceTransformerEmbeddingModel('lazy-model'))
+        assert await lazy_embedder.max_input_tokens() == 256
+        constructor.assert_called_once_with('lazy-model')
 
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')

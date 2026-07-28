@@ -185,6 +185,21 @@ def test_usage_so_far() -> None:
         )
 
 
+def test_usage_has_values_ignores_zero_details() -> None:
+    """`has_values()` must treat an all-zero `details` dict as no values, per its docstring.
+
+    A non-empty `details` dict is truthy, so the previous `any(asdict(...).values())` returned True
+    even when every count was zero. This pins the pure-method behavior directly; no model is involved,
+    so there is no VCR test to write.
+    """
+    assert RunUsage().has_values() is False
+    assert RunUsage(details={'reasoning_tokens': 0}).has_values() is False
+    assert RunUsage(input_tokens=1).has_values() is True
+    assert RunUsage(details={'reasoning_tokens': 3}).has_values() is True
+    # RequestUsage shares the same UsageBase implementation.
+    assert RequestUsage(details={'x': 0}).has_values() is False
+
+
 async def test_multi_agent_usage_no_incr():
     delegate_agent = Agent(TestModel(), output_type=int)
 
@@ -415,6 +430,32 @@ def test_request_usage_basics():
     usage = RequestUsage()
     assert usage.output_audio_tokens == 0
     assert usage.requests == 1
+
+
+def test_usage_arbitrary_fields():
+    usage = RequestUsage(future_tokens=1, label='original')
+
+    assert usage == snapshot(RequestUsage(future_tokens=1, label='original'))
+    assert usage == RequestUsage(future_tokens=1, label='original')
+    assert usage != RequestUsage(future_tokens=2, label='original')
+    assert usage != object()
+    assert RunUsage(requests=0, future_tokens=1) == snapshot(RunUsage(future_tokens=1))
+    assert RunUsage(requests=0) == RunUsage()
+
+    result = usage + RequestUsage(future_tokens=2, label='increment')
+    assert result == RequestUsage(future_tokens=3, label='original')
+
+
+def test_cache_hit_ratio():
+    """Pure arithmetic on usage fields -- no model request to record."""
+    assert RequestUsage(input_tokens=1000, cache_read_tokens=900).cache_hit_ratio == 0.9
+    assert RequestUsage().cache_hit_ratio == 0.0
+    assert RequestUsage(input_tokens=1000).cache_hit_ratio == 0.0
+
+    run_usage = RunUsage()
+    run_usage.incr(RequestUsage(input_tokens=1000, cache_read_tokens=900))
+    run_usage.incr(RequestUsage(input_tokens=500, cache_read_tokens=300))
+    assert run_usage.cache_hit_ratio == 0.8
 
 
 def test_add_usages():

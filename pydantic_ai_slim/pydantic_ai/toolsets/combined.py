@@ -76,9 +76,13 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                         f'{capitalized_toolset_label} defines a tool whose name conflicts with existing tool from {existing_tool.toolset.label}: {name!r}. {toolset.tool_name_conflict_hint}'
                     )
 
+                tool_def = tool.tool_def
+                if tool_def.toolset_id is None and tool_toolset.id is not None:
+                    tool_def = replace(tool_def, toolset_id=tool_toolset.id)
+
                 all_tools[name] = _CombinedToolsetTool(
                     toolset=tool_toolset,
-                    tool_def=tool.tool_def,
+                    tool_def=tool_def,
                     max_retries=tool.max_retries,
                     args_validator=tool.args_validator,
                     args_validator_func=tool.args_validator_func,

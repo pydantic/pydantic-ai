@@ -75,6 +75,7 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                     'timeout': None,
                     'defer_loading': False,
+                    'toolset_id': None,
                     'unless_native': None,
                     'with_native': None,
                     'tool_kind': None,
@@ -92,6 +93,7 @@ def test_model_request_parameters_are_serializable():
                     'blocked_domains': None,
                     'allowed_domains': None,
                     'max_uses': None,
+                    'external_web_access': None,
                 },
                 {'kind': 'code_execution', 'optional': False, 'files': None},
                 {
@@ -154,6 +156,7 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                     'timeout': None,
                     'defer_loading': False,
+                    'toolset_id': None,
                     'unless_native': None,
                     'with_native': None,
                     'tool_kind': None,

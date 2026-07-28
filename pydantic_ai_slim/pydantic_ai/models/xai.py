@@ -98,8 +98,13 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.DEADLINE_EXCEEDED: 504,
 }
 
-XaiModelName = str | ChatModel
-"""Possible xAI model names."""
+XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest']
+"""Possible xAI model names.
+
+`grok-4.5`/`grok-4.5-latest` are bridged with a local `Literal` because `xai_sdk`'s `ChatModel` doesn't
+list them yet (as of 1.17.0). Drop the literal once the `xai-sdk` floor is bumped past the release that
+adds them to `ChatModel`.
+"""
 
 # `provider_name` values accepted on history replay. Includes the current `'xai'` plus the pre-v2
 # `'grok'` alias (when `GrokProvider` existed) so persisted messages from before the rename still
@@ -441,11 +446,13 @@ class XaiModel(Model[AsyncClient]):
 
     @staticmethod
     def _append_tool_call(messages: list[chat_types.chat_pb2.Message], tool_call: chat_types.chat_pb2.ToolCall) -> None:
-        """Append a tool call to the most recent tool-call assistant message, or create a new one.
+        """Attach a tool call to the most recent assistant message, or create a new one.
 
-        We keep tool calls grouped to avoid generating one assistant message per tool call.
+        Every message in a single `ModelResponse` is an assistant message, so attaching to the
+        preceding one keeps an encrypted reasoning trace grouped with the tool calls it produced,
+        matching `xai_sdk`'s `Chat.append`.
         """
-        if messages and messages[-1].tool_calls:
+        if messages:
             messages[-1].tool_calls.append(tool_call)
         else:
             msg = assistant('')

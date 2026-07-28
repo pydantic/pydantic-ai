@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import dataclasses
 import importlib.util
 import logging
 import os
@@ -44,8 +45,10 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import Builder, Custom, customize
+from .cassette_utils import check_cache_prefix_stability
 
 T = TypeVar('T')
 
@@ -76,6 +79,14 @@ logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        'markers',
+        'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
+    )
+
 
 if TYPE_CHECKING:
     from pluggy import Result
@@ -199,6 +210,21 @@ def isdatetime_handler(value: Any, builder: Builder) -> Any | None:  # pragma: n
     # Use IsDatetime() for datetime values in snapshots.
     if isinstance(value, datetime):
         return IsDatetime()
+
+
+@customize
+def usage_handler(value: Any, builder: Builder) -> Custom | None:  # pragma: no cover
+    if isinstance(value, (RequestUsage, RunUsage)):
+        # Usage objects accept arbitrary fields that inline-snapshot's default dataclass handler cannot see.
+        kwargs = value.__dict__.copy()
+        for field in dataclasses.fields(value):
+            if field.name not in kwargs:
+                continue
+            if field.default is not dataclasses.MISSING:
+                kwargs[field.name] = builder.with_default(kwargs[field.name], field.default)
+            elif field.default_factory is not dataclasses.MISSING:
+                kwargs[field.name] = builder.with_default(kwargs[field.name], field.default_factory())
+        return builder.create_call(type(value), [], kwargs)
 
 
 @customize
@@ -437,6 +463,12 @@ def pytest_recording_configure(config: Any, vcr: VCR):
         """Match URL paths after scrubbing AWS account IDs from ARNs."""
         path1 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r1.path)
         path2 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r2.path)
+        # Normalize Vertex AI paths by replacing region and project (cassettes may be recorded
+        # against a different GCP project than the fixture default)
+        path1 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path1)
+        path2 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path2)
+        path1 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path1)
+        path2 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path2)
         if path1 != path2:
             raise AssertionError(f'{path1} != {path2}')
 
@@ -461,6 +493,10 @@ def pytest_recording_configure(config: Any, vcr: VCR):
         # Normalize Bedrock hosts by removing region
         host1_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host1)
         host2_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host2)
+        # Normalize Vertex AI hosts by removing region prefix
+        vertex_host_pattern = re.compile(r'^[a-z0-9-]+-aiplatform\.googleapis\.com$')
+        host1_normalized = vertex_host_pattern.sub('aiplatform.googleapis.com', host1_normalized)
+        host2_normalized = vertex_host_pattern.sub('aiplatform.googleapis.com', host2_normalized)
         if host1_normalized != host2_normalized:
             raise AssertionError(f'{host1} != {host2}')
 
@@ -508,7 +544,7 @@ def mock_vcr_aiohttp_content(mocker: MockerFixture):
     # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
     # So we turn `content` into a cached property to return the same one each time.
     # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
-    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # type: ignore
+    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # pyright: ignore[reportArgumentType, reportUnknownVariableType]
     cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
     mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
     mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
@@ -552,6 +588,25 @@ def fail_partially_used_vcr_cassettes(request: pytest.FixtureRequest, vcr: Casse
     check_vcr_cassette_usage(vcr, strict_usage)
 
 
+@pytest.fixture(autouse=True)
+def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette | None) -> Iterator[None]:
+    """Check final recorded conversations during playback; recording leaves the on-disk cassette unfinished."""
+    yield
+    setup_report = getattr(request.node, 'rep_setup', None)
+    call_report = getattr(request.node, 'rep_call', None)
+    if any(
+        getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
+    ):
+        return
+    if vcr is None or vcr.record_mode != RecordMode.NONE:
+        return
+
+    cassette_path_value = getattr(vcr, '_path', None)
+    if cassette_path_value is None or not (cassette_path := Path(cassette_path_value)).is_file():
+        return
+    check_cache_prefix_stability(request.node, cassette_path)
+
+
 _HttpClientCache: TypeAlias = 'dict[tuple[int, int], httpx.AsyncClient]'
 
 
@@ -575,7 +630,12 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
         return cache[key]
 
     for mod in list(sys.modules.values()):
-        if getattr(mod, 'create_async_http_client', None) is original:
+        # Read the module's own namespace via `__dict__` rather than `getattr`: some
+        # modules (e.g. `transformers` submodules) define a lazy PEP 562 `__getattr__`
+        # that imports submodules on attribute access, and probing every loaded module
+        # with `getattr` would trigger those unrelated (and possibly failing) imports.
+        mod_dict = getattr(mod, '__dict__', None)
+        if mod_dict is not None and mod_dict.get('create_async_http_client', None) is original:
             monkeypatch.setattr(mod, 'create_async_http_client', cached_per_test)
 
     yield cache
@@ -710,6 +770,7 @@ def tiny_video() -> BinaryContent:
 
 os.environ.pop('OPENAI_BASE_URL', None)
 os.environ.pop('ANTHROPIC_BASE_URL', None)
+os.environ.pop('LOGFIRE_EMIT_CONFIGURATION_SPAN', None)
 
 
 @pytest.fixture(scope='session')

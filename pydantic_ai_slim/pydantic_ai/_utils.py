@@ -21,7 +21,7 @@ from collections.abc import (
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
@@ -265,6 +265,43 @@ async def cancel_and_drain(*tasks: asyncio.Task[Any], msg: object = None) -> Non
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+def raise_if_cancelling() -> None:
+    """Re-assert an external cancellation that a completed step absorbed (level-triggered backstop).
+
+    A step the run awaits — a Temporal activity under `WAIT_CANCELLATION_COMPLETED`, an
+    `event_stream_handler`, a capability hook — can catch the `CancelledError` injected by
+    `task.cancel()` and return normally. asyncio even *delegates* a task's cancellation to the
+    future it is currently awaiting, so an awaited child task that absorbs its cancel silently
+    completes the awaiting task too. Either way the cancellation is an edge the framework never
+    sees, and without a re-check the run would complete as if it was never cancelled.
+
+    Well-behaved consumers of their own cancellation, like `asyncio.timeout()` and AnyIO cancel
+    scopes, balance `Task.cancelling()` back down with `Task.uncancel()`, so a positive count at
+    a step boundary is treated as a still-pending cancellation of the run and re-raised. This is
+    deliberately a *policy*, not a proof of external intent: code awaited by the run that cancels
+    its own task as an internal wake-up and suppresses the `CancelledError` without calling
+    `Task.uncancel()` (a pre-3.11 idiom) will be read as a cancelled run. Call this only after
+    the just-completed step's results have been recorded to message history, so cancellation
+    never discards completed work.
+
+    The re-raise is a fresh `CancelledError`: the originally-injected exception object (and any
+    message it carried) was consumed by whatever absorbed it and cannot be recovered — the
+    cancellation *state* is re-asserted, not the original exception.
+
+    On Python 3.10 `Task.cancelling()` does not exist and this is a no-op: an absorbed external
+    cancellation cannot be reliably detected there, so the cancellation guarantee is documented
+    as best-effort on 3.10.
+    """
+    if sys.version_info < (3, 11):  # pragma: lax no cover
+        return
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:  # pragma: no cover - no running asyncio loop (e.g. a Trio-backed run)
+        return
+    if task is not None and task.cancelling() > 0:
+        raise asyncio.CancelledError('pydantic-ai: re-asserting a cancellation absorbed by a completed step')
+
+
 class Unset:
     """A singleton to represent an unset value."""
 
@@ -435,12 +472,15 @@ def sanitize_tool_name(name: str) -> str:
     return TOOL_NAME_SANITIZER.sub('_', name)
 
 
+TOOL_CALL_ID_PREFIX = 'pyd_ai_'
+
+
 def generate_tool_call_id() -> str:
     """Generate a tool call id.
 
     Ensure that the tool call id is unique.
     """
-    return f'pyd_ai_{uuid.uuid4().hex}'
+    return f'{TOOL_CALL_ID_PREFIX}{uuid.uuid4().hex}'
 
 
 SourceT = TypeVar('SourceT', bound=AsyncIterable[Any], default=AsyncIterable[T])
@@ -539,10 +579,31 @@ def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> s
 
 
 def dataclasses_no_defaults_repr(self: Any) -> str:
-    """Exclude fields with values equal to the field default."""
-    kv_pairs = (
-        f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr and getattr(self, f.name) != f.default
-    )
+    """Exclude fields with values equal to the field default.
+
+    A field is shown when its value differs from an explicit `default`. Fields that are
+    required or that only have a `default_factory` have no plain default to compare against
+    here, so they are always shown (the `default_factory` is deliberately not called: some
+    factories are impure, e.g. `uuid7()` or `now_utc()`, and `repr()` must stay observational).
+
+    The comparison is guarded because a value whose `__ne__`/`__bool__` does not return a plain
+    `bool` (e.g. a numpy array or pandas `Series`/`DataFrame`) would otherwise make `repr()`
+    raise `ValueError`, which breaks logging and traceback formatting of the message history.
+    """
+
+    def include_field(f: Any) -> bool:
+        if not f.repr:
+            return False
+        if f.default is MISSING:
+            return True
+        try:
+            return bool(getattr(self, f.name) != f.default)
+        except Exception:
+            # `repr()` must never raise, regardless of how a field value implements `__ne__`/`__bool__`
+            # (e.g. numpy/pandas return non-bool comparisons), so the broad catch here is intentional.
+            return True
+
+    kv_pairs = (f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if include_field(f))
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
 
@@ -832,4 +893,15 @@ def is_text_like_media_type(media_type: str) -> bool:
         or media_type == 'application/xml'
         or media_type.endswith('+xml')
         or media_type in ('application/x-yaml', 'application/yaml')
+    )
+
+
+def format_inlined_text_file(text: str, *, media_type: str, identifier: str) -> str:
+    """Format text file content with delimiters for inlining into a text prompt."""
+    return '\n'.join(
+        [
+            f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
+            text,
+            f'-----END FILE id="{identifier}"-----',
+        ]
     )
