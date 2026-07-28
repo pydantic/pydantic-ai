@@ -321,3 +321,132 @@ async def test_audio_in_server_vad_transcription_requires_deployment(
     assert isinstance(user_part, SpeechPart)
     assert user_part.speaker == 'user' and user_part.transcript is None and user_part.audio is None
     assert isinstance(messages[1], ModelResponse)
+
+
+async def test_spoken_turn_transcribed_drives_a_tool_and_answers_in_audio(
+    azure_ws_cassette: tuple[AzureProvider, RealtimeCassette], assets_path: Path
+) -> None:
+    """The whole spoken round trip on Azure: heard, transcribed, tool called, answered in speech.
+
+    The other Azure tests each cover one leg — text in/audio out, a text-driven tool call, and audio in
+    with transcription *failing* for want of a deployment. This is the combination a browser voice agent
+    actually runs, with input transcription pointed at a deployment that exists.
+
+    Only realtime-capable transcription models are accepted here: a classic `whisper` deployment is
+    rejected with `DeploymentNotFound` like a missing one, so the deployment has to be of a model such
+    as `gpt-4o-transcribe`.
+    """
+    provider, cassette = azure_ws_cassette
+    model = AzureRealtimeModel(
+        'gpt-realtime',
+        provider=provider,
+        settings=OpenAIRealtimeModelSettings(input_transcription_model='gpt-4o-transcribe'),
+    )
+    agent = Agent(
+        instructions=(
+            'When someone introduces themselves, call `remember_name` with their name, '
+            'then greet them by name in a few words.'
+        )
+    )
+
+    @agent.tool_plain
+    def remember_name(name: str) -> str:
+        """Store the name the user introduced themselves with."""
+        return f'Stored {name}.'
+
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
+
+    events: list[Any] = []
+    async with agent.realtime(model).session(audio_retention='output_audio') as session:
+        # Stream the clip in ~100 ms chunks like a live mic; the trailing silence lets server VAD end it.
+        for start in range(0, len(pcm), 4800):
+            await session.send_audio(pcm[start : start + 4800])
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, TurnCompleteEvent):
+                    break
+
+    # The deployed transcription model is what goes on the wire, not the unusable default.
+    assert sent_frames_containing(cassette, 'gpt-4o-transcribe') == snapshot(
+        [
+            {
+                'type': 'session.update',
+                'session': {
+                    'type': 'realtime',
+                    'instructions': 'When someone introduces themselves, call `remember_name` with their name, then greet them by name in a few words.',
+                    'output_modalities': ['audio'],
+                    'audio': {
+                        'input': {
+                            'format': {'type': 'audio/pcm', 'rate': 24000},
+                            'turn_detection': {
+                                'type': 'server_vad',
+                                'create_response': True,
+                                'interrupt_response': True,
+                            },
+                            'transcription': {'model': 'gpt-4o-transcribe'},
+                        },
+                        'output': {'format': {'type': 'audio/pcm', 'rate': 24000}},
+                    },
+                    'tools': [
+                        {
+                            'type': 'function',
+                            'name': 'remember_name',
+                            'parameters': {
+                                'additionalProperties': False,
+                                'properties': {'name': {'type': 'string'}},
+                                'required': ['name'],
+                                'type': 'object',
+                            },
+                            'description': 'Store the name the user introduced themselves with.',
+                        }
+                    ],
+                },
+            }
+        ]
+    )
+
+    assert [event for event in events if isinstance(event, SessionErrorEvent)] == []
+    assert collapse_event_types(events) == snapshot(
+        [
+            'InputSpeechStartEvent',
+            'InputSpeechEndEvent',
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'PartStartEvent',
+            'PartEndEvent',
+            'FunctionToolCallEvent',
+            'FunctionToolResultEvent',
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'TurnCompleteEvent',
+        ]
+    )
+
+    # The spoken turn was transcribed, so history carries the user's words rather than a bare audio part.
+    messages = session.all_messages()
+    assert isinstance(messages[0], ModelRequest)
+    spoken = messages[0].parts[0]
+    assert isinstance(spoken, SpeechPart)
+    assert spoken.speaker == 'user'
+    assert spoken.transcript == snapshot('Hello, my name is Marcelo.')
+
+    # Those words drove the tool call, with the name taken from the transcribed speech.
+    call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+    result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]
+    assert len(call_events) == 1
+    assert call_events[0].part.tool_name == 'remember_name'
+    assert call_events[0].part.args_as_dict() == snapshot({'name': 'Marcelo'})
+    assert len(result_events) == 1
+    assert isinstance(result_events[0].part, ToolReturnPart)
+
+    # And the answer came back as retained speech, not text.
+    final = messages[-1]
+    assert isinstance(final, ModelResponse)
+    reply = final.parts[-1]
+    assert isinstance(reply, SpeechPart)
+    assert reply.speaker == 'assistant'
+    assert reply.audio is not None and len(reply.audio.data) > 0
+    assert 'marcelo' in (reply.transcript or '').lower()
