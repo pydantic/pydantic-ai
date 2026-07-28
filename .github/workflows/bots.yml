@@ -275,8 +275,10 @@ jobs:
         # Runs for all PRs not authored by a repository maintainer: a same-repo
         # branch (e.g. an automated agent's branch built from an untrusted issue)
         # can carry a poisoned instruction file just as a fork can. Resolve the
-        # actual repository role rather than trusting `author_association`, which
-        # can report `CONTRIBUTOR` for maintainers with private org membership.
+        # actual repository permission rather than trusting `author_association`,
+        # which can report `CONTRIBUTOR` for maintainers with private org
+        # membership. The API's `.permission` maps maintain and custom roles onto
+        # their stable base access level.
         #
         # The path list is that instruction layer, which is wider than what Claude
         # Code autoloads: the root `CLAUDE.md` (system prompt) and `.claude/`, but
@@ -293,10 +295,10 @@ jobs:
         # 300 entries, so it could hide an edit in a large PR). Paths with spaces
         # come through quoted, hence the `"` terminator.
         run: |
-          AUTHOR_ROLE=$(gh api "repos/${{ github.repository }}/collaborators/${PR_AUTHOR}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
-          case "$AUTHOR_ROLE" in
-            write | maintain | admin)
-              echo "PR author ${PR_AUTHOR} has ${AUTHOR_ROLE} access; skipping agent-config guard."
+          AUTHOR_PERMISSION=$(gh api "repos/${{ github.repository }}/collaborators/${PR_AUTHOR}/permission" --jq '.permission' 2>/dev/null || echo "unknown")
+          case "$AUTHOR_PERMISSION" in
+            write | admin)
+              echo "PR author ${PR_AUTHOR} has ${AUTHOR_PERMISSION} access; skipping agent-config guard."
               exit 0
               ;;
           esac
