@@ -14558,7 +14558,7 @@ def test_thread_executor_not_serializable() -> None:
 
 
 def test_thread_executor_deprecated_alias() -> None:
-    from pydantic_ai._warnings import PydanticAIDeprecationWarning
+    from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 
     with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `UseThreadExecutor`'):
         from pydantic_ai.capabilities import ThreadExecutor
