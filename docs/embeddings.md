@@ -111,7 +111,7 @@ Support is per model, not per provider, and is declared by [`EmbeddingModel.supp
 
 | Model | Modalities |
 |-------|------------|
-| `google:gemini-embedding-2` | text, image, audio, video, document |
+| `google:gemini-embedding-2`, `google:gemini-embedding-2-preview` | text, image, audio, video, document |
 | Every other built-in provider model | text |
 | [`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] | all of them, so you can test a multimodal pipeline without calling a provider |
 
@@ -135,7 +135,7 @@ Task conditioning interacts with multimodal inputs — see [Task Conditioning](#
 
 All modalities share one 8,192-token context window, and **Google silently truncates** anything over it rather than raising: a long document plus text can lose the tail without any error. [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens] only counts text, so there's no way to check a file's size up front.
 
-Two more things to know about `gemini-embedding-2`. On Vertex it accepts only one input per request, so embed a batch one input at a time there; on the Gemini API a batch is fine. And [`EmbeddingResult.usage`][pydantic_ai.embeddings.EmbeddingResult.usage] reports 0 tokens on the Gemini API — the API does return a per-modality token count, but `google-genai` discards it before Pydantic AI can read it, so cost comes out as 0. Vertex reports usage normally.
+Two more things to know about `gemini-embedding-2`, both of which apply to `gemini-embedding-2-preview` too. On Vertex it accepts only one input per request, so embed a batch one input at a time there; on the Gemini API a batch is fine. And [`EmbeddingResult.usage`][pydantic_ai.embeddings.EmbeddingResult.usage] reports 0 tokens on the Gemini API — the API does return a per-modality token count, but `google-genai` discards it before Pydantic AI can read it, so cost comes out as 0. Vertex reports usage normally.
 
 ## Choosing a model
 
