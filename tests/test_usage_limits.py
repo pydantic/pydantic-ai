@@ -360,6 +360,15 @@ def test_usage_opentelemetry_attributes_include_zero_details():
         'gen_ai.usage.details.reasoning_tokens': 0,
     }
 
+    # Provider data can put a `None` in `details` despite the `dict[str, int]` annotation, and `None` is
+    # not a valid OTel attribute value, so it's the one thing the guard still drops.
+    usage.details = {'reasoning_tokens': 0, 'unreported_tokens': None}  # pyright: ignore[reportAttributeAccessIssue]
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 100,
+        'gen_ai.usage.output_tokens': 50,
+        'gen_ai.usage.details.reasoning_tokens': 0,
+    }
+
 
 def test_opentelemetry_attributes_excludes_first_class_token_details():
     """`details` entries named like a first-class token attribute must never be emitted under `details.*`.
