@@ -137,6 +137,22 @@ async def test_bedrock_client_property_can_be_reassigned(bedrock_provider: Bedro
     assert model.base_url == 'https://bedrock-runtime.example.com'
 
 
+async def test_bedrock_model_blocks_requests_when_disabled():
+    model = _bedrock_model_with_client_error(ClientError({'Error': {'Code': 'TestError'}}, 'Converse'))
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hello')]
+    model_request_parameters = ModelRequestParameters()
+
+    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+        await model.request(messages, None, model_request_parameters)
+
+    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+        async with model.request_stream(messages, None, model_request_parameters):
+            pass
+
+    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+        await model.count_tokens(messages, None, model_request_parameters)
+
+
 def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
     """Instantiate a BedrockConverseModel wired to always raise the given error."""
     return BedrockConverseModel(
@@ -248,7 +264,7 @@ async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_pr
     assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
 
 
-async def test_bedrock_request_non_http_error():
+async def test_bedrock_request_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse')
     model = _bedrock_model_with_client_error(error)
     params = ModelRequestParameters()
@@ -261,7 +277,7 @@ async def test_bedrock_request_non_http_error():
     )
 
 
-async def test_bedrock_count_tokens_non_http_error():
+async def test_bedrock_count_tokens_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'count_tokens')
     model = _bedrock_model_with_client_error(error)
     params = ModelRequestParameters()
@@ -395,7 +411,7 @@ async def test_bedrock_count_tokens_tool_config(
     )
 
 
-async def test_bedrock_stream_non_http_error():
+async def test_bedrock_stream_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
     model = _bedrock_model_with_client_error(error)
     params = ModelRequestParameters()

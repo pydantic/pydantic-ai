@@ -3952,6 +3952,9 @@ def test_temporal_run_context_serializes_usage():
             input_tokens=123,
             output_tokens=456,
             details={'foo': 1},
+            future_tokens=7,
+            label='original',
+            zero_tokens=0,
         ),
         run_id='run-123',
     )

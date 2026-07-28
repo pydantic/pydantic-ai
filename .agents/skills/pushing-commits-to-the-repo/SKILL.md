@@ -15,6 +15,8 @@ is left unresolved.**
   the user's instructions override this.
 - Run `pre-push-review`. Address every finding, commit the fixes, and repeat the review until it
   returns no findings. This applies before the first PR push and between every later PR iteration.
+- Never force-push an open PR branch. Push follow-up commits so previous reviews remain valid;
+  maintainers can squash them when merging.
 - Attempt the push. If it fails, read the real error — do not preemptively decide you lack
   permission from a flag or setting.
 

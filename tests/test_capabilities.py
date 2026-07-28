@@ -52,9 +52,9 @@ from pydantic_ai.capabilities import (
     SelectModel,
     SetToolMetadata,
     Thinking,
-    ThreadExecutor,
     ToolSearch,
     Toolset,
+    UseThreadExecutor,
     WebFetch,
     WebSearch,
     WrapperCapability,
@@ -554,6 +554,7 @@ def test_model_json_schema_with_capabilities():
                                     'enum': [
                                         'claude-fable-5',
                                         'claude-mythos-5',
+                                        'claude-opus-5',
                                         'claude-opus-4-8',
                                         'claude-opus-4-7',
                                         'claude-opus-4-6',
@@ -713,6 +714,7 @@ def test_model_json_schema_with_capabilities():
                         'anthropic:claude-opus-4-6',
                         'anthropic:claude-opus-4-7',
                         'anthropic:claude-opus-4-8',
+                        'anthropic:claude-opus-5',
                         'anthropic:claude-sonnet-4-5',
                         'anthropic:claude-sonnet-4-5-20250929',
                         'anthropic:claude-sonnet-4-6',
@@ -762,6 +764,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:global.anthropic.claude-opus-4-6-v1',
                         'bedrock:global.anthropic.claude-opus-4-7',
                         'bedrock:global.anthropic.claude-opus-4-8',
+                        'bedrock:global.anthropic.claude-opus-5',
                         'bedrock:global.anthropic.claude-sonnet-5',
                         'bedrock:google.gemma-3-12b-it',
                         'bedrock:google.gemma-3-27b-it',
@@ -817,6 +820,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.anthropic.claude-opus-4-6-v1',
                         'bedrock:us.anthropic.claude-opus-4-7',
                         'bedrock:us.anthropic.claude-opus-4-8',
+                        'bedrock:us.anthropic.claude-opus-5',
                         'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
                         'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'bedrock:us.anthropic.claude-sonnet-4-6',
@@ -860,6 +864,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-opus-4-6',
                         'gateway/anthropic:claude-opus-4-7',
                         'gateway/anthropic:claude-opus-4-8',
+                        'gateway/anthropic:claude-opus-5',
                         'gateway/anthropic:claude-sonnet-4-5',
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
                         'gateway/anthropic:claude-sonnet-4-6',
@@ -877,6 +882,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:global.anthropic.claude-opus-4-6-v1',
                         'gateway/bedrock:global.anthropic.claude-opus-4-7',
                         'gateway/bedrock:global.anthropic.claude-opus-4-8',
+                        'gateway/bedrock:global.anthropic.claude-opus-5',
                         'gateway/bedrock:global.anthropic.claude-sonnet-5',
                         'gateway/bedrock:google.gemma-3-12b-it',
                         'gateway/bedrock:google.gemma-3-27b-it',
@@ -910,6 +916,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:us.anthropic.claude-opus-4-6-v1',
                         'gateway/bedrock:us.anthropic.claude-opus-4-7',
                         'gateway/bedrock:us.anthropic.claude-opus-4-8',
+                        'gateway/bedrock:us.anthropic.claude-opus-5',
                         'gateway/bedrock:us.anthropic.claude-sonnet-5',
                         'gateway/bedrock:us.meta.llama4-maverick-17b-instruct-v1:0',
                         'gateway/bedrock:us.meta.llama4-scout-17b-instruct-v1:0',
@@ -14547,7 +14554,20 @@ class TestCompaction:
 
 
 def test_thread_executor_not_serializable() -> None:
-    assert ThreadExecutor.get_serialization_name() is None
+    assert UseThreadExecutor.get_serialization_name() is None
+
+
+def test_thread_executor_deprecated_alias() -> None:
+    from pydantic_ai.exceptions import PydanticAIDeprecationWarning
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `UseThreadExecutor`'):
+        from pydantic_ai.capabilities import ThreadExecutor
+    assert ThreadExecutor is UseThreadExecutor
+
+    # The defining module resolves the old name too, so unpickling keeps working.
+    with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `UseThreadExecutor`'):
+        from pydantic_ai.capabilities.thread_executor import ThreadExecutor as submodule_thread_executor
+    assert submodule_thread_executor is UseThreadExecutor
 
 
 async def test_thread_executor_capability() -> None:
@@ -14560,7 +14580,7 @@ async def test_thread_executor_capability() -> None:
 
     executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='cap-pool')
     try:
-        agent = Agent(FunctionModel(model_function), capabilities=[ThreadExecutor(executor)])
+        agent = Agent(FunctionModel(model_function), capabilities=[UseThreadExecutor(executor)])
 
         @agent.tool_plain
         def check_thread() -> str:

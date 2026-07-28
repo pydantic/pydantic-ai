@@ -352,4 +352,14 @@ The head commit above is checked out for you, so files you `Read` are the PR's v
 Your review comments are pinned to that pull request for you; you do not pass a pull
 request number to `create_pull_request_review_comment` or `submit_pull_request_review`.
 
+Begin the `submit_pull_request_review` body with this line, then a blank line:
+
+Reviewed at `${{ needs.eligibility.outputs.head_sha }}`.
+
+Someone can push while you are running. Your review is posted minutes after you read
+the files, and GitHub attributes it to whatever the head commit is at that moment, not
+to the commit you read. When those differ, a reader who checks your finding against the
+commit GitHub named finds a quote that is not there and concludes you made it up — this
+has already happened. That line is how they can tell.
+
 ${{ needs.fetch_dynamic_prompt.outputs.dynamic_prompt }}
