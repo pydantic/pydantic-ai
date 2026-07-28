@@ -1639,6 +1639,38 @@ async def test_anthropic_task_budget_rejects_unsupported_model(allow_model_reque
         await agent.run('Hello')
 
 
+@pytest.mark.parametrize('effort', ['xhigh', 'max'])
+async def test_anthropic_opus_5_rejects_top_effort_when_thinking_disabled(
+    allow_model_requests: None, effort: Literal['xhigh', 'max']
+):
+    """Claude Opus 5 caps effort at `high` once thinking is explicitly disabled.
+
+    Verified live: `claude-opus-5` returns a 400 (`output_config.effort 'xhigh' is not supported
+    when thinking is disabled on this model`) for `xhigh` and `max`, while `claude-opus-4-8`
+    accepts the same combination. We surface it as a `UserError` before sending the request.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'disabled'},
+        anthropic_effort=effort,
+    )
+    model = AnthropicModel('claude-opus-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings)
+
+    with pytest.raises(UserError, match='does not support `anthropic_effort='):
+        await Agent(model).run('Hello')
+
+    # Opus 4.8 has the flag off, so the same settings go through untouched.
+    allowed = AnthropicModel(
+        'claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings
+    )
+    assert (await Agent(allowed).run('Hello')).output == 'Hello!'
+
+
 async def test_anthropic_task_budget_remaining_rejects_server_side_compaction(allow_model_requests: None):
     """`task_budget.remaining` and `AnthropicCompaction` are mutually exclusive.
 
@@ -4229,6 +4261,28 @@ async def test_anthropic_opus_48_features(allow_model_requests: None, anthropic_
     assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
         {
             'model': 'claude-opus-4-8',
+            'thinking': {'type': 'adaptive', 'display': 'summarized'},
+            'output_config': {'effort': 'xhigh'},
+        }
+    )
+    assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+async def test_anthropic_opus_5_features(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'},
+        anthropic_effort='xhigh',
+    )
+    m = AnthropicModel('claude-opus-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('What is 2+2?')
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.model_name == 'claude-opus-5'
+    request_body = single_request_body(vcr)
+    assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
+        {
+            'model': 'claude-opus-5',
             'thinking': {'type': 'adaptive', 'display': 'summarized'},
             'output_config': {'effort': 'xhigh'},
         }
