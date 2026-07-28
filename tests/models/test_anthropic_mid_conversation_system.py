@@ -15,7 +15,7 @@ from __future__ import annotations as _annotations
 
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -53,6 +53,28 @@ pytestmark = [
 ]
 
 INSTRUCTION = 'From now on, every suggestion must include explicit type annotations.'
+
+
+@pytest.fixture
+def rendered_messages(monkeypatch: pytest.MonkeyPatch) -> list[list[dict[str, Any]]]:
+    """The `messages` array the adapter renders, per request, as it goes out.
+
+    `single_request_body` reads the request stored in the *cassette*, and VCR is configured to match
+    on method, path and host only, so a rendering change still replays its recording and keeps
+    asserting the recorded body — the trap `tests/AGENTS.md` calls out. Every test below therefore
+    also asserts that what the adapter produces today equals what the recording captured, which is
+    what makes the snapshots evidence about live behavior rather than about the file.
+    """
+    rendered: list[list[dict[str, Any]]] = []
+    map_message = AnthropicModel._map_message  # pyright: ignore[reportPrivateUsage]
+
+    async def capture(self: AnthropicModel, *args: Any, **kwargs: Any) -> Any:
+        system_prompt, anthropic_messages = await map_message(self, *args, **kwargs)
+        rendered.append(cast('list[dict[str, Any]]', anthropic_messages))
+        return system_prompt, anthropic_messages
+
+    monkeypatch.setattr(AnthropicModel, '_map_message', capture)
+    return rendered
 
 
 @pytest.fixture
@@ -144,7 +166,11 @@ CASES = [
 
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_mid_conversation_system_prompt(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, case: Case
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    vcr: Cassette,
+    rendered_messages: list[list[dict[str, Any]]],
+    case: Case,
 ):
     """A non-leading `SystemPromptPart` gets its own `system` entry only on models that accept the role.
 
@@ -162,12 +188,13 @@ async def test_mid_conversation_system_prompt(
     assert 'def add(a: int, b: int) -> int:' in result.output
 
     body = single_request_body(vcr)
+    assert rendered_messages == [body['messages']]
     assert body['system'] == 'You are a code reviewer.'
     assert body['messages'] == case.expected_messages
 
 
 async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
 ):
     """`anthropic_cache_messages` puts its breakpoint on the trailing `system` entry, and the API takes it.
 
@@ -184,6 +211,7 @@ async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
     assert 'def add(a: int, b: int) -> int:' in result.output
 
     body = single_request_body(vcr)
+    assert rendered_messages == [body['messages']]
     assert body['messages'][-1] == snapshot(
         {
             'role': 'system',
@@ -199,7 +227,7 @@ async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
 
 
 async def test_mid_conversation_system_prompt_without_user_turn(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
 ):
     """Without a user turn to follow, the instruction degrades to the `<system>`-tagged rendering.
 
@@ -216,6 +244,7 @@ async def test_mid_conversation_system_prompt_without_user_turn(
     assert 'def add(a: int, b: int) -> int:' in result.output
 
     body = single_request_body(vcr)
+    assert rendered_messages == [body['messages']]
     assert body['system'] == 'You are a code reviewer.'
     assert body['messages'] == snapshot(
         [
@@ -235,7 +264,7 @@ async def test_mid_conversation_system_prompt_without_user_turn(
 
 
 async def test_mid_conversation_system_prompt_before_another_request(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
 ):
     """A system entry that a *user* turn would follow keeps the `<system>` wrap.
 
@@ -262,6 +291,7 @@ async def test_mid_conversation_system_prompt_before_another_request(
     assert 'def add(a: int, b: int) -> int:' in reply.content
 
     body = single_request_body(vcr)
+    assert rendered_messages == [body['messages']]
     assert body['system'] == 'You are a code reviewer.'
     assert body['messages'] == snapshot(
         [
@@ -282,7 +312,7 @@ async def test_mid_conversation_system_prompt_before_another_request(
 
 
 async def test_mid_conversation_system_prompt_kept_mid_history(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
 ):
     """An instruction with a real response after it keeps the native entry, mid-history.
 
@@ -314,6 +344,7 @@ async def test_mid_conversation_system_prompt_kept_mid_history(
     assert 'def mul(a: int, b: int) -> int:' in reply.content
 
     body = single_request_body(vcr)
+    assert rendered_messages == [body['messages']]
     assert [message['role'] for message in body['messages']] == snapshot(
         ['user', 'assistant', 'user', 'system', 'assistant', 'user']
     )
@@ -328,7 +359,7 @@ async def test_mid_conversation_system_prompt_kept_mid_history(
 
 
 async def test_mid_conversation_system_prompt_before_empty_response(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
 ):
     """A `ModelResponse` that renders to nothing doesn't count as the assistant turn to follow.
 
@@ -353,6 +384,7 @@ async def test_mid_conversation_system_prompt_before_empty_response(
     assert 'def add(a: int, b: int) -> int:' in reply.content
 
     body = single_request_body(vcr)
+    assert rendered_messages == [body['messages']]
     assert [message['role'] for message in body['messages']] == snapshot(['user', 'assistant', 'user', 'user'])
     assert body['messages'][2]['content'] == snapshot(
         [
@@ -365,7 +397,10 @@ async def test_mid_conversation_system_prompt_before_empty_response(
 
 
 async def test_mid_conversation_system_prompt_unsupported_client(
-    allow_model_requests: None, anthropic_bedrock_client: AsyncAnthropicBedrock, vcr: Cassette
+    allow_model_requests: None,
+    anthropic_bedrock_client: AsyncAnthropicBedrock,
+    vcr: Cassette,
+    rendered_messages: list[list[dict[str, Any]]],
 ):
     """Bedrock doesn't serve the `system` role, so a supported model still gets the `<system>` wrap.
 
@@ -385,6 +420,7 @@ async def test_mid_conversation_system_prompt_unsupported_client(
     assert 'def add(a: int, b: int) -> int:' in result.output
 
     body = single_request_body(vcr)
+    assert rendered_messages == [body['messages']]
     assert body['system'] == 'You are a code reviewer.'
     assert body['messages'] == snapshot(
         [
