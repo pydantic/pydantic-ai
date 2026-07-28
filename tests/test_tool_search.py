@@ -2358,6 +2358,8 @@ def _assert_anthropic_native_search_replay(
 
 @pytest.mark.vcr
 @pytest.mark.moves_cache_prefix(reason='cross-provider replay rewrites native tool-search history')
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
 async def test_live_tool_search_handoff_anthropic_to_openai(
     allow_model_requests: None,
     anthropic_api_key: str,
@@ -2385,6 +2387,8 @@ async def test_live_tool_search_handoff_anthropic_to_openai(
 
 @pytest.mark.vcr
 @pytest.mark.moves_cache_prefix(reason='cross-provider replay rewrites native tool-search history')
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
 async def test_live_tool_search_handoff_openai_to_anthropic(
     allow_model_requests: None,
     anthropic_api_key: str,
@@ -2412,6 +2416,8 @@ async def test_live_tool_search_handoff_openai_to_anthropic(
 
 @pytest.mark.vcr
 @pytest.mark.moves_cache_prefix(reason='cross-provider replay rewrites native tool-search history')
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
 async def test_live_tool_search_handoff_anthropic_openai_anthropic(
     allow_model_requests: None,
     anthropic_api_key: str,
