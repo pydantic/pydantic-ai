@@ -265,6 +265,43 @@ async def cancel_and_drain(*tasks: asyncio.Task[Any], msg: object = None) -> Non
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+def raise_if_cancelling() -> None:
+    """Re-assert an external cancellation that a completed step absorbed (level-triggered backstop).
+
+    A step the run awaits — a Temporal activity under `WAIT_CANCELLATION_COMPLETED`, an
+    `event_stream_handler`, a capability hook — can catch the `CancelledError` injected by
+    `task.cancel()` and return normally. asyncio even *delegates* a task's cancellation to the
+    future it is currently awaiting, so an awaited child task that absorbs its cancel silently
+    completes the awaiting task too. Either way the cancellation is an edge the framework never
+    sees, and without a re-check the run would complete as if it was never cancelled.
+
+    Well-behaved consumers of their own cancellation, like `asyncio.timeout()` and AnyIO cancel
+    scopes, balance `Task.cancelling()` back down with `Task.uncancel()`, so a positive count at
+    a step boundary is treated as a still-pending cancellation of the run and re-raised. This is
+    deliberately a *policy*, not a proof of external intent: code awaited by the run that cancels
+    its own task as an internal wake-up and suppresses the `CancelledError` without calling
+    `Task.uncancel()` (a pre-3.11 idiom) will be read as a cancelled run. Call this only after
+    the just-completed step's results have been recorded to message history, so cancellation
+    never discards completed work.
+
+    The re-raise is a fresh `CancelledError`: the originally-injected exception object (and any
+    message it carried) was consumed by whatever absorbed it and cannot be recovered — the
+    cancellation *state* is re-asserted, not the original exception.
+
+    On Python 3.10 `Task.cancelling()` does not exist and this is a no-op: an absorbed external
+    cancellation cannot be reliably detected there, so the cancellation guarantee is documented
+    as best-effort on 3.10.
+    """
+    if sys.version_info < (3, 11):  # pragma: lax no cover
+        return
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:  # pragma: no cover - no running asyncio loop (e.g. a Trio-backed run)
+        return
+    if task is not None and task.cancelling() > 0:
+        raise asyncio.CancelledError('pydantic-ai: re-asserting a cancellation absorbed by a completed step')
+
+
 class Unset:
     """A singleton to represent an unset value."""
 
