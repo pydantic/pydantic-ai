@@ -910,29 +910,30 @@ class RealtimeSession:
         # output item, so a truncate sent afterwards could no-op. Both frames go out under one hold of
         # the send lock, so a tool result completing in between can't start a new response for the
         # cancel to hit instead.
-        self._start_pump()
-        async with self._send_lock:
-            if audio_end_ms is not None:
-                await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
-            await self._connection.send(CancelResponse())
+        await self._send_frame(
+            *([TruncateOutput(audio_end_ms=audio_end_ms)] if audio_end_ms is not None else []),
+            CancelResponse(),
+        )
         self._pending_interrupted_at_ms = audio_end_ms
         # Mark the barge-in in the trace. When the caller supplied `audio_end_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
         # the user cut in; it's dropped when absent (a cancel without truncation).
         self._record_lifecycle_event('interrupt', audio_end_ms=audio_end_ms)
 
-    async def _send_frame(self, content: RealtimeInput) -> None:
-        """Send one input to the provider, serialized against every other outbound frame.
+    async def _send_frame(self, *contents: RealtimeInput) -> None:
+        """Send inputs to the provider as one group, serialized against every other outbound frame.
 
         A single input can expand to several protocol frames (a `ToolResult` creates the conversation
         item and then asks for a response), so the lock is what makes each input indivisible on the
-        wire, not just ordered.
+        wire, not just ordered. Passing several inputs extends that indivisibility across them, for
+        the cases where an interleaved frame would change what they mean.
         """
         self._ensure_not_closed()
         self._start_pump()
         async with self._send_lock:
             try:
-                await self._connection.send(content)
+                for content in contents:
+                    await self._connection.send(content)
             except self._connection.transport_errors as e:
                 # A send that fails because the link is gone is the same failure the receive side
                 # reports; surface it as the same typed error rather than leaking a `websockets` or

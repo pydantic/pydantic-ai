@@ -1895,6 +1895,11 @@ async def test_transport_failure_while_sending_becomes_a_realtime_error() -> Non
     assert isinstance(exc_info.value.__cause__, ConnectionResetError)
     assert isinstance(exc_info.value, ModelAPIError)
 
+    # `interrupt()` sends its truncate and cancel under one hold of the send lock rather than through
+    # the ordinary path, so it needs the same mapping.
+    with pytest.raises(RealtimeError, match='failed while sending'):
+        await session.interrupt(audio_end_ms=120)
+
     # A session built straight from a connection may not know any model id to attribute this to.
     anonymous = RealtimeSession(_DisconnectedConnection([]))
     with pytest.raises(RealtimeError) as exc_info:
