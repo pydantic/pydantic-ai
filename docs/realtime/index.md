@@ -328,11 +328,19 @@ representation.
 
 #### Concurrent tools
 
-Every tool call runs concurrently with the session. The model can keep talking (or stay silent) while
-the tool works, and receives the result as soon as it is ready, so slow tools do not freeze the
-conversation. The [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] streams
-when the tool finishes; [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] keeps
-the result adjacent to its call so the history remains valid for a text-agent handoff.
+Every tool call runs concurrently with the session: Pydantic AI executes it in the background, so the
+session keeps streaming events and a slow tool never blocks turn tracking, other tools, or your event
+loop. The [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] streams when the
+tool finishes; [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] keeps the result
+adjacent to its call so the history remains valid for a text-agent handoff.
+
+Whether the *model* keeps speaking while it waits is a separate, provider-side question. OpenAI and
+Azure realtime models do by default — they're tuned to fill the gap rather than go quiet. Gemini stops
+generating until the result arrives unless you opt into
+[`google_async_tool_calls`](gemini.md#tool-calls-that-dont-stop-the-conversation), and xAI does not
+report the behavior either way. The model profile's
+[`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]
+tells you which models can.
 
 !!! note "Deferred and approval-required tools"
     Deferred and approval-required calls can be resolved inline by
@@ -612,6 +620,14 @@ with `gen_ai.output.type` set to the same value, and each tool call gets an
 several response spans, since a turn that calls tools is split into a response per step; the
 zero-duration `turn complete` span marks the end of the turn itself, alongside `user speech started`
 and `interrupt`. A response cut off by a barge-in carries `pydantic_ai.response.state='interrupted'`.
+
+The span *names* follow the OpenTelemetry GenAI conventions (`invoke_agent`, `chat`,
+`execute_tool`), so any OTel backend sees what it expects. The friendlier names in the parentheses
+above are display names, which Logfire renders in place of the span name; a different backend shows
+the conventional name. Every realtime span also carries `pydantic_ai.realtime=True`, which is how
+Logfire recognizes a session and how you can filter realtime traffic out of (or into) a query
+anywhere else.
+
 See [Debugging and monitoring](../logfire.md).
 
 OpenAI, Azure OpenAI, and xAI `chat` spans carry the response's own usage, including function-call-only responses.
@@ -624,7 +640,7 @@ import logfire
 
 logfire.configure()
 logfire.instrument_pydantic_ai()
-# realtime_session spans now appear in Logfire
+# `invoke_agent`, `chat`, and `execute_tool` spans now appear in Logfire
 ```
 
 ## Connecting a frontend
