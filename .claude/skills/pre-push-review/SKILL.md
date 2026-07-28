@@ -1,9 +1,12 @@
 ---
-description: Review the current branch against main, simulating the automatic CI Review before there is a PR
+description: Run a high-judgment local review of the current branch before pushing, both before a
+  PR exists and between PR iterations
 allowed-tools:
   - Read
   - Glob
   - Grep
+  - Bash(gh issue view:*)
+  - Bash(gh pr view:*)
   - Bash(git diff:*)
   - Bash(git log:*)
   - Bash(git merge-base:*)
@@ -15,53 +18,53 @@ allowed-tools:
 
 # Pre-push Review
 
-Run the `CI Review` reviewer's judgment against your branch before there is a PR for it
-to run on.
+Use the strongest locally available reviewer to catch problems while they are still cheap
+to fix. Run this before the first push and again before every later push to an existing PR.
 
-## Where the review itself is defined
+This is the local counterpart to `douwebot`: a high-judgment standards review paid for by
+the developer's model subscription. It is independent of the automatic `CI Review`, which
+runs on GitHub after CI passes.
 
-Read these rather than reviewing from memory. This skill deliberately does not duplicate
-committed review policy, so it cannot fall out of step with it:
+## Read the review rubric
 
-- **What to look for, how to prioritise, how to word a finding** —
-  `.github/workflows/shared/prompts/pydantic-ai-pr-review.md`, the complete committed
-  seed prompt and the fallback CI runs when no managed prompt is served. Production may
-  serve a newer prompt from the Logfire managed variable, so this is the committed
-  baseline rather than a record of what ran on any given PR.
-- **The severity scale, the false-positive catalog, and the calibration examples** — the
-  `review-instructions.md` heredoc in `scripts/gather-pydantic-ai-review-context.sh`. At
-  runtime the reviewer reads that file out of `.review-context/`; locally, read the
-  heredoc.
-- **How the reviewer is triggered, gated and fed its context** —
-  `.github/workflows/pydantic-ai-pr-review.md`.
+Read the `prompt:` of the `douwebot` review job in `.github/workflows/bots.yml`. It is the
+source of truth for what to look for, how to prioritise concerns, and what makes feedback
+useful. Apply its review judgment and comment-quality rules, but ignore its hosted workflow
+mechanics: triggers, checkout, model selection, pre-gathered file paths, and GitHub comment
+tools.
 
-(`bots.yml`'s `douwebot` job is a different reviewer — on-demand, label-triggered, no
-verdict. It is not what this skill simulates.)
+Read the root `AGENTS.md`, `agent_docs/index.md` and its relevant topic guides, plus every
+directory-specific `AGENTS.md` governing a changed file.
 
-## Gather the context locally
+## Gather local and PR context
 
-There is no PR, so assemble the equivalent yourself:
+First run `gh pr view` for the current branch.
+
+- **If a PR exists**, read its title, body, base branch, linked issue, comments and reviews.
+  Review the entire branch diff against that base, not just the latest commit. Use the
+  existing discussion to avoid duplicate findings and to detect concerns that remain
+  unresolved after an iteration.
+- **If no PR exists**, use `main` as the base and review against the task context available
+  locally. Skip only PR metadata that does not exist; scope and readiness are still valid
+  review concerns.
+
+Gather the corresponding local state:
 
 ```bash
-git merge-base main HEAD
-git diff main...HEAD --stat
-git diff main...HEAD -W
+git status --short
+git merge-base <base> HEAD
+git diff <base>...HEAD --stat
+git diff <base>...HEAD -W
+git diff HEAD
 ```
 
-Read a large diff in chunks, core implementation before tests, and skip generated files
-(`uv.lock`, cassettes).
+The last command includes staged and unstaged work that has not reached `HEAD`. Read a large
+diff in chunks, core implementation before tests, and skip generated files (`uv.lock`,
+cassettes).
 
-Then read the root `AGENTS.md` plus the directory-specific `AGENTS.md` for each directory
-containing changed files.
+## Return the review locally
 
-## Local adaptations
-
-The prompt assumes a PR exists. Four things change without one:
-
-- **Skip everything PR-scoped** — no description, linked issues, duplicate-PR check, or
-  prior review threads.
-- **Skip "should this change exist"** — the user has already decided it should.
-- **Skip the verdict.** There is nothing to approve or request changes on; the findings
-  are the output.
-- **Emit findings as text**, not inline comments — file:line, the problem, the fix.
-  Group by severity, highest first. Say so plainly when there are none.
+Do not post comments, submit a GitHub review, or modify the branch. Return only actionable
+findings as text: `file:line`, the problem, and the concrete fix. Put higher-level concerns
+before lower-level ones, following the ordering in the `douwebot` rubric. Say plainly when
+there are no findings.

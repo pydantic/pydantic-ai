@@ -1,8 +1,8 @@
 ---
 name: pushing-commits-to-the-repo
-description: What to do after you push — watch CI to green, triage every review comment to a reply
-  and a reaction, and escalate genuine design trade-offs to maintainers. Use whenever you push a
-  commit to a PR.
+description: What to do before and after you push — run a local review, watch CI to green, triage
+  every review comment to a reply and a reaction, and escalate genuine design trade-offs to
+  maintainers. Use whenever you push a commit to a PR.
 ---
 
 # pushing-commits-to-the-repo
@@ -11,9 +11,12 @@ Pushing starts a loop; it does not end the task. **Work stops only when CI is gr
 is left unresolved.**
 
 ## Before you push
+- Commit the exact state you intend to push. Leave nothing staged, unstaged or uncommitted unless
+  the user's instructions override this.
+- Run `pre-push-review`. Address every finding, commit the fixes, and repeat the review until it
+  returns no findings. This applies before the first PR push and between every later PR iteration.
 - Attempt the push. If it fails, read the real error — do not preemptively decide you lack
   permission from a flag or setting.
-- Leave nothing unstaged or uncommitted locally, unless the user's instructions override this.
 
 ## After you push — the loop
 1. **Watch CI to a terminal state.** Don't idle. If it fails, diagnose: fix if the failure is
