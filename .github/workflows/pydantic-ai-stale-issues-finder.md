@@ -69,19 +69,31 @@ safe-outputs:
     expires: 7d
     # Note: elastic uses 2d with twice-weekly schedule. Adjust 'expires'
     # and the schedule together if you change run frequency.
+  threat-detection:
+    # The detection sub-agent runs the same MiniMax model behind its own budget
+    # and deliberately does not inherit the root `max-ai-credits`, so it needs
+    # the same switch — otherwise detection 400s and every safe output is
+    # dropped with an "agentic threat detected" banner.
+    max-ai-credits: -1
 timeout-minutes: 60
-# AI-credits pricing for MiniMax-M3, in dollars per 1M tokens. Required: the
-# model is absent from the AWF api-proxy's built-in table, so without it
-# v0.83.4 rejects every request with HTTP 400 `unknown_model_ai_credits`, and
-# the guardrail cannot be switched off (`apiProxy.maxAiCredits` is emitted
-# unconditionally and must be > 0). gh-aw does not merge this key in from
-# imports, so it is declared per workflow rather than in
-# shared/engine-minimax.md — keep the rates there in step with these.
+# Disable the api-proxy's AI-credits budget (and the token steering that rides
+# on it). `MiniMax-M3` is absent from both the AWF built-in pricing table and
+# its bundled models.dev catalog, so while the budget is active every request
+# is rejected with HTTP 400 `unknown_model_ai_credits`.
+#
+# Neither documented pricing escape hatch reaches the proxy on AWF v0.27.42
+# (the version gh-aw v0.83.4 pins, and the newest released):
+#   - `models.default-ai-credits-pricing` compiles into
+#     `apiProxy.defaultAiCreditsPricing`, but AWF parses that key and then
+#     drops it before building the api-proxy environment, so the container
+#     never receives `AWF_DEFAULT_AI_CREDITS_PRICING`.
+#   - `models.providers` compiles into `apiProxy.providers` only for
+#     AWF >= v0.27.43, which has not been released.
+# Restore a budget here once AWF >= v0.27.43 ships.
+max-ai-credits: -1
+# MiniMax pricing for run cost reporting (`GH_AW_INFO_MODEL_COSTS`), in dollars
+# per 1M tokens. The compiler passes these through unscaled.
 models:
-  default-ai-credits-pricing:
-    input: 0.6
-    output: 2.4
-    cache_read: 0.12
   providers:
     anthropic:
       models:
