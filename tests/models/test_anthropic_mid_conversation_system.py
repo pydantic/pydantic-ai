@@ -441,7 +441,10 @@ async def test_two_mid_conversation_system_prompts_keep_their_order(
     )
     reply = response.parts[-1]
     assert isinstance(reply, TextPart)
-    assert 'def add(a: int, b: int) -> int:' in reply.content
+    # Both instructions applied: the annotation on the parameter (the model is free to pick the
+    # type), and the complexity note. Asserting the exact signature would pin a choice neither
+    # instruction constrains.
+    assert 'def add(a: int' in reply.content
     assert 'O(1)' in reply.content
 
     body = single_request_body(vcr)
