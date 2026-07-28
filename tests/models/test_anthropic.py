@@ -132,6 +132,7 @@ with try_import() as imports_successful:
         BetaMessageDeltaUsage,
         BetaMessageIterationUsage,
         BetaMessageTokensCount,
+        BetaOutputTokensDetails,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
         BetaRawContentBlockStopEvent,
@@ -429,6 +430,36 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
     )
     last_message = message(result.all_messages(), ModelResponse, index=-1)
     assert last_message.cost().total_price == snapshot(Decimal('0.00002688'))
+
+
+async def test_async_request_thinking_tokens(allow_model_requests: None):
+    """Anthropic reports reasoning tokens at `usage.output_tokens_details.thinking_tokens`.
+
+    They are billed within `output_tokens`, so the detail is a readable subset of the output total
+    and must not be added to it.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='world', type='text')],
+        usage=BetaUsage(
+            input_tokens=3,
+            output_tokens=100,
+            output_tokens_details=BetaOutputTokensDetails(thinking_tokens=40),
+        ),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            input_tokens=3,
+            output_tokens=100,
+            details={'input_tokens': 3, 'output_tokens': 100, 'thinking_tokens': 40},
+        )
+    )
+    assert result.usage.total_tokens == snapshot(103)
 
 
 async def test_cache_point_adds_cache_control(allow_model_requests: None):
@@ -4266,6 +4297,9 @@ async def test_anthropic_opus_48_features(allow_model_requests: None, anthropic_
         }
     )
     assert any(isinstance(p, TextPart) for p in response.parts)
+    # Thinking was enabled but the recording reports `thinking_tokens: 0`, which is omitted
+    # rather than written as a zero.
+    assert 'thinking_tokens' not in result.usage.details
 
 
 async def test_anthropic_opus_5_features(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
@@ -4863,6 +4897,29 @@ def test_streaming_usage():
     final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(input_tokens=1, output_tokens=5, details={'input_tokens': 1, 'output_tokens': 5})
+    )
+
+
+def test_streaming_usage_thinking_tokens():
+    """`thinking_tokens` carried by a `message_delta` lands in the merged streaming usage.
+
+    A unit test rather than a VCR one: it pins how a delta merges into the running usage, which a
+    cassette cannot protect because the matcher replays whatever delta was recorded regardless.
+    """
+    start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
+    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    delta = BetaRawMessageDeltaEvent(
+        delta=Delta(),
+        usage=BetaMessageDeltaUsage(output_tokens=5, output_tokens_details=BetaOutputTokensDetails(thinking_tokens=3)),
+        type='message_delta',
+    )
+    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    assert final_usage == snapshot(
+        RequestUsage(
+            input_tokens=1,
+            output_tokens=5,
+            details={'input_tokens': 1, 'output_tokens': 5, 'thinking_tokens': 3},
+        )
     )
 
 
@@ -7497,6 +7554,9 @@ async def test_anthropic_advisor_tool(allow_model_requests: None, anthropic_api_
     assert details['advisor_output_tokens'] > 0
     # Advisor tokens bill at the advisor model's rates and are excluded from the request totals.
     assert result.usage.input_tokens == details['input_tokens']
+    # Recorded top-level `output_tokens_details.thinking_tokens`, billed within `output_tokens`.
+    assert details['thinking_tokens'] == 28
+    assert details['thinking_tokens'] < details['output_tokens']
 
 
 @pytest.mark.vcr()
@@ -7529,6 +7589,8 @@ async def test_anthropic_advisor_tool_stream(
     content = returns[0].content
     assert isinstance(content, dict)
     assert content['type'] == 'advisor_result'
+    # Recorded on a streaming `message_delta`, which is the only place the field appears mid-stream.
+    assert agent_run.result.usage.details['thinking_tokens'] == 47
 
 
 @pytest.mark.vcr()
