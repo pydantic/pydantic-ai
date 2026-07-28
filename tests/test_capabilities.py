@@ -52,9 +52,9 @@ from pydantic_ai.capabilities import (
     SelectModel,
     SetToolMetadata,
     Thinking,
-    ThreadExecutor,
     ToolSearch,
     Toolset,
+    UseThreadExecutor,
     WebFetch,
     WebSearch,
     WrapperCapability,
@@ -14554,7 +14554,20 @@ class TestCompaction:
 
 
 def test_thread_executor_not_serializable() -> None:
-    assert ThreadExecutor.get_serialization_name() is None
+    assert UseThreadExecutor.get_serialization_name() is None
+
+
+def test_thread_executor_deprecated_alias() -> None:
+    from pydantic_ai.exceptions import PydanticAIDeprecationWarning
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `UseThreadExecutor`'):
+        from pydantic_ai.capabilities import ThreadExecutor
+    assert ThreadExecutor is UseThreadExecutor
+
+    # The defining module resolves the old name too, so unpickling keeps working.
+    with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `UseThreadExecutor`'):
+        from pydantic_ai.capabilities.thread_executor import ThreadExecutor as submodule_thread_executor
+    assert submodule_thread_executor is UseThreadExecutor
 
 
 async def test_thread_executor_capability() -> None:
@@ -14567,7 +14580,7 @@ async def test_thread_executor_capability() -> None:
 
     executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='cap-pool')
     try:
-        agent = Agent(FunctionModel(model_function), capabilities=[ThreadExecutor(executor)])
+        agent = Agent(FunctionModel(model_function), capabilities=[UseThreadExecutor(executor)])
 
         @agent.tool_plain
         def check_thread() -> str:
