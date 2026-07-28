@@ -370,7 +370,7 @@ jobs:
         if: failure()
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
-            "The \`auto-review\` run failed — see [the run](${RUN_URL}) for why. This is not a verdict on this PR. If the cause was transient, re-apply the \`auto-review\` label to retry."
+            "The \`douwebot\` run failed — see [the run](${RUN_URL}) for why. This is not a verdict on this PR. If the cause was transient, re-apply the \`douwebot\` label to retry."
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
