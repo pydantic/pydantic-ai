@@ -555,6 +555,142 @@ async def test_external_cancellation_is_never_translated():
         await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 11), reason='`CancelledError` instance preservation across `await task` needs Python 3.11+'
+)
+async def test_task_cancel_of_run_carries_run_cancelled():
+    started = asyncio.Event()
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        started.set()
+        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        return 'slow'  # pragma: no cover
+
+    task = asyncio.create_task(agent.run('go'))
+    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError) as exc_info:
+        await task
+
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None
+    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
+    response = cancelled.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    assert len(response.parts) == 1
+    assert isinstance(response.parts[0], ToolCallPart)
+    assert cancelled.usage.requests == 1
+    assert cancelled.run_id is not None
+    assert task.cancelled()
+
+
+async def test_direct_await_cancellation_carries_run_cancelled_on_all_versions():
+    started = asyncio.Event()
+    agent = Agent(TestModel())
+    recorded: list[RunCancelled | None] = []
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        started.set()
+        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        return 'slow'  # pragma: no cover
+
+    async def run_and_record() -> None:
+        try:
+            await agent.run('go')
+        except asyncio.CancelledError as exc:
+            recorded.append(RunCancelled.from_cancellation(exc))
+            raise
+
+    task = asyncio.create_task(run_and_record())
+    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    (cancelled,) = recorded
+    assert cancelled is not None
+    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
+    assert cancelled.usage.requests == 1
+    assert cancelled.run_id is not None
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason='`asyncio.timeout()` needs Python 3.11+')
+async def test_from_cancellation_through_asyncio_timeout():
+    started = asyncio.Event()
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        started.set()
+        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        return 'slow'  # pragma: no cover
+
+    with pytest.raises(TimeoutError) as exc_info:
+        # This test is version-gated, but Pyright targets the package's Python 3.10 minimum.
+        async with asyncio.timeout(0.01):  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            await agent.run('go')
+
+    assert isinstance(exc_info.value, TimeoutError)
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None
+    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
+    assert started.is_set()
+
+
+def test_from_cancellation_identity_and_none():
+    cancelled = RunCancelled('x')
+    caused = ValueError('wrapper')
+    caused.__cause__ = cancelled
+
+    assert RunCancelled.from_cancellation(cancelled) is cancelled
+    assert RunCancelled.from_cancellation(caused) is cancelled
+    assert RunCancelled.from_cancellation(asyncio.CancelledError()) is None
+    assert RunCancelled.from_cancellation(ValueError()) is None
+
+
+def test_from_cancellation_cycle_safe():
+    first = ValueError('first')
+    second = RuntimeError('second')
+    first.__context__ = second
+    second.__context__ = first
+
+    assert RunCancelled.from_cancellation(first) is None
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 11), reason='`CancelledError` instance preservation across `await task` needs Python 3.11+'
+)
+async def test_iter_external_cancel_carries_run_cancelled():
+    started = asyncio.Event()
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        started.set()
+        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        return 'slow'  # pragma: no cover
+
+    async def drive() -> None:
+        async with agent.iter('go') as agent_run:
+            async for _node in agent_run:
+                pass
+
+    task = asyncio.create_task(drive())
+    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError) as exc_info:
+        await task
+
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None
+    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
+    assert cancelled.usage.requests == 1
+
+
 @requires_task_cancelling
 async def test_external_cancellation_wins_race_with_first_party_cancel():
     """When `cancel()` and an external `task.cancel()` race, the external cancellation wins and

@@ -253,6 +253,9 @@ class AgentRunError(RuntimeError):
         return self.message
 
 
+_RUN_CANCELLED_ATTR = '_pydantic_ai_run_cancelled'
+
+
 class RunCancelled(AgentRunError):
     """Raised when the agent run was cancelled by the application itself.
 
@@ -299,6 +302,48 @@ class RunCancelled(AgentRunError):
 
     def __reduce__(self) -> tuple[type, tuple[str], dict[str, Any]]:
         return self.__class__, (self.message,), self.__dict__
+
+    def _attach_to(self, exc: BaseException) -> None:
+        setattr(exc, _RUN_CANCELLED_ATTR, self)
+
+    @classmethod
+    def from_cancellation(cls, exc: BaseException) -> RunCancelled | None:
+        """Recover run state from a cancellation-related exception.
+
+        External cancellation of a plain `agent.run()` keeps its standard asyncio semantics. Catch
+        it with `except asyncio.CancelledError as exc`, then call
+        `RunCancelled.from_cancellation(exc)` to access the partial run state attached by Pydantic
+        AI. This also works with the `TimeoutError` raised by `asyncio.timeout()` or
+        `asyncio.wait_for()`, whose exception chain contains the original `CancelledError`.
+
+        Passing a `RunCancelled` directly returns the same instance, providing uniform handling for
+        first-party and external cancellation paths.
+
+        On Python 3.10, asyncio recreates `CancelledError` when crossing an `await task` boundary,
+        so the attachment survives only a direct catch within the cancelled task. Python 3.11+
+        preserves the exception instance. Use `capture_run_messages()` as the version-universal
+        fallback when only message history is needed.
+        """
+        pending = [exc]
+        visited: set[int] = set()
+        while pending:
+            current = pending.pop()
+            current_id = id(current)
+            if current_id in visited:
+                continue
+            visited.add(current_id)
+
+            if isinstance(current, cls):
+                return current
+            attached = getattr(current, _RUN_CANCELLED_ATTR, None)
+            if isinstance(attached, cls):
+                return attached
+
+            if current.__cause__ is not None:
+                pending.append(current.__cause__)
+            if current.__context__ is not None:
+                pending.append(current.__context__)
+        return None
 
     def all_messages(self) -> list[ModelMessage]:
         """Return the complete resumable history of the cancelled run.

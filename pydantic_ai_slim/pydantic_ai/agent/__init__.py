@@ -1636,21 +1636,29 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         @asynccontextmanager
         async def _translate_cancellation() -> AsyncGenerator[None]:
+            def _run_cancelled(message: str) -> exceptions.RunCancelled:
+                return exceptions.RunCancelled(
+                    message,
+                    messages=state.message_history,
+                    new_message_index=graph_deps.new_message_index,
+                    usage=state.usage,
+                    metadata=state.metadata,
+                    run_id=state.run_id,
+                    conversation_id=state.conversation_id,
+                )
+
             try:
                 yield
             except asyncio.CancelledError as exc:
                 first_party = graph_deps.cancellation.resolve()
                 graph_deps.cancellation.release_issued()
                 if first_party:
-                    raise exceptions.RunCancelled(
-                        'The agent run was cancelled.',
-                        messages=state.message_history,
-                        new_message_index=graph_deps.new_message_index,
-                        usage=state.usage,
-                        metadata=state.metadata,
-                        run_id=state.run_id,
-                        conversation_id=state.conversation_id,
-                    ) from exc
+                    raise _run_cancelled('The agent run was cancelled.') from exc
+                # An external cancellation must keep propagating as `CancelledError`, but the run
+                # state rides along on the exception instance for `RunCancelled.from_cancellation()`.
+                # Nested runs attach to the same propagating exception; the outermost run attaches
+                # last and wins, giving its awaiter the outer run's history.
+                _run_cancelled('The agent run was cancelled by an external asyncio cancellation.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
                 raise
             else:
                 # A requested cancellation that user code swallowed inside the block, or that was
