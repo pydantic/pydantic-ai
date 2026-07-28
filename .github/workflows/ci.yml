@@ -58,6 +58,7 @@ jobs:
           .github/scripts/test_pydantic_ai_runner.py
           .github/scripts/test_issue_pr_attention_monitor.py
           .github/scripts/test_agentic_workflow_guard.py
+          .github/scripts/test_agent_spend_report.py
 
       # Actions runs the `*.lock.yml`, never the `*.md`, so a source edited without
       # its recompiled lock is a silent no-op. The checkout is shallow, so feed the

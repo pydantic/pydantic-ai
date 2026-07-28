@@ -110,7 +110,7 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 
 | Check | Rejects | Why it matters |
 |---|---|---|
-| `dangling-needs` | `if:`/`outputs:` referencing `needs.<job>` where `<job>` isn't a dependency | The expression evaluates to empty and the job skips. **A job skipped by `if:` reports success**, so the required check stays green while the agent never runs. |
+| `dangling-needs` | `if:`/`outputs:` referencing `needs.<job>` where `<job>` isn't a dependency | The expression evaluates to empty and the job skips. **A job skipped by `if:` reports success**, so the required check stays green while the agent never runs. This is the mechanical enforcement of ["A custom job named in `if:` must also appear in the prompt"](#a-custom-job-named-in-if-must-also-appear-in-the-prompt) — it reads the recompiled lock, so it catches the missing prompt reference whatever the cause. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |
 | `prompt-path-outside-workspace` | prompt text pointing at `/tmp/gh-aw/...` | Outside the agent's file-tool root — `Read` rejects it and the agent burns turns rediscovering the file. Stage context under `$GITHUB_WORKSPACE`. |
 | `timeout-declared` | a source with no `timeout-minutes:` | An unbounded agent can spend a full run and be killed with nothing to show. |

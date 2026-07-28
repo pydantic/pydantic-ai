@@ -1,0 +1,354 @@
+"""Weekly waste report for the `gh-aw` agentic workflows, delivered to Slack.
+
+The static guard in `agentic_workflow_guard.py` catches known anti-patterns at
+review time. This catches the other half: quantitative drift, and workflows that
+die quietly. Both failure modes from #6766 were invisible on the Actions tab —
+`ui-security-review` reported green for a month while never running its agent,
+and `pr-review` spent 72% of its budget on runs that produced nothing.
+
+The signal lives in each run's `agent` artifact, not in the OTel spans:
+
+- `agent_usage.json` — token counts
+- `agent_output.json` — `{"items": []}` means the run delivered nothing
+- `agent-stdio.log` — whole-run retries, each one a full re-spend
+
+Output goes to Slack rather than a public issue: it is operational cost data,
+and a public comment on every regression would be noise.
+
+Artifacts expire after ~7 days, so this only ever sees a recent window and says
+so explicitly in the report rather than implying full coverage.
+"""
+
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.request
+import zipfile
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import Any, cast
+from urllib.parse import urlparse
+
+API_ROOT = 'https://api.github.com'
+AGENT_ARTIFACT = 'agent'
+RETRY_MARKER = re.compile(r'attempt \d+ failed')
+RATE_LIMIT_MARKER = '429 Too Many Requests'
+
+# A workflow whose agent produces nothing this often is malfunctioning, not unlucky:
+# the pre-fix `pr-review` sat at 72% and the post-fix baseline is ~47%.
+ZERO_OUTPUT_ALERT_RATE = 0.5
+# Below this many agent runs the rate is too noisy to alert on.
+MIN_RUNS_FOR_RATE_ALERT = 5
+# A scheduled run has no path filter to legitimately skip on, so an agent that never
+# starts is a broken job graph. PR-triggered workflows skip by design (`ui-security-review`
+# only reviews UI-touching PRs), so alerting on those would be weekly false noise — the
+# static guard in `agentic_workflow_guard.py` covers that failure mode at review time.
+UNCONDITIONAL_EVENTS = frozenset({'schedule', 'workflow_dispatch'})
+
+
+@dataclass(frozen=True)
+class RunRecord:
+    """One workflow run's measured cost and delivered output."""
+
+    workflow: str
+    run_id: int
+    conclusion: str
+    agent_invoked: bool
+    event: str = ''
+    measured: bool = True
+    output_tokens: int = 0
+    item_count: int = 0
+    retries: int = 0
+    rate_limited: bool = False
+
+
+@dataclass
+class WorkflowSummary:
+    """Aggregated cost and waste for one workflow over the sampled window."""
+
+    workflow: str
+    total_runs: int = 0
+    agent_runs: int = 0
+    zero_output_runs: int = 0
+    output_tokens: int = 0
+    retries: int = 0
+    rate_limited_runs: int = 0
+    unconditional_runs: int = 0
+    measured_runs: int = 0
+    unmeasured_runs: int = 0
+    conclusions: Counter[str] = field(default_factory=lambda: Counter())
+
+    @property
+    def zero_output_rate(self) -> float:
+        return self.zero_output_runs / self.measured_runs if self.measured_runs else 0.0
+
+    @property
+    def wasted_tokens(self) -> int:
+        """Output tokens attributable to runs that delivered nothing."""
+        if not self.measured_runs:
+            return 0
+        return round(self.output_tokens * self.zero_output_rate)
+
+
+class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """Drop `Authorization` when a redirect crosses hosts.
+
+    Artifact downloads redirect from `api.github.com` to Azure blob storage, which
+    rejects a forwarded GitHub bearer token with `401 Server failed to authenticate`.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and urlparse(newurl).netloc != urlparse(req.full_url).netloc:
+            redirected.remove_header('Authorization')
+        return redirected
+
+
+class GitHubClient:
+    """Minimal GitHub REST client over `urllib` (no third-party deps in CI)."""
+
+    def __init__(self, repo: str, token: str) -> None:
+        self.repo = repo
+        self.token = token
+        self._opener = urllib.request.build_opener(_StripAuthOnRedirect())
+
+    def _request(self, url: str) -> bytes:
+        request = urllib.request.Request(url)
+        request.add_header('Authorization', f'Bearer {self.token}')
+        request.add_header('Accept', 'application/vnd.github+json')
+        with self._opener.open(request, timeout=60) as response:
+            return response.read()
+
+    def get_json(self, path: str) -> dict[str, Any]:
+        return _as_mapping(json.loads(self._request(f'{API_ROOT}/repos/{self.repo}/{path}')))
+
+    def get_zip(self, url: str) -> bytes:
+        return self._request(url)
+
+
+def _as_mapping(value: object) -> dict[str, Any]:
+    """Coerce a parsed-JSON value to a string-keyed mapping."""
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): item for key, item in cast(dict[Any, Any], value).items()}
+
+
+def _as_list(value: object) -> list[Any]:
+    return cast(list[Any], value) if isinstance(value, list) else []
+
+
+def parse_agent_artifact(archive: bytes) -> tuple[int, int, int, bool]:
+    """Return `(output_tokens, item_count, retries, rate_limited)` from an agent zip."""
+    output_tokens = item_count = retries = 0
+    rate_limited = False
+    with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+        names = set(bundle.namelist())
+        if 'agent_usage.json' in names:
+            usage = _as_mapping(json.loads(bundle.read('agent_usage.json')))
+            output_tokens = int(usage.get('output_tokens') or 0)
+        if 'agent_output.json' in names:
+            output = _as_mapping(json.loads(bundle.read('agent_output.json')))
+            item_count = len(_as_list(output.get('items')))
+        if 'agent-stdio.log' in names:
+            log = bundle.read('agent-stdio.log').decode('utf-8', errors='ignore')
+            retries = len(RETRY_MARKER.findall(log))
+            rate_limited = RATE_LIMIT_MARKER in log
+    return output_tokens, item_count, retries, rate_limited
+
+
+def collect_run(client: GitHubClient, workflow: str, run: dict[str, Any]) -> RunRecord:
+    """Measure one run, treating a missing agent artifact as 'agent never started'."""
+    run_id = int(run.get('id') or 0)
+    conclusion = str(run.get('conclusion') or 'in_progress')
+    event = str(run.get('event') or '')
+
+    listing = client.get_json(f'actions/runs/{run_id}/artifacts')
+    artifacts = [_as_mapping(entry) for entry in _as_list(listing.get('artifacts'))]
+    agent = next(
+        (a for a in artifacts if a.get('name') == AGENT_ARTIFACT and not a.get('expired')),
+        None,
+    )
+    if agent is None:
+        return RunRecord(workflow, run_id, conclusion, agent_invoked=False, event=event)
+
+    # The artifact's existence proves the agent ran, so a download failure must not
+    # be reported as "agent never started" — that is the signal for a workflow whose
+    # job graph silently skips, and conflating the two would fire a false alert.
+    try:
+        archive = client.get_zip(str(agent['archive_download_url']))
+    except (urllib.error.URLError, KeyError) as exc:
+        print(f'warning: could not download agent artifact for run {run_id}: {exc}', file=sys.stderr)
+        return RunRecord(workflow, run_id, conclusion, agent_invoked=True, event=event, measured=False)
+
+    output_tokens, item_count, retries, rate_limited = parse_agent_artifact(archive)
+    return RunRecord(
+        workflow,
+        run_id,
+        conclusion,
+        agent_invoked=True,
+        event=event,
+        output_tokens=output_tokens,
+        item_count=item_count,
+        retries=retries,
+        rate_limited=rate_limited,
+    )
+
+
+def summarize(records: list[RunRecord]) -> list[WorkflowSummary]:
+    """Aggregate per-workflow, sorted by output tokens spent (descending)."""
+    summaries: dict[str, WorkflowSummary] = {}
+    for record in records:
+        summary = summaries.setdefault(record.workflow, WorkflowSummary(record.workflow))
+        summary.total_runs += 1
+        summary.conclusions[record.conclusion] += 1
+        summary.unconditional_runs += int(record.event in UNCONDITIONAL_EVENTS)
+        if not record.agent_invoked:
+            continue
+        summary.agent_runs += 1
+        if not record.measured:
+            summary.unmeasured_runs += 1
+            continue
+        summary.measured_runs += 1
+        summary.output_tokens += record.output_tokens
+        summary.retries += record.retries
+        summary.rate_limited_runs += int(record.rate_limited)
+        if record.item_count == 0:
+            summary.zero_output_runs += 1
+    return sorted(summaries.values(), key=lambda s: -s.output_tokens)
+
+
+def detect_alerts(summaries: list[WorkflowSummary]) -> list[str]:
+    """Return the regression signals worth waking someone for."""
+    alerts: list[str] = []
+    for summary in summaries:
+        name = summary.workflow
+        if summary.unconditional_runs >= MIN_RUNS_FOR_RATE_ALERT and not summary.agent_runs:
+            alerts.append(
+                f'*{name}*: {summary.unconditional_runs} scheduled runs but the agent never started. '
+                'A job skipped by `if:` reports success, so this shows green while doing nothing.'
+            )
+            continue
+        if summary.measured_runs >= MIN_RUNS_FOR_RATE_ALERT and summary.zero_output_rate > ZERO_OUTPUT_ALERT_RATE:
+            alerts.append(
+                f'*{name}*: {summary.zero_output_runs}/{summary.measured_runs} measured runs '
+                f'({summary.zero_output_rate:.0%}) produced no output, '
+                f'~{summary.wasted_tokens:,} output tokens wasted.'
+            )
+        failures = summary.conclusions.get('failure', 0)
+        if summary.total_runs >= MIN_RUNS_FOR_RATE_ALERT and failures == summary.total_runs:
+            alerts.append(f'*{name}*: all {summary.total_runs} runs failed.')
+        if summary.rate_limited_runs:
+            alerts.append(
+                f'*{name}*: {summary.rate_limited_runs}/{summary.measured_runs} runs hit provider rate limits '
+                f'({summary.retries} whole-run retries, each a full re-spend).'
+            )
+    return alerts
+
+
+def format_report(summaries: list[WorkflowSummary], days: int, sampled: int, total: int) -> str:
+    """Render the Slack message body as mrkdwn."""
+    lines = [f'*Agentic workflow spend — last {days}d*', '']
+
+    alerts = detect_alerts(summaries)
+    if alerts:
+        lines.append(':rotating_light: *Needs attention*')
+        lines += [f'• {alert}' for alert in alerts]
+        lines.append('')
+
+    lines.append('```')
+    lines.append(f'{"workflow":<34}{"runs":>6}{"agent":>7}{"empty":>7}{"out tok":>10}')
+    for summary in summaries:
+        empty = f'{summary.zero_output_rate:.0%}' if summary.measured_runs else '-'
+        lines.append(
+            f'{summary.workflow[:33]:<34}{summary.total_runs:>6}{summary.agent_runs:>7}'
+            f'{empty:>7}{summary.output_tokens:>10,}'
+        )
+    lines.append('```')
+
+    total_out = sum(s.output_tokens for s in summaries)
+    wasted = sum(s.wasted_tokens for s in summaries)
+    share = f' ({wasted / total_out:.0%})' if total_out else ''
+    lines.append(f'*{total_out:,}* output tokens, *~{wasted:,}*{share} on runs that delivered nothing.')
+
+    if sampled < total:
+        lines.append(
+            f'_Measured {sampled} of {total} runs; the rest had no agent artifact '
+            f'(expired after ~7d, or the agent never started)._'
+        )
+    return '\n'.join(lines)
+
+
+def build_slack_payload(text: str) -> dict[str, Any]:
+    """Wrap the report in an incoming-webhook payload."""
+    return {'text': text, 'blocks': [{'type': 'section', 'text': {'type': 'mrkdwn', 'text': text}}]}
+
+
+def gather(client: GitHubClient, workflows: list[str], days: int, per_workflow_limit: int) -> list[RunRecord]:
+    """Collect run records for each workflow within the window."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    records: list[RunRecord] = []
+    for workflow in workflows:
+        payload = client.get_json(f'actions/workflows/{workflow}/runs?created=>{since}&per_page={per_workflow_limit}')
+        for run in _as_list(payload.get('workflow_runs')):
+            records.append(collect_run(client, workflow, _as_mapping(run)))
+    return records
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Emit the Slack payload as a GitHub Actions output."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--days', type=int, default=7)
+    parser.add_argument('--per-workflow-limit', type=int, default=100)
+    args = parser.parse_args(argv)
+
+    repo = os.environ.get('GITHUB_REPOSITORY', '')
+    token = os.environ.get('GITHUB_TOKEN', '')
+    if not repo or not token:
+        print('GITHUB_REPOSITORY and GITHUB_TOKEN are required', file=sys.stderr)
+        return 1
+
+    client = GitHubClient(repo, token)
+    workflows = [
+        path.removeprefix('.github/workflows/')
+        for path in (
+            str(_as_mapping(entry).get('path', ''))
+            for entry in _as_list(client.get_json('actions/workflows?per_page=100').get('workflows'))
+        )
+        if path.endswith('.lock.yml')
+    ]
+
+    records = gather(client, workflows, args.days, args.per_workflow_limit)
+    summaries = summarize(records)
+    report = format_report(
+        summaries,
+        args.days,
+        sampled=sum(1 for r in records if r.agent_invoked and r.measured),
+        total=len(records),
+    )
+    print(report)
+
+    if output_path := os.environ.get('GITHUB_OUTPUT'):
+        payload = json.dumps(build_slack_payload(report), separators=(',', ':'))
+        with open(output_path, 'a', encoding='utf-8') as handle:
+            handle.write(f'slack_payload={payload}\n')
+            handle.write(f'has_alerts={"true" if detect_alerts(summaries) else "false"}\n')
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
