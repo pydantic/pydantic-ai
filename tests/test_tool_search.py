@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import AsyncIterable, AsyncIterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
@@ -79,6 +79,7 @@ from pydantic_ai.toolsets._tool_search import (
     keywords_search_fn,
     parse_discovered_tools,
 )
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import iter_message_parts, message, message_part, try_import
@@ -87,6 +88,9 @@ with try_import() as evals_available:
     from pydantic_evals import Case, Dataset
     from pydantic_evals.evaluators import Evaluator, EvaluatorContext
     from pydantic_evals.reporting import EvaluationReport
+
+with try_import() as ag_ui_available:
+    from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 with try_import() as anthropic_available:
     import anthropic  # pyright: ignore[reportUnusedImport]  # noqa: F401
@@ -6198,3 +6202,96 @@ def test_tool_availability_delta_falls_back_to_tool_search_messages():
     assert isinstance(return_part, ToolSearchReturnPart)
     assert return_part.content == {'discovered_tools': [{'name': 'new_tool'}]}
     assert return_part.tool_call_id == 'load-1'
+
+
+def _vercel_tool_history_roundtrip(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+
+
+def _ag_ui_tool_history_roundtrip(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return AGUIAdapter.load_messages(  # pyright: ignore[reportUnknownMemberType]
+        AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.13')  # pyright: ignore[reportUnknownMemberType]
+    )
+
+
+def _portable_tool_history(representation: Literal['local', 'native', 'delta']) -> list[ModelMessage]:
+    if representation == 'local':
+        return [
+            ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search-1')]),
+            ModelRequest(
+                parts=[
+                    ToolSearchReturnPart(
+                        content={'discovered_tools': [{'name': 'get_weather'}]},
+                        tool_call_id='search-1',
+                    )
+                ]
+            ),
+        ]
+    if representation == 'native':
+        return [
+            ModelResponse(
+                parts=[
+                    NativeToolSearchCallPart(
+                        args={'queries': ['weather']},
+                        tool_call_id='search-1',
+                        provider_name='anthropic',
+                        provider_details={'strategy': 'bm25'},
+                    ),
+                    NativeToolSearchReturnPart(
+                        content={'discovered_tools': [{'name': 'get_weather'}]},
+                        tool_call_id='search-1',
+                        provider_name='anthropic',
+                    ),
+                ],
+                provider_name='anthropic',
+            )
+        ]
+    return [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['get_weather'], tool_call_id='search-1')])]
+
+
+@pytest.mark.parametrize('representation', ['local', 'native', 'delta'])
+@pytest.mark.parametrize(
+    'roundtrip',
+    [
+        pytest.param(_vercel_tool_history_roundtrip, id='vercel'),
+        pytest.param(
+            _ag_ui_tool_history_roundtrip,
+            id='ag-ui',
+            marks=pytest.mark.skipif(not ag_ui_available(), reason='ag-ui-protocol not installed'),
+        ),
+    ],
+)
+async def test_tool_history_ui_roundtrip_preserves_anthropic_request(
+    representation: Literal['local', 'native', 'delta'],
+    roundtrip: Callable[[list[ModelMessage]], list[ModelMessage]],
+    allow_model_requests: None,
+) -> None:
+    """Every persisted tool-discovery representation renders identically after a UI adapter round-trip."""
+    pytest.importorskip('anthropic')
+
+    async def render(messages: list[ModelMessage]) -> dict[str, Any]:
+        response = completion_message(
+            [BetaTextBlock(text='done', type='text')],
+            BetaUsage(input_tokens=5, output_tokens=5),
+        )
+        mock_client = MockAnthropic.create_mock(response)
+        model = AnthropicModel(
+            'claude-opus-4-8',
+            provider=AnthropicProvider(anthropic_client=mock_client),
+        )
+        tool = ToolDefinition(
+            name='get_weather',
+            description='Get the weather.',
+            parameters_json_schema={'type': 'object', 'properties': {}},
+            defer_loading=True,
+            with_native=ToolSearchTool.kind,
+        )
+        await model.request(
+            model.prepare_messages(messages),
+            None,
+            ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool()]),
+        )
+        return get_mock_chat_completion_kwargs(mock_client)[0]
+
+    history = _portable_tool_history(representation)
+    assert await render(roundtrip(history)) == await render(history)
