@@ -400,6 +400,22 @@ async def test_final_transcripts_survive_a_flood_of_deltas() -> None:
     ]
 
 
+async def test_close_discards_buffered_view_items() -> None:
+    # Closing is a hangup, not a flush: whatever a view had buffered is dropped rather than delivered
+    # after the session is over. This is the case where a consumer is behind at close time, so the
+    # queue is non-empty -- distinct from closing a view that has already caught up.
+    session = RealtimeSession(BlockingRealtimeConnection([AudioDelta(bytes([index])) for index in range(5)]))
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'\x00'
+        # Let the pump run so the rest of the chunks pile up behind the consumer.
+        for _ in range(10):
+            await asyncio.sleep(0)
+        await session.close()
+        assert [chunk async for chunk in stream] == []
+
+
 async def test_close_ends_views_and_is_idempotent() -> None:
     session = RealtimeSession(BlockingRealtimeConnection([AudioDelta(b'audio')]))
 
