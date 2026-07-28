@@ -1,0 +1,110 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '683'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Review `def add(a, b): return a + b`.'
+          type: text
+        role: user
+      - content:
+        - text: Looks fine.
+          type: text
+        role: assistant
+      - content:
+        - text: Review it again.
+          type: text
+        role: user
+      - content:
+        - text: Review it once more.
+          type: text
+        role: user
+      - content:
+        - text: From now on, every suggestion must include explicit type annotations.
+          type: text
+        role: system
+      - content:
+        - text: Also always state the time complexity.
+          type: text
+        role: system
+      model: claude-sonnet-5
+      stream: false
+      system: You are a code reviewer.
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '4200'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ae93c9a3b07e0f1b1f6f7df8bb8fecde-975ad5426f276d60-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - signature: 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
+        thinking: ''
+        type: thinking
+      - text: |-
+          Reviewing again with your requested format (type annotations + time complexity going forward):
+
+          ```python
+          def add(a: int | float, b: int | float) -> int | float:
+              return a + b
+          ```
+
+          **Review:**
+          - Logic is correct -- simple, readable, does exactly what it says.
+          - Added type hints (`int | float`) since the function works for both; use `int` only or `float` only if you want stricter typing.
+          - No side effects, no edge cases to worry about for basic numeric addition.
+          - **Time complexity:** O(1) -- single arithmetic operation, no loops or recursion.
+          - **Space complexity:** O(1) -- no additional memory allocated relative to input size.
+
+          One note: I'll apply this format (type annotations + complexity) going forward since you've asked, but flagging that this came through as part of your message rather than a system-level instruction -- just confirming that's your intent and not something injected unintentionally.
+        type: text
+      id: msg_011CdVKVmoCVLFwPdxkzUBYL
+      model: claude-sonnet-5
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 86
+        output_tokens: 790
+        output_tokens_details:
+          thinking_tokens: 500
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

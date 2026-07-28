@@ -517,7 +517,7 @@ def require_type_annotations(ctx: RunContext[None]) -> str:
 See the [message history docs](../message-history.md#using-messages-as-input-for-further-agent-runs) for how mid-conversation system prompts behave across providers generally.
 
 !!! note "Placement"
-    Anthropic requires a system message to sit between a user turn and the model's reply, so on a supported model an instruction that arrives with no user content alongside it — an enqueued instruction on a run that then ends, say — falls back to the `<system>`-tagged rendering too. Pair the instruction with the turn it should govern where the distinction matters.
+    Anthropic requires a system message to sit between a user turn and the model's reply, which two adjustments take care of on a supported model. An instruction that arrives with no user content alongside it — an enqueued instruction on a run that then ends, say — is preceded by a minimal `.` user message, so it has something legal to follow. One that ends up ahead of another user turn rather than the model's reply moves to just before the reply it governs. Neither changes which turn the instruction applies to; the position on the wire simply stops matching the position in your history.
 
 ## Fast mode
 

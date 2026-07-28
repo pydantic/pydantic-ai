@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1077'
+      - '917'
       content-type:
       - application/json
       host:
@@ -26,7 +26,7 @@ interactions:
           type: text
         role: assistant
       - content:
-        - text: <tool-availability-change>The available tool set changed.</tool-availability-change>
+        - text: .
           type: text
         role: user
       - content:
@@ -59,15 +59,13 @@ interactions:
           properties: {}
           type: object
         name: old_refund_tool
-      - name: tool_search_tool_bm25
-        type: tool_search_tool_bm25_20251119
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '644'
+      - '665'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -75,17 +73,17 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-93aa41165ff372fb20b8d129e9418060-af89a0a581cced40-01
+      - 00-c63a1e91d3f2455049dcaf351ce7fb93-328eb04a8bfa72b9-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: I can help with your refund. Could you please provide your order ID so I can look up the refund policy for that
-          order?
+      - text: I'd be happy to help you with your refund. To look up the refund policy for your order, could you please provide
+          me with your **order ID**?
         type: text
-      id: msg_011CdTnD7gwAcrJV39ETK5HZ
+      id: msg_011CdVKWWaRyAh4bSYYjEPiQ
       model: claude-opus-4-8
       role: assistant
       stop_details: null
@@ -99,8 +97,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 905
-        output_tokens: 34
+        input_tokens: 616
+        output_tokens: 42
         output_tokens_details:
           thinking_tokens: 0
         service_tier: standard
