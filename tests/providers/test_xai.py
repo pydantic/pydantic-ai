@@ -36,7 +36,12 @@ def test_xai_provider_need_api_key(env: TestEnv) -> None:
 
 
 def test_xai_pass_xai_client() -> None:
-    xai_client = AsyncClient(api_key='api-key')
+    # gRPC async channels bind to the event loop at creation time, so the client
+    # must be constructed inside a running loop (see `_LazyAsyncClient`).
+    async def _make_client() -> AsyncClient:
+        return AsyncClient(api_key='api-key')
+
+    xai_client = asyncio.run(_make_client())
     provider = XaiProvider(xai_client=xai_client)
     assert provider.client == xai_client
 
