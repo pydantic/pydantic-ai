@@ -1214,6 +1214,15 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 if self.tool_error_behavior == 'error':
                     raise
                 _raise_mcp_tool_error(str(e), self.tool_error_behavior, cause=e)
+            except mcp_exceptions.McpError as e:
+                # A bare protocol-level `McpError` — e.g. a JSON-RPC validation rejection returned
+                # by an MCP gateway for a call the server refused — matches neither the `ToolError`
+                # handler above nor the `ExceptionGroup` handler below, so without this it escapes
+                # the toolset and crashes the run. Treat it like the grouped protocol-error case:
+                # always recoverable, so even `tool_error_behavior='failed'` keeps it a `ModelRetry`.
+                if self.tool_error_behavior == 'error':
+                    raise
+                _raise_mcp_tool_error(str(e), 'retry', cause=e)
             except _utils.BaseExceptionGroup as eg:
                 # The FastMCP client runs the MCP session in an anyio task group, so a tool/protocol
                 # error can surface wrapped in an `ExceptionGroup` rather than as a bare
