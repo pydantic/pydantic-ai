@@ -105,7 +105,8 @@ pytestmark = [
 MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2(mcp_types)
 xfail_missing_task_metadata = pytest.mark.xfail(
     MCP_SDK_V2,
-    reason='FastMCP 4 does not expose legacy per-tool task metadata',
+    reason='SEP-2663 dropped the per-tool task metadata SEP-1686 routing reads; calls are driven '
+    'transparently instead, so there is nothing left to route on',
     strict=True,
 )
 
@@ -1613,7 +1614,13 @@ def as_modern_mcp_session(monkeypatch: pytest.MonkeyPatch, as_mcp_sdk_v2: None) 
 
 
 class TestMCPToolsetBackgroundTasks:
-    """SEP-1686 task-augmented execution across the legacy and modern FastMCP APIs."""
+    """Task-augmented execution across both generations.
+
+    FastMCP 3 speaks SEP-1686, where the server declares per-tool `execution.taskSupport` and the
+    client routes on it. FastMCP 4 speaks SEP-2663, where the client no longer routes at all — an
+    ordinary call to a task-only tool is driven to completion transparently — and `use_task=True`
+    means the narrower "hand me the task handle" request the tasks extension exposes.
+    """
 
     @pytest.fixture
     async def task_server(self) -> FastMCP[None]:

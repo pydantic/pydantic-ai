@@ -1251,9 +1251,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         max_retries = self.max_retries if self.max_retries is not None else ctx.max_retries
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in await self.list_tools():
-            # FastMCP 4 omits `execution` from tool listings entirely, so task support reads as
-            # unknown and a task-only tool is called on the ordinary path. `direct_call_tool(...,
-            # use_task=True)` stays available as the explicit escape hatch until it advertises this.
+            # `execution` is SEP-1686, which SEP-2663 superseded: under the newer extension the
+            # server decides, the client no longer routes, and an ordinary `call_tool` on a
+            # task-only tool is transparently driven to completion. So a listing without
+            # `execution` reads as `task: False` — there is no longer a distinction to expose.
             task_support = (
                 mcp_optional_field(mcp_tool.execution, 'taskSupport', 'task_support', str)
                 if mcp_tool.execution
@@ -1307,8 +1308,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             args: The arguments to pass to the tool.
             metadata: Optional request-level `_meta` payload sent alongside the call.
             use_task: When `True`, ask the server to run the call as a durable, cancelable, pollable task.
-                FastMCP 3 uses the MCP SEP-1686 `task=True` call path, while FastMCP 4 uses its tasks extension.
-                Only valid for tools that support task execution.
+                FastMCP 3 uses the MCP SEP-1686 `task=True` call path, while FastMCP 4 uses its tasks
+                extension (SEP-2663). Only valid for tools that support task execution. On FastMCP 4 the
+                ordinary path already drives a task tool to completion, so this is only needed to submit
+                the call without waiting for it.
 
         Raises:
             ModelRetry: If the tool errors and `tool_error_behavior='retry'` (the default).
