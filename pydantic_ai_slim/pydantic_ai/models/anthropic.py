@@ -1519,9 +1519,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
         client_supports_inline_system_prompts = not isinstance(self.client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS)
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
-        # Each emitted `system` entry's index, paired with the `<system>`-tagged blocks that replace
-        # it if it turns out not to be followed by an assistant turn.
-        system_message_fallbacks: list[tuple[int, list[BetaTextBlockParam]]] = []
+        # Where each emitted `system` entry landed, so the placement pass can move it once the rest of
+        # the wire is known.
+        system_message_indexes: list[int] = []
         for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
@@ -1616,16 +1616,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 is_error=True,
                             )
                         user_content_params.append(retry_param)
-                if mid_conversation_system_prompts and not (
-                    client_supports_inline_system_prompts and user_content_params
-                ):
-                    # The API only takes a system entry sandwiched between a user turn and an assistant
-                    # turn (or the end of the array), so without a user turn from this request — e.g. a
-                    # system prompt enqueued after the model's last response — the instruction degrades
-                    # to the `<system>`-tagged text that models without inline system prompt support get,
-                    # as it does on the transports that don't serve the `system` role at all. The other
-                    # half of the placement rule (what *follows* the entry) can't be judged from here and
-                    # is settled by `_relocate_unfollowed_system_messages` once everything is rendered.
+                if mid_conversation_system_prompts and not client_supports_inline_system_prompts:
+                    # Nothing here can serve the `system` role, so the instruction degrades to
+                    # `<system>`-tagged text at the position it was authored at. The recordings show
+                    # what that costs: the model reads it as user-authored and says so.
                     for offset, (index, content) in enumerate(mid_conversation_system_prompts):
                         user_content_params.insert(
                             index + offset, BetaTextBlockParam(text=f'<system>{content}</system>', type='text')
@@ -1634,15 +1628,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if len(user_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
                 if mid_conversation_system_prompts:
-                    system_message_fallbacks.append(
-                        (
-                            len(anthropic_messages),
-                            [
-                                BetaTextBlockParam(text=f'<system>{content}</system>', type='text')
-                                for _, content in mid_conversation_system_prompts
-                            ],
-                        )
-                    )
+                    _append_user_anchor_if_needed(anthropic_messages)
+                    system_message_indexes.append(len(anthropic_messages))
                     anthropic_messages.append(
                         BetaMessageParam(
                             role='system',
@@ -1940,7 +1927,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             else:
                 assert_never(m)
 
-        _relocate_unfollowed_system_messages(anthropic_messages, system_message_fallbacks)
+        _place_system_messages_before_generation(anthropic_messages, system_message_indexes)
 
         if pending_container_uploads:
             upload_blocks = [
@@ -3101,33 +3088,55 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
     assert_never(item.name)
 
 
-def _relocate_unfollowed_system_messages(
-    anthropic_messages: list[BetaMessageParam], fallbacks: list[tuple[int, list[BetaTextBlockParam]]]
-) -> None:
-    """Fold back any `system` entry that didn't end up followed by an assistant turn.
+_USER_ANCHOR_TEXT = '.'
+"""The minimal user turn a `system` entry is given when nothing else precedes it.
 
-    A `{'role': 'system'}` entry is only accepted between a user turn and an assistant turn, or at
-    the end of the array where it feeds the generation. Whether an assistant turn follows can't be
-    decided while mapping: a `ModelResponse` whose parts all drop out (an empty `TextPart`, an
-    orphan tool-search call) renders to nothing, so reading ahead in the message list would call
-    the placement legal where the wire says otherwise. Deciding it here, against what was actually
-    rendered, is the only way to get it right.
+The API takes a `system` entry only after a user turn (or an assistant turn ending in a server tool
+result), so an instruction enqueued after the model's last response has nothing legal to sit behind.
+A single period is the cheapest thing that satisfies the rule while asserting nothing on the user's
+behalf; the alternative is degrading the instruction to `<system>`-tagged text, which the recordings
+show the model reads as a preference it may overrule.
+"""
 
-    `fallbacks` pairs each emitted entry's index with the `<system>`-tagged blocks to put in its
-    place — the same degradation unsupported models get. Walking it in reverse keeps the earlier
-    indexes valid as later entries are removed.
+
+def _append_user_anchor_if_needed(anthropic_messages: list[BetaMessageParam]) -> None:
+    """Give the next `system` entry a user turn to follow, if it doesn't already have one."""
+    if anthropic_messages and anthropic_messages[-1]['role'] == 'user':
+        return
+    anthropic_messages.append(
+        BetaMessageParam(role='user', content=[BetaTextBlockParam(text=_USER_ANCHOR_TEXT, type='text')])
+    )
+
+
+def _place_system_messages_before_generation(anthropic_messages: list[BetaMessageParam], indexes: list[int]) -> None:
+    """Move each `system` entry to just before the assistant turn it governs.
+
+    A `{'role': 'system'}` entry is accepted only immediately before an assistant turn or at the end
+    of the array. An entry that a *user* turn ended up behind is therefore illegal where it stands —
+    which can't be decided while mapping, because a `ModelResponse` whose parts all drop out (an
+    empty `TextPart`, an orphan tool-search call) renders to nothing, so reading ahead in the message
+    list calls placements legal that the wire rejects.
+
+    Sliding it forward past those user turns rather than degrading it keeps it an operator
+    instruction. It costs nothing semantically: an instruction only ever governs the generation that
+    follows it, and that's the same assistant turn either way — the entry just stops matching the
+    position it was authored at. This is the same trade the mapping loop makes inside a single
+    request, where `[user, system, user]` parts render as `user, user, system`.
+
+    Only *user* turns are hopped over, so an earlier instruction stops behind a later one instead of
+    overtaking it and inverting the order they were given in. A `system` entry directly after another
+    is a placement the API accepts — the group as a whole still precedes the generation.
+
+    Walking `indexes` in reverse keeps the earlier ones valid, since moving an entry later never
+    disturbs anything before it.
     """
-    for index, fallback_blocks in reversed(fallbacks):
-        # Trailing is the position the feature exists for — an instruction enqueued right before the
-        # run, feeding the generation. Only an entry a *user* turn ended up behind has to fold back.
-        if index + 1 == len(anthropic_messages) or anthropic_messages[index + 1]['role'] == 'assistant':
+    for index in indexes[::-1]:
+        target = index + 1
+        while target < len(anthropic_messages) and anthropic_messages[target]['role'] == 'user':
+            target += 1
+        if target == index + 1:
             continue
-        # A system entry is only ever emitted directly after a user message with content, so the
-        # merge target is there and holds a block list rather than a bare string.
-        preceding_content = anthropic_messages[index - 1]['content']
-        assert not isinstance(preceding_content, str)
-        anthropic_messages[index - 1]['content'] = [*preceding_content, *fallback_blocks]
-        del anthropic_messages[index]
+        anthropic_messages.insert(target - 1, anthropic_messages.pop(index))
 
 
 def _collect_orphan_tool_search_call_ids(messages: list[ModelMessage]) -> set[str]:

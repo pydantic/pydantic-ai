@@ -6,9 +6,11 @@ can add an operator instruction partway through a conversation without rewriting
 outside the first `ModelRequest` that way when the model and client support it, and keeps the
 `<system>`-tagged user rendering everywhere else.
 
-These tests pin both sides of the `supports_inline_system_prompts` profile flag, the placement
-fallback for the positions the API rejects, the client-transport gate, and the cache breakpoint that
-now lands on the new message.
+The API accepts the entry only directly behind a user turn and directly ahead of an assistant turn
+(or the end of the array), so two transforms keep it legal without giving up its authority: a
+minimal `.` user turn when nothing precedes it, and sliding it past user turns that ended up behind
+it. These tests pin both, both sides of the `supports_inline_system_prompts` profile flag, the
+client-transport gate, and the cache breakpoint that now lands on the new message.
 """
 
 from __future__ import annotations as _annotations
@@ -111,10 +113,9 @@ def message_history() -> list[ModelMessage]:
 def message_history_with_paired_instruction() -> list[ModelMessage]:
     """The same conversation, with the instruction arriving alongside a user prompt.
 
-    The pairing is what earns a native `system` entry at mapping time. Without a user turn in the
-    same request the instruction degrades right there (see `..._without_user_turn`) and placement is
-    never considered, so these are the histories where `_relocate_unfollowed_system_messages` is the
-    code that decides.
+    The pairing is what puts a native `system` entry directly behind the request's own user turn.
+    Without one, the entry gets the `.` anchor instead (see `..._without_user_turn`), so these are
+    the histories where `_place_system_messages_before_generation` decides where it ends up.
     """
     history = message_history()
     history[-1] = ModelRequest(
@@ -241,14 +242,16 @@ async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
 async def test_mid_conversation_system_prompt_without_user_turn(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
 ):
-    """Without a user turn to follow, the instruction degrades to the `<system>`-tagged rendering.
+    """Without a user turn to follow, the instruction gets a minimal one rather than degrading.
 
     Anthropic rejects a `system` entry that directly follows an assistant turn, so a system prompt
-    that lands at the end of the history on its own — here, a run with no new user prompt — must not
-    be sent as one. The request has to keep succeeding, which is what the recording proves.
+    that lands at the end of the history on its own — here, a run with no new user prompt, the shape
+    `ctx.enqueue(SystemPromptPart(...))` produces — has nothing legal to sit behind. A `.` user turn
+    is the cheapest thing that satisfies the rule, and it asserts nothing on the user's behalf.
 
-    The recorded reply spells out what the degradation costs: the model reads the tagged text as "a
-    stated preference from you rather than a higher-privilege instruction", and follows it anyway.
+    The alternative was the `<system>`-tagged rendering, and the recording it replaced is why we
+    don't: the model read the tagged text as "a stated preference from you rather than a
+    higher-privilege instruction". Here it just complies.
     """
     agent = Agent(AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key)))
 
@@ -262,13 +265,11 @@ async def test_mid_conversation_system_prompt_without_user_turn(
         [
             {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
             {'role': 'assistant', 'content': [{'text': 'Looks fine.', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': '.', 'type': 'text'}]},
             {
-                'role': 'user',
+                'role': 'system',
                 'content': [
-                    {
-                        'text': '<system>From now on, every suggestion must include explicit type annotations.</system>',
-                        'type': 'text',
-                    }
+                    {'text': 'From now on, every suggestion must include explicit type annotations.', 'type': 'text'}
                 ],
             },
         ]
@@ -278,21 +279,19 @@ async def test_mid_conversation_system_prompt_without_user_turn(
 async def test_mid_conversation_system_prompt_before_another_request(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
 ):
-    """A system entry that a *user* turn would follow gets folded back into the `<system>` wrap.
+    """A system entry that a *user* turn would follow slides past it instead of degrading.
 
-    The API takes the entry only between a user turn and an assistant turn, or at the very end where
-    it feeds the generation; `[user, system, user]` is rejected outright. So a second `ModelRequest`
-    directly after the one carrying the instruction rules the entry out. `_merge_consecutive_messages`
-    folds consecutive requests into one for agent runs, but leaves them unmerged when their
-    instructions differ, and `Model.request` is callable directly — the adapter can't assume every
-    request is followed by a response.
+    `[user, system, user]` is rejected outright, and a second `ModelRequest` directly after the one
+    carrying the instruction produces exactly that. `_merge_consecutive_messages` folds consecutive
+    requests into one for agent runs, but leaves them unmerged when their instructions differ, and
+    `Model.request` is callable directly — the adapter can't assume every request is followed by a
+    response.
 
-    The instruction is paired with a user prompt here so an entry is actually emitted and the
-    relocation pass is what removes it; a system-only request would never get that far.
+    Moving the entry past the user turn costs nothing: it governs the same generation either way, and
+    it stays an operator instruction rather than becoming text the model can overrule.
 
     Driven through `Model.request` rather than `Agent.run` precisely because the agent's history
-    cleaning would merge the two requests; the recording proves the shape we fall back to is one the
-    API accepts.
+    cleaning would merge the two requests.
     """
     model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
@@ -306,28 +305,23 @@ async def test_mid_conversation_system_prompt_before_another_request(
     )
     reply = response.parts[-1]
     assert isinstance(reply, TextPart)
-    # What the fallback costs, in the model's own words. It reviews the code either way, but it
-    # declines the instruction's authority — the same reading `..._without_user_turn` recorded.
-    assert "I won't treat it as a binding instruction" in reply.content
+    assert 'def add(a: int, b: int) -> int:' in reply.content
 
     body = single_request_body(vcr)
     assert rendered_messages == [body['messages']]
     assert body['system'] == 'You are a code reviewer.'
     assert body['messages'] == snapshot(
         [
-            {'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}], 'role': 'user'},
-            {'content': [{'text': 'Looks fine.', 'type': 'text'}], 'role': 'assistant'},
+            {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
+            {'role': 'assistant', 'content': [{'text': 'Looks fine.', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': 'Review it again.', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': 'Review it once more.', 'type': 'text'}]},
             {
+                'role': 'system',
                 'content': [
-                    {'text': 'Review it again.', 'type': 'text'},
-                    {
-                        'text': '<system>From now on, every suggestion must include explicit type annotations.</system>',
-                        'type': 'text',
-                    },
+                    {'text': 'From now on, every suggestion must include explicit type annotations.', 'type': 'text'}
                 ],
-                'role': 'user',
             },
-            {'content': [{'text': 'Review it once more.', 'type': 'text'}], 'role': 'user'},
         ]
     )
 
@@ -385,7 +379,7 @@ async def test_mid_conversation_system_prompt_before_empty_response(
 
     This is the case that makes the pass necessary rather than merely convenient: the history here
     is byte-identical to `..._kept_mid_history` apart from the response being empty, and that one
-    keeps its entry.
+    leaves its entry where it is.
     """
     model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
@@ -400,20 +394,68 @@ async def test_mid_conversation_system_prompt_before_empty_response(
     )
     reply = response.parts[-1]
     assert isinstance(reply, TextPart)
-    # Same cost as `..._before_another_request`: the request is accepted, and the instruction lands
-    # as text the model feels free to overrule.
-    assert "isn't a legitimate system instruction" in reply.content
+    assert 'def add(a: int, b: int) -> int:' in reply.content
 
     body = single_request_body(vcr)
     assert rendered_messages == [body['messages']]
-    assert [message['role'] for message in body['messages']] == snapshot(['user', 'assistant', 'user', 'user'])
-    assert body['messages'][2]['content'] == snapshot(
+    assert [message['role'] for message in body['messages']] == snapshot(
+        ['user', 'assistant', 'user', 'user', 'system']
+    )
+    assert body['messages'][-1] == snapshot(
+        {
+            'role': 'system',
+            'content': [
+                {'text': 'From now on, every suggestion must include explicit type annotations.', 'type': 'text'}
+            ],
+        }
+    )
+
+
+async def test_two_mid_conversation_system_prompts_keep_their_order(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
+):
+    """Two instructions that both have to move end up adjacent, in the order they were given.
+
+    Each slides only past *user* turns, so the earlier one stops behind the later one rather than
+    overtaking it — sliding past everything would invert them, and "ignore the previous instruction"
+    cases would then resolve backwards. Consecutive `system` entries are a placement the API takes:
+    the group as a whole still precedes the generation, and the recording shows both obeyed.
+    """
+    model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    response = await model.request(
         [
-            {'text': 'Review it again.', 'type': 'text'},
+            *message_history_with_paired_instruction(),
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Also always state the time complexity.'),
+                    UserPromptPart(content='Review it once more.'),
+                ]
+            ),
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+    reply = response.parts[-1]
+    assert isinstance(reply, TextPart)
+    assert 'def add(a: int, b: int) -> int:' in reply.content
+    assert 'O(1)' in reply.content
+
+    body = single_request_body(vcr)
+    assert rendered_messages == [body['messages']]
+    assert body['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
+            {'role': 'assistant', 'content': [{'text': 'Looks fine.', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': 'Review it again.', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': 'Review it once more.', 'type': 'text'}]},
             {
-                'text': '<system>From now on, every suggestion must include explicit type annotations.</system>',
-                'type': 'text',
+                'role': 'system',
+                'content': [
+                    {'text': 'From now on, every suggestion must include explicit type annotations.', 'type': 'text'}
+                ],
             },
+            {'role': 'system', 'content': [{'text': 'Also always state the time complexity.', 'type': 'text'}]},
         ]
     )
 
