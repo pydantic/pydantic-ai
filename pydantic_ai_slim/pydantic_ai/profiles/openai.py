@@ -67,6 +67,9 @@ class _ReasoningSupport:
     supports_mode: bool
     """The Responses API accepts `reasoning.mode` (`'standard' | 'pro'`) for the model."""
 
+    supports_context: bool
+    """The Responses API accepts `reasoning.context='all_turns'` for the model."""
+
     @property
     def supported(self) -> bool:
         """Whether the model reasons at all."""
@@ -78,24 +81,44 @@ class _ReasoningSupport:
         return self.enabled_by_default and not self.can_be_disabled
 
 
-_NO_REASONING = _ReasoningSupport(enabled_by_default=False, can_be_disabled=False, supports_mode=False)
+_NO_REASONING = _ReasoningSupport(
+    enabled_by_default=False, can_be_disabled=False, supports_mode=False, supports_context=False
+)
 """The model doesn't reason at all."""
 
-_OPT_IN_REASONING = _ReasoningSupport(enabled_by_default=False, can_be_disabled=True, supports_mode=False)
+_OPT_IN_REASONING = _ReasoningSupport(
+    enabled_by_default=False, can_be_disabled=True, supports_mode=False, supports_context=False
+)
 """The model defaults to `reasoning_effort='none'` (reasoning off, sampling parameters allowed) and reasons on request."""
 
-_ALWAYS_ON_REASONING = _ReasoningSupport(enabled_by_default=True, can_be_disabled=False, supports_mode=False)
+_ALWAYS_ON_REASONING = _ReasoningSupport(
+    enabled_by_default=True, can_be_disabled=False, supports_mode=False, supports_context=False
+)
 """The model always reasons; it doesn't accept `reasoning_effort='none'`."""
 
 _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # GPT-5.6 (sol/terra/luna) reasons by default (at 'medium'), accepts `effort='none'` to turn
-    # reasoning off, and is the only family that supports `reasoning.mode`.
-    'gpt-5.6': _ReasoningSupport(enabled_by_default=True, can_be_disabled=True, supports_mode=True),
-    # gpt-5.5 reasons by default like gpt-5.6, but has no `reasoning.mode`.
-    'gpt-5.5-pro': _ALWAYS_ON_REASONING,
-    'gpt-5.5': _ReasoningSupport(enabled_by_default=True, can_be_disabled=True, supports_mode=False),
-    'gpt-5.4-pro': _ALWAYS_ON_REASONING,
-    'gpt-5.4': _OPT_IN_REASONING,
+    # reasoning off, and is the only family that supports `reasoning.mode`. The GPT-5.4, -5.5 and
+    # -5.6 families all accept `reasoning.context='all_turns'` (live-verified 2026-07).
+    'gpt-5.6': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
+    ),
+    # gpt-5.5 reasons by default like gpt-5.6, but has no `reasoning.mode`. The -pro variant can't
+    # be disabled; both accept `reasoning.context='all_turns'`.
+    'gpt-5.5-pro': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=False, supports_mode=False, supports_context=True
+    ),
+    'gpt-5.5': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=True, supports_mode=False, supports_context=True
+    ),
+    # gpt-5.4 is opt-in like gpt-5.3 below, but (with its -pro variant) accepts
+    # `reasoning.context='all_turns'`.
+    'gpt-5.4-pro': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=False, supports_mode=False, supports_context=True
+    ),
+    'gpt-5.4': _ReasoningSupport(
+        enabled_by_default=False, can_be_disabled=True, supports_mode=False, supports_context=True
+    ),
     # The GPT-5.1+ chat variants always reason at a fixed 'medium' effort: they reject sampling
     # parameters and any other `reasoning.effort` value, including 'none'.
     'gpt-5.3-chat': _ALWAYS_ON_REASONING,
@@ -234,6 +257,14 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     Currently only supported by the GPT-5.6 family."""
 
+    openai_responses_supports_reasoning_context: bool
+    """Whether the Responses API accepts `reasoning.context='all_turns'` for this model. Default: `False`.
+
+    `auto` and `current_turn` are accepted by every reasoning model, so they are gated on
+    `openai_supports_reasoning` instead; only `all_turns` requires this flag.
+
+    Currently supported by the GPT-5.4, GPT-5.5, and GPT-5.6 families."""
+
     openai_responses_requires_function_call_status_none: bool
     """Whether the Responses API requires the `status` field on function tool calls to be `None`. Default: `False`.
 
@@ -348,6 +379,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_reasoning_enabled_by_default=reasoning.enabled_by_default,
         openai_supports_reasoning_effort_none=reasoning.can_be_disabled,
         openai_responses_supports_reasoning_mode=reasoning.supports_mode,
+        openai_responses_supports_reasoning_context=reasoning.supports_context,
         openai_supports_phase=supports_phase,
         openai_supports_prompt_cache_breakpoints=supports_prompt_cache_breakpoints,
         supported_native_tools=supported_native_tools,
