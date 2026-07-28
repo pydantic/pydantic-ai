@@ -402,6 +402,16 @@ class RealtimeSession:
         self._assistant_transcript = ''
         self._output_audio = bytearray()
 
+        # A realtime session is duplex: the user's part and the model's assemble at the same time, and
+        # each response starts a fresh `_response_parts` list. Numbering streamed parts by their
+        # position in a message would therefore hand out index 0 to both sides at once, so a consumer
+        # couldn't tell whose delta it holds. One monotonic counter per session keeps every streamed
+        # part's index unique instead: in realtime, `index` identifies a part in the event stream, not
+        # a slot in a message.
+        self._next_part_index = 0
+        self._active_user_index = 0
+        self._user_indexes_by_id: dict[str, int] = {}
+
         # In-flight user request being assembled from input-transcript events.
         self._active_user: SpeechPart | None = None
         self._user_transcript = ''
@@ -837,10 +847,16 @@ class RealtimeSession:
             )
         )
         self._active_assistant = part
-        self._active_assistant_index = len(self._response_parts)
+        self._active_assistant_index = self._take_part_index()
         self._assistant_transcript = ''
         events.append(PartStartEvent(index=self._active_assistant_index, part=part))
         return events
+
+    def _take_part_index(self) -> int:
+        """Claim the next session-unique index for a part about to start streaming."""
+        index = self._next_part_index
+        self._next_part_index += 1
+        return index
 
     def _handle_assistant_transcript(
         self, text: str, *, output_text: bool = False, item_id: str | None = None
@@ -854,7 +870,7 @@ class RealtimeSession:
             delta: SpeechPartDelta | TextPartDelta = TextPartDelta(content_delta=appended)
         else:
             self._active_assistant = replace(active, transcript=self._assistant_transcript)
-            delta = SpeechPartDelta(transcript_delta=appended)
+            delta = SpeechPartDelta(speaker='assistant', transcript_delta=appended)
         if appended:
             events.append(PartDeltaEvent(index=self._active_assistant_index, delta=delta))
         return events
@@ -863,7 +879,11 @@ class RealtimeSession:
         events = self._ensure_active_assistant(item_id=item_id)
         if self._retain_output:
             self._output_audio.extend(data)
-        events.append(PartDeltaEvent(index=self._active_assistant_index, delta=SpeechPartDelta(audio_chunk=data)))
+        events.append(
+            PartDeltaEvent(
+                index=self._active_assistant_index, delta=SpeechPartDelta(speaker='assistant', audio_chunk=data)
+            )
+        )
         return events
 
     def _finalize_assistant_part(self) -> list[RealtimeEvent]:
@@ -1146,7 +1166,7 @@ class RealtimeSession:
         """
         self._ensure_chat_span()
         events = self._finalize_assistant_part()
-        index = len(self._response_parts)
+        index = self._take_part_index()
         events.append(PartStartEvent(index=index, part=call_part))
         events.append(PartEndEvent(index=index, part=call_part))
         self._response_parts.append(call_part)
@@ -1217,12 +1237,18 @@ class RealtimeSession:
                 self._active_users_by_id[item_id] = part
                 self._user_transcripts_by_id[item_id] = ''
                 self._user_item_order.append(item_id)
-                events.append(PartStartEvent(index=0, part=part))
+                self._user_indexes_by_id[item_id] = self._take_part_index()
+                events.append(PartStartEvent(index=self._user_indexes_by_id[item_id], part=part))
             transcript, appended = _accumulate_transcript(self._user_transcripts_by_id[item_id], text)
             self._user_transcripts_by_id[item_id] = transcript
             self._active_users_by_id[item_id] = replace(self._active_users_by_id[item_id], transcript=transcript)
             if appended:
-                events.append(PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta=appended)))
+                events.append(
+                    PartDeltaEvent(
+                        index=self._user_indexes_by_id[item_id],
+                        delta=SpeechPartDelta(speaker='user', transcript_delta=appended),
+                    )
+                )
             if is_final:
                 events.extend(self._finalize_user(item_id=item_id))
             return events
@@ -1233,12 +1259,17 @@ class RealtimeSession:
             part = SpeechPart(speaker='user', transcript='')
             self._active_user = part
             self._user_transcript = ''
-            events.append(PartStartEvent(index=0, part=part))
+            self._active_user_index = self._take_part_index()
+            events.append(PartStartEvent(index=self._active_user_index, part=part))
         self._user_transcript, appended = _accumulate_transcript(self._user_transcript, text)
         assert self._active_user is not None
         self._active_user = replace(self._active_user, transcript=self._user_transcript)
         if appended:
-            events.append(PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta=appended)))
+            events.append(
+                PartDeltaEvent(
+                    index=self._active_user_index, delta=SpeechPartDelta(speaker='user', transcript_delta=appended)
+                )
+            )
         if is_final:
             events.extend(self._finalize_user())
         return events
@@ -1248,10 +1279,12 @@ class RealtimeSession:
             if self._active_user is None:
                 return []
             part = self._active_user
+            index = self._active_user_index
             self._active_user = None
             self._user_transcript = ''
         else:
             part = self._active_users_by_id.pop(item_id)
+            index = self._user_indexes_by_id.pop(item_id)
             self._user_transcripts_by_id.pop(item_id)
             self._finalized_user_item_ids.add(item_id)
         self._user_turn_active = False
@@ -1282,7 +1315,7 @@ class RealtimeSession:
         else:
             self._finalized_users_by_id[item_id] = part
             self._flush_finalized_user_prefix()
-        return [PartEndEvent(index=0, part=part)]
+        return [PartEndEvent(index=index, part=part)]
 
     def _flush_finalized_user_prefix(self) -> None:
         """Append finalized user items in provider order, up to the first item still awaiting its final.
@@ -1400,7 +1433,8 @@ class RealtimeSession:
         self._history.append(ModelRequest(parts=[part], conversation_id=self._conversation_id))
         # No deltas to stream (there's no transcript), so bracket the turn with just start/end so a
         # streaming consumer still sees the user turn boundary.
-        return [PartStartEvent(index=0, part=part), PartEndEvent(index=0, part=part)]
+        index = self._take_part_index()
+        return [PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part)]
 
     def _is_replayed_item(self, item_id: str | None, tool_call_id: str | None = None) -> bool:
         """Whether an xAI resumption replay already exists in local history."""

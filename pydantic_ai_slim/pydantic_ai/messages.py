@@ -3415,6 +3415,17 @@ class ToolCallPartDelta:
 class SpeechPartDelta:
     """A partial update (delta) for a `SpeechPart` to append transcript text and/or audio data."""
 
+    speaker: Literal['user', 'assistant'] | None = None
+    """Who is speaking, matching the [`SpeechPart`][pydantic_ai.messages.SpeechPart] this delta belongs to.
+
+    Realtime sessions are duplex: the user's transcript and the model's can stream at the same time,
+    interleaved delta by delta. Carrying the speaker here means rendering a live transcript needs
+    nothing but the delta itself — no correlating back to an earlier
+    [`PartStartEvent`][pydantic_ai.messages.PartStartEvent].
+
+    `None` only when a delta wasn't produced by a realtime session.
+    """
+
     transcript_delta: str | None = None
     """Incremental transcript text to append to the existing transcript, if any."""
 

@@ -308,8 +308,8 @@ async def test_assistant_transcript_partials_then_final() -> None:
     assert events == snapshot(
         [
             PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='Hi ')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='there')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='Hi ')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='there')),
             PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='Hi there')),
             TurnCompleteEvent(),
         ]
@@ -334,7 +334,7 @@ async def test_assistant_transcript_final_only() -> None:
     assert events == snapshot(
         [
             PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='Hello world')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='Hello world')),
             PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='Hello world')),
             TurnCompleteEvent(),
         ]
@@ -475,8 +475,8 @@ async def test_user_transcript_final_becomes_request() -> None:
     assert events == snapshot(
         [
             PartStartEvent(index=0, part=SpeechPart(speaker='user', transcript='')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='what is ')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='the weather')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='what is ')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='the weather')),
             PartEndEvent(index=0, part=SpeechPart(speaker='user', transcript='what is the weather')),
         ]
     )
@@ -2048,11 +2048,13 @@ async def test_audio_only_user_turn_finalized_on_each_manual_commit() -> None:
 
     first_user = SpeechPart(speaker='user', audio=_wav_content(b'\xaa'))
     second_user = SpeechPart(speaker='user', audio=_wav_content(b'\xbb'))
+    # Each turn's part gets its own session-unique index, so a consumer can tell the second user turn
+    # from the first (and from the assistant response that took index 1 in between).
     assert events == [
         PartStartEvent(index=0, part=first_user),
         PartEndEvent(index=0, part=first_user),
-        PartStartEvent(index=0, part=second_user),
-        PartEndEvent(index=0, part=second_user),
+        PartStartEvent(index=2, part=second_user),
+        PartEndEvent(index=2, part=second_user),
     ]
     assert session.new_messages() == snapshot(
         [
@@ -2533,7 +2535,7 @@ async def test_grounding_streams_and_folds_native_tool_parts() -> None:
 
     assert events == [
         PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
-        PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='It is sunny in Rome')),
+        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='It is sunny in Rome')),
         *_native_part_events(grounding),
         PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='It is sunny in Rome')),
         TurnCompleteEvent(),
