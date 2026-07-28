@@ -87,6 +87,16 @@ __all__ = (
 )
 
 
+@asynccontextmanager
+async def _history_repair_stats_scope(stats: HistoryRepairStats) -> AsyncGenerator[None]:
+    """Bind history-repair counters to the current request and reset them on exit."""
+    history_repair_stats_ctx.set(stats)
+    try:
+        yield
+    finally:
+        history_repair_stats_ctx.set(None)
+
+
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
@@ -1053,9 +1063,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert not self._did_stream, 'stream() should only be called once per node'
 
         try:
-            model, model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(
-                ctx, streaming=True
-            )
+            (
+                model,
+                model_settings,
+                model_request_parameters,
+                message_history,
+                run_context,
+                repair_stats,
+            ) = await self._prepare_request(ctx, streaming=True)
         except exceptions.SkipModelRequest as e:
             # SkipModelRequest in stream path: yield an empty stream and finish handling
             # new_message_index wasn't updated in _prepare_request, fix it here
@@ -1076,172 +1091,175 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             assert self._result is not None
             return
 
-        # Cooperative hand-off between this coroutine and the wrap_model_request task:
-        # 1. The task runs capability middleware, then calls _streaming_handler which opens the stream.
-        # 2. _streaming_handler sets stream_ready once the stream is open, then waits on stream_done.
-        # 3. This coroutine waits for stream_ready (or early task completion), yields the stream
-        #    to the caller, and sets stream_done when the caller is finished consuming it.
-        # 4. The handler resumes, the stream context manager closes, and the task completes.
-        stream_ready = asyncio.Event()
-        stream_done = asyncio.Event()
-        agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
+        async with _history_repair_stats_scope(repair_stats):
+            # Cooperative hand-off between this coroutine and the wrap_model_request task:
+            # 1. The task runs capability middleware, then calls _streaming_handler which opens the stream.
+            # 2. _streaming_handler sets stream_ready once the stream is open, then waits on stream_done.
+            # 3. This coroutine waits for stream_ready (or early task completion), yields the stream
+            #    to the caller, and sets stream_done when the caller is finished consuming it.
+            # 4. The handler resumes, the stream context manager closes, and the task completes.
+            stream_ready = asyncio.Event()
+            stream_done = asyncio.Event()
+            agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
-        _handler_response: _messages.ModelResponse | None = None
+            _handler_response: _messages.ModelResponse | None = None
 
-        async def _streaming_handler(
-            req_ctx: ModelRequestContext,
-        ) -> _messages.ModelResponse:
-            nonlocal _handler_response
-            # Stamp the request-issue instant so the instrumentation capability can record
-            # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
-            # the first-chunk instant; the delta is the client-side time to first token.
-            request_start = time.perf_counter()
-            # `model_request_stream` stitches the (possibly suspended → complete) segments
-            # into one continuous stream, so the whole chain is presented as a single
-            # `AgentStream` and the model-request hooks wrap it once.
-            # `ctx.state.usage.requests` is bumped once here: continuations aren't
-            # separate request steps.
-            async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
+            async def _streaming_handler(
+                req_ctx: ModelRequestContext,
+            ) -> _messages.ModelResponse:
+                nonlocal _handler_response
+                # Stamp the request-issue instant so the instrumentation capability can record
+                # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
+                # the first-chunk instant; the delta is the client-side time to first token.
+                request_start = time.perf_counter()
+                # `model_request_stream` stitches the (possibly suspended → complete) segments
+                # into one continuous stream, so the whole chain is presented as a single
+                # `AgentStream` and the model-request hooks wrap it once.
+                # `ctx.state.usage.requests` is bumped once here: continuations aren't
+                # separate request steps.
+                async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
+                    self._did_stream = True
+                    ctx.state.usage.requests += 1
+                    agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
+                    agent_stream_holder.append(agent_stream)
+                    stream_ready.set()
+                    try:
+                        await stream_done.wait()
+                    finally:
+                        # Report TTFT in a `finally` so it also lands when the consumer raises
+                        # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
+                        # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
+                        # that cancelled path `finish` is never reached today (no metrics of any
+                        # kind are recorded), so this is symmetry rather than an observable fix.
+                        time_to_first_chunk_ctx.set(sr.time_to_first_chunk(request_start))
+                response = sr.get()
+                _handler_response = response
+                return response
+
+            wrap_request_context = ModelRequestContext(
+                model=model,
+                messages=message_history,
+                model_settings=model_settings,
+                model_request_parameters=model_request_parameters,
+            )
+            wrap_request_context.model_id = ctx.deps.model_id
+            # Signal to hooks that the agent loop expects a real event stream.
+            wrap_request_context.streaming = True
+            wrap_task = asyncio.create_task(
+                ctx.deps.root_capability.wrap_model_request(
+                    run_context,
+                    request_context=wrap_request_context,
+                    handler=_streaming_handler,
+                )
+            )
+
+            # Wait for handler to start or wrap to complete (short-circuit).
+            # If outer cancellation arrives during this wait, drain both tasks before re-raising
+            # so the user's `wrap_model_request` cleanup runs instead of orphaning.
+            ready_waiter = asyncio.create_task(stream_ready.wait())
+            try:
+                await asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+            except BaseException:
+                # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
+                # so both tasks are still ours; drain them so cleanup runs before we re-raise.
+                #
+                # Unblock `_streaming_handler` before draining: if wrap_task's model
+                # absorbed the CancelledError (e.g. Temporal's cooperative cancellation),
+                # the handler is parked on `stream_done.wait()`. Setting stream_done lets
+                # it exit so cancel_and_drain's gather can complete. Harmless no-op when
+                # the task was actually cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
+                stream_done.set()
+                await cancel_and_drain(ready_waiter, wrap_task)
+                raise
+            else:
+                # Handoff succeeded: `wrap_task` is owned by the rest of the streaming
+                # lifecycle below. Only the throwaway readiness waiter is ours to clean up.
+                await cancel_and_drain(ready_waiter)
+
+            if wrap_task.done() and not stream_ready.is_set():
+                # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
+                try:
+                    result_or_exc: _messages.ModelResponse | Exception
+                    try:
+                        result_or_exc = wrap_task.result()
+                    except Exception as e:
+                        result_or_exc = e
+                    model_response = await self._resolve_wrap_result(
+                        ctx, run_context, wrap_request_context, result_or_exc
+                    )
+                except exceptions.ModelRetry as e:
+                    self._did_stream = True
+                    # Don't increment usage.requests — handler was never called (short-circuit)
+                    run_context = build_run_context(ctx)
+                    await self._build_retry_node(ctx, e)
+                    # Must still yield from @asynccontextmanager — yield an empty stream
+                    dummy_sr = CompletedStreamedResponse(
+                        _messages.ModelResponse(parts=[]), model_request_parameters=model_request_parameters
+                    )
+                    yield self._build_agent_stream(ctx, dummy_sr, model_request_parameters)
+                    return
                 self._did_stream = True
                 ctx.state.usage.requests += 1
-                agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
-                agent_stream_holder.append(agent_stream)
-                stream_ready.set()
-                try:
-                    await stream_done.wait()
-                finally:
-                    # Report TTFT in a `finally` so it also lands when the consumer raises
-                    # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
-                    # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
-                    # that cancelled path `finish` is never reached today (no metrics of any
-                    # kind are recorded), so this is symmetry rather than an observable fix.
-                    time_to_first_chunk_ctx.set(sr.time_to_first_chunk(request_start))
-            response = sr.get()
-            _handler_response = response
-            return response
-
-        wrap_request_context = ModelRequestContext(
-            model=model,
-            messages=message_history,
-            model_settings=model_settings,
-            model_request_parameters=model_request_parameters,
-        )
-        wrap_request_context.model_id = ctx.deps.model_id
-        # Signal to hooks that the agent loop expects a real event stream.
-        wrap_request_context.streaming = True
-        wrap_task = asyncio.create_task(
-            ctx.deps.root_capability.wrap_model_request(
-                run_context,
-                request_context=wrap_request_context,
-                handler=_streaming_handler,
-            )
-        )
-
-        # Wait for handler to start or wrap to complete (short-circuit).
-        # If outer cancellation arrives during this wait, drain both tasks before re-raising
-        # so the user's `wrap_model_request` cleanup runs instead of orphaning.
-        ready_waiter = asyncio.create_task(stream_ready.wait())
-        try:
-            await asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
-        except BaseException:
-            # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
-            # so both tasks are still ours; drain them so cleanup runs before we re-raise.
-            #
-            # Unblock `_streaming_handler` before draining: if wrap_task's model
-            # absorbed the CancelledError (e.g. Temporal's cooperative cancellation),
-            # the handler is parked on `stream_done.wait()`. Setting stream_done lets
-            # it exit so cancel_and_drain's gather can complete. Harmless no-op when
-            # the task was actually cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
-            stream_done.set()
-            await cancel_and_drain(ready_waiter, wrap_task)
-            raise
-        else:
-            # Handoff succeeded: `wrap_task` is owned by the rest of the streaming
-            # lifecycle below. Only the throwaway readiness waiter is ours to clean up.
-            await cancel_and_drain(ready_waiter)
-
-        if wrap_task.done() and not stream_ready.is_set():
-            # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
-            try:
-                result_or_exc: _messages.ModelResponse | Exception
-                try:
-                    result_or_exc = wrap_task.result()
-                except Exception as e:
-                    result_or_exc = e
-                model_response = await self._resolve_wrap_result(ctx, run_context, wrap_request_context, result_or_exc)
-            except exceptions.ModelRetry as e:
-                self._did_stream = True
-                # Don't increment usage.requests — handler was never called (short-circuit)
-                run_context = build_run_context(ctx)
-                await self._build_retry_node(ctx, e)
-                # Must still yield from @asynccontextmanager — yield an empty stream
-                dummy_sr = CompletedStreamedResponse(
-                    _messages.ModelResponse(parts=[]), model_request_parameters=model_request_parameters
+                replay_sr = CompletedStreamedResponse(
+                    model_response,
+                    model_request_parameters=model_request_parameters,
+                    replay_events=True,
                 )
-                yield self._build_agent_stream(ctx, dummy_sr, model_request_parameters)
+                agent_stream = self._build_agent_stream(ctx, replay_sr, model_request_parameters)
+                yield agent_stream
+                self.last_request_context = wrap_request_context
+                await self._finish_handling(ctx, model_response)
+                assert self._result is not None
                 return
-            self._did_stream = True
-            ctx.state.usage.requests += 1
-            replay_sr = CompletedStreamedResponse(
-                model_response,
-                model_request_parameters=model_request_parameters,
-                replay_events=True,
-            )
-            agent_stream = self._build_agent_stream(ctx, replay_sr, model_request_parameters)
-            yield agent_stream
-            self.last_request_context = wrap_request_context
-            await self._finish_handling(ctx, model_response)
-            assert self._result is not None
-            return
 
-        # Normal path: handler was called, stream is ready
-        stream_error: BaseException | None = None
-        try:
-            yield agent_stream_holder[0]
-        except BaseException as exc:
-            stream_error = exc
-            raise
-        finally:
-            stream_done.set()
+            # Normal path: handler was called, stream is ready
+            stream_error: BaseException | None = None
+            try:
+                yield agent_stream_holder[0]
+            except BaseException as exc:
+                stream_error = exc
+                raise
+            finally:
+                stream_done.set()
 
-            if stream_error is not None:
-                await _cancel_task(wrap_task)
-                # Capture the partial response so `capture_run_messages` and `all_messages()`
-                # include what was streamed before the interruption.
-                # We append directly rather than via `_append_response` to skip the usage-limit
-                # check; raising `UsageLimitExceeded` here would mask `stream_error`.
-                if agent_stream_holder:  # pragma: no branch
-                    partial = agent_stream_holder[0].response
-                    recorded_state = await _resolve_interrupted_stream_state(model, stream_error, partial)
-                    partial_response = replace(
-                        partial,
-                        state=recorded_state,
-                        run_id=ctx.state.run_id,
-                        conversation_id=ctx.state.conversation_id,
-                    )
-                    ctx.state.usage.incr(partial_response.usage)
-                    ctx.state.message_history.append(partial_response)
-            else:
-                try:
-                    try:
-                        model_response = await wrap_task
-                    except exceptions.ModelRetry:
-                        raise  # Propagate to outer handler
-                    except Exception as e:
-                        model_response = await ctx.deps.root_capability.on_model_request_error(
-                            run_context, request_context=wrap_request_context, error=e
+                if stream_error is not None:
+                    await _cancel_task(wrap_task)
+                    # Capture the partial response so `capture_run_messages` and `all_messages()`
+                    # include what was streamed before the interruption.
+                    # We append directly rather than via `_append_response` to skip the usage-limit
+                    # check; raising `UsageLimitExceeded` here would mask `stream_error`.
+                    if agent_stream_holder:  # pragma: no branch
+                        partial = agent_stream_holder[0].response
+                        recorded_state = await _resolve_interrupted_stream_state(model, stream_error, partial)
+                        partial_response = replace(
+                            partial,
+                            state=recorded_state,
+                            run_id=ctx.state.run_id,
+                            conversation_id=ctx.state.conversation_id,
                         )
-                except exceptions.ModelRetry as e:
-                    # Don't increment usage.requests — _streaming_handler already did
-                    # In the normal streaming path the handler was always called (that's
-                    # how the stream was created), so _handler_response is always set.
-                    assert _handler_response is not None
-                    self._append_response(ctx, _handler_response)
-                    await self._build_retry_node(ctx, e)
+                        ctx.state.usage.incr(partial_response.usage)
+                        ctx.state.message_history.append(partial_response)
                 else:
-                    self.last_request_context = wrap_request_context
-                    await self._finish_handling(ctx, model_response)
-                    assert self._result is not None
+                    try:
+                        try:
+                            model_response = await wrap_task
+                        except exceptions.ModelRetry:
+                            raise  # Propagate to outer handler
+                        except Exception as e:
+                            model_response = await ctx.deps.root_capability.on_model_request_error(
+                                run_context, request_context=wrap_request_context, error=e
+                            )
+                    except exceptions.ModelRetry as e:
+                        # Don't increment usage.requests — _streaming_handler already did
+                        # In the normal streaming path the handler was always called (that's
+                        # how the stream was created), so _handler_response is always set.
+                        assert _handler_response is not None
+                        self._append_response(ctx, _handler_response)
+                        await self._build_retry_node(ctx, e)
+                    else:
+                        self.last_request_context = wrap_request_context
+                        await self._finish_handling(ctx, model_response)
+                        assert self._result is not None
 
     @staticmethod
     def _build_agent_stream(
@@ -1270,9 +1288,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return self._result  # pragma: no cover
 
         try:
-            model, model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(
-                ctx, streaming=False
-            )
+            (
+                model,
+                model_settings,
+                model_request_parameters,
+                message_history,
+                run_context,
+                repair_stats,
+            ) = await self._prepare_request(ctx, streaming=False)
         except exceptions.SkipModelRequest as e:
             # new_message_index wasn't updated in _prepare_request, fix it here
             ctx.deps.new_message_index = _first_new_message_index(
@@ -1311,6 +1334,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_request_parameters=model_request_parameters,
         )
         request_context.model_id = ctx.deps.model_id
+        history_repair_stats_ctx.set(repair_stats)
         try:
             try:
                 model_response = await ctx.deps.root_capability.wrap_model_request(
@@ -1333,6 +1357,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx.state.usage.requests += 1
                 self._append_response(ctx, _handler_response)
             return await self._build_retry_node(ctx, e)
+        finally:
+            history_repair_stats_ctx.set(None)
         self.last_request_context = request_context
         ctx.state.usage.requests += 1
 
@@ -1349,6 +1375,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         models.ModelRequestParameters,
         list[_messages.ModelMessage],
         RunContext[DepsT],
+        HistoryRepairStats,
     ]:
         if self._resume_suspended is not None:
             return await self._prepare_resume_request(ctx, streaming=streaming)
@@ -1473,11 +1500,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # messages are merged. The default `prepare_messages` returns the input list
         # unchanged, so the identity check skips the redundant second pass.
         if prepared is not messages:
-            messages, repair_stats = _clean_message_history(prepared, repair_last_response=True)
-
-        # Thread the repair counters to `open_model_request_span` so they can be recorded as
-        # OTel attributes on the model-request span. The span reads and clears the context var.
-        history_repair_stats_ctx.set(repair_stats)
+            messages, second_pass_stats = _clean_message_history(prepared, repair_last_response=True)
+            repair_stats = HistoryRepairStats(
+                dropped_orphaned_results=repair_stats.dropped_orphaned_results
+                + second_pass_stats.dropped_orphaned_results,
+                synthesized_tool_returns=repair_stats.synthesized_tool_returns
+                + second_pass_stats.synthesized_tool_returns,
+                merged_messages=repair_stats.merged_messages + second_pass_stats.merged_messages,
+            )
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
@@ -1491,7 +1521,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.deps.usage_limits.check_before_request(usage)
 
-        return model, model_settings or None, model_request_parameters, messages, run_context
+        return model, model_settings or None, model_request_parameters, messages, run_context, repair_stats
 
     async def _prepare_resume_request(
         self,
@@ -1504,6 +1534,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         models.ModelRequestParameters,
         list[_messages.ModelMessage],
         RunContext[DepsT],
+        HistoryRepairStats,
     ]:
         """Prepare a request that resumes a turn the provider paused mid-flight.
 
@@ -1591,7 +1622,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.last_model_request_parameters = model_request_parameters
         ctx.deps.usage_limits.check_before_request(ctx.state.usage)
 
-        return model, model_settings or None, model_request_parameters, messages, run_context
+        return model, model_settings or None, model_request_parameters, messages, run_context, HistoryRepairStats()
 
     async def _finish_handling(
         self,
