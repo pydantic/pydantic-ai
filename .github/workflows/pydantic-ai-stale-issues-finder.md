@@ -69,6 +69,9 @@ safe-outputs:
     expires: 7d
     # Note: elastic uses 2d with twice-weekly schedule. Adjust 'expires'
     # and the schedule together if you change run frequency.
+  threat-detection:
+    # Detection's separate AWF config does not inherit the model pricing below.
+    max-ai-credits: -1
 timeout-minutes: 60
 # MiniMax pricing for AI-credit enforcement and run-cost reporting, in dollars
 # per 1M tokens. AWF v0.27.42 uses the default for models absent from its
