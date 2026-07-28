@@ -273,7 +273,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
                 # and warning would fire on every caption-plus-image embed, the common case.
                 if skipped_text_conditioning:
                     warnings.warn(
-                        f'`{self._model_name}` conditions on a task by prefixing the text, so an `EmbeddingContent` '
+                        f'`{self._model_name}` conditions on a task by prefixing the text, so an `EmbeddingGroup` '
                         'of several text parts is embedded unconditioned; pass it as a single text part to condition '
                         'it, or set `google_task` to `raw` to opt out of conditioning entirely.',
                         UserWarning,

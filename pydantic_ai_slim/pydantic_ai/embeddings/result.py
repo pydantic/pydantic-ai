@@ -89,7 +89,7 @@ class EmbeddingResult:
         """Get the embedding for an input by index or by the original input text.
 
         Lookup by value is text-only; embeddings of files and of
-        [`EmbeddingContent`][pydantic_ai.embeddings.EmbeddingContent] are accessed by index.
+        [`EmbeddingGroup`][pydantic_ai.embeddings.EmbeddingGroup] are accessed by index.
 
         Args:
             item: Either an integer index or the original input text.

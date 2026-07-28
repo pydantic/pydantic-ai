@@ -81,11 +81,11 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 Some models embed more than text. Pass images, audio, video or documents using the same content types you'd use in a prompt — see [`EmbeddingContentPart`][pydantic_ai.embeddings.EmbeddingContentPart] for the accepted set — and each input yields one embedding, exactly like text.
 
-To combine several parts into a *single* vector — a page screenshot and its caption, say — wrap them in [`EmbeddingContent`][pydantic_ai.embeddings.EmbeddingContent]:
+To combine several parts into a *single* vector — a page screenshot and its caption, say — wrap them in [`EmbeddingGroup`][pydantic_ai.embeddings.EmbeddingGroup]:
 
 ```python {title="multimodal_embeddings.py"}
 from pydantic_ai import Embedder
-from pydantic_ai.embeddings import EmbeddingContent
+from pydantic_ai.embeddings import EmbeddingGroup
 from pydantic_ai.messages import ImageUrl
 
 embedder = Embedder('google:gemini-embedding-2')
@@ -100,7 +100,7 @@ async def main():
     #> 2
 
     # One input, one vector combining the caption and the image
-    result = await embedder.embed_documents(EmbeddingContent(['a kiwi fruit', image]))
+    result = await embedder.embed_documents(EmbeddingGroup(['a kiwi fruit', image]))
     print(len(result.embeddings))
     #> 1
 ```
@@ -116,7 +116,7 @@ Support is per model, not per provider, and is declared by [`EmbeddingModel.supp
 | [`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] | all of them, so you can test a multimodal pipeline without calling a provider |
 
 !!! note "Looking up embeddings"
-    `result['some text']` looks an embedding up by its text, whether you passed a `str` or a [`TextContent`][pydantic_ai.messages.TextContent]. Embeddings of files and of `EmbeddingContent` are accessed by index.
+    `result['some text']` looks an embedding up by its text, whether you passed a `str` or a [`TextContent`][pydantic_ai.messages.TextContent]. Embeddings of files and of `EmbeddingGroup` are accessed by index.
 
     [`EmbeddingResult.inputs`][pydantic_ai.embeddings.EmbeddingResult.inputs] holds whatever you passed in, so it is now typed as `Sequence[EmbeddingInput]` rather than `Sequence[str]`. Code that treated it as text — `', '.join(result.inputs)`, say — needs to narrow to `str` first.
 
@@ -129,7 +129,7 @@ Support is per model, not per provider, and is declared by [`EmbeddingModel.supp
 
 Files are sent to Google inline, so a URL is downloaded first, and only `http(s)` URLs can be. A [`VideoUrl`][pydantic_ai.messages.VideoUrl] pointing at YouTube or a `gs://` bucket — which the [chat models](models/google.md) pass to Google by reference — can't be embedded: YouTube raises a [`UserError`][pydantic_ai.exceptions.UserError] and `gs://` a `ValueError`. Pass the bytes as [`BinaryContent`][pydantic_ai.messages.BinaryContent] instead.
 
-Google documents [multimodal limits](https://ai.google.dev/gemini-api/docs/embeddings#multimodal) of 6 images, 1 document of up to 6 pages, 1 video of up to 120 seconds, and 180 seconds of audio. For images these bound a single input rather than the request: 7 separate images embed fine, while 7 fused into one `EmbeddingContent` are rejected. Pydantic AI doesn't enforce any of this, so exceeding a limit surfaces as a provider error. `document` means PDF, and the accepted image, audio and video formats are listed on the same page — other media types are sent as-is and rejected by Google.
+Google documents [multimodal limits](https://ai.google.dev/gemini-api/docs/embeddings#multimodal) of 6 images, 1 document of up to 6 pages, 1 video of up to 120 seconds, and 180 seconds of audio. For images these bound a single input rather than the request: 7 separate images embed fine, while 7 fused into one `EmbeddingGroup` are rejected. Pydantic AI doesn't enforce any of this, so exceeding a limit surfaces as a provider error. `document` means PDF, and the accepted image, audio and video formats are listed on the same page — other media types are sent as-is and rejected by Google.
 
 Task conditioning interacts with multimodal inputs — see [Task Conditioning](#task-conditioning) for which inputs get a task prefix and which warn.
 
@@ -420,9 +420,9 @@ When you don't set `google_task`, `gemini-embedding-2` is conditioned as `'searc
 
 `google_task` only applies to `gemini-embedding-2`; on any other model it is ignored with a warning (those models condition via `google_task_type` instead). Conversely, `google_task_type` is ignored on `gemini-embedding-2`, since that model conditions through the text prefix.
 
-Because the prefix conditions *text*, it applies only to an input that is exactly one text part. A file, or an [`EmbeddingContent`][pydantic_ai.embeddings.EmbeddingContent] of several parts (see [Multimodal inputs](#multimodal-inputs)), is embedded without one. Two cases warn:
+Because the prefix conditions *text*, it applies only to an input that is exactly one text part. A file, or an [`EmbeddingGroup`][pydantic_ai.embeddings.EmbeddingGroup] of several parts (see [Multimodal inputs](#multimodal-inputs)), is embedded without one. Two cases warn:
 
-- Fusing several **text** parts into one `EmbeddingContent` warns even on the default task, because the conditioning is silently lost and unconditioned text lands in a different region of the space than conditioned text. Pass the text as a single part to condition it, or `google_task='raw'` to opt out deliberately.
+- Fusing several **text** parts into one `EmbeddingGroup` warns even on the default task, because the conditioning is silently lost and unconditioned text lands in a different region of the space than conditioned text. Pass the text as a single part to condition it, or `google_task='raw'` to opt out deliberately.
 - An input holding a **file** warns only if you set `google_task` explicitly — a reminder that it didn't apply there, since Google defines no task instruction for image, audio or video. On the default task this is silent, as it would otherwise fire on every caption-plus-image embed.
 
 #### Google-Specific Settings
@@ -1023,7 +1023,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-To accept more than text, override [`supported_modalities`][pydantic_ai.embeddings.EmbeddingModel.supported_modalities] so unsupported inputs are rejected before a request is made, then call [`prepare_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_embed] instead of [`prepare_text_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_text_embed] and map each input yourself. [`embedding_parts()`][pydantic_ai.embeddings.embedding_parts] gives you the parts of an input, so a single part and an [`EmbeddingContent`][pydantic_ai.embeddings.EmbeddingContent] of several parts can be handled alike — remembering that every input, however many parts it has, must yield exactly one embedding.
+To accept more than text, override [`supported_modalities`][pydantic_ai.embeddings.EmbeddingModel.supported_modalities] so unsupported inputs are rejected before a request is made, then call [`prepare_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_embed] instead of [`prepare_text_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_text_embed] and map each input yourself. [`embedding_parts()`][pydantic_ai.embeddings.embedding_parts] gives you the parts of an input, so a single part and an [`EmbeddingGroup`][pydantic_ai.embeddings.EmbeddingGroup] of several parts can be handled alike — remembering that every input, however many parts it has, must yield exactly one embedding.
 
 !!! note "Upgrading an existing subclass"
     `embed()` and `prepare_embed()` used to be typed in terms of `str`. They now take [`EmbeddingInput`][pydantic_ai.embeddings.EmbeddingInput], and `prepare_embed()` returns the inputs rather than plain strings, so a subclass written against the old signatures needs updating. Widen your `embed()` annotation to match the base class, and switch to [`prepare_text_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_text_embed] — which additionally returns the text to send — wherever you were passing `prepare_embed()`'s result straight to a text-only API.

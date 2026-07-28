@@ -5,7 +5,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import TextContent
 
 from ._modality import embedding_modality
-from .input import EmbeddingContent, EmbeddingInput, EmbeddingModality, embedding_parts
+from .input import EmbeddingGroup, EmbeddingInput, EmbeddingModality, embedding_parts
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings, merge_embedding_settings
 
@@ -110,7 +110,7 @@ class EmbeddingModel(ABC):
 
         Returns:
             A tuple of (normalized inputs list, merged settings). An item may be an
-            [`EmbeddingContent`][pydantic_ai.embeddings.EmbeddingContent] of several parts, which
+            [`EmbeddingGroup`][pydantic_ai.embeddings.EmbeddingGroup] of several parts, which
             `supported_modalities` can't refuse because it describes modalities rather than fusion —
             embed its parts into one vector, or reject it, but don't pass it on as if it were one part.
 
@@ -164,12 +164,12 @@ class EmbeddingModel(ABC):
                 texts.append(item)
             elif isinstance(item, TextContent):
                 texts.append(item.content)
-            elif isinstance(item, EmbeddingContent):
+            elif isinstance(item, EmbeddingGroup):
                 # One part is nothing to fuse, so it embeds like the bare part it wraps.
                 if len(item.content) == 1 and isinstance(part := item.content[0], str | TextContent):
                     texts.append(part if isinstance(part, str) else part.content)
                     continue
-                # An all-text `EmbeddingContent` clears the modality gate, so the reason it can't be
+                # An all-text `EmbeddingGroup` clears the modality gate, so the reason it can't be
                 # embedded here is the fusion, not the modality — say that rather than "isn't text".
                 raise UserError(
                     f'`{self.model_name}` can only embed a single text part per input; '

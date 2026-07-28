@@ -10,12 +10,13 @@ from typing import TYPE_CHECKING, Annotated, Any, get_args, get_origin
 
 import anyio
 import pytest
+from pydantic import TypeAdapter
 from vcr.cassette import Cassette
 
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings import (
-    EmbeddingContent,
     EmbeddingContentPart,
+    EmbeddingGroup,
     EmbeddingInput,
     EmbeddingModality,
     EmbeddingModel,
@@ -108,12 +109,12 @@ def test_embedding_modality(part: EmbeddingContentPart, expected: EmbeddingModal
 
 def test_embedding_parts():
     """Unit rather than VCR: this is the fan-out every provider builds its request from, and pinning
-    it directly says `EmbeddingContent` unwraps in order while a bare part doesn't, which a provider
+    it directly says `EmbeddingGroup` unwraps in order while a bare part doesn't, which a provider
     test can only show indirectly.
     """
     image = BinaryImage(data=b'\x00', media_type='image/png')
     assert embedding_parts('hello') == ['hello']
-    assert embedding_parts(EmbeddingContent(['hello', image])) == ['hello', image]
+    assert embedding_parts(EmbeddingGroup(['hello', image])) == ['hello', image]
 
 
 def test_embedding_content_part_tracks_the_messages_union():
@@ -140,20 +141,57 @@ def test_embedding_content_part_tracks_the_messages_union():
     assert members(EmbeddingContentPart) == members(UserContent) - {CachePoint, UploadedFile}
 
 
-def test_embedding_content_rejects_bare_str():
+def test_embedding_group_round_trips_with_its_discriminator():
+    """`EmbeddingGroup` carries a `kind` like every other member of `EmbeddingInput`, and it stays out
+    of the repr the way the `messages` content types keep theirs out.
+
+    Unit rather than VCR: `kind` never reaches a provider. What it pins is the serialized form of an
+    input a user stores alongside its vector, where adding or renaming the discriminator later would
+    strand what they already wrote.
+    """
+    adapter = TypeAdapter(list[EmbeddingInput])
+    inputs: list[EmbeddingInput] = ['a kiwi fruit', EmbeddingGroup(['a caption', ImageUrl(url=KIWI_IMAGE_URL)])]
+
+    dumped = adapter.dump_python(inputs, mode='json')
+    assert dumped == snapshot(
+        [
+            'a kiwi fruit',
+            {
+                'content': [
+                    'a caption',
+                    {
+                        'url': 'https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+                        'force_download': False,
+                        'vendor_metadata': None,
+                        'kind': 'image-url',
+                        'media_type': 'image/jpeg',
+                        'identifier': 'bd38f5',
+                    },
+                ],
+                'kind': 'embedding-group',
+            },
+        ]
+    )
+    assert adapter.validate_python(dumped) == inputs
+    assert repr(inputs[1]) == snapshot(
+        "EmbeddingGroup(content=['a caption', ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg')])"
+    )
+
+
+def test_embedding_group_rejects_bare_str():
     """A `str` is itself a sequence of parts, so this type-checks and would embed five characters."""
-    with pytest.raises(UserError, match=r'`EmbeddingContent` takes a sequence of parts, not a single string\.'):
-        EmbeddingContent('a kiwi')
+    with pytest.raises(UserError, match=r'`EmbeddingGroup` takes a sequence of parts, not a single string\.'):
+        EmbeddingGroup('a kiwi')
 
 
-def test_embedding_content_rejects_an_empty_sequence():
+def test_embedding_group_rejects_an_empty_sequence():
     """Every input yields one embedding, and an empty one has nothing to make a vector from.
 
-    The modality gate loops over the parts, so an empty `EmbeddingContent` clears it and reaches the
+    The modality gate loops over the parts, so an empty `EmbeddingGroup` clears it and reaches the
     provider as an empty `Content`, which fails there instead of at the call site.
     """
-    with pytest.raises(UserError, match=r'`EmbeddingContent` needs at least one part to embed\.'):
-        EmbeddingContent([])
+    with pytest.raises(UserError, match=r'`EmbeddingGroup` needs at least one part to embed\.'):
+        EmbeddingGroup([])
 
 
 async def test_test_model_embeds_every_modality(tiny_image: BinaryImage):
@@ -186,11 +224,11 @@ async def test_combined_content_yields_one_embedding(tiny_image: BinaryImage):
     """One sequence element yields one vector however many parts it holds, and keeps the container.
 
     Unit rather than VCR: the Google cases pin the fusion on the wire, and what is left is the
-    accounting every model shares — a result entry per input, holding the `EmbeddingContent` the
+    accounting every model shares — a result entry per input, holding the `EmbeddingGroup` the
     caller passed rather than its parts.
     """
     model = TestEmbeddingModel(dimensions=4)
-    content = EmbeddingContent(['a kiwi fruit', tiny_image])
+    content = EmbeddingGroup(['a kiwi fruit', tiny_image])
     result = await Embedder(model).embed_documents(content)
 
     assert len(result.embeddings) == 1
@@ -228,7 +266,7 @@ async def test_combined_content_on_text_only_model_raises(gemini_api_key: str):
     with pytest.raises(
         UserError, match=r'can only embed a single text part per input; pass the parts as separate inputs'
     ):
-        await Embedder(model).embed_documents(EmbeddingContent(['a kiwi', 'fruit']))
+        await Embedder(model).embed_documents(EmbeddingGroup(['a kiwi', 'fruit']))
 
 
 class _OverreachingEmbeddingModel(EmbeddingModel):
@@ -280,7 +318,7 @@ async def test_prepare_text_embed_rejects_a_file_and_not_the_text_beside_it():
 
 
 async def test_prepare_text_embed_rejects_a_single_part_that_is_not_text():
-    """A one-part `EmbeddingContent` unwraps only when the part is text; a lone file is still refused.
+    """A one-part `EmbeddingGroup` unwraps only when the part is text; a lone file is still refused.
 
     The modality gate lets the image through, so this needs a model that advertises images and sends
     text — the same mismatch `_OverreachingEmbeddingModel` exists for.
@@ -288,7 +326,7 @@ async def test_prepare_text_embed_rejects_a_single_part_that_is_not_text():
     embedder = Embedder(_OverreachingEmbeddingModel())
 
     with pytest.raises(UserError, match=r'`overreaching-model` can only embed a single text part per input'):
-        await embedder.embed_documents(EmbeddingContent([ImageUrl(url='https://example.com/img.png')]))
+        await embedder.embed_documents(EmbeddingGroup([ImageUrl(url='https://example.com/img.png')]))
 
 
 def test_prepare_text_embed_unwraps_text_content():
@@ -408,15 +446,15 @@ async def test_text_only_provider_reports_original_inputs(case: _TextOnlyProvide
     [pytest.param('Hello, world!', id='str'), pytest.param(TextContent(content='Hello, world!'), id='text-content')],
 )
 async def test_single_text_part_content_embeds_on_a_text_only_provider(part: EmbeddingContentPart, openai_api_key: str):
-    """A text-only provider takes a one-part `EmbeddingContent`: one part is nothing to fuse.
+    """A text-only provider takes a one-part `EmbeddingGroup`: one part is nothing to fuse.
 
-    Refusing it would make `EmbeddingContent` unusable for a caller that builds inputs uniformly and
+    Refusing it would make `EmbeddingGroup` unusable for a caller that builds inputs uniformly and
     only sometimes has more than one part. Replays the same `embed_query('Hello, world!')` recording
     the cases above reuse — the unwrapping happens before the provider builds its body, so the
     request is byte-identical to embedding the bare part.
     """
     model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
-    content = EmbeddingContent([part])
+    content = EmbeddingGroup([part])
 
     result = await Embedder(model).embed_query(content)
 
@@ -488,7 +526,7 @@ _GOOGLE_MULTIMODAL_CASES: list[_GoogleMultimodalCase] = (
         ),
         _GoogleMultimodalCase(
             id='text-and-image-combined',
-            inputs=lambda assets: EmbeddingContent(
+            inputs=lambda assets: EmbeddingGroup(
                 ['a kiwi fruit', TextContent(content='green and fuzzy'), assets.image]
             ),
             expected_parts=[['a kiwi fruit', 'green and fuzzy', '<image/jpeg>']],
@@ -496,11 +534,11 @@ _GOOGLE_MULTIMODAL_CASES: list[_GoogleMultimodalCase] = (
         ),
         _GoogleMultimodalCase(
             id='text-parts-combined',
-            inputs=lambda _: EmbeddingContent(['a kiwi fruit', 'green and fuzzy']),
+            inputs=lambda _: EmbeddingGroup(['a kiwi fruit', 'green and fuzzy']),
             # Fusing text parts costs the task prefix, which is why this warns on the default task too.
             expected_parts=[['a kiwi fruit', 'green and fuzzy']],
             expected_embeddings=1,
-            expected_warning='an `EmbeddingContent` of several text parts is embedded unconditioned',
+            expected_warning='an `EmbeddingGroup` of several text parts is embedded unconditioned',
         ),
         _GoogleMultimodalCase(
             id='batch-text-and-image-url',
@@ -661,10 +699,10 @@ async def test_google_rejects_more_images_than_one_input_may_hold(gemini_api_key
     """The same seven images fused into one input is where the limit bites, and Google says where.
 
     The counterpart to the batch above: Google spells the limit out as "per input instance", so the
-    ceiling belongs to `EmbeddingContent`, not to the batch, and chunking a batch would not help.
+    ceiling belongs to `EmbeddingGroup`, not to the batch, and chunking a batch would not help.
     """
     model = GoogleEmbeddingModel('gemini-embedding-2', provider=GoogleProvider(api_key=gemini_api_key))
-    content = EmbeddingContent([_solid_png(red) for red in range(0, 7 * 32, 32)])
+    content = EmbeddingGroup([_solid_png(red) for red in range(0, 7 * 32, 32)])
 
     with pytest.raises(ModelHTTPError, match=r'at most 6 image parts per input instance, but 7 were provided'):
         await Embedder(model).embed_documents(content, settings=GoogleEmbeddingSettings(dimensions=128))
@@ -715,7 +753,7 @@ async def test_instrumentation_describes_non_text_inputs(capfire: CaptureLogfire
             DocumentUrl(url='https://example.com/doc.pdf'),
             # No extension to infer a media type from; the span omits it rather than failing the request.
             ImageUrl(url='https://example.com/redirects/to/an/image'),
-            EmbeddingContent([TextContent(content='a kiwi fruit'), tiny_image]),
+            EmbeddingGroup([TextContent(content='a kiwi fruit'), tiny_image]),
         ]
     )
 

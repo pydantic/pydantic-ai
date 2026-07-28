@@ -21,7 +21,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 
 from ._modality import embedding_modality
 from .base import EmbeddingModel
-from .input import EmbeddingContent, EmbeddingContentPart, EmbeddingInput, EmbeddingModality
+from .input import EmbeddingContentPart, EmbeddingGroup, EmbeddingInput, EmbeddingModality
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 from .wrapper import WrapperEmbeddingModel
@@ -232,7 +232,7 @@ _SPEC_MODALITIES: dict[EmbeddingModality, Literal['image', 'audio', 'video']] = 
 
 def _otel_input(item: EmbeddingInput, include_binary_content: bool) -> _OtelInput:
     """Represent an input for the `inputs` span attribute, describing files instead of inlining their data."""
-    if isinstance(item, EmbeddingContent):
+    if isinstance(item, EmbeddingGroup):
         return [_otel_input(part, include_binary_content) for part in item.content]
     elif isinstance(item, str):
         return item

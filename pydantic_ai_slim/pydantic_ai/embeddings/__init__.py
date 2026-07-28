@@ -14,8 +14,8 @@ from pydantic_ai.providers import Provider, infer_provider
 
 from .base import EmbeddingModel
 from .input import (
-    EmbeddingContent,
     EmbeddingContentPart,
+    EmbeddingGroup,
     EmbeddingInput,
     EmbeddingModality,
     embedding_parts,
@@ -31,7 +31,7 @@ __all__ = [
     'EmbeddingModel',
     'EmbeddingSettings',
     'EmbeddingResult',
-    'EmbeddingContent',
+    'EmbeddingGroup',
     'EmbeddingContentPart',
     'EmbeddingInput',
     'EmbeddingModality',
