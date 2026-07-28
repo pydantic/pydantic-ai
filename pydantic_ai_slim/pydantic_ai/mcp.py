@@ -1129,8 +1129,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 f'`{self.__class__.__name__}._ensure_initialized` called before entering the toolset context'
             )
         async with self._enter_lock:
-            # Double-check after acquiring the lock (another coroutine may have initialized)
+            # Double-check after acquiring the lock (another coroutine may have initialized,
+            # or __aexit__ may have closed the session while we waited)
             if self._initialized:
+                return
+            if not self.is_running:
                 return
             # Perform the deferred initialization — assign state atomically after all
             # operations succeed so a partial failure doesn't leave stale _server_info.
