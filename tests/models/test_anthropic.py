@@ -11297,8 +11297,16 @@ async def test_anthropic_keyword_tool_search_is_stripped_for_capability_only_cor
     assert not any(tool.get('name') == 'search_tools' for tool in request['tools'])
 
 
-async def test_anthropic_named_native_tool_search_is_kept_for_capability_only_corpus(allow_model_requests: None):
-    """An explicit named native strategy keeps its search surface for a capability-only corpus."""
+async def test_anthropic_named_native_tool_search_rejects_capability_only_corpus(allow_model_requests: None):
+    """A server-side strategy over a capability-owned corpus is refused, on Anthropic specifically.
+
+    Capability-owned tools reach the wire as `defer_loading` entries — that's how
+    `load_capability` reveals them by `tool_reference` without a search tool — and Anthropic's
+    `tool_search_tool_regex` indexes precisely those entries, so the model could uncover and call
+    `lookup_refund_policy` without ever loading `refunds` or seeing its instructions. The strategy
+    the user picked has no client-executed equivalent to fall back to, so this raises rather than
+    quietly substituting one.
+    """
     response = completion_message(
         [BetaTextBlock(text='Done.', type='text')],
         BetaUsage(input_tokens=5, output_tokens=10),
@@ -11316,10 +11324,8 @@ async def test_anthropic_named_native_tool_search_is_kept_for_capability_only_co
         deps_type=type(None),
         capabilities=[refunds, ToolSearch(strategy='regex')],
     )
-    await agent.run('Hello')
-
-    [request] = get_mock_chat_completion_kwargs(mock_client)
-    assert any(tool.get('type') == 'tool_search_tool_regex_20251119' for tool in request['tools'])
+    with pytest.raises(UserError, match=r"strategy='regex'.*incompatible with deferred-loading"):
+        await agent.run('Hello')
 
 
 async def test_anthropic_callable_tool_search_is_stripped_for_capability_only_corpus(
@@ -11372,6 +11378,52 @@ async def test_anthropic_callable_tool_search_is_stripped_for_capability_only_co
     assert calls == [(['refund'], [])]
     requests = get_mock_chat_completion_kwargs(mock_client)
     assert all(not any(tool.get('name') == 'search_tools' for tool in request['tools']) for request in requests)
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected_defer_loading'),
+    [('claude-sonnet-5', True), ('claude-opus-4-1-20250805', None)],
+)
+async def test_anthropic_defer_loading_needs_a_reveal_mechanism(
+    allow_model_requests: None, model_name: str, expected_defer_loading: bool | None
+):
+    """`defer_loading` only goes on the wire where a `tool_reference` reveal can take it off again.
+
+    `defer_loading` records what the author asked for, so it stays set on a capability's tools after
+    `load_capability` runs. Sonnet 5 renders the reveal as the `tool_reference` block in the recorded
+    result, which unhides the schema. Opus 4.1 predates tool search, gets the same result as plain
+    JSON text, and honors `defer_loading` regardless — verified live: with the flag it calls
+    `load_capability`, without it, the tool itself — so sending the flag there would leave the
+    loaded tool permanently unreachable.
+    """
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='load-1', input={'id': 'refunds'}, name='load_capability', type='tool_use')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=5, output_tokens=10)),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[refunds])
+    await agent.run('Hello')
+
+    _, request = get_mock_chat_completion_kwargs(mock_client)
+    [tool] = [t for t in request['tools'] if t.get('name') == 'lookup_refund_policy']
+    assert tool.get('defer_loading') is expected_defer_loading
+    result_block_types: list[str] = []
+    for wire_message in cast(list[dict[str, Any]], request['messages']):
+        for content_block in cast(list[dict[str, Any]], wire_message['content']):
+            if content_block['type'] == 'tool_result':
+                result_block_types += [block['type'] for block in cast(list[dict[str, Any]], content_block['content'])]
+    # The reveal and the flag travel together: whichever model gets one gets the other.
+    assert ('tool_reference' in result_block_types) is (expected_defer_loading is True)
 
 
 @pytest.mark.vcr()

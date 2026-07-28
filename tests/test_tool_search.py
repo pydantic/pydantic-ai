@@ -6344,8 +6344,14 @@ def _local_search_tools_def() -> ToolDefinition:
 
 
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])
-def test_capability_gated_tool_search_keeps_named_native_strategy(strategy: str) -> None:
-    """Explicit named-native strategies keep their selected server-side search surface."""
+def test_capability_gated_tool_search_raises_on_named_native_strategy(strategy: str) -> None:
+    """Named-native strategies have no local equivalent — silently substituting `keywords`
+    would change the user's chosen algorithm, so we raise.
+
+    Letting them through would leak instead: capability-owned tools stay on the wire as
+    `defer_loading` entries so `load_capability` can reveal them by `tool_reference`, and a
+    server-side search indexes exactly those entries — it would hand the model a tool whose
+    owning capability, and so whose instructions, never loaded."""
 
     class M(TestModel):
         @classmethod
@@ -6357,9 +6363,8 @@ def test_capability_gated_tool_search_keeps_named_native_strategy(strategy: str)
         native_tools=[ToolSearchTool(strategy=cast(Any, strategy), optional=True)],
         deferred_capability_ids={'refunds'},
     )
-    _, prepared = M().prepare_request(None, params)
-    assert prepared.native_tools == [ToolSearchTool(strategy=cast(Any, strategy), optional=True)]
-    assert prepared.function_tools == params.function_tools
+    with pytest.raises(UserError, match=rf'strategy={strategy!r}.*incompatible with deferred-loading'):
+        M().prepare_request(None, params)
 
 
 def test_capability_gated_tool_search_promotes_default_strategy_to_custom() -> None:

@@ -17,10 +17,9 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-from pydantic import Field
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
@@ -136,10 +135,10 @@ class ModelRequestParameters:
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
-    revealed_tool_names: Annotated[set[str], Field(exclude=True)] = field(default_factory=set[str], repr=False)
+    revealed_tool_names: set[str] = field(default_factory=set[str], repr=False)
     """Deferred tools currently revealed through tool search or capability loading."""
 
-    deferred_capability_ids: Annotated[set[str], Field(exclude=True)] = field(default_factory=set[str], repr=False)
+    deferred_capability_ids: set[str] = field(default_factory=set[str], repr=False)
     """IDs of on-demand capabilities."""
 
     output_mode: OutputMode = 'text'
@@ -1571,8 +1570,8 @@ def _resolve_tool_search_native_for_capability_owned_corpus(
     (2) the caller keeps `search_tools` in the request parameters — that callback is what
     the client-executed surface invokes. Adapters may still render that callback as a
     native client-executed tool-search item rather than as a regular function tool on the
-    provider wire. Explicit named-native strategies (`'bm25'`/`'regex'`) keep their
-    server-side search surface unchanged.
+    provider wire. Named-native strategies (`'bm25'`/`'regex'`) have no client-executed
+    equivalent, so we raise rather than silently substitute a different algorithm.
     """
     capability_owns_corpus = any(t.capability_id in params.deferred_capability_ids for t in params.function_tools)
     if not capability_owns_corpus:
@@ -1584,10 +1583,17 @@ def _resolve_tool_search_native_for_capability_owned_corpus(
         if not isinstance(t, ToolSearchTool):
             resolved_natives.append(t)
             continue
+        if t.strategy not in (None, 'custom'):
+            raise UserError(
+                f'`ToolSearch(strategy={t.strategy!r})` is incompatible with deferred-loading '
+                "capabilities. Server-side strategies can't "
+                "honor capability gating and would reveal tools whose owning capability hasn't "
+                'been loaded yet. Use `strategy=None` (auto: client-executed local search when a '
+                "deferred capability is present), `strategy='keywords'`, or a custom callable."
+            )
+        keep_search_tools_local = True
         if t.strategy is None:
             t = replace(t, strategy='custom')
-        if t.strategy == 'custom':
-            keep_search_tools_local = True
         resolved_natives.append(t)
     return _ToolSearchNativeResolution(resolved_natives, keep_search_tools_local=keep_search_tools_local)
 

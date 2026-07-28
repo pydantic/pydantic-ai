@@ -1467,8 +1467,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not tool_defs:
             return [], None
 
+        # `defer_loading` hides a tool's schema until something reveals it, and on Anthropic the only
+        # reveal is a `tool_reference` block, which `_map_message` renders under this same condition.
+        # A model that doesn't support the tool-search native tool never gets one, so sending it the
+        # flag would hide a tool nothing can unhide — reachable once a capability has been loaded,
+        # since `defer_loading` records authored intent and stays set after the reveal. Keeping both
+        # sides on one condition is what stops them from drifting apart.
+        supports_deferred_tools = any(isinstance(t, ToolSearchTool) for t in model_request_parameters.native_tools)
+
         # Map ToolDefinitions to Anthropic format
-        tools: list[BetaToolUnionParam] = [self._map_tool_definition(t, model_settings) for t in tool_defs.values()]
+        tools: list[BetaToolUnionParam] = [
+            self._map_tool_definition(t, model_settings, include_defer_loading=supports_deferred_tools)
+            for t in tool_defs.values()
+        ]
 
         # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
         # `cache_control` on tools with `defer_loading=True` (`Tools with defer_loading
@@ -2282,7 +2293,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
-    def _map_tool_definition(self, f: ToolDefinition, model_settings: AnthropicModelSettings) -> BetaToolParam:
+    def _map_tool_definition(
+        self, f: ToolDefinition, model_settings: AnthropicModelSettings, *, include_defer_loading: bool = True
+    ) -> BetaToolParam:
         """Maps a `ToolDefinition` dataclass to an Anthropic `BetaToolParam` dictionary."""
         tool_param: BetaToolParam = {
             'name': f.name,
@@ -2293,7 +2306,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_param['strict'] = f.strict
         if model_settings.get('anthropic_eager_input_streaming'):
             tool_param['eager_input_streaming'] = True
-        if f.defer_loading:
+        if include_defer_loading and f.defer_loading:
             tool_param['defer_loading'] = True
         return tool_param
 
