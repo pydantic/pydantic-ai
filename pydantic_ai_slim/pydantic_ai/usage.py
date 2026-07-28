@@ -38,12 +38,6 @@ class _UsageSerializerDescriptor:
         return _usage_serializer(owner)
 
 
-class _UsageSerializerMixin:
-    # Bare `pydantic_core.to_json()` looks for this attribute but does not build custom core schemas for stdlib
-    # dataclasses. The descriptor builds the same serializer as `TypeAdapter` for each concrete usage class.
-    __pydantic_serializer__ = _UsageSerializerDescriptor()
-
-
 def _serialize_usage(
     value: UsageBase,
     inner: core_schema.SerializerFunctionWrapHandler,
@@ -83,7 +77,11 @@ def _serialize_usage(
 
 
 @dataclass(repr=False, init=False, eq=False)
-class UsageBase(_UsageSerializerMixin):
+class UsageBase:
+    # Bare `pydantic_core.to_json()` looks for this attribute but does not build custom core schemas for stdlib
+    # dataclasses. The descriptor builds the same serializer as `TypeAdapter` for each concrete usage class.
+    __pydantic_serializer__ = _UsageSerializerDescriptor()
+
     input_tokens: Annotated[
         int,
         # `request_tokens` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
