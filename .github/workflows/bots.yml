@@ -92,8 +92,10 @@ jobs:
     outputs:
       category: ${{ steps.extract.outputs.category }}
       skip: ${{ steps.check-label.outputs.has_label }}
+      config_changed: ${{ steps.config-guard.outputs.config_changed }}
     steps:
       - name: Check for modified config files
+        id: config-guard
         # Runs for ALL PRs, not just forks: a same-repo branch (e.g. an automated
         # agent's branch built from an untrusted issue) can carry a poisoned
         # CLAUDE.md/AGENTS.md/.claude just as a fork can, and this job loads that
@@ -102,11 +104,21 @@ jobs:
         # slip a config edit past this guard while different code runs; TOCTOU) and
         # match the per-file `diff --git` headers (the compare JSON `.files` array
         # caps at 300 entries, so it could hide an edit in a large PR).
+        #
+        # A hit is a skip, not a failure. Editing these files is legitimate and
+        # routine, so failing here marked every such PR permanently red for doing
+        # nothing wrong — which trains reviewers to ignore the check that is
+        # supposed to mean something. The guard publishes its verdict as an output
+        # and every step below that would load the changed config is gated on it,
+        # as is the `Category Apply` job. (The `douwebot` job's own refusal is a
+        # different contract and is deliberately left as a failure.)
         run: |
           CHANGED=$(gh api "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" -H 'Accept: application/vnd.github.v3.diff' | grep '^diff --git ')
           if echo "$CHANGED" | grep -qiE '/(AGENTS\.md|CLAUDE\.md)( |$)|/\.claude/'; then
-            echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping auto-labeling for security."
-            exit 1
+            echo "config_changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping auto-labeling for security."
+          else
+            echo "config_changed=false" >> "$GITHUB_OUTPUT"
           fi
         env:
           GH_TOKEN: ${{ github.token }}
@@ -115,6 +127,7 @@ jobs:
 
       - name: Check if category label already exists
         id: check-label
+        if: steps.config-guard.outputs.config_changed == 'false'
         run: |
           LABELS=$(gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json labels --jq '.labels[].name')
           CATEGORY_LABELS=("bug" "feature" "docs" "chore" "dependency")
@@ -132,17 +145,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Checkout repository
-        if: steps.check-label.outputs.has_label == 'false'
+        if: steps.config-guard.outputs.config_changed == 'false' && steps.check-label.outputs.has_label == 'false'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Install bubblewrap
-        if: steps.check-label.outputs.has_label == 'false'
+        if: steps.config-guard.outputs.config_changed == 'false' && steps.check-label.outputs.has_label == 'false'
         run: sudo apt-get install -y bubblewrap
 
       - name: Classify PR with Claude Code
-        if: steps.check-label.outputs.has_label == 'false'
+        if: steps.config-guard.outputs.config_changed == 'false' && steps.check-label.outputs.has_label == 'false'
         id: classify
         uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
         env:
@@ -174,7 +187,7 @@ jobs:
             Return your classification as JSON with a "category" field set to one of: bug, feature, docs, chore, dependency.
 
       - name: Extract and validate category
-        if: steps.check-label.outputs.has_label == 'false'
+        if: steps.config-guard.outputs.config_changed == 'false' && steps.check-label.outputs.has_label == 'false'
         id: extract
         run: |
           CATEGORY=$(echo "$STRUCTURED_OUTPUT" | jq -r .category | tr -d '[:space:]')
@@ -191,7 +204,10 @@ jobs:
   category-apply:
     name: Category Apply
     needs: category-classify
-    if: needs.category-classify.outputs.skip != 'true' && needs.category-classify.outputs.category != ''
+    if: >-
+      needs.category-classify.outputs.config_changed != 'true' &&
+      needs.category-classify.outputs.skip != 'true' &&
+      needs.category-classify.outputs.category != ''
     runs-on: ubuntu-latest
     permissions:
       issues: write
