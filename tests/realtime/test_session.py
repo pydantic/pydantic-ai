@@ -400,6 +400,27 @@ async def test_final_transcripts_survive_a_flood_of_deltas() -> None:
     ]
 
 
+async def test_send_only_session_still_runs_tools() -> None:
+    # Tool execution, turn tracking, and usage limits all run off the receive loop, and a caller who
+    # sends a prompt and then goes off to do something else has no reason to think iterating is what
+    # switches the agent on. Sending starts the loop, so the tool runs without anyone consuming.
+    ran = asyncio.Event()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        ran.set()
+        return 'done'
+
+    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='c1', tool_name='fast', args='{}')])
+    async with RealtimeSession(conn, runner) as session:
+        await session.send('do the task')
+        # No `async for` and no view: the agent still has to run the tool and return its result.
+        async with asyncio.timeout(5):
+            await ran.wait()
+            while len(conn.sent) < 2:
+                await asyncio.sleep(0)
+    assert [type(sent).__name__ for sent in conn.sent] == ['TextInput', 'ToolResult']
+
+
 async def test_close_discards_buffered_view_items() -> None:
     # Closing is a hangup, not a flush: whatever a view had buffered is dropped rather than delivered
     # after the session is over. This is the case where a consumer is behind at close time, so the

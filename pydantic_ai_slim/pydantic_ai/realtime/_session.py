@@ -910,6 +910,7 @@ class RealtimeSession:
         # output item, so a truncate sent afterwards could no-op. Both frames go out under one hold of
         # the send lock, so a tool result completing in between can't start a new response for the
         # cancel to hit instead.
+        self._start_pump()
         async with self._send_lock:
             if audio_end_ms is not None:
                 await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
@@ -928,6 +929,7 @@ class RealtimeSession:
         wire, not just ordered.
         """
         self._ensure_not_closed()
+        self._start_pump()
         async with self._send_lock:
             await self._connection.send(content)
 
@@ -2043,7 +2045,9 @@ class RealtimeSession:
             raise RuntimeError('This realtime session is closed and cannot be streamed.')
 
     def _start_pump(self) -> None:
-        if self._pump_task is None:
+        # Only once the session owns its context: before `__aenter__` there is no session span to
+        # attach the loop to, and teardown has nothing tracking the task.
+        if self._entered and self._pump_task is None:
             self._pump_task = asyncio.create_task(self._pump(self._session_span_context))
 
     def _publish_taps(self, event: RealtimeEvent) -> None:
