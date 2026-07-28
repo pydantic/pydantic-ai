@@ -444,8 +444,6 @@ def test_logfire(
                                 'metadata': None,
                                 'timeout': None,
                                 'defer_loading': False,
-                                'defer_loading_on_wire': False,
-                                'tool_search_is_default_configuration': None,
                                 'toolset_id': None,
                                 'unless_native': None,
                                 'with_native': None,
@@ -456,6 +454,9 @@ def test_logfire(
                             }
                         ],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'capability_owned_deferred_tool_names': [],
+                        'tool_search_is_default_configuration': True,
                         'output_mode': 'text',
                         'output_tools': [],
                         'output_object': None,
@@ -1006,6 +1007,9 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'capability_owned_deferred_tool_names': [],
+                        'tool_search_is_default_configuration': True,
                         'output_mode': 'tool',
                         'output_object': None,
                         'output_tools': [
@@ -1025,8 +1029,6 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'metadata': None,
                                 'timeout': None,
                                 'defer_loading': False,
-                                'defer_loading_on_wire': False,
-                                'tool_search_is_default_configuration': None,
                                 'toolset_id': '<output>',
                                 'unless_native': None,
                                 'with_native': None,
@@ -1314,6 +1316,9 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'capability_owned_deferred_tool_names': [],
+                        'tool_search_is_default_configuration': True,
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],

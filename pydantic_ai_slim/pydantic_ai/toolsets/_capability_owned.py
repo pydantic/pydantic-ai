@@ -33,7 +33,6 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
                     tool_def,
                     capability_id=tool_def.capability_id if tool_def.capability_id is not None else capability_id,
                     defer_loading=defer_loading or tool_def.defer_loading,
-                    defer_loading_on_wire=defer_loading or tool_def.defer_loading_on_wire,
                 ),
             )
         return result

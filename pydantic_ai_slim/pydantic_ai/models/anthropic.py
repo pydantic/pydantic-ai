@@ -1408,14 +1408,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # tool. Remove a semantically bare search surface only when the entire corpus is
         # capability-owned, so there is nothing the model can discover by searching.
         capability_only_corpus = bool(tool_search_corpus) and all(
-            tool_def.defer_loading_on_wire for tool_def in tool_search_corpus
+            tool_def.name in model_request_parameters.capability_owned_deferred_tool_names
+            for tool_def in tool_search_corpus
         )
-        has_explicit_tool_search_configuration = any(
-            tool_def.tool_search_is_default_configuration is False for tool_def in tool_defs.values()
-        )
-        if capability_only_corpus and not has_explicit_tool_search_configuration:
+        if capability_only_corpus and model_request_parameters.tool_search_is_default_configuration:
             tool_defs = {
-                name: replace(tool_def, with_native=None) if tool_def.defer_loading_on_wire else tool_def
+                name: replace(tool_def, with_native=None)
+                if name in model_request_parameters.capability_owned_deferred_tool_names
+                else tool_def
                 for name, tool_def in tool_defs.items()
                 if tool_def.unless_native != ToolSearchTool.kind
             }
@@ -2291,7 +2291,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_param['strict'] = f.strict
         if model_settings.get('anthropic_eager_input_streaming'):
             tool_param['eager_input_streaming'] = True
-        if f.defer_loading_on_wire or f.with_native == ToolSearchTool.kind:
+        if f.defer_loading:
             tool_param['defer_loading'] = True
         return tool_param
 

@@ -799,10 +799,8 @@ async def test_tool_search_toolset_max_results():
     assert len(rv['discovered_tools']) == 10
 
 
-async def test_tool_search_toolset_discovered_tools_flip_defer_loading():
-    """Discovered tools have `defer_loading=False`; undiscovered ones still have
-    `defer_loading=True`. Both stay in the toolset under their real names — the
-    wire-side filter in `Model.prepare_request` decides what reaches the model."""
+async def test_tool_search_toolset_discovered_tools_keep_defer_loading():
+    """Discovery does not overwrite the tools' authored `defer_loading=True` value."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
 
@@ -818,7 +816,7 @@ async def test_tool_search_toolset_discovered_tools_flip_defer_loading():
     ctx = _build_run_context(None, messages=messages, discovered_tool_names={'calculate_mortgage'})
 
     tools = await searchable.get_tools(ctx)
-    assert tools['calculate_mortgage'].tool_def.defer_loading is False
+    assert tools['calculate_mortgage'].tool_def.defer_loading is True
     assert tools['stock_price'].tool_def.defer_loading is True
     assert tools['crypto_price'].tool_def.defer_loading is True
 
@@ -1179,9 +1177,7 @@ async def test_tool_search_toolset_tool_with_none_description():
 
 
 async def test_tool_search_toolset_multiple_searches_accumulate():
-    """Discovery accumulates across search turns: tools surfaced in any past
-    `search_tools` return have `defer_loading=False` on the next step, and
-    not-yet-found ones keep `defer_loading=True`."""
+    """Discovery accumulates without changing the tools' authored deferred state."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
 
@@ -1204,8 +1200,8 @@ async def test_tool_search_toolset_multiple_searches_accumulate():
     ctx = _build_run_context(None, messages=messages, discovered_tool_names={'calculate_mortgage', 'stock_price'})
 
     tools = await searchable.get_tools(ctx)
-    assert tools['calculate_mortgage'].tool_def.defer_loading is False
-    assert tools['stock_price'].tool_def.defer_loading is False
+    assert tools['calculate_mortgage'].tool_def.defer_loading is True
+    assert tools['stock_price'].tool_def.defer_loading is True
     assert tools['crypto_price'].tool_def.defer_loading is True
 
 
@@ -2237,7 +2233,7 @@ async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loa
         return f'Weather in {city}.'
 
     # `get_weather` was discovered last turn, so it now rides along as a callable tool
-    # (`defer_loading=False`, but `with_native='tool_search'` still set).
+    # while its authored `defer_loading=True` value stays stable.
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='I might want the weather later.')]),
         ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='loc_1')]),
@@ -4052,12 +4048,12 @@ async def test_tool_search_toolset_discovers_from_builtin_return_part():
         )
     ]
     # `parse_discovered_tools` extracts discovery from the native return part; mirror that
-    # into `discovered_tool_names`, which `get_tools` reads to flip visibility.
+    # into `discovered_tool_names`, which request preparation uses for visibility.
     assert parse_discovered_tools(messages) == {'calculate_mortgage'}
     ctx = _build_run_context(None, messages=messages, discovered_tool_names={'calculate_mortgage'})
 
     tools = await searchable.get_tools(ctx)
-    assert tools['calculate_mortgage'].tool_def.defer_loading is False
+    assert tools['calculate_mortgage'].tool_def.defer_loading is True
     assert tools['stock_price'].tool_def.defer_loading is True
 
 
@@ -4280,17 +4276,18 @@ def test_with_native_undiscovered_drops_on_unsupported_model():
 
 
 def test_with_native_discovered_kept_on_unsupported_model():
-    """A discovered corpus member (`defer_loading=False`) stays in the request even when
+    """A revealed corpus member stays in the request even when
     the builtin is unsupported — the model can call it directly by name on the local path."""
 
     m = TestModel()
-    corpus_tool = ToolDefinition(name='deferred_tool', with_native='tool_search', defer_loading=False)
+    corpus_tool = ToolDefinition(name='deferred_tool', with_native='tool_search', defer_loading=True)
 
     _, prepared = m.prepare_request(
         None,
         ModelRequestParameters(
             function_tools=[corpus_tool],
             native_tools=[ToolSearchTool(optional=True)],
+            revealed_tool_names={'deferred_tool'},
         ),
     )
     assert prepared.native_tools == []
@@ -6035,7 +6032,7 @@ async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_f
 #
 # Provider-side tool search can't honor capability gating — it would reveal corpus tools
 # whose owning capability hasn't been loaded yet. When any function tool has both
-# `with_native='tool_search'` and `defer_loading_on_wire=True`, `_resolve_native_tool_swap` either
+# `with_native='tool_search'` and belongs to a deferred capability, `_resolve_native_tool_swap` either
 # raises (named-native strategies have no local equivalent) or promotes `strategy=None` to
 # `'custom'` (client-executed), keeping `search_tools` on the wire as the callback.
 
@@ -6047,7 +6044,6 @@ def _capability_owned_corpus_tool() -> ToolDefinition:
         with_native=ToolSearchTool.kind,
         capability_id='refunds',
         defer_loading=True,
-        defer_loading_on_wire=True,
     )
 
 
@@ -6067,6 +6063,7 @@ def test_capability_gated_tool_search_keeps_named_native_strategy(strategy: str)
     params = ModelRequestParameters(
         function_tools=[_capability_owned_corpus_tool()],
         native_tools=[ToolSearchTool(strategy=cast(Any, strategy), optional=True)],
+        capability_owned_deferred_tool_names={'lookup_refund_policy'},
     )
     _, prepared = M().prepare_request(None, params)
     assert prepared.native_tools == [ToolSearchTool(strategy=cast(Any, strategy), optional=True)]
@@ -6085,6 +6082,7 @@ def test_capability_gated_tool_search_promotes_default_strategy_to_custom() -> N
     params = ModelRequestParameters(
         function_tools=[_local_search_tools_def(), _capability_owned_corpus_tool()],
         native_tools=[ToolSearchTool(strategy=None, optional=True)],
+        capability_owned_deferred_tool_names={'lookup_refund_policy'},
     )
     _, prepared = M().prepare_request(None, params)
 
@@ -6107,6 +6105,7 @@ def test_capability_gated_tool_search_skips_other_natives_and_leaves_custom_stra
         function_tools=[_local_search_tools_def(), _capability_owned_corpus_tool()],
         # WebSearchTool listed first so the promotion loop must `continue` past it.
         native_tools=[WebSearchTool(), ToolSearchTool(strategy='custom', optional=True)],
+        capability_owned_deferred_tool_names={'lookup_refund_policy'},
     )
     _, prepared = M().prepare_request(None, params)
 

@@ -142,6 +142,16 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
 
     _search_fn: ToolSearchFunc[AgentDepsT] | None = field(init=False, repr=False, default=None)
 
+    @property
+    def is_default_configuration(self) -> bool:
+        """Whether this is semantically a bare `ToolSearch()` capability."""
+        return (
+            self.strategy is None
+            and self.max_results == 10
+            and self.tool_description is None
+            and self.parameter_description is None
+        )
+
     def __post_init__(self) -> None:
         # `'keywords'` and a callable strategy both run their algorithm on our side and
         # both engage the provider's "client-executed" native mode where supported, so
@@ -207,12 +217,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             tool_description=self.tool_description,
             parameter_description=self.parameter_description,
             enable_fallback=self.strategy not in ('bm25', 'regex'),
-            is_default_configuration=(
-                self.strategy is None
-                and self.max_results == 10
-                and self.tool_description is None
-                and self.parameter_description is None
-            ),
+            is_default_configuration=self.is_default_configuration,
         )
 
     async def before_model_request(

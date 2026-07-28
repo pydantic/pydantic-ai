@@ -17,9 +17,10 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
+from pydantic import Field
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
@@ -135,6 +136,14 @@ class ModelRequestParameters:
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
+    revealed_tool_names: Annotated[set[str], Field(exclude=True)] = field(default_factory=set[str])
+    """Deferred tools currently revealed through tool search or capability loading."""
+
+    capability_owned_deferred_tool_names: Annotated[set[str], Field(exclude=True)] = field(default_factory=set[str])
+    """Deferred corpus members owned by an on-demand capability."""
+
+    tool_search_is_default_configuration: Annotated[bool, Field(exclude=True)] = True
+    """Whether tool search came from a semantically bare `ToolSearch()` capability."""
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
@@ -514,7 +523,7 @@ class Model(ABC, Generic[InterfaceClient]):
            `defer_loading` flag for `ToolSearchTool`).
         3. `with_native` matches an *unsupported* native tool → the corpus member can't be
            paired with its native tool on this provider, so its fate turns on discovery:
-           if `defer_loading=True` it's still undiscovered and is dropped from wire (the
+           if it is absent from `revealed_tool_names` it's still undiscovered and is dropped from wire (the
            model has no way to call it); otherwise it's already discovered and stays on wire
            as a plain function tool, but sheds `with_native` — with no native tool present, an
            adapter that derives a native flag from it (e.g. OpenAI's `defer_loading`) would
@@ -559,9 +568,7 @@ class Model(ABC, Generic[InterfaceClient]):
                 f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
             )
 
-        tool_search_resolution = _resolve_tool_search_native_for_capability_owned_corpus(
-            supported_natives, params.function_tools
-        )
+        tool_search_resolution = _resolve_tool_search_native_for_capability_owned_corpus(supported_natives, params)
         supported_natives = tool_search_resolution.native_tools
         tool_search_kept_local = tool_search_resolution.keep_search_tools_local
 
@@ -578,7 +585,7 @@ class Model(ABC, Generic[InterfaceClient]):
             # native tool on this provider; its fate turns on whether it's been discovered yet.
             if t.with_native and t.with_native not in supported_ids:
                 # Still undiscovered → drop: the model has no way to call it on this provider.
-                if t.defer_loading:
+                if t.name not in params.revealed_tool_names:
                     continue
                 # Already discovered → keep it callable as a plain function tool, but shed
                 # `with_native`: with no native tool on the wire, an adapter that derives a native
@@ -1531,7 +1538,7 @@ class _ToolSearchNativeResolution:
 
 
 def _resolve_tool_search_native_for_capability_owned_corpus(
-    supported_natives: Sequence[AbstractNativeTool], function_tools: Sequence[ToolDefinition]
+    supported_natives: Sequence[AbstractNativeTool], params: ModelRequestParameters
 ) -> _ToolSearchNativeResolution:
     """Resolve tool search's native mode when a deferred capability owns a corpus tool.
 
@@ -1551,9 +1558,7 @@ def _resolve_tool_search_native_for_capability_owned_corpus(
     provider wire. Explicit named-native strategies (`'bm25'`/`'regex'`) keep their
     server-side search surface unchanged.
     """
-    capability_owns_corpus = any(
-        t.with_native == ToolSearchTool.kind and t.defer_loading_on_wire for t in function_tools
-    )
+    capability_owns_corpus = any(t.name in params.capability_owned_deferred_tool_names for t in params.function_tools)
     if not capability_owns_corpus:
         return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
 

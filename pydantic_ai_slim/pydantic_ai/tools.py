@@ -611,39 +611,11 @@ class ToolDefinition:
     defer_loading: bool = False
     """Whether this tool should be hidden from the model until something explicitly surfaces it.
 
-    Carries two meanings depending on where in the pipeline you observe it:
-
-    1. **User-input intent** — set on `Tool(defer_loading=True)` (or via a custom toolset)
-       to opt this tool into deferred loading. This is what `prepare_tools` hooks and other
-       pre-toolset-wrapping consumers see, and is the value users persist on `ToolDefinition`.
-    2. **Current visibility state** — after a toolset like
-       the internal `ToolSearchToolset` processes
-       the corpus, it flips this field to `False` for tools whose discovery shows up in
-       message history, so downstream `Model.prepare_request` filtering and adapter wire
-       formatting can read "should this be on the wire?" off a single boolean.
-
-    The dual meaning is acknowledged tech debt: a future `RunContext.loaded_tools` /
-    equivalent will surface (2) as a derived view so this field cleanly stays a user-input
-    flag. Until then, the toolset-set value flows through agent-graph plumbing on a per-step
-    `ToolDefinition` instance built via `replace(...)`; user-persisted definitions are not
-    mutated.
+    Set on `Tool(defer_loading=True)` (or via a custom toolset) to opt this tool into
+    deferred loading. This author intent remains stable after the tool is revealed;
+    current visibility is tracked separately in the request context.
 
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
-    """
-
-    defer_loading_on_wire: bool = False
-    """Whether a provider adapter should keep this tool deferred on the wire for the whole run.
-
-    Deferred capabilities set this independently of `defer_loading`, whose value changes when
-    the capability is revealed. Providers that support application-driven reveals can use this
-    stable flag to preserve the prompt-cache prefix while still allowing the revealed tool call.
-    """
-
-    tool_search_is_default_configuration: Annotated[bool | None, Field(exclude=True)] = field(default=None, repr=False)
-    """Whether a tool-search function represents a semantically bare `ToolSearch()` capability.
-
-    This is set only on the framework-managed `search_tools` definition so model adapters
-    can distinguish auto/default search from an explicitly configured search surface.
     """
 
     unless_native: Annotated[
