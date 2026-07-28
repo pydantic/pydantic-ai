@@ -187,14 +187,14 @@ Pydantic AI translates the `strict` flag into a native schema-enforcement featur
 | OpenAI | Strict tool definitions. Enabled automatically when the tool's schema is strict-compatible; `strict=True` forces it. |
 | Anthropic | Strict tool definitions. Off unless you opt in with `strict=True`. |
 | Bedrock | Strict tool spec, on supported models. Off unless you opt in with `strict=True`. |
-| Google (Gemini) | Gemini's [`VALIDATED` function-calling mode](https://ai.google.dev/gemini-api/docs/function-calling#function_calling_config), which ensures the model adheres to the declared schema. On **Gemini 2.5 and newer it is enabled by default** — `VALIDATED` needs no schema changes, so it's a free improvement — and you can opt a tool out with `strict=False`. `VALIDATED` is a preview Gemini feature. |
+| Google (Gemini) | Gemini's [`VALIDATED` function-calling mode](https://ai.google.dev/gemini-api/docs/function-calling#function_calling_config), which ensures the model adheres to the declared schema. On **Gemini 2.5 and newer it is enabled by default** — `VALIDATED` needs no schema changes, so it's a free improvement — and you can opt out with `strict=False`. Gemini's mode is request-wide: any function or output tool with `strict=False` keeps the whole request on `AUTO`. `VALIDATED` is a preview Gemini feature. |
 
 ### Strictness values
 
 The `strict` flag is a `bool | None`:
 
 - `True` — force strict mode wherever the provider supports it for the tool's schema.
-- `False` — never use strict mode for the tool. On Google, this opts the tool out of `VALIDATED`.
+- `False` — never use strict mode for the tool. On Google, any tool (function or output) with `strict=False` keeps the whole request on `AUTO` rather than `VALIDATED`.
 - `None` (**default**) — decide per provider: OpenAI enables strict when the schema is strict-compatible; Google defaults to `VALIDATED` on supported models; Anthropic and Bedrock leave it off unless you explicitly opt in with `strict=True`.
 
 To turn strict mode on for many tools at once, use [agent-wide dynamic tools](#prepare-tools) to set `strict=True` on each [`ToolDefinition`][pydantic_ai.tools.ToolDefinition].
