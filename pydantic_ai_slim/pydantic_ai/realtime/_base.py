@@ -46,7 +46,8 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..models import AbstractModel, ModelRequestParameters, download_item
+from ..models import ModelRequestParameters, download_item
+from ..models._abstract import AbstractModel
 from ..native_tools import AbstractNativeTool
 from ..settings import ThinkingLevel, ToolChoice
 from ..usage import RequestUsage
