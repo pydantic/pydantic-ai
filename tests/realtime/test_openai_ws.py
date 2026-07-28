@@ -75,7 +75,11 @@ a=setup:actpass
 
 with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
-    from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
+    from pydantic_ai.realtime.openai import (
+        OpenAIRealtimeConnection,
+        OpenAIRealtimeModel,
+        OpenAIRealtimeModelSettings,
+    )
 
 pytestmark = [
     pytest.mark.anyio,
@@ -466,6 +470,12 @@ async def test_webrtc_sideband_text_turn(
         # The sideband doesn't own the audio transport, so the audio methods are unavailable.
         with pytest.raises(UserError, match='does not own the audio transport'):
             await session.send_audio(b'\x00\x00')
+
+        # It sees no output-audio deltas either, which is what makes a barge-in clear the provider's
+        # outbound buffer instead of clamping a truncation against a byte counter that stays zero.
+        connection = session._connection  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(connection, OpenAIRealtimeConnection)
+        assert not connection._observes_output_audio  # pyright: ignore[reportPrivateUsage]
 
         await session.send('Say hello.')
         with anyio.fail_after(30):
