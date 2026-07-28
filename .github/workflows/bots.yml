@@ -234,9 +234,11 @@ jobs:
       #     comments but cannot push code or reach other secrets;
       #   - the tool allowlist below grants no arbitrary-exec sink;
       #   - `allowed_non_write_users` makes the action scrub Anthropic/cloud/
-      #     Actions secrets from subprocess envs, and the bubblewrap install below
-      #     adds PID-namespace isolation so a read of `/proc/<pid>/environ` (say,
-      #     via a fork-committed absolute symlink) does not recover them.
+      #     Actions secrets from subprocess envs and run them under bubblewrap
+      #     PID-namespace isolation, so a read of `/proc/<pid>/environ` -- say via
+      #     a fork-committed absolute symlink, which does survive checkout -- does
+      #     not recover them. The action installs bubblewrap itself; the step below
+      #     only front-runs it, since the action's own install is best-effort.
       # See https://gh.io/securely-using-pull_request_target.
       - name: Checkout base ref (trusted; owns the workspace root)
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -341,6 +343,15 @@ jobs:
           # the base tools always include the read-only `Grep`, which is the same
           # ripgrep without the `--pre` surface. Audit anything added here the same
           # way: does any flag of this binary take a command or a pager?
+          #
+          # Note this list is NOT what contains arbitrary *reads*, and trimming it
+          # cannot be: the always-included `Read` tool takes absolute paths, so
+          # dropping `Bash(cat:*)` would buy nothing. Reading the process
+          # environment is contained a layer down instead -- `allowed_non_write_users`
+          # below makes the action set `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, which
+          # strips Anthropic/cloud/Actions secrets from subprocess environments, and
+          # it runs subprocesses under bubblewrap PID-namespace isolation so other
+          # processes' `/proc/<pid>/environ` is out of reach.
           claude_args: |
             --model claude-opus-4-8[1m]
             --add-dir pr-head
