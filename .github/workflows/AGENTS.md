@@ -67,6 +67,20 @@ never fired once, reporting false-green on every PR (#6766). Both it and
 After changing either, check the recompiled lock: `activation.needs` must list the job,
 and the job itself must **not** have `needs: activation`.
 
+# A PR that edits `bots.yml` cannot test its own change
+
+`bots.yml` triggers on `pull_request_target`, and GitHub runs that trigger's
+workflow file from the **base branch**, never from the PR head — that is what makes
+the trigger safe to give secrets to. So a PR that changes `bots.yml` sees the
+*current `main`* version of every job in it, and its own edit takes effect only
+after merge.
+
+The practical consequence is that a `bots.yml` check can stay red on the very PR
+that fixes it, and re-pushing will not help. Reason about the change by reading the
+diff, and expect the first real execution to be on `main`. This is unlike
+`.github/workflows/ci.yml`, which runs on `pull_request` from the PR's own merge
+ref and therefore does test itself.
+
 # Agentic workflows (`gh-aw`)
 
 The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://github.com/githubnext/gh-aw) authored as human-editable `<name>.md` sources (frontmatter + prompt) that **compile** to a generated `<name>.lock.yml`. GitHub Actions runs the `.lock.yml`, never the `.md`.
