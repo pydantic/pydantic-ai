@@ -26,6 +26,18 @@ safe-outputs:
     close-older-issues: false
     expires: 7d
 timeout-minutes: 30
+# AI-credits pricing for MiniMax-M3, in dollars per 1M tokens. Required: the
+# model is absent from the AWF api-proxy's built-in table, so without it
+# v0.83.4 rejects every request with HTTP 400 `unknown_model_ai_credits`, and
+# the guardrail cannot be switched off (`apiProxy.maxAiCredits` is emitted
+# unconditionally and must be > 0). gh-aw does not merge this key in from
+# imports, so it is declared per workflow rather than in
+# shared/engine-minimax.md — keep the rates there in step with these.
+models:
+  default-ai-credits-pricing:
+    input: 0.6
+    output: 2.4
+    cache_read: 0.12
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
