@@ -2309,72 +2309,144 @@ async def test_openai_deferred_capability_runs_on_model_without_native_tool_sear
     assert [p.content for p in bar_returns] == [1]
 
 
-async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_requests: None):
-    """A model switch between turns (Anthropic → OpenAI) should replay cleanly: the
-    provider-specific Builtin* tool search parts are skipped by the mismatched provider,
-    and the agent can still dispatch already-discovered tools by name. This is the
-    canonical FallbackModel-style scenario the design calls for."""
-    pytest.importorskip('openai')
-    pytest.importorskip('anthropic')
-
-    # Prior turn: Anthropic ran a native BM25 search and discovered `get_weather`.
-    prior: list[ModelMessage] = [
-        ModelRequest.user_text_prompt('weather please'),
-        ModelResponse(
-            parts=[
-                NativeToolCallPart(
-                    provider_name='anthropic',
-                    tool_name='tool_search',
-                    tool_call_id='srv_a',
-                    args={'query': 'weather'},
-                    provider_details={'strategy': 'bm25'},
-                ),
-                NativeToolReturnPart(
-                    provider_name='anthropic',
-                    tool_name='tool_search',
-                    tool_call_id='srv_a',
-                    content={'discovered_tools': [{'name': 'get_weather'}]},
-                ),
-            ],
-            provider_name='anthropic',
-        ),
-    ]
-
-    # Switch to OpenAI for the follow-up. The Anthropic builtin parts should be silently
-    # skipped (`provider_name` mismatch). `get_weather` was discovered in the prior turn,
-    # so `parse_discovered_tools` picks it up and exposes the regular
-    # variant on the new provider — the model can call it directly.
-    followup = response_message(
-        [
-            ResponseOutputMessage(
-                id='msg_1',
-                content=[ResponseOutputText(text='Sunny.', type='output_text', annotations=[])],
-                role='assistant',
-                status='completed',
-                type='message',
-            ),
-        ],
+def _cross_provider_tool_search_agent(model: AnthropicModel | OpenAIResponsesModel) -> Agent[None, str]:
+    agent: Agent[None, str] = Agent(
+        model,
+        instructions='Always use get_exchange_rate to answer exchange-rate questions.',
     )
-    mock_client = MockOpenAIResponses.create_mock(followup)
-    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model=model, capabilities=[ToolSearch()])
 
     @agent.tool_plain(defer_loading=True)
-    def get_weather(city: str) -> str:  # pragma: no cover
-        return f'Weather in {city}.'
+    def get_exchange_rate(pair: str) -> str:
+        """Look up the exchange rate for a currency pair."""
+        return f'{pair}: 0.92'
 
-    await agent.run('and what about tomorrow?', message_history=prior)
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    # The Anthropic-generated tool search parts are not echoed back to OpenAI (wrong
-    # provider) — the replayed input contains only the user message from the prior turn
-    # and the new user prompt, plus no `tool_search_call` items.
-    item_types = [cast('dict[str, Any]', item).get('type') for item in kwargs['input']]
-    assert 'tool_search_call' not in item_types
-    # `get_weather` is visible on this turn because it was discovered in the prior turn's
-    # history — the local `ToolSearchToolset` emits its regular variant in the tool
-    # list so the OpenAI request carries `get_weather` as a regular function tool.
-    tool_names = [cast('dict[str, Any]', tool).get('name') for tool in kwargs['tools']]
-    assert 'get_weather' in tool_names
+    return agent
+
+
+def _assert_exchange_rate_called(messages: list[ModelMessage], pair: str) -> None:
+    returns = [
+        part
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+        if part.tool_name == 'get_exchange_rate'
+    ]
+    assert [part.content for part in returns] == [f'{pair}: 0.92']
+
+
+def _recorded_request_bodies(vcr: Any, provider: Literal['anthropic', 'openai']) -> list[dict[str, Any]]:
+    uri_fragment = 'api.anthropic.com' if provider == 'anthropic' else 'api.openai.com'
+    return [json.loads(request.body) for request in vcr.requests if uri_fragment in request.uri]
+
+
+def _assert_openai_native_search_replay(body: dict[str, Any]) -> None:
+    item_types = [item.get('type') for item in body['input']]
+    assert 'tool_search_call' in item_types
+    assert 'tool_search_output' in item_types
+
+
+def _assert_anthropic_native_search_replay(
+    body: dict[str, Any], result_type: Literal['tool_result', 'tool_search_tool_result']
+) -> None:
+    search_results = [
+        block for message in body['messages'] for block in message['content'] if block.get('type') == result_type
+    ]
+    if result_type == 'tool_result':
+        references = [nested for result in search_results for nested in result['content']]
+    else:
+        references = [reference for result in search_results for reference in result['content']['tool_references']]
+    assert any(reference.get('type') == 'tool_reference' for reference in references)
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='cross-provider replay rewrites native tool-search history')
+async def test_live_tool_search_handoff_anthropic_to_openai(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    openai_api_key: str,
+    vcr: Any,
+) -> None:
+    """A real Anthropic native search remains callable after replay on OpenAI."""
+    first_agent = _cross_provider_tool_search_agent(
+        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    )
+    first = await first_agent.run('What is the USD/EUR exchange rate?')
+    assert any(isinstance(part, NativeToolSearchCallPart) for message in first.all_messages() for part in message.parts)
+
+    second_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    )
+    second = await second_agent.run(
+        'Now call get_exchange_rate for GBP/USD without searching again.',
+        message_history=first.all_messages(),
+    )
+
+    _assert_exchange_rate_called(second.new_messages(), 'GBP/USD')
+    _assert_openai_native_search_replay(_recorded_request_bodies(vcr, 'openai')[0])
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='cross-provider replay rewrites native tool-search history')
+async def test_live_tool_search_handoff_openai_to_anthropic(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    openai_api_key: str,
+    vcr: Any,
+) -> None:
+    """A real OpenAI native search remains callable after replay on Anthropic."""
+    first_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    )
+    first = await first_agent.run('What is the USD/EUR exchange rate?')
+    assert any(isinstance(part, NativeToolSearchCallPart) for message in first.all_messages() for part in message.parts)
+
+    second_agent = _cross_provider_tool_search_agent(
+        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    )
+    second = await second_agent.run(
+        'Now call get_exchange_rate for GBP/USD without searching again.',
+        message_history=first.all_messages(),
+    )
+
+    _assert_exchange_rate_called(second.new_messages(), 'GBP/USD')
+    _assert_anthropic_native_search_replay(_recorded_request_bodies(vcr, 'anthropic')[0], 'tool_result')
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='cross-provider replay rewrites native tool-search history')
+async def test_live_tool_search_handoff_anthropic_openai_anthropic(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    openai_api_key: str,
+    vcr: Any,
+) -> None:
+    """Twice-travelled real history remains accepted and callable on its origin vendor."""
+    first_agent = _cross_provider_tool_search_agent(
+        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    )
+    first = await first_agent.run('What is the USD/EUR exchange rate?')
+    assert any(isinstance(part, NativeToolSearchCallPart) for message in first.all_messages() for part in message.parts)
+
+    second_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    )
+    second = await second_agent.run(
+        'Now call get_exchange_rate for GBP/USD without searching again.',
+        message_history=first.all_messages(),
+    )
+    _assert_exchange_rate_called(second.new_messages(), 'GBP/USD')
+
+    third_agent = _cross_provider_tool_search_agent(
+        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    )
+    third = await third_agent.run(
+        'Now call get_exchange_rate for CAD/USD without searching again.',
+        message_history=second.all_messages(),
+    )
+
+    _assert_exchange_rate_called(third.new_messages(), 'CAD/USD')
+    openai_bodies = _recorded_request_bodies(vcr, 'openai')
+    anthropic_bodies = _recorded_request_bodies(vcr, 'anthropic')
+    _assert_openai_native_search_replay(openai_bodies[0])
+    _assert_anthropic_native_search_replay(anthropic_bodies[-1], 'tool_search_tool_result')
 
 
 def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, list[dict[str, Any]]]]:
