@@ -1160,6 +1160,12 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
+!!! note "Why two exception types?"
+    Cancellation can originate from two different places, and only one of them is Pydantic AI's to name:
+
+    - **Your application** decides to stop the run, through one of the dedicated cancellation methods. Pydantic AI issued that cancellation itself, so it can consume it before asyncio interprets it and raise `RunCancelled` instead: the run ends with an ordinary, catchable application error.
+    - **The asyncio environment** cancels the task the run happens to be on: `asyncio.Task.cancel()`, `asyncio.timeout()` expiring, a [`TaskGroup`][asyncio.TaskGroup] tearing down after a sibling failed, a server shutting down, workflow cancellation under [durable execution](durable_execution/overview.md). All of these deliver the very same `CancelledError` signal, so Pydantic AI cannot tell a stop button from a timeout -- and the exception's type is load-bearing for everything built on it: `asyncio.timeout()` only produces `TimeoutError`, a `TaskGroup` only treats the task as cleanly cancelled, and Temporal only ends the workflow as *Cancelled* if `CancelledError` itself keeps propagating. Raising `RunCancelled` in its place would silently break each of those. So the run state is *attached to* the propagating `CancelledError` for [`from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation], rather than replacing it.
+
 Cancellation is terminal: capability hooks may observe it and clean up, but cannot recover the run to success — on Python 3.11+ this holds even if user code absorbs the delivered cancellation; on Python 3.10 it is best-effort. When first-party and external cancellation race, external cancellation wins. On Python 3.10, that race cannot be distinguished, so first-party cancellation wins instead.
 
 For fine-grained control over the agent graph, call [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] on the handle returned by [`agent.iter()`][pydantic_ai.agent.Agent.iter]:
