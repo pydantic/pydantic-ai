@@ -331,6 +331,47 @@ dispatched via `anyio.to_thread`).
 rejects `..`) to prevent path traversal -- callers passing user-controlled
 IDs should still sanitise first.
 
+## Bounding snapshot growth
+
+Each step writes a new full-history snapshot keyed by an incrementing `seq`,
+and nothing is pruned by default. Within one long `Agent.run` the snapshot
+count equals the number of settled tool-call steps, so a long single run pays a
+growing storage cost.
+
+`InMemoryStepStore`, `FileStepStore`, and `SqliteStepStore` accept an opt-in
+`max_snapshots_per_run: int | None` (default `None`, unbounded -- byte-for-byte
+the prior behavior). When set to `N >= 1`, each `save_snapshot` prunes the run
+down to a retain set:
+
+- the newest `N` snapshots by `seq`,
+- the newest snapshot overall (serves `latest_snapshot(include_interrupted=True)`),
+- the newest `complete` snapshot (serves the default read path).
+
+The last two keep both read modes correct even when the newest `N` snapshots
+are all `interrupted` and the newest resumable `complete` sits below that
+window, so the retain set can exceed `N`. `from_spec(..., max_snapshots_per_run=N)`
+forwards the bound to the constructed store.
+
+```python
+from pydantic_ai_harness.step_persistence import FileStepStore
+
+store = FileStepStore('runs', max_snapshots_per_run=8)
+```
+
+Pruning a snapshot never deletes its externalized media: blobs are
+content-addressed and may be shared across snapshots and runs, so orphaned-blob
+GC is out of scope (see the non-goals below). Age-based (TTL) expiry is out of
+scope too -- it belongs at whole-run granularity, not per snapshot.
+
+Bounded retention discards older per-step snapshots, including pre-compaction
+ones. Any downstream that reconstructs history by unioning a run's retained
+snapshots -- snapshot search or a "full transcript" receipt keyed on `run_id`
+-- can only see what is retained. With a tight bound (for example
+`max_snapshots_per_run=1`) the older, pre-compaction states are gone, so treat
+the bound as a hard limit on how far back such recovery can reach. Leave the
+bound at `None`, or set it high enough to cover the history you need to recover,
+when full-transcript reconstruction matters.
+
 ## Persisting media
 
 `BinaryContent` payloads (images, audio, documents, video) inline as
@@ -515,8 +556,12 @@ abstracting.
   write artifacts, labels, PRs, or external state should call
   `annotate_tool_effect(store, ctx, ...)` (see [Failure recovery](#failure-recovery))
   so the orchestrator can decide whether replay is safe.
-- It does not clean up old snapshots/events. Retention is the caller's
-  responsibility.
+- It does not prune events, and by default does not prune snapshots.
+  Retention is the caller's responsibility; snapshot growth can be bounded
+  opt-in with `max_snapshots_per_run` (see [Bounding snapshot growth](#bounding-snapshot-growth)).
+- It does not garbage-collect externalized media. Pruning a snapshot leaves
+  its content-addressed blobs in place, since they may be shared across
+  snapshots and runs.
 - It does not emit OpenTelemetry spans. pydantic_ai's `Instrumentation`
   capability already spans `agent run` / `chat` / `running tool` and
   populates `gen_ai.agent.name`, `gen_ai.agent.call.id`,
