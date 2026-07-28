@@ -1781,11 +1781,26 @@ def test_huggingface_unknown_provider_returns_none():
 
 
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
-def test_anthropic_tool_availability_delta_support():
-    """Only the model families verified for the beta advertise native tool changes."""
-    supported = AnthropicProvider.model_profile('claude-sonnet-5')
-    unsupported = AnthropicProvider.model_profile('claude-sonnet-4-6')
-    assert supported is not None
-    assert unsupported is not None
-    assert supported.get('anthropic_supports_tool_availability_delta') is True
-    assert unsupported.get('anthropic_supports_tool_availability_delta') is None
+@pytest.mark.parametrize(
+    'model_name,supported',
+    [
+        ('claude-opus-5', True),
+        ('claude-opus-4-8', True),
+        ('claude-fable-5', True),
+        # Serves the `system` role but rejects tool deltas — the two capabilities are independent.
+        ('claude-sonnet-5', False),
+        ('claude-sonnet-4-6', False),
+        ('claude-haiku-4-5', False),
+        ('claude-opus-4-7', False),
+        ('claude-opus-4-6', False),
+    ],
+)
+def test_anthropic_tool_availability_delta_support(model_name: str, supported: bool):
+    """Pins the live-verified per-model matrix for `tool_addition` / `tool_removal`.
+
+    Not derivable from a version cutoff: `claude-sonnet-5` is newer than `claude-opus-4-8` and rejects
+    the blocks, so every entry was checked against the API rather than inferred.
+    """
+    profile = AnthropicProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('anthropic_supports_tool_availability_delta') is (True if supported else None)

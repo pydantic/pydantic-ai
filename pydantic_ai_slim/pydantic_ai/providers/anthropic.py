@@ -42,10 +42,23 @@ _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-sonnet-5',
 )
 
-_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = ('claude-opus-4-8', 'claude-sonnet-5')
 """Models that accept a `{'role': 'system'}` entry inside the Messages API's `messages` array.
 
 Older models reject it with `role 'system' is not supported on this model`.
+"""
+
+_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-opus-4-8',
+    'claude-opus-5',
+)
+"""Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
+
+Deliberately not the same list as `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`: the two are independent
+capabilities. `claude-sonnet-5` serves the `system` role but rejects tool deltas with
+`tool_addition/tool_removal is not supported on this model`, while every model that predates the
+`mid-conversation-tool-changes-2026-07-01` beta rejects them with `requires a model that supports ...`.
+Verified live per model; `claude-mythos-5` is untested and so stays out.
 """
 
 
