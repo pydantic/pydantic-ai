@@ -67,6 +67,10 @@ class EmbeddingContent:
                 '`EmbeddingContent` takes a sequence of parts, not a single string. '
                 "Wrap it in a list to embed it on its own, or pass it to `embed()` directly if it's the whole input."
             )
+        # Every input must yield one embedding, and there is nothing to embed here; left unchecked this
+        # reaches the provider as an empty `Content` and fails there instead.
+        if not self.content:
+            raise UserError('`EmbeddingContent` needs at least one part to embed.')
 
 
 EmbeddingInput: TypeAlias = EmbeddingContentPart | EmbeddingContent

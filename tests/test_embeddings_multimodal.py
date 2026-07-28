@@ -146,6 +146,16 @@ def test_embedding_content_rejects_bare_str():
         EmbeddingContent('a kiwi')
 
 
+def test_embedding_content_rejects_an_empty_sequence():
+    """Every input yields one embedding, and an empty one has nothing to make a vector from.
+
+    The modality gate loops over the parts, so an empty `EmbeddingContent` clears it and reaches the
+    provider as an empty `Content`, which fails there instead of at the call site.
+    """
+    with pytest.raises(UserError, match=r'`EmbeddingContent` needs at least one part to embed\.'):
+        EmbeddingContent([])
+
+
 async def test_test_model_embeds_every_modality(tiny_image: BinaryImage):
     """`TestEmbeddingModel` accepts every modality so multimodal apps can be tested against it."""
     model = TestEmbeddingModel(dimensions=4)
@@ -216,7 +226,7 @@ async def test_combined_content_on_text_only_model_raises(gemini_api_key: str):
     model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
 
     with pytest.raises(
-        UserError, match=r'cannot combine multiple parts into a single embedding; pass the parts as separate inputs'
+        UserError, match=r'can only embed a single text part per input; pass the parts as separate inputs'
     ):
         await Embedder(model).embed_documents(EmbeddingContent(['a kiwi', 'fruit']))
 
@@ -267,6 +277,18 @@ async def test_prepare_text_embed_rejects_a_file_and_not_the_text_beside_it():
 
     with pytest.raises(UserError, match=r'`overreaching-model` only supports plain text inputs, got `ImageUrl`\.'):
         await embedder.embed_documents(ImageUrl(url='https://example.com/img.png'))
+
+
+async def test_prepare_text_embed_rejects_a_single_part_that_is_not_text():
+    """A one-part `EmbeddingContent` unwraps only when the part is text; a lone file is still refused.
+
+    The modality gate lets the image through, so this needs a model that advertises images and sends
+    text — the same mismatch `_OverreachingEmbeddingModel` exists for.
+    """
+    embedder = Embedder(_OverreachingEmbeddingModel())
+
+    with pytest.raises(UserError, match=r'`overreaching-model` can only embed a single text part per input'):
+        await embedder.embed_documents(EmbeddingContent([ImageUrl(url='https://example.com/img.png')]))
 
 
 def test_prepare_text_embed_unwraps_text_content():
@@ -377,6 +399,30 @@ async def test_text_only_provider_reports_original_inputs(case: _TextOnlyProvide
 
     assert result.inputs == [tagged]
     assert result['Hello, world!'] == result.embeddings[0]
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.vcr('../test_embeddings/TestOpenAI.test_query.yaml')
+@pytest.mark.parametrize(
+    'part',
+    [pytest.param('Hello, world!', id='str'), pytest.param(TextContent(content='Hello, world!'), id='text-content')],
+)
+async def test_single_text_part_content_embeds_on_a_text_only_provider(part: EmbeddingContentPart, openai_api_key: str):
+    """A text-only provider takes a one-part `EmbeddingContent`: one part is nothing to fuse.
+
+    Refusing it would make `EmbeddingContent` unusable for a caller that builds inputs uniformly and
+    only sometimes has more than one part. Replays the same `embed_query('Hello, world!')` recording
+    the cases above reuse — the unwrapping happens before the provider builds its body, so the
+    request is byte-identical to embedding the bare part.
+    """
+    model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
+    content = EmbeddingContent([part])
+
+    result = await Embedder(model).embed_query(content)
+
+    assert len(result.embeddings) == 1
+    # The container is what the caller passed, so it is what the result reports.
+    assert result.inputs == [content]
 
 
 @dataclass(frozen=True)

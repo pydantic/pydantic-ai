@@ -6,7 +6,7 @@ from typing import Literal, cast
 import anyio
 
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
-from pydantic_ai.messages import BinaryContent, TextContent
+from pydantic_ai.messages import BinaryContent, FileUrl, TextContent
 from pydantic_ai.models import download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
@@ -408,17 +408,29 @@ async def _map_contents(items_parts: Sequence[Sequence[EmbeddingContentPart]]) -
     A batch here is a corpus rather than the handful of files a chat prompt carries, so downloading
     one at a time would make latency linear in the number of URLs across the whole batch.
     """
-    semaphore = anyio.Semaphore(_MAX_CONCURRENT_DOWNLOADS)
     mapped: dict[tuple[int, int], Part] = {}
+    downloads: list[tuple[tuple[int, int], FileUrl]] = []
 
-    async def map_part(key: tuple[int, int], part: EmbeddingContentPart) -> None:
-        async with semaphore:
-            mapped[key] = await _map_content_part(part)
+    for item_index, parts in enumerate(items_parts):
+        for part_index, part in enumerate(parts):
+            # Only a URL needs a task; everything else maps without awaiting, so a corpus of inline
+            # content spawns nothing at all rather than one task per part.
+            if isinstance(part, FileUrl):
+                downloads.append(((item_index, part_index), part))
+            else:
+                mapped[(item_index, part_index)] = _map_inline_part(part)
 
-    async with anyio.create_task_group() as tg:
-        for item_index, parts in enumerate(items_parts):
-            for part_index, part in enumerate(parts):
-                tg.start_soon(map_part, (item_index, part_index), part)
+    if downloads:
+        semaphore = anyio.Semaphore(_MAX_CONCURRENT_DOWNLOADS)
+
+        async def download(key: tuple[int, int], url: FileUrl) -> None:
+            async with semaphore:
+                downloaded = await download_item(url, data_format='bytes')
+                mapped[key] = Part(inline_data=Blob(data=downloaded['data'], mime_type=downloaded['data_type']))
+
+        async with anyio.create_task_group() as tg:
+            for key, url in downloads:
+                tg.start_soon(download, key, url)
 
     return [
         Content(parts=[mapped[(item_index, part_index)] for part_index in range(len(parts))])
@@ -426,17 +438,14 @@ async def _map_contents(items_parts: Sequence[Sequence[EmbeddingContentPart]]) -
     ]
 
 
-async def _map_content_part(part: EmbeddingContentPart) -> Part:
-    """Map a content part to a Google `Part`, downloading URLs as the embeddings API only takes inline data."""
+def _map_inline_part(part: str | TextContent | BinaryContent) -> Part:
+    """Map a part that is already inline to a Google `Part`; a `FileUrl` is downloaded instead."""
     if isinstance(part, str):
         return Part(text=part)
     elif isinstance(part, TextContent):
         return Part(text=part.content)
-    elif isinstance(part, BinaryContent):
-        return Part(inline_data=Blob(data=part.data, mime_type=part.media_type))
     else:
-        downloaded = await download_item(part, data_format='bytes')
-        return Part(inline_data=Blob(data=downloaded['data'], mime_type=downloaded['data_type']))
+        return Part(inline_data=Blob(data=part.data, mime_type=part.media_type))
 
 
 def _map_usage(

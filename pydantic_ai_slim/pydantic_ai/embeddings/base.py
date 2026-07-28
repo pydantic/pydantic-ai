@@ -165,10 +165,14 @@ class EmbeddingModel(ABC):
             elif isinstance(item, TextContent):
                 texts.append(item.content)
             elif isinstance(item, EmbeddingContent):
+                # One part is nothing to fuse, so it embeds like the bare part it wraps.
+                if len(item.content) == 1 and isinstance(part := item.content[0], str | TextContent):
+                    texts.append(part if isinstance(part, str) else part.content)
+                    continue
                 # An all-text `EmbeddingContent` clears the modality gate, so the reason it can't be
                 # embedded here is the fusion, not the modality — say that rather than "isn't text".
                 raise UserError(
-                    f'`{self.model_name}` cannot combine multiple parts into a single embedding; '
+                    f'`{self.model_name}` can only embed a single text part per input; '
                     'pass the parts as separate inputs to embed them separately.'
                 )
             else:
