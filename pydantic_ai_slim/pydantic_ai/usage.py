@@ -7,8 +7,8 @@ from functools import cache
 from typing import Annotated, Any, cast
 
 from genai_prices.data_snapshot import get_snapshot
-from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler, TypeAdapter
-from pydantic_core import SchemaSerializer, core_schema
+from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler
+from pydantic_core import core_schema
 
 from . import _utils
 from .exceptions import UsageLimitExceeded
@@ -29,16 +29,6 @@ _LEGACY_TOKEN_ALIASES = (('input_tokens', 'request_tokens'), ('output_tokens', '
 
 
 @cache
-def _usage_serializer(usage_type: type[object]) -> SchemaSerializer:
-    return TypeAdapter(usage_type).serializer
-
-
-class _UsageSerializerDescriptor:
-    def __get__(self, instance: object, owner: type[object]) -> SchemaSerializer:
-        return _usage_serializer(owner)
-
-
-@cache
 def _usage_field_names(usage_type: type[UsageBase]) -> frozenset[str]:
     return frozenset(field.name for field in dataclasses.fields(usage_type))
 
@@ -53,10 +43,6 @@ def _usage_items(usage: UsageBase) -> dict[str, Any]:
 
 @dataclass(repr=False, init=False, eq=False)
 class UsageBase:
-    # Bare `pydantic_core.to_json()` does not discover custom schemas for stdlib dataclasses. Point it at the
-    # generated `TypeAdapter` serializer so it still uses normal field serialization rather than a custom function.
-    __pydantic_serializer__ = _UsageSerializerDescriptor()
-
     input_tokens: Annotated[
         int,
         # `request_tokens` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
