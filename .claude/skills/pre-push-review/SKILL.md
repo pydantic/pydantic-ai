@@ -20,12 +20,14 @@ to run on.
 
 ## Where the review itself is defined
 
-Read these rather than reviewing from memory — this skill deliberately does not restate
-them, so it cannot drift from what CI actually does:
+Read these rather than reviewing from memory. This skill deliberately does not duplicate
+committed review policy, so it cannot fall out of step with it:
 
 - **What to look for, how to prioritise, how to word a finding** —
-  `.github/workflows/shared/prompts/pydantic-ai-pr-review.md`. This is the complete
-  reviewer prompt.
+  `.github/workflows/shared/prompts/pydantic-ai-pr-review.md`, the complete committed
+  seed prompt and the fallback CI runs when no managed prompt is served. Production may
+  serve a newer prompt from the Logfire managed variable, so this is the committed
+  baseline rather than a record of what ran on any given PR.
 - **The severity scale, the false-positive catalog, and the calibration examples** — the
   `review-instructions.md` heredoc in `scripts/gather-pydantic-ai-review-context.sh`. At
   runtime the reviewer reads that file out of `.review-context/`; locally, read the
