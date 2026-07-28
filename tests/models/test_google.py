@@ -77,6 +77,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings, ServiceTier
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
@@ -3791,6 +3792,31 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
         'output_mime_type': 'image/jpeg',
         'output_compression_quality': 90,
     }
+
+
+def test_google_vertex_skips_include_server_side_tool_invocations(
+    mocker: MockerFixture, google_provider: GoogleProvider
+) -> None:
+    """Vertex rejects `include_server_side_tool_invocations`, so it must not be set on Gemini 3+ via Vertex."""
+    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    # A function tool is included so `tool_config` is non-empty on both paths; the only field that
+    # should differ is `include_server_side_tool_invocations`.
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='search')], native_tools=[WebSearchTool()])
+    _tools, tool_config, _image_config = model._get_tool_config(params, GoogleModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert tool_config is not None
+    assert 'include_server_side_tool_invocations' not in tool_config
+
+
+def test_google_gemini_api_sets_include_server_side_tool_invocations(
+    google_provider: GoogleProvider,
+) -> None:
+    """The Gemini Developer API keeps `include_server_side_tool_invocations` on Gemini 3+ (regression guard)."""
+    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='search')], native_tools=[WebSearchTool()])
+    _tools, tool_config, _image_config = model._get_tool_config(params, GoogleModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert tool_config is not None
+    assert tool_config['include_server_side_tool_invocations'] is True
 
 
 async def test_google_vertexai_image_generation(
