@@ -144,9 +144,6 @@ class ModelRequestParameters:
     )
     """Deferred corpus members owned by an on-demand capability."""
 
-    tool_search_is_default_configuration: Annotated[bool, Field(exclude=True)] = True
-    """Whether tool search came from a semantically bare `ToolSearch()` capability."""
-
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])

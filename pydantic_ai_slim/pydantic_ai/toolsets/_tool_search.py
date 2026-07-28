@@ -281,9 +281,6 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     keyword algorithm; and on providers that DO support it, only the native tool reaches
     the wire (no redundant `search_tools` slot that could confuse the model)."""
 
-    is_default_configuration: bool = True
-    """Whether this toolset came from a semantically bare `ToolSearch()` capability."""
-
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 

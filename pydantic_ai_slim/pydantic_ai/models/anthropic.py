@@ -1405,19 +1405,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_def for tool_def in tool_defs.values() if tool_def.with_native == ToolSearchTool.kind
         ]
         # Anthropic accepts application-driven `tool_reference` reveals without a search
-        # tool. Remove a semantically bare search surface only when the entire corpus is
-        # capability-owned, so there is nothing the model can discover by searching.
+        # tool. Remove the search surface when the entire corpus is capability-owned,
+        # since capability-owned tools are never searchable.
         capability_only_corpus = bool(tool_search_corpus) and all(
             tool_def.name in model_request_parameters.capability_owned_deferred_tool_names
             for tool_def in tool_search_corpus
         )
-        if capability_only_corpus and model_request_parameters.tool_search_is_default_configuration:
+        if capability_only_corpus:
             tool_defs = {
                 name: replace(tool_def, with_native=None)
                 if name in model_request_parameters.capability_owned_deferred_tool_names
                 else tool_def
                 for name, tool_def in tool_defs.items()
-                if tool_def.unless_native != ToolSearchTool.kind
+                if tool_def.tool_kind != 'tool-search'
             }
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)

@@ -26,7 +26,6 @@ from pydantic_ai._instrumentation import (
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7
-from pydantic_ai.capabilities._tool_search import ToolSearch
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
     CompletedStreamedResponse,
@@ -780,11 +779,6 @@ async def _prepare_request_parameters(
             and (capability := run_context.capabilities.get(tool_def.capability_id)) is not None
             and capability.defer_loading is True
         },
-        tool_search_is_default_configuration=all(
-            capability.is_default_configuration
-            for capability in run_context.capabilities.values()
-            if isinstance(capability, ToolSearch)
-        ),
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_schema.object_def,

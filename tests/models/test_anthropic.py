@@ -11148,8 +11148,8 @@ async def test_anthropic_bare_tool_search_is_stripped_for_capability_only_corpus
     assert not any(tool.get('name') == 'search_tools' for tool in request['tools'])
 
 
-async def test_anthropic_keyword_tool_search_is_kept_for_capability_only_corpus(allow_model_requests: None):
-    """An explicit keyword strategy keeps its search surface for a capability-only corpus."""
+async def test_anthropic_keyword_tool_search_is_stripped_for_capability_only_corpus(allow_model_requests: None):
+    """An explicit keyword strategy has no useful search surface for a capability-only corpus."""
     response = completion_message(
         [BetaTextBlock(text='Done.', type='text')],
         BetaUsage(input_tokens=5, output_tokens=10),
@@ -11170,7 +11170,7 @@ async def test_anthropic_keyword_tool_search_is_kept_for_capability_only_corpus(
     await agent.run('Hello')
 
     [request] = get_mock_chat_completion_kwargs(mock_client)
-    assert any(tool.get('name') == 'search_tools' for tool in request['tools'])
+    assert not any(tool.get('name') == 'search_tools' for tool in request['tools'])
 
 
 async def test_anthropic_named_native_tool_search_is_kept_for_capability_only_corpus(allow_model_requests: None):
@@ -11198,10 +11198,10 @@ async def test_anthropic_named_native_tool_search_is_kept_for_capability_only_co
     assert any(tool.get('type') == 'tool_search_tool_regex_20251119' for tool in request['tools'])
 
 
-async def test_anthropic_callable_tool_search_is_kept_and_reachable_for_capability_only_corpus(
+async def test_anthropic_callable_tool_search_is_stripped_for_capability_only_corpus(
     allow_model_requests: None,
 ):
-    """A custom callable keeps its search surface and is invoked after its capability loads."""
+    """A custom callable gets an empty corpus after loading and has no useful search surface."""
     responses = [
         completion_message(
             [BetaToolUseBlock(id='load-1', input={'id': 'refunds'}, name='load_capability', type='tool_use')],
@@ -11247,7 +11247,7 @@ async def test_anthropic_callable_tool_search_is_kept_and_reachable_for_capabili
     assert result.output == 'Done.'
     assert calls == [(['refund'], [])]
     requests = get_mock_chat_completion_kwargs(mock_client)
-    assert all(any(tool.get('name') == 'search_tools' for tool in request['tools']) for request in requests)
+    assert all(not any(tool.get('name') == 'search_tools' for tool in request['tools']) for request in requests)
 
 
 @pytest.mark.vcr()
