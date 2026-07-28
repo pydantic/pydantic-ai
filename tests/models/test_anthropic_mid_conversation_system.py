@@ -108,6 +108,21 @@ def message_history() -> list[ModelMessage]:
     ]
 
 
+def message_history_with_paired_instruction() -> list[ModelMessage]:
+    """The same conversation, with the instruction arriving alongside a user prompt.
+
+    The pairing is what earns a native `system` entry at mapping time. Without a user turn in the
+    same request the instruction degrades right there (see `..._without_user_turn`) and placement is
+    never considered, so these are the histories where `_relocate_unfollowed_system_messages` is the
+    code that decides.
+    """
+    history = message_history()
+    history[-1] = ModelRequest(
+        parts=[SystemPromptPart(content=INSTRUCTION), UserPromptPart(content='Review it again.')]
+    )
+    return history
+
+
 @dataclass(frozen=True)
 class Case:
     """A model on one side of the `supports_inline_system_prompts` flag, and the wire it produces."""
@@ -263,7 +278,7 @@ async def test_mid_conversation_system_prompt_without_user_turn(
 async def test_mid_conversation_system_prompt_before_another_request(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_messages: list[list[dict[str, Any]]]
 ):
-    """A system entry that a *user* turn would follow keeps the `<system>` wrap.
+    """A system entry that a *user* turn would follow gets folded back into the `<system>` wrap.
 
     The API takes the entry only between a user turn and an assistant turn, or at the very end where
     it feeds the generation; `[user, system, user]` is rejected outright. So a second `ModelRequest`
@@ -272,6 +287,9 @@ async def test_mid_conversation_system_prompt_before_another_request(
     instructions differ, and `Model.request` is callable directly — the adapter can't assume every
     request is followed by a response.
 
+    The instruction is paired with a user prompt here so an entry is actually emitted and the
+    relocation pass is what removes it; a system-only request would never get that far.
+
     Driven through `Model.request` rather than `Agent.run` precisely because the agent's history
     cleaning would merge the two requests; the recording proves the shape we fall back to is one the
     API accepts.
@@ -279,13 +297,18 @@ async def test_mid_conversation_system_prompt_before_another_request(
     model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
-        [*message_history(), ModelRequest(parts=[UserPromptPart(content='Review it once more.')])],
+        [
+            *message_history_with_paired_instruction(),
+            ModelRequest(parts=[UserPromptPart(content='Review it once more.')]),
+        ],
         None,
         ModelRequestParameters(),
     )
     reply = response.parts[-1]
     assert isinstance(reply, TextPart)
-    assert 'def add(a: int, b: int) -> int:' in reply.content
+    # What the fallback costs, in the model's own words. It reviews the code either way, but it
+    # declines the instruction's authority — the same reading `..._without_user_turn` recorded.
+    assert "I won't treat it as a binding instruction" in reply.content
 
     body = single_request_body(vcr)
     assert rendered_messages == [body['messages']]
@@ -296,10 +319,11 @@ async def test_mid_conversation_system_prompt_before_another_request(
             {'content': [{'text': 'Looks fine.', 'type': 'text'}], 'role': 'assistant'},
             {
                 'content': [
+                    {'text': 'Review it again.', 'type': 'text'},
                     {
                         'text': '<system>From now on, every suggestion must include explicit type annotations.</system>',
                         'type': 'text',
-                    }
+                    },
                 ],
                 'role': 'user',
             },
@@ -321,15 +345,9 @@ async def test_mid_conversation_system_prompt_kept_mid_history(
     """
     model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
-    history = message_history()
-    # Pair the instruction with a user turn, so it takes the native entry rather than the fallback.
-    history[-1] = ModelRequest(
-        parts=[SystemPromptPart(content=INSTRUCTION), UserPromptPart(content='Review it again.')]
-    )
-
     response = await model.request(
         [
-            *history,
+            *message_history_with_paired_instruction(),
             ModelResponse(parts=[TextPart(content='def add(a: int, b: int) -> int: return a + b')]),
             ModelRequest(parts=[UserPromptPart(content='Now do `def mul(a, b): return a * b`.')]),
         ],
@@ -364,12 +382,16 @@ async def test_mid_conversation_system_prompt_before_empty_response(
     so a request after it lands directly behind the system entry and the API rejects the whole
     thing. Reading ahead in the message list would call this placement legal; only checking what was
     actually rendered gets it right, which is why the decision is a pass over the wire messages.
+
+    This is the case that makes the pass necessary rather than merely convenient: the history here
+    is byte-identical to `..._kept_mid_history` apart from the response being empty, and that one
+    keeps its entry.
     """
     model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
-            *message_history(),
+            *message_history_with_paired_instruction(),
             ModelResponse(parts=[TextPart(content='')]),
             ModelRequest(parts=[UserPromptPart(content='Review it once more.')]),
         ],
@@ -378,17 +400,20 @@ async def test_mid_conversation_system_prompt_before_empty_response(
     )
     reply = response.parts[-1]
     assert isinstance(reply, TextPart)
-    assert 'def add(a: int, b: int) -> int:' in reply.content
+    # Same cost as `..._before_another_request`: the request is accepted, and the instruction lands
+    # as text the model feels free to overrule.
+    assert "isn't a legitimate system instruction" in reply.content
 
     body = single_request_body(vcr)
     assert rendered_messages == [body['messages']]
     assert [message['role'] for message in body['messages']] == snapshot(['user', 'assistant', 'user', 'user'])
     assert body['messages'][2]['content'] == snapshot(
         [
+            {'text': 'Review it again.', 'type': 'text'},
             {
                 'text': '<system>From now on, every suggestion must include explicit type annotations.</system>',
                 'type': 'text',
-            }
+            },
         ]
     )
 
