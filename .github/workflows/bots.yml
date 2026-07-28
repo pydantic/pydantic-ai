@@ -216,34 +216,49 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           # Reviewing a fork PR means reading the fork's code, so this job checks
-          # it out. v7 refuses that by default from `pull_request_target`. What
-          # makes it acceptable here is narrower than "no pwn-request risk": the
-          # steps below still hold a write-scoped token and the API keys, and
+          # it out. v7 refuses that by default from `pull_request_target`. Be
+          # precise about what that costs, because it is not "no pwn-request
+          # risk": the steps below hold a write-scoped token and the API keys, and
           # `persist-credentials: false` only keeps the token out of `.git/config`.
-          # The actual mitigations are that (a) no step builds, installs or runs
-          # the checked-out code, and (b) the guard below rejects any PR touching
-          # a file that ends up in the reviewer's context — which for an LLM is
-          # the real execution boundary, since reading a poisoned instruction file
-          # is the attack. Whenever the prompt starts loading a new path, add it
-          # there. See https://gh.io/securely-using-pull_request_target.
+          #
+          # Prompt injection is NOT prevented and cannot be — reading
+          # attacker-authored text IS this job's purpose (the diff, code comments,
+          # docstrings, plus the PR and issue bodies gathered below), so assume the
+          # reviewer can be steered. What bounds the damage instead:
+          #   - no step builds, installs or runs the checked-out code;
+          #   - the token is `contents: read`, so a steered reviewer can write
+          #     comments but cannot push code or reach other secrets;
+          #   - the tool allowlist below grants no arbitrary-exec sink;
+          #   - the guard below keeps the fork out of the *instruction* layer.
+          # See https://gh.io/securely-using-pull_request_target.
           allow-unsafe-pr-checkout: true
 
       - name: Check for modified config files
+        # This does NOT stop prompt injection -- the reviewer reads the whole diff,
+        # so injected text rides in just as well on a code comment or a docstring.
+        # What it protects is the narrower *instruction* layer: files the agent
+        # reads as its own operating instructions rather than as material under
+        # review, where injected text carries the authority of the system prompt
+        # instead of having to argue against it.
+        #
         # Runs for ALL PRs, not just forks: a same-repo branch (e.g. an automated
         # agent's branch built from an untrusted issue) can carry a poisoned
-        # instruction file just as a fork can, and the review step below checks out
-        # that head. The path list covers every file the reviewer ingests from the
-        # checkout, not just the ones Claude Code autoloads: the root `CLAUDE.md`
-        # (system prompt) and `.claude/`, but equally `agent_docs/` and the
-        # per-directory `AGENTS.md` files, which the prompt tells the reviewer to
-        # read, and `.agents/skills/`. `CLAUDE.local.md`/`.mcp.json` are gitignored,
-        # but `.gitignore` only advises `git add` -- a force-added one still checks
-        # out and still gets loaded. Compare the immutable base...head SHAs via the
-        # diff media type (not `gh pr diff`, which reads the live PR head -- a
-        # force-push could slip a config edit past this guard while different code
-        # runs; TOCTOU) and match the per-file `diff --git` headers (the compare JSON
-        # `.files` array caps at 300 entries, so it could hide an edit in a large
-        # PR). Paths with spaces come through quoted, hence the `"` terminator.
+        # instruction file just as a fork can.
+        #
+        # The path list is that instruction layer, which is wider than what Claude
+        # Code autoloads: the root `CLAUDE.md` (system prompt) and `.claude/`, but
+        # equally `agent_docs/` and the per-directory `AGENTS.md` files, which the
+        # prompt below tells the reviewer to read and enforce, and `.agents/skills/`.
+        # `CLAUDE.local.md`/`.mcp.json` are gitignored, but `.gitignore` only advises
+        # `git add` -- a force-added one still checks out and still gets loaded.
+        # Extend this whenever the prompt starts reading a new path.
+        #
+        # Compare the immutable base...head SHAs via the diff media type (not
+        # `gh pr diff`, which reads the live PR head -- a force-push could slip a
+        # config edit past this guard while different code runs; TOCTOU) and match
+        # the per-file `diff --git` headers (the compare JSON `.files` array caps at
+        # 300 entries, so it could hide an edit in a large PR). Paths with spaces
+        # come through quoted, hence the `"` terminator.
         run: |
           CHANGED=$(gh api "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" -H 'Accept: application/vnd.github.v3.diff' | grep '^diff --git ')
           if echo "$CHANGED" | grep -qiE '/(AGENTS\.md|CLAUDE\.md|CLAUDE\.local\.md|\.mcp\.json)( |"|$)|/(\.claude|\.agents|agent_docs)/'; then
@@ -284,9 +299,17 @@ jobs:
           # ANTHROPIC_BASE_URL points at a gateway, and Claude Code cannot detect 1M-context
           # support through a gateway, so without the suffix it budgets for 200K.
           # https://code.claude.com/docs/en/model-config.md
+          # This job reviews untrusted fork code and must be assumed steerable by
+          # prompt injection, so no entry here may reach arbitrary execution.
+          # `Bash(rg:*)` and `Bash(git grep:*)` are deliberately absent: `rg --pre`
+          # and `git grep -O` both run a command of the caller's choosing, and
+          # prefix matching waves those flags straight through. Nothing is lost --
+          # the base tools always include the read-only `Grep`, which is the same
+          # ripgrep without the `--pre` surface. Audit anything added here the same
+          # way: does any flag of this binary take a command or a pager?
           claude_args: |
             --model claude-opus-4-8[1m]
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(gh api repos/${{ github.repository }}/pulls/comments/:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),WebSearch,WebFetch"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(gh api repos/${{ github.repository }}/pulls/comments/:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),WebSearch,WebFetch"
 
           prompt: |
             REPO: ${{ github.repository }}
