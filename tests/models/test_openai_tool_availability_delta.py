@@ -12,6 +12,7 @@ from pydantic_ai import (
     ToolCallPart,
     UserPromptPart,
 )
+from pydantic_ai.messages import ToolSearchCallPart, ToolSearchReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -32,6 +33,37 @@ def refund_tool() -> ToolDefinition:
             'required': ['order_id'],
         },
     )
+
+
+def test_removal_uses_synthesized_fallback() -> None:
+    """OpenAI's native item only adds tools, so any removal keeps the compatibility projection."""
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='test-key'))
+
+    messages = model.prepare_messages(
+        [
+            ModelRequest(
+                parts=[
+                    ToolAvailabilityDeltaPart(
+                        added=['lookup_refund_policy'],
+                        removed=['old_refund_tool'],
+                        tool_call_id='load-refunds',
+                    )
+                ]
+            )
+        ]
+    )
+
+    assert len(messages) == 2
+    assert isinstance(messages[0], ModelResponse)
+    assert messages[0].parts == [
+        ToolSearchCallPart(args={'queries': ['lookup_refund_policy']}, tool_call_id='load-refunds')
+    ]
+    assert isinstance(messages[1], ModelRequest)
+    assert len(messages[1].parts) == 1
+    return_part = messages[1].parts[0]
+    assert isinstance(return_part, ToolSearchReturnPart)
+    assert return_part.content == {'discovered_tools': [{'name': 'lookup_refund_policy'}]}
+    assert return_part.tool_call_id == 'load-refunds'
 
 
 async def test_supported_model_calls_additional_tool(
