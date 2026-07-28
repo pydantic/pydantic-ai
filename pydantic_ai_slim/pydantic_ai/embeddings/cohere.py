@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -154,6 +155,7 @@ class CohereEmbeddingModel(EmbeddingModel):
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        check_allow_model_requests()
         inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(CohereEmbeddingSettings, settings)
 

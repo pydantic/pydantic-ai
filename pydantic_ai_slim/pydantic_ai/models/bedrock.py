@@ -64,6 +64,7 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    check_allow_model_requests,
     download_item,
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
@@ -660,6 +661,7 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -714,6 +716,7 @@ class BedrockConverseModel(Model[BaseClient]):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
+        check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
