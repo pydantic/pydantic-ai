@@ -706,6 +706,10 @@ def test_sync_stream_bridge_defers_iterator_gc_from_another_thread(monkeypatch: 
     owner_thread_id = threading.get_ident()
     cleanup_thread_id: int | None = None
     unraisable: list[object] = []
+    # Flush any garbage a sibling test leaked into this xdist worker before arming the hook, so its
+    # finalizer warnings (e.g. an unclosed socket) run under the default hook instead of polluting
+    # our capture list and failing `assert not unraisable`.
+    gc.collect()
     monkeypatch.setattr(sys, 'unraisablehook', unraisable.append)
 
     @asynccontextmanager
@@ -754,6 +758,10 @@ def test_sync_stream_bridge_closes_iterator_gc_after_shutdown(monkeypatch: pytes
     asyncio.set_event_loop(loop)
     cleanup_thread_id: int | None = None
     unraisable: list[object] = []
+    # Flush any garbage a sibling test leaked into this xdist worker before arming the hook, so its
+    # finalizer warnings (e.g. an unclosed socket) run under the default hook instead of polluting
+    # our capture list and failing `assert not unraisable`.
+    gc.collect()
     monkeypatch.setattr(sys, 'unraisablehook', unraisable.append)
 
     @asynccontextmanager
