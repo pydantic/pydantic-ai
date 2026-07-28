@@ -2133,9 +2133,9 @@ def test_dbos_mcp_wrapper_visit_and_replace():
 
 def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Simple model function for durability tests."""
-    for msg in reversed(messages):  # pragma: no branch - first message carries the prompt
-        for part in msg.parts:  # pragma: no branch - first part is the UserPromptPart
-            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
+    for msg in reversed(messages):  # pragma: no branch
+        for part in msg.parts:  # pragma: no branch
+            if isinstance(part, UserPromptPart):  # pragma: no branch
                 return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
     return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
 
@@ -2661,7 +2661,7 @@ async def test_dbos_durability_resolve_model_id_capability_is_deps_aware(dbos: D
 def _dbos_broken_resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
     if model_id == 'broken-model':
         raise ValueError('resolver exploded')
-    return None  # pragma: no cover - only 'broken-model' flows through this test
+    return None  # pragma: no cover
 
 
 async def test_dbos_durability_user_resolver_error_propagates(dbos: DBOS) -> None:
@@ -2801,9 +2801,9 @@ def test_dbos_durability_get_serialization_name() -> None:
 
 
 async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-    for msg in reversed(messages):  # pragma: no branch - first message carries the prompt
-        for part in msg.parts:  # pragma: no branch - first part is the UserPromptPart
-            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
+    for msg in reversed(messages):  # pragma: no branch
+        for part in msg.parts:  # pragma: no branch
+            if isinstance(part, UserPromptPart):  # pragma: no branch
                 yield f'Echo: {part.content}'
                 return
     yield 'no prompt'  # pragma: no cover
@@ -3204,7 +3204,7 @@ async def test_dbos_durability_dynamic_capability_tool_runs_in_step(dbos: DBOS) 
 
 def test_dbos_durability_dynamic_capability_requires_id(dbos: DBOS) -> None:
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
-        return Capability()  # pragma: no cover — construction raises before the factory can run
+        return Capability()  # pragma: no cover
 
     with pytest.raises(UserError, match=r"DynamicCapability\(\.\.\., id='user-tools'\)"):
         Agent(
@@ -3219,7 +3219,7 @@ def test_dbos_durability_bare_capability_func_requires_explicit_wrapper(dbos: DB
     so under durable execution it raises with a hint to wrap it explicitly."""
 
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
-        return Capability()  # pragma: no cover — construction raises before the factory can run
+        return Capability()  # pragma: no cover
 
     with pytest.raises(UserError, match=r'wrap it explicitly'):
         Agent(
@@ -3310,7 +3310,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset_in_iter(dbos: DBOS) -
             'Hello',
             toolsets=[MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='iter_mcp')],
         ):
-            pass  # pragma: no cover — run setup raises before any node runs
+            pass  # pragma: no cover
 
     with pytest.raises(
         UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
@@ -3319,7 +3319,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset_in_iter(dbos: DBOS) -
 
 
 def _per_run_dynamic_factory(ctx: RunContext[Any]) -> FunctionToolset[Any]:
-    return FunctionToolset()  # pragma: no cover — rejected before the factory is resolved
+    return FunctionToolset()  # pragma: no cover
 
 
 async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) -> None:

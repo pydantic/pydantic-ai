@@ -734,7 +734,7 @@ class ToolManager(Generic[AgentDepsT]):
             allow_partial=allow_partial,
             wrap_validation_errors=wrap_validation_errors,
         )
-        if not validated.args_valid:  # pragma: no cover — caller (result.py) uses wrap_validation_errors=False
+        if not validated.args_valid:  # pragma: no cover
             assert validated.validation_error is not None
             raise validated.validation_error
         return await self.execute_output_tool_call(

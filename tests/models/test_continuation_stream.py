@@ -176,7 +176,7 @@ class _FakeModel(Model):
         return None
 
 
-async def _no_sleep(delay: float) -> None:  # pragma: no cover - scripted responses have no delay
+async def _no_sleep(delay: float) -> None:  # pragma: no cover
     return None
 
 
@@ -647,7 +647,7 @@ async def test_segment_transport_error_propagates_when_not_cancelled() -> None:
     class _ExplodingStream(_FakeStream):
         async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
             raise httpx.ReadError('boom')
-            yield  # pragma: no cover - unreachable, marks this a generator
+            yield  # pragma: no cover
 
     class _ExplodingModel(_FakeModel):
         @asynccontextmanager
@@ -1018,7 +1018,7 @@ async def test_later_segment_error_cancels_suspended_job() -> None:
     class _ExplodingStream(_FakeStream):
         async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
             raise RuntimeError('segment 2 boom')
-            yield  # pragma: no cover - unreachable, marks this a generator
+            yield  # pragma: no cover
 
     class _SecondSegmentExplodesModel(_FakeModel):
         @asynccontextmanager

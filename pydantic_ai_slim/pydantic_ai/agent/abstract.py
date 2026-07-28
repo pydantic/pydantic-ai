@@ -84,7 +84,7 @@ AgentMetadata = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, An
 AgentInstructions = _instructions.AgentInstructions
 """Type alias for agent instructions — a string, `TemplateStr`, callable, or sequence thereof."""
 
-Instructions = AgentInstructions
+Instructions = AgentInstructions  # TODO(v3): remove the `Instructions` alias
 """Deprecated: use `AgentInstructions` instead."""
 
 AgentModelSettings = ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]
@@ -340,7 +340,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to expose as `RunContext.usage`.
             model_settings: Optional settings to expose as `RunContext.model_settings`.
         """
-        return []  # pragma: no cover — concrete subclasses override this
+        return []  # pragma: no cover
 
     def output_json_schema(self, output_type: OutputSpec[OutputDataT | RunOutputDataT] | None = None) -> JsonSchema:
         """The output return JSON schema."""

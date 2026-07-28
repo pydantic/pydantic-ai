@@ -1867,9 +1867,9 @@ async def test_disabled_tool():
 
 def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Simple model function for durability tests."""
-    for msg in reversed(messages):  # pragma: no branch - first message carries the prompt
-        for part in msg.parts:  # pragma: no branch - first part is the UserPromptPart
-            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
+    for msg in reversed(messages):  # pragma: no branch
+        for part in msg.parts:  # pragma: no branch
+            if isinstance(part, UserPromptPart):  # pragma: no branch
                 return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
     return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
 
@@ -1901,7 +1901,7 @@ def test_resolve_tool_task_config_reads_metadata() -> None:
     fn_toolset = FunctionToolset[None](id='resolve_meta_toolset')
 
     def fn_tool() -> str:
-        return 'ok'  # pragma: no cover - registered with toolset; test only resolves metadata
+        return 'ok'  # pragma: no cover
 
     fn_toolset.add_function(fn_tool, metadata={'prefect': metadata_config})
     tool_def = ToolDefinition(name='fn_tool', metadata={'prefect': metadata_config})
@@ -2025,10 +2025,10 @@ async def test_prefect_durability_allows_fully_opted_out_runtime_function_toolse
 
 
 async def test_prefect_durability_rejects_partially_opted_out_runtime_function_toolset() -> None:
-    async def opted_out() -> str:  # pragma: no cover — rejected before any tool runs
+    async def opted_out() -> str:  # pragma: no cover
         return 'ok'
 
-    async def wrapped() -> str:  # pragma: no cover — rejected before any tool runs
+    async def wrapped() -> str:  # pragma: no cover
         return 'no'
 
     toolset = FunctionToolset(id='runtime')
@@ -2055,7 +2055,7 @@ async def test_prefect_durability_rejects_runtime_toolset_in_iter() -> None:
     @flow
     async def run_agent() -> None:
         async with agent.iter('Hello', toolsets=[FunctionToolset(id='iter_fn')]):
-            pass  # pragma: no cover — run setup raises before any node runs
+            pass  # pragma: no cover
 
     with pytest.raises(UserError, match='FunctionToolset cannot be passed to '):
         await run_agent()
@@ -2148,7 +2148,7 @@ async def test_prefect_durability_dynamic_capability_tool_runs_as_task() -> None
 
 def test_prefect_durability_dynamic_capability_requires_id() -> None:
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
-        return Capability()  # pragma: no cover — construction raises before the factory can run
+        return Capability()  # pragma: no cover
 
     with pytest.raises(UserError, match=r"DynamicCapability\(\.\.\., id='user-tools'\)"):
         Agent(
@@ -2464,9 +2464,9 @@ async def test_prefect_durability_passes_through_non_wrappable_leaf() -> None:
 
 
 async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-    for msg in reversed(messages):  # pragma: no branch - first message carries the prompt
-        for part in msg.parts:  # pragma: no branch - first part is the UserPromptPart
-            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
+    for msg in reversed(messages):  # pragma: no branch
+        for part in msg.parts:  # pragma: no branch
+            if isinstance(part, UserPromptPart):  # pragma: no branch
                 yield f'Echo: {part.content}'
                 return
     yield 'no prompt'  # pragma: no cover

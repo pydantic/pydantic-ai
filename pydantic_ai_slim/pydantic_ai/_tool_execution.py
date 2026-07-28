@@ -1086,7 +1086,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                 if self.call_kinds[i] == 'output':
                     r = output_results.get(i)
                     if r is None:
-                        continue  # pragma: no cover  # every output index is populated above
+                        continue  # pragma: no cover
                     is_winner = self.final_result is not None and r.call.tool_call_id == self.final_result.tool_call_id
                     if is_winner and self.final_result_was_set_externally:
                         # Streamed-in winner: record "processed" without claiming it was selected here.

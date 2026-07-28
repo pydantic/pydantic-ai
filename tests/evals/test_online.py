@@ -2234,13 +2234,13 @@ def test_extract_args_without_logfire_raises(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(RuntimeError, match='logfire'):
 
         @online_module.evaluate(AlwaysTrue(), extract_args=True)
-        async def f(x: int) -> int:  # pragma: no cover - decorator raises before body runs
+        async def f(x: int) -> int:  # pragma: no cover
             return x
 
     with pytest.raises(RuntimeError, match='logfire'):
 
         @online_module.evaluate(AlwaysTrue(), record_return=True)
-        async def g(x: int) -> int:  # pragma: no cover - decorator raises before body runs
+        async def g(x: int) -> int:  # pragma: no cover
             return x
 
 
@@ -2250,7 +2250,7 @@ def test_extract_args_unknown_parameter_raises():
     with pytest.raises(ValueError, match='not in'):
 
         @evaluate(AlwaysTrue(), extract_args=['nonexistent'])
-        async def f(x: int) -> int:  # pragma: no cover - decorator raises before body runs
+        async def f(x: int) -> int:  # pragma: no cover
             return x
 
 
