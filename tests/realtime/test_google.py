@@ -52,7 +52,7 @@ from pydantic_ai.realtime import (
     TurnCompleteEvent,
     TurnDetection,
 )
-from pydantic_ai.realtime._base import ImageInput, RealtimeModelProfile, SessionErrorEvent, TextInput
+from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     InputTranscript,

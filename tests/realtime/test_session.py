@@ -8,7 +8,7 @@ import wave
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from threading import Event as ThreadEvent
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 import pytest
 from inline_snapshot import snapshot
@@ -107,6 +107,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from ..conftest import IsDatetime, IsStr
 
 pytestmark = pytest.mark.anyio
+T = TypeVar('T')
 
 
 def _wav_content(pcm: bytes, sample_rate: int = 24000) -> BinaryContent:
@@ -186,6 +187,15 @@ async def collect_events(session: _RealtimeSession) -> list[RealtimeEvent]:
         return [event async for event in session]
 
 
+async def drain_events(session: _RealtimeSession) -> list[RealtimeEvent]:
+    """Drain an already-entered session."""
+    return [event async for event in session]
+
+
+async def aiter_to_list(iterator: AsyncIterator[T]) -> list[T]:
+    return [item async for item in iterator]
+
+
 def _profile(
     *,
     supports_image_input: bool = True,
@@ -243,6 +253,15 @@ class FakeRealtimeConnection(RealtimeConnection):
             self._release.set()
 
 
+class BlockingRealtimeConnection(FakeRealtimeConnection):
+    """Replay fixed events, then remain open until the session closes."""
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async for event in super().__aiter__():
+            yield event
+        await asyncio.Event().wait()
+
+
 class FakeRealtimeModel(RealtimeModel):
     """A model that yields a pre-built connection and records connect arguments."""
 
@@ -291,6 +310,129 @@ class FakeRealtimeModel(RealtimeModel):
 
 
 # --- event translation -------------------------------------------------------------------------
+
+
+async def test_consumption_views_run_concurrently_with_event_stream() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='hello', is_final=True),
+            AudioDelta(b'audio-1'),
+            Transcript(text='hi', is_final=False),
+            AudioDelta(b'audio-2'),
+            Transcript(text='hi there', is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        events, audio, transcripts, deltas = await asyncio.gather(
+            drain_events(session),
+            aiter_to_list(session.stream_audio()),
+            aiter_to_list(session.stream_transcripts()),
+            aiter_to_list(session.stream_transcripts(delta=True)),
+        )
+
+        assert events == [
+            PartStartEvent(index=0, part=SpeechPart(speaker='user', transcript='')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='hello')),
+            PartEndEvent(index=0, part=SpeechPart(speaker='user', transcript='hello')),
+            PartStartEvent(index=1, part=SpeechPart(speaker='assistant', transcript='')),
+            PartDeltaEvent(index=1, delta=SpeechPartDelta(speaker='assistant', audio_chunk=b'audio-1')),
+            PartDeltaEvent(index=1, delta=SpeechPartDelta(speaker='assistant', transcript_delta='hi')),
+            PartDeltaEvent(index=1, delta=SpeechPartDelta(speaker='assistant', audio_chunk=b'audio-2')),
+            PartDeltaEvent(index=1, delta=SpeechPartDelta(speaker='assistant', transcript_delta=' there')),
+            PartEndEvent(index=1, part=SpeechPart(speaker='assistant', transcript='hi there')),
+            TurnCompleteEvent(),
+        ]
+        assert audio == [b'audio-1', b'audio-2']
+        assert transcripts == [
+            SpeechPart(speaker='user', transcript='hello'),
+            SpeechPart(speaker='assistant', transcript='hi there'),
+        ]
+        assert deltas == [
+            SpeechPartDelta(speaker='user', transcript_delta='hello'),
+            SpeechPartDelta(speaker='assistant', transcript_delta='hi'),
+            SpeechPartDelta(speaker='assistant', transcript_delta=' there'),
+        ]
+
+
+async def test_audio_view_drops_oldest_chunk_on_overflow() -> None:
+    chunks = [bytes([index]) for index in range(40)]
+    session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
+
+    async with session:
+        assert [chunk async for chunk in session.stream_audio()] == chunks[-32:]
+        assert len(await drain_events(session)) == 41
+
+
+async def test_final_transcripts_survive_a_flood_of_deltas() -> None:
+    # The two speakers' transcripts stream at once, so a finalized user turn is routinely followed by
+    # a long run of assistant deltas. Final parts and deltas are separate subscriptions for exactly
+    # this reason: sharing one bounded queue and filtering on the way out let those deltas evict the
+    # finalized part a `delta=False` consumer was waiting for, losing it silently.
+    words = [f'word{index} ' for index in range(60)]
+    session = RealtimeSession(
+        FakeRealtimeConnection(
+            [
+                InputTranscript(text='what is the weather', is_final=True),
+                *[Transcript(text=''.join(words[: index + 1]), is_final=False) for index in range(len(words))],
+                Transcript(text=''.join(words), is_final=True),
+                TurnCompleteEvent(),
+            ]
+        )
+    )
+
+    async with session:
+        transcripts, _ = await asyncio.gather(
+            aiter_to_list(session.stream_transcripts()),
+            drain_events(session),
+        )
+
+    # Both speakers' finalized turns arrive, despite far more deltas than any single window holds.
+    assert [(part.speaker, part.transcript) for part in transcripts] == [
+        ('user', 'what is the weather'),
+        # Assistant transcripts are recorded verbatim; only user turns are stripped at finalization.
+        ('assistant', ''.join(words)),
+    ]
+
+
+async def test_close_ends_views_and_is_idempotent() -> None:
+    session = RealtimeSession(BlockingRealtimeConnection([AudioDelta(b'audio')]))
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'audio'
+        transcript_task = asyncio.create_task(aiter_to_list(session.stream_transcripts()))
+        await asyncio.sleep(0)
+        assert session.closed is False
+        await session.close()
+        await session.close()
+        assert session.closed is True
+        assert [chunk async for chunk in stream] == []
+        assert await transcript_task == []
+        with pytest.raises(RuntimeError, match='This realtime session is closed'):
+            await session.send_audio(b'more audio')
+        with pytest.raises(RuntimeError, match='closed and cannot be streamed'):
+            await anext(session.stream_audio())
+
+
+async def test_view_is_lazy_and_does_not_replay_events() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([AudioDelta(b'audio')]))
+
+    async with session:
+        unused_audio = session.stream_audio()
+        unused_transcripts = session.stream_transcripts()
+        assert [event async for event in session]
+        assert [chunk async for chunk in unused_audio] == []
+        assert [part async for part in unused_transcripts] == []
+
+
+async def test_view_requires_entered_session() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([]))
+
+    with pytest.raises(RuntimeError, match='Enter the realtime session'):
+        await anext(session.stream_audio())
 
 
 async def test_assistant_transcript_partials_then_final() -> None:
@@ -1118,14 +1260,17 @@ async def test_tool_completion_drained_between_events() -> None:
     session = RealtimeSession(conn, runner)
     events = await collect_events(session)
 
+    # The point is that the finished tool's result is drained while the upstream is still producing,
+    # rather than waiting for the stream to end. Its exact position among the audio deltas depends on
+    # how many event-loop checkpoints the send path takes, so read this as "early", not as a contract.
     assert [type(e).__name__ for e in events] == snapshot(
         [
             'PartStartEvent',
             'PartEndEvent',
             'FunctionToolCallEvent',
-            'FunctionToolResultEvent',
             'PartStartEvent',
             'PartDeltaEvent',
+            'FunctionToolResultEvent',
             'PartDeltaEvent',
         ]
     )

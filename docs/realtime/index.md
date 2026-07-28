@@ -47,17 +47,26 @@ Browser/WebRTC and telephony stacks remain transport concerns that connect users
 ## Quickstart
 
 ```python
+import asyncio
+from collections.abc import AsyncIterator
+
 from pydantic_ai import Agent
-from pydantic_ai.messages import SpeechPart, SpeechPartDelta
-from pydantic_ai.realtime import PartDeltaEvent, PartEndEvent
+from pydantic_ai.messages import SpeechPart
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 agent = Agent(instructions='You are a helpful voice assistant.')
 microphone_chunk = b'...'
 
 
-def play_audio(chunk: bytes) -> None:
-    pass
+async def play_audio(chunks: AsyncIterator[bytes]):
+    async for chunk in chunks:
+        ...  # send the PCM16 bytes to your audio output
+
+
+async def show_captions(parts: AsyncIterator[SpeechPart]):
+    async for part in parts:
+        print(part.speaker, part.transcript)
+        #> assistant Hello from the realtime assistant.
 
 
 @agent.tool_plain
@@ -69,13 +78,10 @@ async def main():
     model = OpenAIRealtimeModel('gpt-realtime')
     async with agent.realtime(model).session() as session:
         await session.send_audio(microphone_chunk)  # PCM16 audio bytes
-        async for event in session:
-            match event:
-                case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
-                    play_audio(chunk)
-                case PartEndEvent(part=SpeechPart(speaker='assistant', transcript=transcript)):
-                    print('assistant:', transcript)
-#> assistant: Hello from the realtime assistant.
+        await asyncio.gather(
+            play_audio(session.stream_audio()),
+            show_captions(session.stream_transcripts()),
+        )
 ```
 
 You stream content in with the session's `send_*` helpers and consume events by iterating the
@@ -93,20 +99,21 @@ covers browser/telephony transports.
 
 ## The event loop
 
-Handle the events your application needs: play audio deltas, render transcripts, show tool lifecycle
-updates, mark turns complete, react to reconnection, and surface recoverable errors.
+Use the session's consumption views for media and captions while the main event iterator handles the
+control plane:
 
 ```python
+import asyncio
+from collections.abc import AsyncIterator
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     SpeechPart,
-    SpeechPartDelta,
 )
 from pydantic_ai.realtime import (
-    PartDeltaEvent,
-    PartEndEvent,
+    InputSpeechStartEvent,
     ReconnectedEvent,
     SessionErrorEvent,
     TurnCompleteEvent,
@@ -116,10 +123,15 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 agent = Agent()
 
 
-def play_audio(chunk: bytes) -> None: ...
+async def play_audio(chunks: AsyncIterator[bytes]) -> None:
+    async for chunk in chunks:
+        ...
 
 
-def show_transcript(transcript: str) -> None: ...
+async def show_transcripts(parts: AsyncIterator[SpeechPart]) -> None:
+    async for part in parts:
+        print(part.speaker, part.transcript)
+        #> assistant Hello from the realtime assistant.
 
 
 def show_tool_status(status: str) -> None: ...
@@ -136,12 +148,12 @@ def show_error(message: str) -> None: ...
 
 async def main():
     async with agent.realtime(OpenAIRealtimeModel('gpt-realtime')).session() as session:
+        audio_task = asyncio.create_task(play_audio(session.stream_audio()))
+        transcript_task = asyncio.create_task(show_transcripts(session.stream_transcripts()))
         async for event in session:
             match event:
-                case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
-                    play_audio(chunk)
-                case PartEndEvent(part=SpeechPart(transcript=transcript)):
-                    show_transcript(transcript)
+                case InputSpeechStartEvent():
+                    await session.interrupt()
                 case FunctionToolCallEvent():
                     show_tool_status('running')
                 case FunctionToolResultEvent():
@@ -152,6 +164,7 @@ async def main():
                     show_reconnected(state_restored)
                 case SessionErrorEvent(message=message):
                     show_error(message)
+        await asyncio.gather(audio_task, transcript_task)
 ```
 
 ### Event reference
@@ -174,7 +187,25 @@ Spoken content (both the user's and the model's) streams as a
 | [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | The original deferred or approval-required requests resolved by an inline capability handler. |
 | [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | The inline handler supplied results and normal tool processing continues. |
 
-For playback, read audio from the `SpeechPartDelta.audio_chunk`s and nothing else. The rules:
+For playback, iterate
+[`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]. It yields only the model's
+live PCM audio chunks, in playback order, and never repeats retained audio. Each iterator buffers up
+to 32 chunks; if playback falls behind, it drops the oldest chunk rather than stalling the session's
+tool execution, turn tracking, or event stream.
+
+For captions, [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts]
+yields completed [`SpeechPart`][pydantic_ai.messages.SpeechPart]s for both speakers. Pass
+`delta=True` to receive live [`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta] updates
+instead; each update carries its own `speaker`. Transcript iterators use the same 32-item,
+drop-oldest overflow policy.
+
+Both views subscribe when iteration begins, so an unused view never buffers. Calling
+[`close()`][pydantic_ai.realtime.RealtimeSession.close] discards their pending items and ends every
+live iterator cleanly; [`closed`][pydantic_ai.realtime.RealtimeSession.closed] reports whether that
+has happened.
+
+As an advanced alternative, consume audio from the raw event stream. Read
+`SpeechPartDelta.audio_chunk` and follow all four rules:
 
 - The model's speech is delivered in full as deltas, whether or not audio is
   [retained](#retaining-audio) — retention controls what *history* keeps, not what streams.

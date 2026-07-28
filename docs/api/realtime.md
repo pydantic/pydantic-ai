@@ -58,6 +58,15 @@ these, or a precise [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessio
 [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] methods (`commit_audio()`, `clear_audio()`,
 `create_response()`, `interrupt()`), not `send()`.
 
+**Consumption views** —
+[`RealtimeSession.stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] yields model
+audio chunks ready for playback, while
+[`RealtimeSession.stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts]
+yields finalized speech from both speakers or live deltas with `delta=True`. These bounded views can
+run concurrently with each other and with the session's raw event iterator.
+[`RealtimeSession.close()`][pydantic_ai.realtime.RealtimeSession.close] ends the session and every
+live view; [`RealtimeSession.closed`][pydantic_ai.realtime.RealtimeSession.closed] exposes its state.
+
 The low-level [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send] accepts the
 superset [`RealtimeInput`][pydantic_ai.realtime.codec.RealtimeInput], which additionally includes the
 turn-control verbs ([`CommitAudio`][pydantic_ai.realtime.codec.CommitAudio],

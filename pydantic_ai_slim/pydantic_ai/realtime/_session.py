@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import replace
 from threading import Lock as ThreadLock
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
 
 import pydantic_core
 from anyio import Lock
@@ -125,6 +125,24 @@ _FULL_PROFILE = RealtimeModelProfile(
     audio_input_sample_rate=24000,
     audio_output_sample_rate=24000,
 )
+
+# Audio chunks are kilobytes apiece, so a slow player is bounded tightly. Transcript items are short
+# strings, and dropping one silently corrupts the text a user is reading rather than causing an
+# audible glitch, so they get a far deeper window for the same trivial cost.
+_AUDIO_TAP_SIZE = 32
+_TRANSCRIPT_TAP_SIZE = 512
+_TapItem = TypeVar('_TapItem')
+
+
+def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> None:
+    """Put without blocking the pump, retaining the newest bounded window.
+
+    The queue is sized one over its data window so the completion sentinel always fits.
+    """
+    if queue.qsize() >= queue.maxsize - 1:
+        queue.get_nowait()
+    queue.put_nowait(item)
+
 
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
 # `SessionUsageEvent`, which `_handle_pump_event` peels off first (they drive tool execution and usage
@@ -435,6 +453,10 @@ class RealtimeSession:
         # before the connection and toolset close.
         self._queue: asyncio.Queue[RealtimeEvent | object] = asyncio.Queue()
         self._queue_changed = object()
+        self._tap_finished = object()
+        self._audio_taps: set[asyncio.Queue[bytes | object]] = set()
+        self._transcript_taps: set[asyncio.Queue[SpeechPart | object]] = set()
+        self._transcript_delta_taps: set[asyncio.Queue[SpeechPartDelta | object]] = set()
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._pending_messages = _RealtimePendingMessages()
         self._pending_messages_lock = Lock()
@@ -443,10 +465,7 @@ class RealtimeSession:
         # a tool result creates the item and then asks for a response, and `interrupt()` truncates
         # before it cancels. Without this, those sequences interleave — a barge-in's cancel can land on
         # a response that a tool result started in the gap, killing the wrong turn.
-        # `asyncio.Lock` rather than anyio's: this class is asyncio-bound already (queue, tasks), and
-        # an uncontended acquire returns without a checkpoint, so serializing sends doesn't insert an
-        # event-loop tick into every audio frame.
-        self._send_lock = asyncio.Lock()
+        self._send_lock = Lock()
         if self._tool_manager.ctx is not None:
             self._tool_manager.ctx.pending_messages = self._pending_messages
         # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
@@ -465,6 +484,7 @@ class RealtimeSession:
         self._stream_exhausted = False
         self._entered = False
         self._closed = False
+        self._closing_error: BaseException | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
         # The session span is deliberately not made current in the owner's task. Child spans receive
@@ -568,10 +588,21 @@ class RealtimeSession:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        self._closing_error = exc_value
+        await self.close()
+
+    async def close(self) -> None:
+        """Close the session and end its live stream views.
+
+        This method is idempotent. Active [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
+        and [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] iterators
+        finish cleanly, with any buffered items discarded. The surrounding model context owns the
+        underlying connection, so it remains open until that context exits.
+        """
         if not self._entered or self._closed:
             return
         self._closed = True
-
+        self._finish_taps(discard_pending=True)
         tasks = [*self._background_tasks]
         if self._pump_task is not None:
             tasks.append(self._pump_task)
@@ -580,7 +611,7 @@ class RealtimeSession:
 
         self._flush_pending_users()
 
-        error = exc_value or self._pump_error
+        error = self._closing_error or self._pump_error
         if self._chat_span is not None:
             if error is not None:
                 self._record_span_error(self._chat_span, error)
@@ -599,6 +630,74 @@ class RealtimeSession:
         self._session_span_context = None
         self._session_span_attributes = None
         self._loop = None
+
+    @property
+    def closed(self) -> bool:
+        """Whether the session has been closed."""
+        return self._closed
+
+    async def stream_audio(self) -> AsyncIterator[bytes]:
+        """Stream model audio chunks ready for playback.
+
+        The iterator contains only live model audio, in playback order. It never repeats retained
+        audio from finalized speech parts.
+
+        Each iterator has a 32-chunk buffer. If its consumer falls behind, the oldest chunk is
+        dropped so audio playback cannot stall tool execution, turn tracking, or the main event
+        stream. Closing the session discards buffered chunks and ends the iterator cleanly.
+        """
+        self._ensure_streamable()
+        # The extra slot is reserved for the completion sentinel, so ending a full tap does not
+        # discard one of its 32 data items or block the pump during teardown.
+        queue: asyncio.Queue[bytes | object] = asyncio.Queue(maxsize=_AUDIO_TAP_SIZE + 1)
+        self._audio_taps.add(queue)
+        if self._pump_finished:
+            queue.put_nowait(self._tap_finished)
+        else:
+            self._start_pump()
+        try:
+            while (item := await queue.get()) is not self._tap_finished:
+                assert isinstance(item, bytes)
+                yield item
+        finally:
+            self._audio_taps.discard(queue)
+
+    @overload
+    def stream_transcripts(self, *, delta: Literal[False] = False) -> AsyncIterator[SpeechPart]: ...
+
+    @overload
+    def stream_transcripts(self, *, delta: Literal[True]) -> AsyncIterator[SpeechPartDelta]: ...
+
+    async def stream_transcripts(self, *, delta: bool = False) -> AsyncIterator[SpeechPart | SpeechPartDelta]:
+        """Stream speech transcripts for both the user and assistant.
+
+        By default, yields finalized [`SpeechPart`][pydantic_ai.messages.SpeechPart] instances.
+        Pass `delta=True` for live captions as self-describing
+        [`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta] instances carrying `speaker` and
+        `transcript_delta`. Empty transcript updates and finalized parts without a transcript are
+        omitted.
+
+        Final transcripts and deltas are separate subscriptions, so one never crowds out the other.
+        Each iterator buffers up to 512 items; if its consumer falls behind, the oldest is dropped,
+        because captioning must not be able to stall tool execution, turn tracking, or the main event
+        stream. Closing the session discards buffered items and ends the iterator cleanly.
+        """
+        self._ensure_streamable()
+        # Each kind gets its own subscription, so a consumer's window is never spent on items it
+        # would discard: sharing one queue let a burst of deltas evict the finalized part a
+        # `delta=False` consumer was waiting for, and the two speakers' transcripts interleave.
+        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=_TRANSCRIPT_TAP_SIZE + 1)
+        taps: set[Any] = self._transcript_delta_taps if delta else self._transcript_taps
+        taps.add(queue)
+        if self._pump_finished:
+            queue.put_nowait(self._tap_finished)
+        else:
+            self._start_pump()
+        try:
+            while (item := await queue.get()) is not self._tap_finished:
+                yield item
+        finally:
+            taps.discard(queue)
 
     @staticmethod
     def _record_span_error(span: Span, error: BaseException) -> None:
@@ -793,6 +892,7 @@ class RealtimeSession:
             audio_end_ms: Milliseconds of the current output audio that were actually played. When
                 given, the output item is truncated to this point before the response is cancelled.
         """
+        self._ensure_not_closed()
         self._require_capability(self._profile.get('supports_interruption', False), 'interrupt', 'interruption')
         if audio_end_ms is not None and not self._profile.get('supports_output_truncation', False):
             raise UserError(
@@ -820,8 +920,13 @@ class RealtimeSession:
         item and then asks for a response), so the lock is what makes each input indivisible on the
         wire, not just ordered.
         """
+        self._ensure_not_closed()
         async with self._send_lock:
             await self._connection.send(content)
+
+    def _ensure_not_closed(self) -> None:
+        if self._closed:
+            raise RuntimeError('This realtime session is closed.')
 
     def _require_capability(self, supported: bool, method: str, feature: str) -> None:
         """Raise a clear `UserError` before sending when the model doesn't support `method`."""
@@ -1901,6 +2006,7 @@ class RealtimeSession:
                 await self._drain_pending_messages('asap')
             return False
         for out in self._translate_event(event):
+            self._publish_taps(out)
             await self._queue.put(out)
         if isinstance(event, TurnCompleteEvent):
             await self._drain_pending_messages('when_idle')
@@ -1917,9 +2023,40 @@ class RealtimeSession:
             self._pump_error = e
         finally:
             self._pump_finished = True
+            if not self._closed:
+                self._finish_taps()
             await self._queue.put(self._queue_changed)
             if token is not None:
                 otel_context.detach(token)
+
+    def _ensure_streamable(self) -> None:
+        if not self._entered:
+            raise RuntimeError('Enter the realtime session with `async with` before streaming it.')
+        if self._closed:
+            raise RuntimeError('This realtime session is closed and cannot be streamed.')
+
+    def _start_pump(self) -> None:
+        if self._pump_task is None:
+            self._pump_task = asyncio.create_task(self._pump(self._session_span_context))
+
+    def _publish_taps(self, event: RealtimeEvent) -> None:
+        if isinstance(event, PartDeltaEvent) and isinstance(delta := event.delta, SpeechPartDelta):
+            if delta.audio_chunk:
+                for queue in self._audio_taps:
+                    _put_tap(queue, delta.audio_chunk)
+            if delta.transcript_delta:
+                for queue in self._transcript_delta_taps:
+                    _put_tap(queue, delta)
+        elif isinstance(event, PartEndEvent) and isinstance(part := event.part, SpeechPart) and part.transcript:
+            for queue in self._transcript_taps:
+                _put_tap(queue, part)
+
+    def _finish_taps(self, *, discard_pending: bool = False) -> None:
+        for queue in (*self._audio_taps, *self._transcript_taps, *self._transcript_delta_taps):
+            if discard_pending:
+                while not queue.empty():
+                    queue.get_nowait()
+            queue.put_nowait(self._tap_finished)
 
     async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
         """Read translated events from the session queue without owning session resources."""
@@ -1933,8 +2070,7 @@ class RealtimeSession:
             raise RuntimeError('This realtime session event stream has already ended.')
 
         self._iterator_active = True
-        if self._pump_task is None:
-            self._pump_task = asyncio.create_task(self._pump(self._session_span_context))
+        self._start_pump()
         try:
             while True:
                 item = await self._queue.get()
