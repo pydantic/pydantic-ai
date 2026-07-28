@@ -3142,10 +3142,7 @@ def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> No
     """
     for cap_type in _AUTO_INJECT_CAPABILITY_TYPES:
         if not has_capability_type(capabilities, cap_type):
-            capability = cap_type()
-            if isinstance(capability, ToolSearchCap):
-                capability._auto_injected = True  # pyright: ignore[reportPrivateUsage]
-            capabilities.append(capability)
+            capabilities.append(cap_type())
 
 
 def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) -> set[str]:

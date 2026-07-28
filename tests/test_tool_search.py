@@ -25,7 +25,6 @@ from typing_extensions import TypedDict
 import pydantic_ai.agent as agent_module
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai._deferred_capabilities import DEFERRED_CAPABILITY_TOOL_METADATA_KEY
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
     synthesize_local_from_native_call,
@@ -6036,7 +6035,7 @@ async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_f
 #
 # Provider-side tool search can't honor capability gating — it would reveal corpus tools
 # whose owning capability hasn't been loaded yet. When any function tool has both
-# `with_native='tool_search'` and a `capability_id`, `_resolve_native_tool_swap` either
+# `with_native='tool_search'` and `defer_loading_on_wire=True`, `_resolve_native_tool_swap` either
 # raises (named-native strategies have no local equivalent) or promotes `strategy=None` to
 # `'custom'` (client-executed), keeping `search_tools` on the wire as the callback.
 
@@ -6048,7 +6047,7 @@ def _capability_owned_corpus_tool() -> ToolDefinition:
         with_native=ToolSearchTool.kind,
         capability_id='refunds',
         defer_loading=True,
-        metadata={DEFERRED_CAPABILITY_TOOL_METADATA_KEY: True},
+        defer_loading_on_wire=True,
     )
 
 

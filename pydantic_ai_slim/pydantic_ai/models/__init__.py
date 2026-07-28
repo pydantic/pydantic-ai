@@ -23,7 +23,7 @@ import httpx
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
-from .. import _deferred_capabilities, _utils
+from .. import _utils
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -1552,9 +1552,7 @@ def _resolve_tool_search_native_for_capability_owned_corpus(
     equivalent, so we raise rather than silently substitute a different algorithm.
     """
     capability_owns_corpus = any(
-        t.with_native == ToolSearchTool.kind
-        and (t.metadata or {}).get(_deferred_capabilities.DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
-        for t in function_tools
+        t.with_native == ToolSearchTool.kind and t.defer_loading_on_wire for t in function_tools
     )
     if not capability_owns_corpus:
         return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)

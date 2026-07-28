@@ -14,7 +14,6 @@ from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._deferred_capabilities import AUTO_TOOL_SEARCH_METADATA_KEY, DEFERRED_CAPABILITY_TOOL_METADATA_KEY
 from .._run_context import RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
@@ -1406,26 +1405,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_def for tool_def in tool_defs.values() if tool_def.with_native == ToolSearchTool.kind
         ]
         # Anthropic accepts deferred tools and application-driven `tool_reference` reveals
-        # without a search tool. Keep explicit ToolSearch configuration and mixed corpora
-        # unchanged; only remove the auto-injected search callback when every corpus member
-        # is owned by a deferred capability.
-        capability_only_auto_search = (
-            bool(tool_search_corpus)
-            and all(
-                (tool_def.metadata or {}).get(DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
-                for tool_def in tool_search_corpus
-            )
-            and any(
-                (tool_def.metadata or {}).get(AUTO_TOOL_SEARCH_METADATA_KEY) is True for tool_def in tool_defs.values()
-            )
+        # without a search tool. Remove the search surface only when the entire corpus is
+        # capability-owned, so there is nothing the model can discover by searching.
+        capability_only_corpus = bool(tool_search_corpus) and all(
+            tool_def.defer_loading_on_wire for tool_def in tool_search_corpus
         )
-        if capability_only_auto_search:
+        if capability_only_corpus:
             tool_defs = {
-                name: replace(tool_def, with_native=None)
-                if (tool_def.metadata or {}).get(DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
-                else tool_def
+                name: replace(tool_def, with_native=None) if tool_def.defer_loading_on_wire else tool_def
                 for name, tool_def in tool_defs.items()
-                if (tool_def.metadata or {}).get(AUTO_TOOL_SEARCH_METADATA_KEY) is not True
+                if tool_def.unless_native != ToolSearchTool.kind
             }
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
@@ -2299,7 +2288,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_param['strict'] = f.strict
         if model_settings.get('anthropic_eager_input_streaming'):
             tool_param['eager_input_streaming'] = True
-        if f.defer_loading or f.with_native == ToolSearchTool.kind:
+        if f.defer_loading_on_wire or f.with_native == ToolSearchTool.kind:
             tool_param['defer_loading'] = True
         return tool_param
 

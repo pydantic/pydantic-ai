@@ -141,7 +141,6 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     """Custom description for the `queries` parameter when search runs on our side."""
 
     _search_fn: ToolSearchFunc[AgentDepsT] | None = field(init=False, repr=False, default=None)
-    _auto_injected: bool = field(init=False, repr=False, default=False)
 
     def __post_init__(self) -> None:
         # `'keywords'` and a callable strategy both run their algorithm on our side and
@@ -208,7 +207,6 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             tool_description=self.tool_description,
             parameter_description=self.parameter_description,
             enable_fallback=self.strategy not in ('bm25', 'regex'),
-            auto_injected=self._auto_injected,
         )
 
     async def before_model_request(

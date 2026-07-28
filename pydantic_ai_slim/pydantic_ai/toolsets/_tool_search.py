@@ -37,7 +37,6 @@ from typing import Annotated, Any
 from pydantic import Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict, assert_never
 
-from .._deferred_capabilities import AUTO_TOOL_SEARCH_METADATA_KEY
 from .._run_context import AgentDepsT, RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from ..exceptions import ModelRetry, UserError
@@ -282,9 +281,6 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     keyword algorithm; and on providers that DO support it, only the native tool reaches
     the wire (no redundant `search_tools` slot that could confuse the model)."""
 
-    auto_injected: bool = False
-    """Whether this wrapper came from the agent's default `ToolSearch` capability."""
-
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
@@ -383,7 +379,6 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             parameters_json_schema=schema,
             tool_kind='tool-search',
             unless_native=unless_native,
-            metadata={AUTO_TOOL_SEARCH_METADATA_KEY: True} if self.auto_injected else None,
         )
 
         return _SearchTool(

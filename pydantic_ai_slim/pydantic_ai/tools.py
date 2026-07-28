@@ -631,6 +631,14 @@ class ToolDefinition:
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
 
+    defer_loading_on_wire: bool = False
+    """Whether a provider adapter should keep this tool deferred on the wire for the whole run.
+
+    Deferred capabilities set this independently of `defer_loading`, whose value changes when
+    the capability is revealed. Providers that support application-driven reveals can use this
+    stable flag to preserve the prompt-cache prefix while still allowing the revealed tool call.
+    """
+
     unless_native: Annotated[
         str | None,
         # Old names were `prefer_builtin` and (after the builtin → native rename in https://github.com/pydantic/pydantic-ai/issues/5338)
