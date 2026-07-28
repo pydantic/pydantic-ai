@@ -222,6 +222,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
 
     @property
     def supported_modalities(self) -> frozenset[EmbeddingModality]:
+        """The modalities this model can embed; `gemini-embedding-2` also accepts images, audio, video and PDFs."""
         if self._model_name in _MULTIMODAL_MODELS:
             return _MULTIMODAL_MODALITIES
         return super().supported_modalities

@@ -131,6 +131,8 @@ Files are sent to Google inline, so a URL is downloaded first, and only `http(s)
 
 Google documents [multimodal limits](https://ai.google.dev/gemini-api/docs/embeddings#multimodal) of 6 images, 1 document of up to 6 pages, 1 video of up to 120 seconds, and 180 seconds of audio. For images these bound a single input rather than the request: 7 separate images embed fine, while 7 fused into one `EmbeddingContent` are rejected. Pydantic AI doesn't enforce any of this, so exceeding a limit surfaces as a provider error. `document` means PDF, and the accepted image, audio and video formats are listed on the same page — other media types are sent as-is and rejected by Google.
 
+Task conditioning interacts with multimodal inputs — see [Task Conditioning](#task-conditioning) for which inputs get a task prefix and which warn.
+
 All modalities share one 8,192-token context window, and **Google silently truncates** anything over it rather than raising: a long document plus text can lose the tail without any error. [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens] only counts text, so there's no way to check a file's size up front.
 
 Two more things to know about `gemini-embedding-2`. On Vertex it accepts only one input per request, so embed a batch one input at a time there; on the Gemini API a batch is fine. And [`EmbeddingResult.usage`][pydantic_ai.embeddings.EmbeddingResult.usage] reports 0 tokens on the Gemini API — the API does return a per-modality token count, but `google-genai` discards it before Pydantic AI can read it, so cost comes out as 0. Vertex reports usage normally.
@@ -417,6 +419,11 @@ embedder = Embedder(
 When you don't set `google_task`, `gemini-embedding-2` is conditioned as `'search result'`. Conditioning is on by default because Google recommends it for this model and it yields better retrieval performance than embedding raw text. To opt out and embed the text verbatim, pass `google_task='raw'`.
 
 `google_task` only applies to `gemini-embedding-2`; on any other model it is ignored with a warning (those models condition via `google_task_type` instead). Conversely, `google_task_type` is ignored on `gemini-embedding-2`, since that model conditions through the text prefix.
+
+Because the prefix conditions *text*, it applies only to an input that is exactly one text part. A file, or an [`EmbeddingContent`][pydantic_ai.embeddings.EmbeddingContent] of several parts (see [Multimodal inputs](#multimodal-inputs)), is embedded without one. Two cases warn:
+
+- Fusing several **text** parts into one `EmbeddingContent` warns even on the default task, because the conditioning is silently lost and unconditioned text lands in a different region of the space than conditioned text. Pass the text as a single part to condition it, or `google_task='raw'` to opt out deliberately.
+- An input holding a **file** warns only if you set `google_task` explicitly — a reminder that it didn't apply there, since Google defines no task instruction for image, audio or video. On the default task this is silent, as it would otherwise fire on every caption-plus-image embed.
 
 #### Google-Specific Settings
 
@@ -918,6 +925,9 @@ embedder = Embedder('openai:text-embedding-3-small', instrument=True)
 Embedder.instrument_all()
 ```
 
+!!! note "Binary content in spans"
+    A file input is recorded by media type rather than by dumping its bytes into the span, but its data is still included as base64 while [`InstrumentationSettings.include_binary_content`][pydantic_ai.models.instrumented.InstrumentationSettings] is left at its default of `True`. Pass `instrument=InstrumentationSettings(include_binary_content=False)` to record the media type alone, or `include_content=False` to leave inputs out entirely.
+
 See the [Debugging and Monitoring guide](logfire.md) for more details on using Logfire with Pydantic AI.
 
 ## Two-stage retrieval with rerankers
@@ -1013,9 +1023,9 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-To accept more than text, override [`supported_modalities`][pydantic_ai.embeddings.EmbeddingModel.supported_modalities] so unsupported inputs are rejected before a request is made, then call [`prepare_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_embed] instead of `prepare_text_embed()` and map each input yourself. [`embedding_parts()`][pydantic_ai.embeddings.embedding_parts] gives you the parts of an input, so a single part and an [`EmbeddingContent`][pydantic_ai.embeddings.EmbeddingContent] of several parts can be handled alike — remembering that every input, however many parts it has, must yield exactly one embedding.
+To accept more than text, override [`supported_modalities`][pydantic_ai.embeddings.EmbeddingModel.supported_modalities] so unsupported inputs are rejected before a request is made, then call [`prepare_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_embed] instead of [`prepare_text_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_text_embed] and map each input yourself. [`embedding_parts()`][pydantic_ai.embeddings.embedding_parts] gives you the parts of an input, so a single part and an [`EmbeddingContent`][pydantic_ai.embeddings.EmbeddingContent] of several parts can be handled alike — remembering that every input, however many parts it has, must yield exactly one embedding.
 
 !!! note "Upgrading an existing subclass"
-    `embed()` and `prepare_embed()` used to be typed in terms of `str`. They now take [`EmbeddingInput`][pydantic_ai.embeddings.EmbeddingInput], and `prepare_embed()` returns the inputs rather than plain strings, so a subclass written against the old signatures needs updating. Widen your `embed()` annotation to match the base class, and switch to `prepare_text_embed()` — which additionally returns the text to send — wherever you were passing `prepare_embed()`'s result straight to a text-only API.
+    `embed()` and `prepare_embed()` used to be typed in terms of `str`. They now take [`EmbeddingInput`][pydantic_ai.embeddings.EmbeddingInput], and `prepare_embed()` returns the inputs rather than plain strings, so a subclass written against the old signatures needs updating. Widen your `embed()` annotation to match the base class, and switch to [`prepare_text_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_text_embed] — which additionally returns the text to send — wherever you were passing `prepare_embed()`'s result straight to a text-only API.
 
 Use [`WrapperEmbeddingModel`][pydantic_ai.embeddings.WrapperEmbeddingModel] if you want to wrap an existing model to add custom behavior like caching or logging.

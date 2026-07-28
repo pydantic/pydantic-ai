@@ -82,10 +82,18 @@ KIWI_IMAGE_URL = 'https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQ
     ],
 )
 def test_embedding_modality(part: EmbeddingContentPart, expected: EmbeddingModality):
+    """Unit rather than VCR: `AudioUrl` and `VideoUrl` reach no other test in this file, since the
+    audio and video cases send `BinaryContent`, so covering this dispatch through `Embedder` would
+    cost two more URL-download recordings for no extra assertion.
+    """
     assert embedding_modality(part) == expected
 
 
 def test_embedding_parts():
+    """Unit rather than VCR: this is the fan-out every provider builds its request from, and pinning
+    it directly says `EmbeddingContent` unwraps in order while a bare part doesn't, which a provider
+    test can only show indirectly.
+    """
     image = BinaryImage(data=b'\x00', media_type='image/png')
     assert embedding_parts('hello') == ['hello']
     assert embedding_parts(EmbeddingContent(['hello', image])) == ['hello', image]
@@ -133,6 +141,9 @@ async def test_combined_content_yields_one_embedding(tiny_image: BinaryImage):
 
 
 def test_wrapper_delegates_supported_modalities():
+    """Unit rather than VCR: delegation is provider-independent, and the wrapper reaching the wrong
+    model's modalities would gate a request that should have been allowed — a negative no cassette shows.
+    """
     assert WrapperEmbeddingModel(TestEmbeddingModel()).supported_modalities == TestEmbeddingModel().supported_modalities
 
 
@@ -198,7 +209,11 @@ async def test_prepare_text_embed_rejects_a_file():
 
 
 def test_prepare_text_embed_unwraps_text_content():
-    """Text-only implementations get plain strings, while the result keeps the original inputs."""
+    """Text-only implementations get plain strings, while the result keeps the original inputs.
+
+    Unit rather than VCR: the two halves are indistinguishable on the wire — every text-only provider
+    sends `texts` and reports `items`, and a cassette only witnesses the first.
+    """
     tagged = TextContent(content='world', metadata={'chunk': 7})
     items, texts, _ = TestEmbeddingModel().prepare_text_embed(['hello', tagged])
 
