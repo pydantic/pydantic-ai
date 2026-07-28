@@ -2476,6 +2476,164 @@ async def test_truncate_sideband_connection_does_not_clamp() -> None:
     assert json.loads(ws.sent[0])['audio_end_ms'] == 1200
 
 
+def _playback(event_type: str, response_id: str = 'resp_1') -> str:
+    """A WebRTC playback-boundary frame, which only a sideband connection ever receives."""
+    return json.dumps({'type': event_type, 'response_id': response_id})
+
+
+def _content_part_added(item_id: str, part_type: str = 'audio', content_index: int = 0) -> str:
+    return json.dumps(
+        {
+            'type': 'response.content_part.added',
+            'item_id': item_id,
+            'content_index': content_index,
+            'part': {'type': part_type, 'transcript': ''},
+        }
+    )
+
+
+@pytest.mark.anyio
+async def test_sideband_truncate_targets_the_item_from_the_content_part() -> None:
+    """A sideband has no audio deltas to learn the speaking item from, so it reads the content part.
+
+    Without it `interrupt(audio_end_ms=…)` is silently dropped and history records the whole turn as
+    heard — the model then "remembers" saying words the user interrupted.
+    """
+    ws = FakeWebSocket([_content_part_added('item_sideband', content_index=2)])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=3000))
+    assert json.loads(ws.sent[0]) == {
+        'type': 'conversation.item.truncate',
+        'item_id': 'item_sideband',
+        'content_index': 2,
+        'audio_end_ms': 3000,
+    }
+
+
+@pytest.mark.anyio
+async def test_sideband_ignores_a_non_audio_content_part() -> None:
+    """A text part carries no audio to truncate, so it must not become the truncation target."""
+    ws = FakeWebSocket([_content_part_added('item_text', part_type='text')])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=3000))
+    assert ws.sent == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    'frame,expected_index',
+    [
+        pytest.param({'item_id': 'item_a', 'part': {'type': 'audio'}}, 0, id='content_index-omitted'),
+        pytest.param({'item_id': 'item_a', 'content_index': None, 'part': {'type': 'audio'}}, 0, id='null'),
+    ],
+)
+async def test_sideband_content_part_without_an_index_targets_the_first_part(
+    frame: dict[str, Any], expected_index: int
+) -> None:
+    """The audio is the response's first content part unless the provider says otherwise."""
+    ws = FakeWebSocket([json.dumps({'type': 'response.content_part.added', **frame})])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=500))
+    assert json.loads(ws.sent[0])['content_index'] == expected_index
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    'frame',
+    [
+        pytest.param({'item_id': 'item_a'}, id='no-part'),
+        pytest.param({'part': {'type': 'audio'}}, id='no-item-id'),
+    ],
+)
+async def test_sideband_content_part_without_a_target_is_ignored(frame: dict[str, Any]) -> None:
+    """A frame that doesn't name an audio part on an item can't be a truncation target."""
+    ws = FakeWebSocket([json.dumps({'type': 'response.content_part.added', **frame})])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=500))
+    assert ws.sent == []
+
+
+@pytest.mark.anyio
+async def test_websocket_connection_ignores_content_parts_for_truncation() -> None:
+    """A WebSocket session learns the speaking item from audio deltas, which are authoritative."""
+    ws = FakeWebSocket([_content_part_added('item_from_part'), _audio_delta('item_from_delta', audio_bytes=480)])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=3000))
+    assert json.loads(ws.sent[0])['item_id'] == 'item_from_delta'
+
+
+@pytest.mark.anyio
+async def test_sideband_cancel_clears_the_audio_the_browser_is_still_playing() -> None:
+    """A sideband barge-in drops the provider's outbound audio buffer, not just the generation.
+
+    Over WebRTC the provider streams audio to the browser ahead of playback, so `response.cancel`
+    alone leaves the user hearing the response they interrupted.
+    """
+    ws = FakeWebSocket([_playback('output_audio_buffer.started')])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(CancelResponse())
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['output_audio_buffer.clear']
+
+
+@pytest.mark.anyio
+async def test_sideband_cancel_clears_audio_after_the_response_finished() -> None:
+    """Playback outlasts generation, so the buffer is dropped even once the response is over."""
+    done = json.dumps({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
+    ws = FakeWebSocket([_playback('output_audio_buffer.started'), done])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    assert not conn._response_active, 'the response is over; only playback is still running'  # pyright: ignore[reportPrivateUsage]
+    await conn.send(CancelResponse())
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['output_audio_buffer.clear']
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('ended_by', ['output_audio_buffer.stopped', 'output_audio_buffer.cleared'])
+async def test_sideband_cancel_does_not_clear_when_playback_already_ended(ended_by: str) -> None:
+    """Nothing is playing, so there is no buffer to drop and no frame to send."""
+    ws = FakeWebSocket([_playback('output_audio_buffer.started'), _playback(ended_by)])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(CancelResponse())
+    assert ws.sent == []
+
+
+@pytest.mark.anyio
+async def test_playback_boundary_is_tracked_even_when_the_frame_is_suppressed() -> None:
+    """Playback state lands even when the straggler filter drops the frame that carries it.
+
+    A cancelled response's buffered audio can start playing after the cancel, and that
+    `output_audio_buffer.started` carries the cancelled `response_id` — so it is suppressed from the
+    event stream. Tracking it after the filter would leave the connection unable to stop the audio.
+    """
+    ws = FakeWebSocket([])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    await conn._decode_frame(json.dumps({'type': 'response.created', 'response': {'id': 'resp_1'}}))  # pyright: ignore[reportPrivateUsage]
+    await conn.send(CancelResponse())
+    ws.sent.clear()
+
+    assert await conn._decode_frame(_playback('output_audio_buffer.started')) == []  # pyright: ignore[reportPrivateUsage]
+    await conn.send(CancelResponse())
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['output_audio_buffer.clear']
+
+
+@pytest.mark.anyio
+async def test_websocket_cancel_never_clears_the_output_buffer() -> None:
+    """`output_audio_buffer.clear` is WebRTC-only; the provider rejects it on a WebSocket session."""
+    created = json.dumps({'type': 'response.created', 'response': {'id': 'resp_1'}})
+    ws = FakeWebSocket([created, _playback('output_audio_buffer.started')])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(CancelResponse())
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['response.cancel']
+
+
 @pytest.mark.anyio
 async def test_truncate_defaults_content_index_when_absent() -> None:
     ws = FakeWebSocket([_audio_delta('item_x')])

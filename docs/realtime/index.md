@@ -335,6 +335,12 @@ caller's responsibility. Explicit `interrupt()` and manual turn-taking require p
 `audio_end_ms` truncation additionally needs [`supports_output_truncation`](#model-profile-reference), which xAI Grok
 Voice lacks — call `interrupt()` without `audio_end_ms` there.
 
+On a [WebRTC sideband](#browser-webrtc) there is a third buffer between those two: the provider
+generates audio well ahead of playback and keeps streaming what it already produced, so stopping the
+model is not enough to stop the voice. `interrupt()` drops that outbound buffer too, which is what
+actually ends the turn for the listener. The browser still owns its own playback buffer and should
+flush it on barge-in, as above.
+
 Realtime history records the cut-off point on the last assistant
 [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms] of the turn.
 The value is an offset into that part's output audio, in milliseconds. It stays `None` when the

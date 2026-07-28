@@ -119,6 +119,12 @@ from ._openai_webrtc import answer_webrtc_offer as _answer_webrtc_offer, mint_cl
 # (see `resolve_transcription_model`) so it can be bumped without changing the behavior of apps on `'auto'`.
 _AUTO_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper'
 
+# WebRTC-only playback boundaries: over a WebRTC call the audio reaches the browser on the media track
+# rather than as deltas, so these frames are the sideband's only signal of whether the model is still
+# being heard. `stopped` ends playback naturally; `cleared` acknowledges an `output_audio_buffer.clear`.
+_OUTPUT_AUDIO_PLAYBACK_STARTED = 'output_audio_buffer.started'
+_OUTPUT_AUDIO_PLAYBACK_ENDED = frozenset({'output_audio_buffer.stopped', 'output_audio_buffer.cleared'})
+
 __all__ = (
     'OpenAIRealtimeModel',
     'OpenAIRealtimeModelSettings',
@@ -350,6 +356,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._current_item_id: str | None = None
         self._current_content_index = 0
         self._generated_audio_bytes = 0
+        # Whether the provider is still streaming audio to the browser, tracked from the WebRTC-only
+        # playback-boundary events. A sideband sees no output-audio deltas, so this is its only signal.
+        self._output_audio_playing = False
 
     @property
     def model_name(self) -> str | None:
@@ -444,6 +453,16 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # item (server-initiated cancels clear it via `response.done`, but a client cancel doesn't).
                 self._current_item_id = None
                 self._generated_audio_bytes = 0
+            # Over WebRTC the provider streams audio to the browser far ahead of playback and keeps
+            # playing what it already sent, so `response.cancel` — which only stops generation — leaves
+            # the user listening to speech they interrupted (measured: 27s of it still to come after
+            # `response.done`). Dropping that buffer is what actually ends the turn for the listener,
+            # and it applies even once the response is over, which is why it hangs off playback state
+            # rather than `_response_active`. A WebSocket session has no such buffer (the caller holds
+            # the audio) and the provider rejects the event there, so this is sideband-only.
+            if not self._observes_output_audio and self._output_audio_playing:
+                await self._send_event({'type': 'output_audio_buffer.clear'})
+                self._output_audio_playing = False
         elif isinstance(content, TruncateOutput):
             # No current output item (e.g. the model wasn't speaking) → nothing to truncate.
             if self._current_item_id is not None:
@@ -549,6 +568,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         """
         data = loads_obj(raw)
         event_type = data.get('type')
+        # Playback state belongs to the connection, not to any one response, so track it before the
+        # straggler filter: the `cleared`/`stopped` frames of a response we just cancelled carry its
+        # `response_id` and would be dropped, leaving us believing the browser is still being spoken to.
+        if event_type == _OUTPUT_AUDIO_PLAYBACK_STARTED:
+            self._output_audio_playing = True
+        elif event_type in _OUTPUT_AUDIO_PLAYBACK_ENDED:
+            self._output_audio_playing = False
         # Drop trailing frames from a response we cancelled on barge-in (its audio/transcript deltas,
         # output-item events, etc.); its own `response.done` still passes through below to close the
         # response, emit usage, and clear the suppression.
@@ -564,6 +590,15 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             created = ResponseCreatedEvent.construct(**data)
             self._response_active = True
             self._active_response_id = created.response.id or None if is_str_dict(response_data) else None
+        elif event_type == 'response.content_part.added' and not self._observes_output_audio:
+            # A sideband receives no output-audio deltas, so this is the only place it learns which item
+            # and content part carry the response's audio — the target a `TruncateOutput` must name.
+            # Without it the truncation is silently dropped and history records the whole turn as heard.
+            part = data.get('part')
+            if is_str_dict(part) and part.get('type') == 'audio' and isinstance(item_id := data.get('item_id'), str):
+                self._current_item_id = item_id
+                content_index = data.get('content_index')
+                self._current_content_index = content_index if isinstance(content_index, int) else 0
         elif event_type in AUDIO_DELTA_TYPES:
             audio = ResponseAudioDeltaEvent.construct(**data)
             # Track the speaking item so a later `TruncateOutput` can name it.
@@ -967,6 +1002,10 @@ class OpenAIRealtimeModel(RealtimeModel):
                 reconnect=self.reconnect,
                 input_transcription_enabled=transcription_enabled,
                 model_name=server_model,
+                # The media flows browser <-> provider, so this connection never sees output-audio
+                # deltas: it must not clamp a truncation against a byte counter that stays zero, and a
+                # barge-in has to drop the provider's outbound buffer the browser is still playing.
+                observes_output_audio=False,
             )
         finally:
             if cm is not None:  # pragma: no branch
