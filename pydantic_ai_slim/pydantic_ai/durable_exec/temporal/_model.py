@@ -455,7 +455,8 @@ class TemporalModel(WrapperModel):
         prepared = model_for_request.prepare_messages(params.messages, params.model_request_parameters)
         if prepared is params.messages:
             return prepared
-        return _clean_message_history(prepared, repair_last_response=True)
+        cleaned_messages, _ = _clean_message_history(prepared, repair_last_response=True)
+        return cleaned_messages
 
     def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any] | None = None) -> Model:
         """Resolve a model ID to a Model instance.
