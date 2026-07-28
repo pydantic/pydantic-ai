@@ -261,7 +261,7 @@ async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_pr
     assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
 
 
-async def test_bedrock_request_non_http_error():
+async def test_bedrock_request_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse')
     model = _bedrock_model_with_client_error(error)
     params = ModelRequestParameters()
@@ -408,7 +408,7 @@ async def test_bedrock_count_tokens_tool_config(
     )
 
 
-async def test_bedrock_stream_non_http_error():
+async def test_bedrock_stream_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
     model = _bedrock_model_with_client_error(error)
     params = ModelRequestParameters()

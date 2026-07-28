@@ -15,6 +15,8 @@ import httpx
 import pytest
 from pytest_mock import MockerFixture
 
+import pydantic_ai.models
+
 from ._inline_snapshot import snapshot
 
 if sys.version_info < (3, 11):
@@ -39,6 +41,7 @@ from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, try_import
 
 pytestmark = [
     pytest.mark.anyio,
+    pytest.mark.usefixtures('allow_model_requests'),
 ]
 
 with try_import() as logfire_imports_successful:
@@ -99,40 +102,45 @@ with try_import() as sentence_transformers_imports_successful:
 async def test_openai_embedding_model_blocks_requests_when_disabled():
     model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key='test-key'))
 
-    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
-        await model.embed('hello', input_type='query')
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
 
 
 @pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed')
 async def test_cohere_embedding_model_blocks_requests_when_disabled():
     model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key='test-key'))
 
-    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
-        await model.embed('hello', input_type='query')
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='google not installed')
 async def test_google_embedding_model_blocks_requests_when_disabled():
     model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key='test-key'))
 
-    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
-        await model.embed('hello', input_type='query')
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
 
 
 @pytest.mark.skipif(not bedrock_imports_successful(), reason='bedrock not installed')
 async def test_bedrock_embedding_model_blocks_requests_when_disabled():
     model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=BedrockProvider(bedrock_client=MagicMock()))
 
-    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
-        await model.embed('hello', input_type='query')
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
 
 
 @pytest.mark.skipif(not voyageai_imports_successful(), reason='voyageai not installed')
 async def test_voyageai_embedding_model_blocks_requests_when_disabled():
     model = VoyageAIEmbeddingModel('voyage-4', provider=VoyageAIProvider(api_key='test-key'))
 
-    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
-        await model.embed('hello', input_type='query')
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
 
 
 STSB_BERT_TINY_MODEL = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
