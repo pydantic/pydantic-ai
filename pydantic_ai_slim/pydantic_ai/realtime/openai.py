@@ -285,6 +285,16 @@ def _map_transcription_usage(usage: RealtimeTranscriptionUsage | None) -> Reques
     return RequestUsage(details=details) if details else None
 
 
+def _describe_close(ws: ClientConnection) -> str:
+    """Describe a close that `websockets` reported by ending iteration instead of raising."""
+    if (code := ws.close_code) is None:  # pragma: no cover
+        # Only reachable if iteration ends while the connection is still open, which `websockets`
+        # doesn't do; described generically rather than asserted so it can't mask a real close.
+        return 'stream ended'
+    reason = ws.close_reason
+    return f'received {code} {reason}' if reason else f'received {code}'
+
+
 class OpenAIRealtimeConnection(RealtimeConnection):
     """A live WebSocket connection to the OpenAI Realtime API."""
 
@@ -473,20 +483,28 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                         continue
                     for event in events:
                         yield event
-                return  # the upstream iterator ended without dropping
+                # `websockets` ends iteration silently on a *normal* close (1000/1001) and only raises
+                # on an abnormal one, but a session the server hung up on is over either way: OpenAI
+                # ends one that reaches its duration cap with `1001 Your session hit the maximum
+                # duration of 60 minutes.`. Handle it like a drop so a reconnect policy still runs and,
+                # without one, the consumer learns the conversation was cut off instead of seeing the
+                # stream quietly end.
+                closed = _describe_close(self._ws)
             except websockets.ConnectionClosed as e:
-                if self._reconnect is None or self._dial is None:
-                    # No reconnect policy: a dropped connection is fatal. Surface it as a
-                    # non-recoverable error and end the stream cleanly, rather than raising.
-                    yield SessionErrorEvent(message=f'OpenAI realtime connection closed: {e}', recoverable=False)
-                    return
-                if await self._try_reconnect():
-                    yield ReconnectedEvent(state_restored=self._restores_state_on_reconnect)
-                    continue
-                yield SessionErrorEvent(
-                    message=f'OpenAI realtime connection closed; reconnect failed: {e}', recoverable=False
-                )
+                closed = str(e)
+
+            if self._reconnect is None or self._dial is None:
+                # No reconnect policy: a closed connection is fatal. Surface it as a non-recoverable
+                # error and end the stream cleanly, rather than raising.
+                yield SessionErrorEvent(message=f'OpenAI realtime connection closed: {closed}', recoverable=False)
                 return
+            if await self._try_reconnect():
+                yield ReconnectedEvent(state_restored=self._restores_state_on_reconnect)
+                continue
+            yield SessionErrorEvent(
+                message=f'OpenAI realtime connection closed; reconnect failed: {closed}', recoverable=False
+            )
+            return
 
     def _is_cancelled_straggler(self, event_type: str | None, data: dict[str, Any]) -> bool:
         """Whether this frame is a trailing delta from a response cancelled on barge-in (drop it).

@@ -297,8 +297,10 @@ async def test_audio_in_server_vad_transcription_requires_deployment(
         for start in range(0, len(pcm), 4800):
             await session.send_audio(pcm[start : start + 4800])
         with anyio.fail_after(45):
-            async for event in session:
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)
+                if isinstance(event, TurnCompleteEvent):
+                    break
 
     assert collapse_event_types(events) == snapshot(
         [

@@ -45,6 +45,7 @@ from pydantic_ai.realtime.codec import (
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
+from .ws_helpers import collect_codec_events, collect_session_events
 
 with try_import() as imports_successful:
     from xai_sdk import AsyncClient
@@ -319,7 +320,14 @@ def test_session_config_omits_absent_model_settings() -> None:
 
 
 class FakeWebSocket:
-    """A minimal stand-in for a `websockets` client connection."""
+    """A minimal stand-in for a `websockets` client connection.
+
+    Running out of scripted frames stands in for the server closing the connection normally, which is
+    how `websockets` reports a 1000/1001 close: iteration ends rather than raising.
+    """
+
+    close_code: int | None = 1000
+    close_reason: str = ''
 
     def __init__(self, incoming: list[Any]) -> None:
         self._incoming = list(incoming)
@@ -383,7 +391,10 @@ class _RecordingConnect:
 
     def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> Any:
         self.urls.append(url)
-        ws = next(self._sockets)
+        try:
+            ws = next(self._sockets)
+        except StopIteration:
+            raise OSError('server is down')  # no more sockets scripted: the server stays down
         recorder = self
 
         class _CM:
@@ -438,7 +449,7 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
     )
     async with _connect(model, 'Be nice') as conn:
         assert isinstance(conn, XaiRealtimeConnection)
-        events = [e async for e in conn]
+        events = await collect_codec_events(conn)
 
     assert events == [Transcript(text='hi', is_final=True)]  # the `.updated` partial was dropped
     assert fake_connect.url == 'wss://api.x.ai/v1/realtime?model=grok-voice-latest'
@@ -573,14 +584,16 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     connect = _RecordingConnect([dropped, good])
     monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
 
-    model = _model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0))
+    model = _model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0, max_attempts=1))
     async with _connect(model, 'x') as conn:
-        events = [e async for e in conn]
+        events = await collect_codec_events(conn)
 
     assert events == [ReconnectedEvent(state_restored=True), Transcript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]  # both the dropped and the current socket are closed
+    # The last URL is the re-dial attempted after `good` hung up, which the stand-in refuses.
     assert connect.urls == [
         'wss://api.x.ai/v1/realtime?model=grok-voice-latest',
+        'wss://api.x.ai/v1/realtime?model=grok-voice-latest&conversation_id=conversation-1',
         'wss://api.x.ai/v1/realtime?model=grok-voice-latest&conversation_id=conversation-1',
     ]
     assert json.loads(dropped.sent[0])['session']['resumption'] == {'enabled': True}
@@ -644,9 +657,10 @@ async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
     monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([dropped, resumed]))
 
     agent = Agent()
-    async with agent.realtime(_model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0))).session() as session:
+    model = _model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0, max_attempts=1))
+    async with agent.realtime(model).session() as session:
         await session.send('Hello.')
-        events = [event async for event in session]
+        events = await collect_session_events(session)
 
     assert sum(isinstance(event, ReconnectedEvent) for event in events) == 1
     messages = session.all_messages()

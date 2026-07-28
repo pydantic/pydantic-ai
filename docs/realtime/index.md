@@ -735,7 +735,8 @@ connection; never ship backend credentials to a client.
 
 ## Reconnecting
 
-A long-lived connection can drop. Pass a
+A long-lived connection can drop, and every provider also caps how long one session may stay open —
+OpenAI closes an hour in, whether or not the conversation is still going. Pass a
 [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently re-dial with
 exponential backoff, re-apply the session configuration, and emit a
 [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] event:
@@ -747,12 +748,17 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 model = OpenAIRealtimeModel('gpt-realtime', reconnect=ReconnectPolicy(max_attempts=5))
 ```
 
+`max_attempts` bounds the retries for a single drop; `max_reconnects` bounds how many times the whole
+session may come back, so a server that accepts a connection and immediately hangs up eventually gives
+up instead of re-dialing forever.
+
 For OpenAI and Azure OpenAI, reconnecting restores the session configuration but **not** server-side
 conversation state (the audio buffer and prior turns), so treat a
 [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] with `state_restored=False` as the start of a fresh
 turn. Without a
-policy (the default), a dropped connection raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]
-from the session iterator, so the app can open a new session itself.
+policy (the default), a connection the server closes — for any reason, including the session cap —
+raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the session iterator, so the app can
+open a new session itself.
 
 Gemini and xAI reconnect via native **session resumption**, which restores prior turns. xAI suppresses
 the provider's resumption replay burst from the local event stream and enables resumption automatically

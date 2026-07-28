@@ -83,6 +83,7 @@ from pydantic_ai.usage import RequestUsage
 
 from ..conftest import try_import
 from .test_session import make_tool_manager
+from .ws_helpers import collect_codec_events, collect_session_events
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
@@ -577,7 +578,14 @@ def test_model_repr_hides_api_key() -> None:
 
 
 class FakeWebSocket:
-    """A minimal stand-in for a `websockets` client connection."""
+    """A minimal stand-in for a `websockets` client connection.
+
+    Running out of scripted frames stands in for the server closing the connection normally, which is
+    how `websockets` reports a 1000/1001 close: iteration ends rather than raising.
+    """
+
+    close_code: int | None = 1000
+    close_reason: str = ''
 
     def __init__(self, incoming: list[Any]) -> None:
         self._incoming = list(incoming)
@@ -637,7 +645,7 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
 
     async with _connect(model, 'Be nice', tools=tools) as conn:
-        events = [e async for e in conn]
+        events = await collect_codec_events(conn)
 
     assert events == [Transcript(text='hi', is_final=True)]
     assert fake_connect.url == 'wss://api.openai.com/v1/realtime?model=gpt-realtime'
@@ -890,7 +898,7 @@ async def test_connect_skips_unrelated_events_during_handshake(monkeypatch: pyte
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
     async with _connect(model, 'x') as conn:
-        assert [e async for e in conn] == []
+        assert await collect_codec_events(conn) == []
 
 
 @pytest.mark.anyio
@@ -1005,7 +1013,7 @@ async def test_connection_iter_skips_non_string_frames(monkeypatch: pytest.Monke
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
     async with _connect(model, 'x') as conn:
-        events = [e async for e in conn]
+        events = await collect_codec_events(conn)
     assert events == [AudioDelta(data=b'\x09')]
 
 
@@ -1086,7 +1094,7 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
     async with _connect(model, 'x') as conn:
-        events = [e async for e in conn]
+        events = await collect_codec_events(conn)
     assert [type(e).__name__ for e in events] == [
         'SessionErrorEvent',
         'SessionErrorEvent',
@@ -1754,7 +1762,7 @@ async def test_connection_drops_deltas_from_a_cancelled_response() -> None:
     conn._active_response_id = 'resp-1'  # pyright: ignore[reportPrivateUsage]
     await conn.send(CancelResponse())  # cancels resp-1 and starts suppressing its stragglers
 
-    events = [event async for event in conn]
+    events = await collect_codec_events(conn)
     assert events == [
         TurnCompleteEvent(
             interrupted=True,
@@ -1790,7 +1798,7 @@ async def test_superseded_cancelled_response_done_suppresses_turn_complete() -> 
     conn._active_response_id = 'A'  # pyright: ignore[reportPrivateUsage]
     await conn.send(CancelResponse())  # cancel A (barge-in); B is created below and becomes active
 
-    events = [event async for event in conn]
+    events = await collect_codec_events(conn)
     # A's usage is recorded, B keeps streaming, and no `TurnCompleteEvent` fired for the superseded A.
     assert [type(event).__name__ for event in events] == ['SessionUsageEvent', 'AudioDelta']
     assert isinstance(events[0], SessionUsageEvent) and events[0].provider_response_id == 'A'
@@ -1804,7 +1812,7 @@ async def test_response_done_without_response_object_is_recoverable() -> None:
     # recoverable path); it degrades to a graceful `TurnCompleteEvent` with an unknown status.
     ws = FakeWebSocket([json.dumps({'type': 'response.done'})])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
-    events = [event async for event in conn]
+    events = await collect_codec_events(conn)
     assert events == [TurnCompleteEvent(interrupted=False, provider_details={'status': None})]
 
 
@@ -1826,7 +1834,7 @@ async def test_transcription_completed_token_usage_emits_run_level_usage() -> No
     )
     ws = FakeWebSocket([frame])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
-    events = [event async for event in conn]
+    events = await collect_codec_events(conn)
     assert events == [
         InputTranscript(text='hi', is_final=True, item_id='u1'),
         SessionUsageEvent(
@@ -1857,7 +1865,7 @@ async def test_response_done_emits_usage_then_turn_complete() -> None:
     )
     ws = FakeWebSocket([done])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
-    events = [e async for e in conn]
+    events = await collect_codec_events(conn)
     assert events == [
         SessionUsageEvent(
             usage=RequestUsage(input_tokens=3, output_tokens=2),
@@ -1890,7 +1898,7 @@ async def test_response_done_maps_xai_top_level_usage_extras() -> None:
         }
     )
     conn = OpenAIRealtimeConnection(FakeWebSocket([done]))  # type: ignore[arg-type]
-    events = [event async for event in conn]
+    events = await collect_codec_events(conn)
     assert events[0] == SessionUsageEvent(
         usage=RequestUsage(
             input_tokens=8,
@@ -1919,7 +1927,7 @@ async def test_response_done_function_call_only_still_emits_usage() -> None:
     )
     ws = FakeWebSocket([done])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
-    events = [e async for e in conn]
+    events = await collect_codec_events(conn)
     # function-call-only → no TurnCompleteEvent, but usage is still surfaced
     assert events == [
         SessionUsageEvent(
@@ -1979,7 +1987,7 @@ async def test_function_call_only_response_without_usage_finalizes_before_answer
     connection = OpenAIRealtimeConnection(FakeWebSocket(frames))  # type: ignore[arg-type]
     session = RealtimeSession(connection, make_tool_manager(runner), provider_name='openai')
     async with session:
-        _ = [event async for event in session]
+        _ = await collect_session_events(session)
 
     messages = session.all_messages()
     assert len(messages) == 3
@@ -2027,7 +2035,7 @@ async def test_session_stamps_openai_response_metadata(
         provider_name='openai',
     )
     async with session:
-        _ = [event async for event in session]
+        _ = await collect_session_events(session)
 
     response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
     assert response.provider_name == 'openai'
@@ -2063,7 +2071,7 @@ async def test_session_records_empty_openai_response(
     session = RealtimeSession(connection, make_tool_manager(), provider_name='openai')
 
     async with session:
-        _ = [event async for event in session]
+        _ = await collect_session_events(session)
 
     response = session.new_messages()[0]
     assert isinstance(response, ModelResponse)
@@ -2097,6 +2105,54 @@ async def test_connection_closed_yields_fatal_error() -> None:
     assert error.recoverable is False
 
 
+class _ExpiredWebSocket(FakeWebSocket):
+    """Closed normally by the server, with the code and reason OpenAI sends at its duration cap."""
+
+    close_code = 1001
+    close_reason = 'Your session hit the maximum duration of 60 minutes.'
+
+
+@pytest.mark.anyio
+async def test_clean_close_is_reported_as_a_fatal_error() -> None:
+    """A *normal* close ends the stream with an error carrying the server's own explanation.
+
+    `websockets` ends iteration silently on a 1000/1001 close and raises only on an abnormal one, so
+    without this a hangup is indistinguishable from a conversation that simply finished. It isn't:
+    held against the live API, an idle `gpt-realtime` session is closed by the server after exactly
+    60 minutes with `1001 Your session hit the maximum duration of 60 minutes.`.
+    """
+    conn = OpenAIRealtimeConnection(_ExpiredWebSocket([]))  # type: ignore[arg-type]
+    assert [event async for event in conn] == [
+        SessionErrorEvent(
+            message=(
+                'OpenAI realtime connection closed: received 1001 Your session hit the maximum duration of 60 minutes.'
+            ),
+            recoverable=False,
+        )
+    ]
+
+
+@pytest.mark.anyio
+async def test_clean_close_reconnects_when_a_policy_is_configured() -> None:
+    """Hitting the session cap is exactly what a reconnect policy is for, so it re-dials and resumes."""
+    transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'still here'})
+    replacements = iter([FakeWebSocket([transcript])])
+
+    async def dial() -> Any:
+        try:
+            return next(replacements)
+        except StopIteration:
+            raise OSError('server is down')
+
+    conn = OpenAIRealtimeConnection(
+        _ExpiredWebSocket([]),  # type: ignore[arg-type]
+        dial=dial,
+        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
+    )
+    events = await collect_codec_events(conn)
+    assert events == [ReconnectedEvent(state_restored=False), Transcript(text='still here', is_final=True)]
+
+
 @pytest.mark.anyio
 async def test_reconnect_budget_bounds_a_flapping_server() -> None:
     # `max_attempts` bounds the retries for one drop and resets whenever a dial succeeds, so a server
@@ -2110,7 +2166,7 @@ async def test_reconnect_budget_bounds_a_flapping_server() -> None:
         dials += 1
         return FakeWebSocket([])
 
-    conn = rt_openai.OpenAIRealtimeConnection(FakeWebSocket([]), dial=dial, reconnect=policy)
+    conn = rt_openai.OpenAIRealtimeConnection(FakeWebSocket([]), dial=dial, reconnect=policy)  # type: ignore[arg-type]
     assert await conn._try_reconnect() is True  # pyright: ignore[reportPrivateUsage]
     assert await conn._try_reconnect() is True  # pyright: ignore[reportPrivateUsage]
     # Budget spent: further drops are terminal rather than re-dialed, and we stop dialing entirely.
@@ -2120,18 +2176,23 @@ async def test_reconnect_budget_bounds_a_flapping_server() -> None:
 
 async def test_reconnects_on_drop_and_resumes() -> None:
     transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'hi'})
-    good = FakeWebSocket([transcript])
+    replacements = iter([FakeWebSocket([transcript])])
 
     async def dial() -> Any:
-        return good
+        try:
+            return next(replacements)
+        except StopIteration:
+            # Once the replacement has said its piece and hung up, the server stays down, so the
+            # stream terminates instead of re-dialing until the session's reconnect budget runs out.
+            raise OSError('server is down')
 
-    # The initial connection drops; reconnect re-dials to `good` and resumes streaming.
+    # The initial connection drops; reconnect re-dials and resumes streaming.
     conn = OpenAIRealtimeConnection(
         DroppingWebSocket([]),  # type: ignore[arg-type]
         dial=dial,
-        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0),
+        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
     )
-    events = [e async for e in conn]
+    events = await collect_codec_events(conn)
     assert events == [ReconnectedEvent(state_restored=False), Transcript(text='hi', is_final=True)]
 
 
@@ -2151,7 +2212,10 @@ class _RecordingConnect:
         self.closed: list[FakeWebSocket] = []
 
     def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> Any:
-        ws = next(self._sockets)
+        try:
+            ws = next(self._sockets)
+        except StopIteration:
+            raise OSError('server is down')  # no more sockets scripted: the server stays down
         recorder = self
 
         class _CM:
@@ -2175,9 +2239,9 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     connect = _RecordingConnect([dropped, good])
     monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
 
-    model = OpenAIRealtimeModel('gpt-realtime', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0))
+    model = OpenAIRealtimeModel('gpt-realtime', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1))
     async with _connect(model, 'x') as conn:
-        events = [e async for e in conn]
+        events = await collect_codec_events(conn)
 
     assert events == [ReconnectedEvent(state_restored=False), Transcript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
@@ -2533,7 +2597,7 @@ async def test_connection_iter_skips_unmapped_events(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
     async with _connect(model, 'x') as conn:
-        events = [e async for e in conn]
+        events = await collect_codec_events(conn)
     assert events == [
         TurnCompleteEvent(
             interrupted=False,

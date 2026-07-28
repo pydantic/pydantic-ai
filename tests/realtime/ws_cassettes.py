@@ -240,6 +240,10 @@ class ReplayWebSocket:
         self._position = 0
         self._normalizer = _SentFrameNormalizer()
         self._condition = asyncio.Condition()
+        # Mirrors the `websockets` attributes a connection exposes once closed, so code that inspects
+        # the close after iteration ends (a normal close doesn't raise) sees what was recorded.
+        self.close_code: int | None = None
+        self.close_reason: str = ''
 
     async def send(self, message: str | bytes) -> None:
         text = message.decode('utf-8') if isinstance(message, bytes) else message
@@ -263,10 +267,14 @@ class ReplayWebSocket:
             while True:
                 interaction = self._peek()
                 if interaction is None:
+                    # The recording ran out: the session outlived what was captured, which replays as
+                    # the ordinary end-of-conversation close.
+                    self.close_code, self.close_reason = 1000, ''
                     raise ConnectionClosedOK(None, None)
                 if isinstance(interaction, CassetteClose):
                     self._position += 1
                     self._condition.notify_all()
+                    self.close_code, self.close_reason = interaction.code, interaction.reason
                     close = Close(interaction.code, interaction.reason)
                     raise (ConnectionClosedOK if interaction.ok else ConnectionClosedError)(close, None)
                 if interaction.direction == 'received':
