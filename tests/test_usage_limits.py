@@ -2,14 +2,16 @@ import asyncio
 import functools
 import operator
 import re
+from collections import UserDict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import timezone
 from decimal import Decimal
+from types import MappingProxyType
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from pydantic_ai import (
     Agent,
@@ -521,6 +523,26 @@ def test_usage_nested_arbitrary_field_promoted_when_declared():
     assert loaded.future_tokens == serialized['future_tokens'] == 42
     assert loaded.label == 'original'
     assert serialized['_extra'] == {'label': 'original'}
+
+
+@pytest.mark.parametrize(
+    'extra',
+    [
+        UserDict({'future_tokens': 42}),
+        MappingProxyType({'future_tokens': 42}),
+    ],
+)
+def test_usage_nested_extra_accepts_mapping(extra: object):
+    loaded = TypeAdapter(RequestUsage).validate_python({'_extra': extra})
+
+    assert loaded.future_tokens == 42
+    assert vars(loaded)['_extra'] == {'future_tokens': 42}
+
+
+@pytest.mark.parametrize('extra', [None, [], 'bad', 123])
+def test_usage_nested_extra_rejects_invalid_value(extra: object):
+    with pytest.raises(ValidationError):
+        TypeAdapter(RequestUsage).validate_python({'_extra': extra})
 
 
 @pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])

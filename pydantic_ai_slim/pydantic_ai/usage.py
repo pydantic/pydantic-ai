@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+from collections.abc import Mapping
 from copy import copy
 from dataclasses import dataclass
 from functools import cache
@@ -111,20 +112,18 @@ class UsageBase:
                     if field_name not in value_dict and legacy_name in value_dict and value_dict[legacy_name] is None:
                         input_value[legacy_name] = 0
 
-                nested_extra = input_value.get('_extra')
-                if isinstance(nested_extra, dict):
-                    nested_extra = cast(dict[str, Any], nested_extra)
+                nested_extra = input_value.get('_extra', {})
+                if isinstance(nested_extra, Mapping):
+                    nested_extra = cast(Mapping[str, Any], nested_extra)
                     extra: dict[str, Any] = {}
                     for key, item in nested_extra.items():
                         if key in field_names - {'_extra'}:
                             input_value.setdefault(key, item)
                         elif key not in reserved_names:
                             extra[key] = item
-                else:
-                    extra = {}
-                for key in value_dict.keys() - reserved_names:
-                    extra[key] = input_value.pop(key)
-                input_value['_extra'] = extra
+                    for key in value_dict.keys() - reserved_names:
+                        extra[key] = input_value.pop(key)
+                    input_value['_extra'] = extra
             else:
                 input_value = cast(object, value)
 
