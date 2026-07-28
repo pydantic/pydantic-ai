@@ -399,7 +399,7 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_images=True,
         supports_seeding_audio=True,
         supports_thinking=False,  # GA `gpt-realtime` is not a reasoning model
-        supports_async_tool_calls=False,
+        supports_async_tool_calls=True,  # the realtime models keep talking through a tool call
         supported_native_tools=frozenset(),
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
