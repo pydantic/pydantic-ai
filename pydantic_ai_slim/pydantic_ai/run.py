@@ -211,6 +211,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         if self._result_override is not None:
             raise StopAsyncIteration
         self.ctx.deps.cancellation.bind()
+        # Re-assert a first-party cancellation swallowed by the caller's previous loop body
+        # before the graph can run another node with model or tool side effects.
+        _utils.raise_if_cancelling()
         try:
             task = await anext(self._graph_run)
             # The completed step's messages are already recorded on `state.message_history`,
@@ -219,9 +222,6 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         except BaseException as exc:
             self._node_error = exc
             raise
-        # The completed step's messages are already recorded on `state.message_history`,
-        # so if it absorbed an external cancellation, re-assert it before advancing.
-        _utils.raise_if_cancelling()
         node = self._task_to_node(task)
         if isinstance(node, End) and self._graph_run.state.pending_messages:
             # `asap` messages drain in `before_model_request` (which fires either way), but
@@ -493,9 +493,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         the code driving the run sees `asyncio.CancelledError`. When the `agent.iter()` context
         exits, this becomes [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] (including for
         `agent.run()`, which wraps `iter()`). Everything that completed before the cancellation took
-        effect is preserved in message history. [`RunCancelled.messages`][pydantic_ai.exceptions.RunCancelled.messages]
-        contains a complete snapshot that can be passed to a new run as `message_history` to resume
-        the conversation.
+        effect is preserved in message history.
+        [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] returns a
+        complete snapshot that can be passed to a new run as `message_history` to resume the
+        conversation.
 
         Unlike [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel], which
         only stops the current model response and lets the run continue, this ends the run itself.

@@ -1643,7 +1643,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 graph_deps.cancellation.release_issued()
                 if first_party:
                     raise exceptions.RunCancelled(
-                        'The agent run was cancelled.', messages=list(state.message_history)
+                        'The agent run was cancelled.',
+                        messages=state.message_history,
+                        new_message_index=graph_deps.new_message_index,
+                        usage=state.usage,
+                        metadata=state.metadata,
+                        run_id=state.run_id,
+                        conversation_id=state.conversation_id,
                     ) from exc
                 raise
             else:

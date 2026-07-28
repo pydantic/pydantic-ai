@@ -8391,7 +8391,7 @@ class WorkflowCancelAgentWorkflow:
                     if Agent.is_call_tools_node(node):
                         agent_run.cancel()
         except RunCancelled as exc:
-            return f'cancelled:{bool(exc.messages)}'
+            return f'cancelled:{bool(exc.all_messages())}'
         return 'completed'  # pragma: no cover
 
 

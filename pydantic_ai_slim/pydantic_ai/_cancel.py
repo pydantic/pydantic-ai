@@ -56,12 +56,17 @@ class RunCancellation:
         a different task than the one that started the run still gets cancelled correctly.
         If a cancellation was requested before any task was bound (e.g. `cancel()` on a
         lazily-started run) or was issued to a previous driving task, it is (re-)delivered to
-        this one.
+        this one. A caller that catches and uncancels the controller's own cancellation takes
+        over its bookkeeping; the issued count is re-synchronized at the next step boundary.
         """
         task = task or asyncio.current_task()
         if task is None:  # pragma: no cover — agent runs always execute inside a task
             return
         self._owner = task
+        if sys.version_info >= (3, 11) and task in self._issued:
+            self._issued[task] = min(self._issued[task], task.cancelling())
+            if self._issued[task] == 0:
+                del self._issued[task]
         if self._requested and not self._finished and task not in self._issued:
             # Deliver a request that arrived before this task was bound, or was previously
             # delivered to a different driving task.

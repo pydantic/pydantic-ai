@@ -20,6 +20,7 @@ trigger.
 from __future__ import annotations as _annotations
 
 import asyncio
+import pickle
 import sys
 from collections.abc import AsyncIterable
 from typing import Any
@@ -33,10 +34,13 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
     ModelResponse,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -141,6 +145,78 @@ async def test_consumed_cancellation_is_not_a_false_positive():
 # --- First-party cancellation: `AgentRun.cancel()` / `RunContext.cancel_run()` ---
 
 
+def test_run_cancelled_result_surface():
+    """`RunCancelled` exposes the result accessors while keeping a detached history snapshot."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart('previous')]),
+        ModelResponse(parts=[TextPart('cancelled')]),
+    ]
+    usage = RunUsage(requests=1)
+    error = RunCancelled(
+        'cancelled',
+        messages=messages,
+        new_message_index=1,
+        usage=usage,
+        metadata={'customer': '123'},
+        run_id='run-123',
+        conversation_id='conversation-123',
+    )
+
+    assert error.all_messages() == messages
+    assert error.all_messages() is not messages
+    assert error.all_messages_json() == ModelMessagesTypeAdapter.dump_json(messages)
+    assert error.new_messages() == messages[1:]
+    assert error.new_messages_json() == ModelMessagesTypeAdapter.dump_json(messages[1:])
+    assert error.response is messages[-1]
+    assert error.timestamp == messages[-1].timestamp
+    assert error.usage is usage
+    assert error.metadata == {'customer': '123'}
+    assert error.run_id == 'run-123'
+    assert error.conversation_id == 'conversation-123'
+
+
+def test_run_cancelled_defaults_before_model_response():
+    """A cancellation before the first response has zero usage and no response-derived timestamp."""
+    error = RunCancelled('cancelled')
+
+    assert error.all_messages() == []
+    assert error.new_messages() == []
+    assert error.usage == RunUsage()
+    assert error.metadata is None
+    assert error.run_id is None
+    assert error.conversation_id is None
+    with pytest.raises(ValueError, match='No response found in the message history'):
+        _ = error.response
+    with pytest.raises(ValueError, match='No response found in the message history'):
+        _ = error.timestamp
+
+
+def test_run_cancelled_pickle_round_trip():
+    """Pickling preserves the detached history, new-message boundary, usage, metadata, and IDs."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart('previous')]),
+        ModelResponse(parts=[TextPart('cancelled')]),
+    ]
+    error = RunCancelled(
+        'cancelled',
+        messages=messages,
+        new_message_index=1,
+        usage=RunUsage(requests=1),
+        metadata={'customer': '123'},
+        run_id='run-123',
+        conversation_id='conversation-123',
+    )
+
+    restored = pickle.loads(pickle.dumps(error))
+
+    assert restored.all_messages() == messages
+    assert restored.new_messages() == messages[1:]
+    assert restored.usage == RunUsage(requests=1)
+    assert restored.metadata == {'customer': '123'}
+    assert restored.run_id == 'run-123'
+    assert restored.conversation_id == 'conversation-123'
+
+
 def _parallel_tools_agent() -> tuple[Agent, list[list[ModelMessage]]]:
     """An agent whose first response calls a fast tool and a slow self-cancelling tool.
 
@@ -180,18 +256,25 @@ async def test_tool_cancels_run_and_history_is_resumable():
     """`ctx.cancel_run()` from a tool raises `RunCancelled` from `agent.run()`.
 
     The completed sibling tool's real result is preserved in an interrupted request on
-    `RunCancelled.messages`, and resuming with that history plus a new prompt sends the model a
+    `RunCancelled.all_messages()`, and resuming with that history plus a new prompt sends the model a
     provider-valid transcript: the real return, exactly one synthesized `'interrupted'` return
     for the cancelled call, and the new prompt.
     """
     agent, seen_by_model = _parallel_tools_agent()
 
     with capture_run_messages() as live_messages, pytest.raises(RunCancelled) as exc_info:
-        await agent.run('go')
+        await agent.run('go', metadata={'customer': '123'})
 
-    messages = exc_info.value.messages
+    error = exc_info.value
+    messages = error.all_messages()
     assert messages is not live_messages
     assert messages == live_messages
+    assert error.new_messages() == messages
+    assert error.response is messages[1]
+    assert error.usage.requests == 1
+    assert error.metadata == {'customer': '123'}
+    assert error.run_id is not None
+    assert error.conversation_id is not None
     assert [(type(m).__name__, getattr(m, 'state', None)) for m in messages] == [
         ('ModelRequest', 'complete'),
         ('ModelResponse', 'complete'),
@@ -273,6 +356,30 @@ async def test_iter_swallowed_cancellation_is_quiet_abandonment():
     task = asyncio.current_task()
     assert task is not None
     assert _task_cancelling(task) == 0
+
+
+@requires_task_cancelling
+async def test_iter_reasserts_swallowed_cancellation_before_next_node():
+    """A swallowed first-party cancellation stops iteration before another model call."""
+    model_calls: list[None] = []
+
+    def model_function(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        model_calls.append(None)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_function))
+
+    with pytest.raises(RunCancelled):
+        async with agent.iter('go') as agent_run:
+            async for _node in agent_run:
+                if len(model_calls) == 1:
+                    agent_run.cancel()
+                    try:
+                        await asyncio.sleep(0)
+                    except asyncio.CancelledError:
+                        pass
+
+    assert len(model_calls) == 1
 
 
 @requires_task_cancelling
@@ -382,6 +489,7 @@ async def test_run_cancellation_tracks_issuances_per_task():
     uncancelled_cancellation = RunCancellation()
     uncancelled_bound = asyncio.Event()
     keep_uncancelled_task_live = asyncio.Event()
+    uncancelled_redelivered = asyncio.Event()
 
     async def swallow_and_uncancel() -> None:
         task = asyncio.current_task()
@@ -392,20 +500,25 @@ async def test_run_cancellation_tracks_issuances_per_task():
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             _task_uncancel(task)
-        await keep_uncancelled_task_live.wait()
+        try:
+            await keep_uncancelled_task_live.wait()
+        except asyncio.CancelledError:
+            uncancelled_redelivered.set()
+            assert uncancelled_cancellation.resolve()
 
     uncancelled_task = asyncio.create_task(swallow_and_uncancel())
     await uncancelled_bound.wait()
     uncancelled_cancellation.cancel()
     await asyncio.sleep(0)
-    uncancelled_cancellation.release_issued()
+    uncancelled_cancellation.bind(uncancelled_task)
+    await uncancelled_redelivered.wait()
     keep_uncancelled_task_live.set()
     await uncancelled_task
 
 
 async def test_event_stream_handler_cancels_run():
     """`ctx.cancel_run()` from an `event_stream_handler` (the TUI Esc gesture) cancels the run;
-    the partial response streamed so far is preserved on `RunCancelled.messages`."""
+    the partial response streamed so far is preserved by `RunCancelled.all_messages()`."""
 
     async def handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
         async for _event in events:  # pragma: no branch
@@ -416,7 +529,7 @@ async def test_event_stream_handler_cancels_run():
     with pytest.raises(RunCancelled) as exc_info:
         await agent.run('go', event_stream_handler=handler)
 
-    response = exc_info.value.messages[-1]
+    response = exc_info.value.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.state == 'interrupted'
 

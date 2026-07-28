@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
@@ -18,6 +18,7 @@ else:
 
 if TYPE_CHECKING:
     from .messages import ModelMessage, ModelResponse, RetryPromptPart, ToolReturnPart
+    from .usage import RunUsage
 
 __all__ = (
     'ModelRetry',
@@ -267,22 +268,121 @@ class RunCancelled(AgentRunError):
 
     Everything the run completed before the cancellation took effect — including the partial
     response of an interrupted stream and the results of tool calls that finished — is preserved
-    in [`messages`][pydantic_ai.exceptions.RunCancelled.messages]: pass it as `message_history`
-    to a new run (with a new user prompt or not) to resume the conversation; any tool calls that
-    never produced a result are automatically closed out with synthesized
+    in [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages]: pass it as
+    `message_history` to a new run (with a new user prompt or not) to resume the conversation; any
+    tool calls that never produced a result are automatically closed out with synthesized
     `outcome='interrupted'` returns before the history is sent to a model.
     """
 
-    messages: list[ModelMessage]
-    """The cancelled run's message history.
+    def __init__(
+        self,
+        message: str,
+        *,
+        messages: Sequence[ModelMessage] = (),
+        new_message_index: int = 0,
+        usage: RunUsage | None = None,
+        metadata: dict[str, Any] | None = None,
+        run_id: str | None = None,
+        conversation_id: str | None = None,
+    ):
+        if usage is None:
+            from .usage import RunUsage
 
-    A detached snapshot of the run's message history at termination, ready to pass as
-    `message_history` for a resumed run.
-    """
-
-    def __init__(self, message: str, messages: list[ModelMessage]):
-        self.messages = messages
+            usage = RunUsage()
+        self._messages = list(messages)
+        self._new_message_index = new_message_index
+        self._usage = usage
+        self._metadata = metadata
+        self._run_id = run_id
+        self._conversation_id = conversation_id
         super().__init__(message)
+
+    def __reduce__(self) -> tuple[type, tuple[str], dict[str, Any]]:
+        return self.__class__, (self.message,), self.__dict__
+
+    def all_messages(self) -> list[ModelMessage]:
+        """Return the complete resumable history of the cancelled run.
+
+        This is a DETACHED snapshot of the run's message history at termination, ready to pass as
+        `message_history` for a resumed run.
+
+        Returns:
+            List of messages.
+        """
+        return self._messages
+
+    def all_messages_json(self) -> bytes:
+        """Return all messages from [`all_messages`][pydantic_ai.exceptions.RunCancelled.all_messages] as JSON bytes.
+
+        Returns:
+            JSON bytes representing the messages.
+        """
+        from .messages import ModelMessagesTypeAdapter
+
+        return ModelMessagesTypeAdapter.dump_json(self.all_messages())
+
+    def new_messages(self) -> list[ModelMessage]:
+        """Return the messages produced during the cancelled run.
+
+        Messages provided via `message_history` and messages from older runs are excluded.
+
+        Returns:
+            List of new messages.
+        """
+        return self._messages[self._new_message_index :]
+
+    def new_messages_json(self) -> bytes:
+        """Return new messages from [`new_messages`][pydantic_ai.exceptions.RunCancelled.new_messages] as JSON bytes.
+
+        Returns:
+            JSON bytes representing the new messages.
+        """
+        from .messages import ModelMessagesTypeAdapter
+
+        return ModelMessagesTypeAdapter.dump_json(self.new_messages())
+
+    @property
+    def response(self) -> ModelResponse:
+        """Return the last response from the message history.
+
+        Raises:
+            ValueError: If the run was cancelled before receiving any model response.
+        """
+        from .messages import ModelResponse
+
+        for message in reversed(self.all_messages()):
+            if isinstance(message, ModelResponse):
+                return message
+        raise ValueError('No response found in the message history')
+
+    @property
+    def timestamp(self) -> datetime:
+        """Return the timestamp of the last response.
+
+        Raises:
+            ValueError: If the run was cancelled before receiving any model response.
+        """
+        return self.response.timestamp
+
+    @property
+    def usage(self) -> RunUsage:
+        """Return the usage of the cancelled run."""
+        return self._usage
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        return self._metadata
+
+    @property
+    def run_id(self) -> str | None:
+        """The unique identifier for the agent run, or `None` if it was cancelled before starting."""
+        return self._run_id
+
+    @property
+    def conversation_id(self) -> str | None:
+        """The conversation identifier, or `None` if the run was cancelled before starting."""
+        return self._conversation_id
 
 
 class SuspendedResponseExpired(AgentRunError):

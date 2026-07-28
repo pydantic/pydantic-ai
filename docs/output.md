@@ -1077,12 +1077,12 @@ async def main():
                 if Agent.is_call_tools_node(node):
                     agent_run.cancel()  # (1)!
     except RunCancelled as exc:
-        print(f'Cancelled after {len(exc.messages)} messages')  # (2)!
+        print(f'Cancelled after {len(exc.all_messages())} messages')  # (2)!
         #> Cancelled after 2 messages
 ```
 
 1. Typically wired to a "stop" gesture — `cancel()` is safe to call from another task (e.g. a key handler while the run is awaited elsewhere), and is a no-op once the run has finished.
-2. [`RunCancelled.messages`][pydantic_ai.exceptions.RunCancelled.messages] holds the run's complete message history: everything that finished before the cancellation took effect, including the partial response of an interrupted stream and the results of tool calls that completed. Pass it to a new run as `message_history` to resume the conversation — any tool call that never produced a result is [repaired automatically](message-history.md#making-histories-provider-valid) before the history is sent to a model.
+2. [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] returns the run's complete message history: everything that finished before the cancellation took effect, including the partial response of an interrupted stream and the results of tool calls that completed. Pass it to a new run as `message_history` to resume the conversation — any tool call that never produced a result is [repaired automatically](message-history.md#making-histories-provider-valid) before the history is sent to a model.
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
