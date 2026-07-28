@@ -366,6 +366,7 @@ async def test_multiple_concurrent_tool_retries():
         if ctx.deps.run_id not in retried_run_ids:
             retried_run_ids.add(ctx.deps.run_id)
             raise ModelRetry('Fail')
+        # Won't branch if all runs happen very quickly.
         if len(retried_run_ids) == len(run_ids):  # pragma: no branch
             event.set()
         await event.wait()  # ensure a retry is done by all runs before any of them finish their flow

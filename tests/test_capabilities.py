@@ -10718,6 +10718,7 @@ class TestRunErrorHooks:
                     self.log.append('wrap_run:caught')
                     return AgentRunResult(output='wrap_recovered')
 
+            # The uncovered body is the assertion: this hook must not be called.
             async def on_run_error(  # pragma: no cover
                 self, ctx: RunContext[Any], *, error: BaseException
             ) -> AgentRunResult[Any]:
@@ -13502,6 +13503,7 @@ class TestModelRetryFromHooks:
             ) -> ModelResponse:
                 raise ModelRetry('retry please')
 
+            # The uncovered body is the assertion: this hook must not be called.
             async def on_model_request_error(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
@@ -14029,6 +14031,7 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Wrap says retry tool')
 
+            # The uncovered body is the assertion: this hook must not be called.
             async def on_tool_execute_error(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
@@ -17571,6 +17574,7 @@ class TestModelRetryFromOutputHooks:
                     raise ModelRetry('Bad output, please try again')
                 return result
 
+            # The uncovered body is the assertion: this hook must not be called.
             async def on_output_process_error(  # pragma: no cover
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, error: Exception
             ) -> Any:
@@ -18333,6 +18337,7 @@ class TestToolOutputWithOutputHooks:
 
         @dataclass
         class BothHooksCap(AbstractCapability[Any]):
+            # The uncovered body is the assertion: this hook must not be called.
             async def before_tool_validate(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
@@ -18344,6 +18349,7 @@ class TestToolOutputWithOutputHooks:
                 log.append(f'tool_validate:{call.tool_name}')
                 return args
 
+            # The uncovered body is the assertion: this hook must not be called.
             async def before_tool_execute(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],

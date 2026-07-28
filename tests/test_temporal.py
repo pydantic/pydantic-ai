@@ -295,6 +295,7 @@ def _kill_leaked_temporal_server(port: int) -> None:
     except (FileNotFoundError, subprocess.TimeoutExpired):  # pragma: lax no cover
         return
 
+    # The body fires only on a real leak, so it's covered on some runs and not on others.
     for line in result.stdout.splitlines():  # pragma: lax no cover
         if 'temporal-sdk-py' not in line:
             continue
