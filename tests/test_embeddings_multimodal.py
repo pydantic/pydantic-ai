@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any, get_args, get_origin
 
+import anyio
 import pytest
 from vcr.cassette import Cassette
 
@@ -70,6 +71,7 @@ with try_import() as bedrock_imports_successful:
 with try_import() as google_imports_successful:
     from google.genai.types import Content, Part
 
+    from pydantic_ai.embeddings import google as google_embeddings
     from pydantic_ai.embeddings.google import GoogleEmbeddingModel, GoogleEmbeddingSettings
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -256,9 +258,15 @@ class _OverreachingEmbeddingModel(EmbeddingModel):
         )
 
 
-async def test_prepare_text_embed_rejects_a_file():
+async def test_prepare_text_embed_rejects_a_file_and_not_the_text_beside_it():
+    """Only the input the mapping can't build is refused; the text the model does handle goes through."""
+    embedder = Embedder(_OverreachingEmbeddingModel())
+
+    result = await embedder.embed_documents('a kiwi fruit')
+    assert result.inputs == ['a kiwi fruit']
+
     with pytest.raises(UserError, match=r'`overreaching-model` only supports plain text inputs, got `ImageUrl`\.'):
-        await Embedder(_OverreachingEmbeddingModel()).embed_documents(ImageUrl(url='https://example.com/img.png'))
+        await embedder.embed_documents(ImageUrl(url='https://example.com/img.png'))
 
 
 def test_prepare_text_embed_unwraps_text_content():
@@ -500,6 +508,51 @@ async def test_google_multimodal(
     assert result.inputs == (inputs if isinstance(inputs, list) else [inputs])
 
 
+@pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
+@pytest.mark.vcr
+async def test_google_preview_embeds_a_file_and_still_sends_a_task_type(
+    assets: _Assets,
+    gemini_api_key: str,
+    google_embed_content_spy: Callable[[Provider[Client]], dict[str, Any]],
+):
+    """`gemini-embedding-2-preview` embeds a file while conditioning on `task_type`, unlike `gemini-embedding-2`.
+
+    Multimodality and task conditioning are separate capabilities, and this model has the first without
+    the second: its request carries the image as `inline_data` *and* a `task_type`, where
+    `gemini-embedding-2` conditions with a text prefix and sends `task_type=None`. Google documents the
+    modalities for `gemini-embedding-2` only, so this recording is the evidence the preview accepts them.
+    """
+    provider = GoogleProvider(api_key=gemini_api_key)
+    model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=provider)
+    captured = google_embed_content_spy(provider)
+
+    result = await Embedder(model).embed_documents(assets.image, settings=GoogleEmbeddingSettings(dimensions=128))
+
+    contents: list[Content] = captured['contents']
+    assert [[_describe_part(part) for part in (content.parts or [])] for content in contents] == [['<image/jpeg>']]
+    assert captured['config'].task_type == 'RETRIEVAL_DOCUMENT'
+    assert len(result.embeddings) == 1
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
+def test_google_preview_supports_every_modality(gemini_api_key: str):
+    """The preview is gated like `gemini-embedding-2`, while `gemini-embedding-001` stays text-only.
+
+    Unit rather than VCR: the recording above witnesses one modality, and recording audio, video and a
+    document against the preview too would pay three more requests to restate one frozenset. The
+    text-only half is a rejection that never reaches the provider, pinned end to end by
+    `test_unsupported_modality_raises`.
+    """
+    provider = GoogleProvider(api_key=gemini_api_key)
+
+    assert GoogleEmbeddingModel('gemini-embedding-2-preview', provider=provider).supported_modalities == snapshot(
+        frozenset({'text', 'image', 'audio', 'video', 'document'})
+    )
+    assert GoogleEmbeddingModel('gemini-embedding-001', provider=provider).supported_modalities == snapshot(
+        frozenset({'text'})
+    )
+
+
 def _solid_png(red: int) -> BinaryImage:
     """A solid-colour PNG, distinct per `red` value.
 
@@ -569,6 +622,32 @@ async def test_google_rejects_more_images_than_one_input_may_hold(gemini_api_key
 
     with pytest.raises(ModelHTTPError, match=r'at most 6 image parts per input instance, but 7 were provided'):
         await Embedder(model).embed_documents(content, settings=GoogleEmbeddingSettings(dimensions=128))
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
+async def test_concurrent_downloads_keep_part_order(monkeypatch: pytest.MonkeyPatch):
+    """Parts download concurrently, so the order they finish in must not be the order they are sent.
+
+    Unit rather than VCR, and deliberately so: under cassette playback a download returns without
+    real latency, so completion order collapses back to start order and no recording can witness a
+    reordering. Getting this wrong would silently pair each vector with the wrong input.
+    """
+    media_types = {'https://example.com/slow.bin': 'image/png', 'https://example.com/quick.bin': 'image/jpeg'}
+
+    async def staggered_download(item: Any, **kwargs: Any) -> Any:
+        # The first part finishes last, so collecting on completion would swap the two.
+        await anyio.sleep(0.05 if item.url.endswith('slow.bin') else 0)
+        return {'data': b'\x00', 'data_type': media_types[item.url]}
+
+    monkeypatch.setattr(google_embeddings, 'download_item', staggered_download)
+
+    contents = await google_embeddings._map_contents(  # pyright: ignore[reportPrivateUsage]
+        [[ImageUrl(url=url) for url in media_types]]
+    )
+
+    content = contents[0]
+    assert isinstance(content, Content)
+    assert [_describe_part(part) for part in content.parts or []] == ['<image/png>', '<image/jpeg>']
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')

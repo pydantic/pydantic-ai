@@ -3,6 +3,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
+import anyio
+
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import BinaryContent, TextContent
 from pydantic_ai.models import download_item
@@ -89,10 +91,13 @@ _SYMMETRIC_TASKS: frozenset[GoogleEmbeddingTask] = frozenset({'classification', 
 _TASK_PREFIX_MODEL = 'gemini-embedding-2'
 
 # Models that accept more than text. See https://ai.google.dev/gemini-api/docs/embeddings#multimodal
-# Derived from `_TASK_PREFIX_MODEL` because the branch of `embed()` that maps non-text parts is the
-# task-prefix branch: a model added here without a multimodal request mapping would advertise a
-# capability and then have `prepare_text_embed()` refuse it.
-_MULTIMODAL_MODELS: frozenset[str] = frozenset({_TASK_PREFIX_MODEL})
+# Independent of `_TASK_PREFIX_MODEL`: multimodality and task conditioning are separate capabilities,
+# and `gemini-embedding-2-preview` has the first without the second. Google documents the modalities
+# only for `gemini-embedding-2`, but the preview accepts an inline image just the same.
+_MULTIMODAL_MODELS: frozenset[str] = frozenset({'gemini-embedding-2', 'gemini-embedding-2-preview'})
+
+# Downloads run concurrently, bounded like `BedrockEmbeddingSettings.bedrock_max_concurrency`'s default.
+_MAX_CONCURRENT_DOWNLOADS = 5
 
 _MULTIMODAL_MODALITIES: frozenset[EmbeddingModality] = frozenset({'text', 'image', 'audio', 'video', 'document'})
 
@@ -234,13 +239,18 @@ class GoogleEmbeddingModel(EmbeddingModel):
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
-        items: Sequence[EmbeddingInput]
+        items: list[EmbeddingInput]
         contents: list[ContentUnion]
 
-        if self._model_name == _TASK_PREFIX_MODEL:
+        if self._model_name in _MULTIMODAL_MODELS:
             items, merged_settings = self.prepare_embed(inputs, settings)
-            settings = cast(GoogleEmbeddingSettings, merged_settings)
+        else:
+            # The text is discarded: `_map_content_part()` maps a `str` to the same `Part`. What this
+            # buys over `prepare_embed()` is the rejection of anything that isn't a single text part.
+            items, _, merged_settings = self.prepare_text_embed(inputs, settings)
+        settings = cast(GoogleEmbeddingSettings, merged_settings)
 
+        if self._model_name == _TASK_PREFIX_MODEL:
             google_task = settings.get('google_task')
             if (google_task_type := settings.get('google_task_type')) is not None:
                 warnings.warn(
@@ -251,34 +261,9 @@ class GoogleEmbeddingModel(EmbeddingModel):
                 )
             task = google_task if google_task is not None else 'search result'
 
-            contents = []
-            skipped_file_conditioning = False
-            skipped_text_conditioning = False
-            for item in items:
-                parts = embedding_parts(item)
-                # The prefix conditions text, so it only applies to an input that is a single text part;
-                # Google doesn't define task instructions for other modalities, nor for a multi-part input.
-                # See https://ai.google.dev/gemini-api/docs/embeddings#multimodal
-                if len(parts) == 1 and isinstance(text_part := parts[0], str | TextContent):
-                    text = text_part if isinstance(text_part, str) else text_part.content
-                    # `'raw'` opts out of conditioning (verbatim passthrough). Named `'raw'`, not `'none'`:
-                    # the prefix is applied client-side (no provider API value to mirror, unlike VoyageAI's
-                    # `'none'` which maps to a null `input_type`), and `'raw'` avoids the `google_task=None`
-                    # footgun where `None` would silently fall back to the `'search result'` default.
-                    if task == 'raw':
-                        pass
-                    elif input_type == 'document' and task not in _SYMMETRIC_TASKS:
-                        title = settings.get('google_title') or 'none'
-                        text = f'title: {title} | text: {text}'
-                    else:
-                        text = f'task: {task} | query: {text}'
-                    contents.append(Content(parts=[Part(text=text)]))
-                else:
-                    if all(isinstance(part, str | TextContent) for part in parts):
-                        skipped_text_conditioning = True
-                    else:
-                        skipped_file_conditioning = True
-                    contents.append(Content(parts=[await _map_content_part(part) for part in parts]))
+            conditioned, skipped_text_conditioning, skipped_file_conditioning = _condition_parts(
+                items, task, input_type, settings.get('google_title')
+            )
 
             if task != 'raw':
                 # Text that goes unconditioned lands in a different region of the space than text that
@@ -302,15 +287,13 @@ class GoogleEmbeddingModel(EmbeddingModel):
                         stacklevel=2,
                     )
 
+            contents = await _map_contents(conditioned)
             config = EmbedContentConfig(
                 task_type=None,
                 output_dimensionality=settings.get('dimensions'),
                 title=None,
             )
         else:
-            items, texts, merged_settings = self.prepare_text_embed(inputs, settings)
-            settings = cast(GoogleEmbeddingSettings, merged_settings)
-
             if settings.get('google_task') is not None:
                 warnings.warn(
                     f'`google_task` is only supported by `{_TASK_PREFIX_MODEL}` and is ignored; '
@@ -322,7 +305,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
             if google_task_type is None:
                 google_task_type = 'RETRIEVAL_DOCUMENT' if input_type == 'document' else 'RETRIEVAL_QUERY'
 
-            contents = [Content(parts=[Part(text=text)]) for text in texts]
+            contents = await _map_contents([embedding_parts(item) for item in items])
             config = EmbedContentConfig(
                 task_type=google_task_type,
                 output_dimensionality=settings.get('dimensions'),
@@ -376,6 +359,71 @@ class GoogleEmbeddingModel(EmbeddingModel):
         if response.total_tokens is None:
             raise UnexpectedModelBehavior('Token counting returned no result')  # pragma: no cover
         return response.total_tokens
+
+
+def _condition_parts(
+    items: Sequence[EmbeddingInput],
+    task: GoogleEmbeddingTask,
+    input_type: EmbedInputType,
+    google_title: str | None,
+) -> tuple[list[Sequence[EmbeddingContentPart]], bool, bool]:
+    """Apply the task prefix to each input, returning the parts to send plus what went unconditioned.
+
+    The prefix conditions text, so it only applies to an input that is a single text part; Google
+    defines no task instruction for other modalities, nor for a multi-part input.
+    See https://ai.google.dev/gemini-api/docs/embeddings#multimodal
+    """
+    conditioned: list[Sequence[EmbeddingContentPart]] = []
+    skipped_text = False
+    skipped_file = False
+
+    for item in items:
+        parts = embedding_parts(item)
+        if len(parts) == 1 and isinstance(text_part := parts[0], str | TextContent):
+            text = text_part if isinstance(text_part, str) else text_part.content
+            # `'raw'` opts out of conditioning (verbatim passthrough). Named `'raw'`, not `'none'`:
+            # the prefix is applied client-side (no provider API value to mirror, unlike VoyageAI's
+            # `'none'` which maps to a null `input_type`), and `'raw'` avoids the `google_task=None`
+            # footgun where `None` would silently fall back to the `'search result'` default.
+            if task == 'raw':
+                pass
+            elif input_type == 'document' and task not in _SYMMETRIC_TASKS:
+                text = f'title: {google_title or "none"} | text: {text}'
+            else:
+                text = f'task: {task} | query: {text}'
+            conditioned.append([text])
+        else:
+            if all(isinstance(part, str | TextContent) for part in parts):
+                skipped_text = True
+            else:
+                skipped_file = True
+            conditioned.append(parts)
+
+    return conditioned, skipped_text, skipped_file
+
+
+async def _map_contents(items_parts: Sequence[Sequence[EmbeddingContentPart]]) -> list[ContentUnion]:
+    """Map each input's parts to one `Content`, downloading any URLs concurrently.
+
+    A batch here is a corpus rather than the handful of files a chat prompt carries, so downloading
+    one at a time would make latency linear in the number of URLs across the whole batch.
+    """
+    semaphore = anyio.Semaphore(_MAX_CONCURRENT_DOWNLOADS)
+    mapped: dict[tuple[int, int], Part] = {}
+
+    async def map_part(key: tuple[int, int], part: EmbeddingContentPart) -> None:
+        async with semaphore:
+            mapped[key] = await _map_content_part(part)
+
+    async with anyio.create_task_group() as tg:
+        for item_index, parts in enumerate(items_parts):
+            for part_index, part in enumerate(parts):
+                tg.start_soon(map_part, (item_index, part_index), part)
+
+    return [
+        Content(parts=[mapped[(item_index, part_index)] for part_index in range(len(parts))])
+        for item_index, parts in enumerate(items_parts)
+    ]
 
 
 async def _map_content_part(part: EmbeddingContentPart) -> Part:
