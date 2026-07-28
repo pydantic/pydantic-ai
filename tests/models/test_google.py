@@ -3797,7 +3797,11 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
 def test_google_vertex_skips_include_server_side_tool_invocations(
     mocker: MockerFixture, google_provider: GoogleProvider
 ) -> None:
-    """Vertex rejects `include_server_side_tool_invocations`, so it must not be set on Gemini 3+ via Vertex."""
+    """Vertex rejects `include_server_side_tool_invocations`, so it must not be set on Gemini 3+ via Vertex.
+
+    Not a VCR test: the field is dropped before the request is sent, and our cassette matchers don't
+    inspect the request body, so a recording would stay green if it were reintroduced.
+    """
     model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
     # A function tool is included so `tool_config` is non-empty on both paths; the only field that
@@ -3811,7 +3815,11 @@ def test_google_vertex_skips_include_server_side_tool_invocations(
 def test_google_gemini_api_sets_include_server_side_tool_invocations(
     google_provider: GoogleProvider,
 ) -> None:
-    """The Gemini Developer API keeps `include_server_side_tool_invocations` on Gemini 3+ (regression guard)."""
+    """The Gemini Developer API keeps `include_server_side_tool_invocations` on Gemini 3+ (regression guard).
+
+    Not a VCR test: our cassette matchers don't inspect the request body, so a recording would stay
+    green if the field were silently dropped; asserting `tool_config` directly is what catches that.
+    """
     model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='search')], native_tools=[WebSearchTool()])
     _tools, tool_config, _image_config = model._get_tool_config(params, GoogleModelSettings())  # pyright: ignore[reportPrivateUsage]
