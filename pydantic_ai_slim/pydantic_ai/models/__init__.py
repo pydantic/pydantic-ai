@@ -495,15 +495,24 @@ class Model(ABC, Generic[InterfaceClient]):
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
         """
-        supports_tool_availability_delta = self.profile.get(
-            'anthropic_supports_tool_availability_delta', False
-        ) or self.profile.get('openai_responses_supports_tool_availability_delta', False)
-        has_tool_removal = any(
-            isinstance(message, ModelRequest)
-            and any(isinstance(part, ToolAvailabilityDeltaPart) and part.removed for part in message.parts)
-            for message in messages
+        supports_tool_removal = self.profile.get('anthropic_supports_tool_availability_delta', False)
+        supports_tool_addition = supports_tool_removal or self.profile.get(
+            'openai_responses_supports_tool_availability_delta', False
         )
-        if not supports_tool_availability_delta or has_tool_removal:
+        removed_tools = {
+            tool_name
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart)
+            for tool_name in part.removed
+        }
+        if removed_tools and not supports_tool_removal:
+            raise UserError(
+                f'Model {self.model_name!r} cannot withdraw tools {sorted(removed_tools)!r}: '
+                'tool removal is not supported.'
+            )
+        if not supports_tool_addition:
             messages = _synthesize_tool_availability_delta_messages(messages)
 
         if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
