@@ -4265,6 +4265,9 @@ async def test_anthropic_opus_48_features(allow_model_requests: None, anthropic_
         }
     )
     assert any(isinstance(p, TextPart) for p in response.parts)
+    # Thinking was enabled but the recording reports `thinking_tokens: 0`, which is omitted
+    # rather than written as a zero.
+    assert 'thinking_tokens' not in result.usage.details
 
 
 _REFUSAL_CASE_PARAMS = [
@@ -4844,7 +4847,11 @@ def test_streaming_usage():
 
 
 def test_streaming_usage_thinking_tokens():
-    """Streaming usage is cumulative, so `thinking_tokens` from a delta event replaces the running value."""
+    """`thinking_tokens` carried by a `message_delta` lands in the merged streaming usage.
+
+    A unit test rather than a VCR one: it pins how a delta merges into the running usage, which a
+    cassette cannot protect because the matcher replays whatever delta was recorded regardless.
+    """
     start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
     initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
     delta = BetaRawMessageDeltaEvent(
@@ -7493,6 +7500,9 @@ async def test_anthropic_advisor_tool(allow_model_requests: None, anthropic_api_
     assert details['advisor_output_tokens'] > 0
     # Advisor tokens bill at the advisor model's rates and are excluded from the request totals.
     assert result.usage.input_tokens == details['input_tokens']
+    # Recorded top-level `output_tokens_details.thinking_tokens`, billed within `output_tokens`.
+    assert details['thinking_tokens'] == 28
+    assert details['thinking_tokens'] < details['output_tokens']
 
 
 @pytest.mark.vcr()
@@ -7525,6 +7535,8 @@ async def test_anthropic_advisor_tool_stream(
     content = returns[0].content
     assert isinstance(content, dict)
     assert content['type'] == 'advisor_result'
+    # Recorded on a streaming `message_delta`, which is the only place the field appears mid-stream.
+    assert agent_run.result.usage.details['thinking_tokens'] == 47
 
 
 @pytest.mark.vcr()
