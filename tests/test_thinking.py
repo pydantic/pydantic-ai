@@ -1,19 +1,21 @@
 """Tests for the unified thinking/reasoning feature.
 
 Tests the base Model.prepare_request() thinking resolution, per-provider translation,
-the Thinking capability, and end-to-end integration via FunctionModel.
+the Thinking capability, end-to-end integration via FunctionModel, and how the capability
+layers with the other sources of the `thinking` model setting.
 """
 
 # pyright: reportPrivateUsage=false, reportArgumentType=false
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import CAPABILITY_TYPES, Thinking
+from pydantic_ai.capabilities import CAPABILITY_TYPES, AbstractCapability, CapabilityOrdering, Thinking
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -955,25 +957,25 @@ class TestXaiThinkingTranslation:
 
 
 class TestThinkingCapability:
-    def test_default_effort(self):
+    def test_defaults(self):
         cap = Thinking()
         assert cap.effort is True
+        assert cap.override is False
 
-    def test_get_model_settings_default(self):
-        cap = Thinking()
-        assert cap.get_model_settings() == snapshot(ModelSettings(thinking=True))
+    def test_get_model_settings_override_is_static(self):
+        """`override=True` needs no context, so it stays a plain dict.
 
-    def test_get_model_settings_high(self):
-        cap = Thinking(effort='high')
+        This keeps `CombinedCapability`'s all-static eager merge available when no other
+        capability contributes a callable. The default (`override=False`) returns a callable
+        instead; its behavior is covered by `test_thinking_settings_layering`.
+        """
+        cap = Thinking(effort='high', override=True)
         assert cap.get_model_settings() == snapshot(ModelSettings(thinking='high'))
 
-    def test_get_model_settings_false(self):
-        cap = Thinking(effort=False)
-        assert cap.get_model_settings() == snapshot(ModelSettings(thinking=False))
-
-    def test_get_model_settings_low(self):
-        cap = Thinking(effort='low')
-        assert cap.get_model_settings() == snapshot(ModelSettings(thinking='low'))
+    def test_from_spec_with_override(self):
+        cap = Thinking.from_spec(effort='high', override=True)
+        assert isinstance(cap, Thinking)
+        assert cap.override is True
 
     def test_serialization_name(self):
         assert Thinking.get_serialization_name() == 'Thinking'
@@ -1027,41 +1029,6 @@ class TestThinkingIntegration:
         result = await agent.run('test')
         assert result.output == 'ok'
 
-    async def test_capability_flows_through_to_model(self):
-        """Thinking capability's model settings flow through to resolved params."""
-        captured_params: list[ModelRequestParameters] = []
-
-        def _capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            captured_params.append(info.model_request_parameters)
-            return ModelResponse(parts=[TextPart(content='done')])
-
-        model = FunctionModel(
-            _capture,
-            profile=ModelProfile(supports_thinking=True),
-        )
-        agent = Agent(model, capabilities=[Thinking(effort='high')])
-        result = await agent.run('test')
-        assert result.output == 'done'
-        assert len(captured_params) == 1
-        assert captured_params[0].thinking == 'high'
-
-    async def test_capability_default_effort_flows_through(self):
-        """Thinking() with default effort=True flows through."""
-        captured_params: list[ModelRequestParameters] = []
-
-        def _capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            captured_params.append(info.model_request_parameters)
-            return ModelResponse(parts=[TextPart(content='done')])
-
-        model = FunctionModel(
-            _capture,
-            profile=ModelProfile(supports_thinking=True),
-        )
-        agent = Agent(model, capabilities=[Thinking()])
-        result = await agent.run('test')
-        assert result.output == 'done'
-        assert captured_params[0].thinking is True
-
     async def test_capability_silently_ignored_on_unsupported_model(self):
         """Thinking capability on unsupported model -> params.thinking stays None."""
         captured_params: list[ModelRequestParameters] = []
@@ -1078,26 +1045,6 @@ class TestThinkingIntegration:
         result = await agent.run('test')
         assert result.output == 'done'
         assert captured_params[0].thinking is None
-
-    async def test_model_settings_override_with_thinking(self):
-        """run-level model_settings with thinking override agent-level capability."""
-        captured_params: list[ModelRequestParameters] = []
-        captured_settings: list[ModelSettings | None] = []
-
-        def _capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            captured_params.append(info.model_request_parameters)
-            captured_settings.append(info.model_settings)
-            return ModelResponse(parts=[TextPart(content='done')])
-
-        model = FunctionModel(
-            _capture,
-            profile=ModelProfile(supports_thinking=True),
-        )
-        agent = Agent(model, capabilities=[Thinking(effort='low')])
-        result = await agent.run('test', model_settings=ModelSettings(thinking='high'))
-        assert result.output == 'done'
-        # Run-level settings override capability settings via merge_model_settings
-        assert captured_params[0].thinking == 'high'
 
     async def test_thinking_false_capability_on_always_enabled(self):
         """Thinking(effort=False) on always-on model -> silently ignored."""
@@ -1143,6 +1090,171 @@ class TestThinkingIntegration:
         returned_settings, resolved_params = model.prepare_request(settings, ModelRequestParameters())
         assert returned_settings is None
         assert resolved_params.thinking == 'high'
+
+
+# ---------------------------------------------------------------------------
+# 5. Settings layering tests
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _SetThinking(AbstractCapability[Any]):
+    """Stand-in for another capability that configures `thinking`.
+
+    Models a remotely managed configuration capability, which must sit in the `outermost`
+    tier to see the other capabilities' contributions.
+    """
+
+    thinking: ThinkingLevel = True
+    outermost: bool = False
+
+    def get_ordering(self) -> CapabilityOrdering | None:
+        return CapabilityOrdering(position='outermost') if self.outermost else None
+
+    def get_model_settings(self) -> ModelSettings:
+        return ModelSettings(thinking=self.thinking)
+
+
+@dataclass(frozen=True)
+class _LayerCase:
+    """One combination of settings layers, and the `thinking` value the model should receive."""
+
+    id: str
+    capabilities: tuple[AbstractCapability[Any], ...]
+    expected: ThinkingLevel | None
+    model_level_settings: ModelSettings | None = None
+    agent_settings: ModelSettings | None = None
+    run_settings: ModelSettings | None = None
+
+
+_LAYER_CASES = [
+    _LayerCase(
+        id='applies-when-nothing-set',
+        capabilities=(Thinking(effort='high'),),
+        expected='high',
+    ),
+    _LayerCase(
+        id='default-effort-applies-when-nothing-set',
+        capabilities=(Thinking(),),
+        expected=True,
+    ),
+    _LayerCase(
+        id='yields-to-model-settings',
+        capabilities=(Thinking(effort='high'),),
+        model_level_settings=ModelSettings(thinking='low'),
+        expected='low',
+    ),
+    _LayerCase(
+        id='yields-to-agent-settings',
+        capabilities=(Thinking(effort='high'),),
+        agent_settings=ModelSettings(thinking='low'),
+        expected='low',
+    ),
+    _LayerCase(
+        id='yields-to-preceding-capability',
+        capabilities=(_SetThinking(thinking='low'), Thinking(effort='high')),
+        expected='low',
+    ),
+    _LayerCase(
+        id='yields-to-outermost-capability',
+        capabilities=(Thinking(effort='high'), _SetThinking(thinking='low', outermost=True)),
+        expected='low',
+    ),
+    _LayerCase(
+        id='following-capability-still-wins',
+        capabilities=(Thinking(effort='high'), _SetThinking(thinking='low')),
+        expected='low',
+    ),
+    _LayerCase(
+        id='run-settings-still-win',
+        capabilities=(Thinking(effort='high'),),
+        run_settings=ModelSettings(thinking='low'),
+        expected='low',
+    ),
+    _LayerCase(
+        id='override-beats-model-settings',
+        capabilities=(Thinking(effort='high', override=True),),
+        model_level_settings=ModelSettings(thinking='low'),
+        expected='high',
+    ),
+    _LayerCase(
+        id='override-beats-agent-settings',
+        capabilities=(Thinking(effort='high', override=True),),
+        agent_settings=ModelSettings(thinking='low'),
+        expected='high',
+    ),
+    _LayerCase(
+        id='override-beats-preceding-capability',
+        capabilities=(_SetThinking(thinking='low'), Thinking(effort='high', override=True)),
+        expected='high',
+    ),
+    _LayerCase(
+        id='override-beats-outermost-capability',
+        capabilities=(Thinking(effort='high', override=True), _SetThinking(thinking='low', outermost=True)),
+        expected='high',
+    ),
+    _LayerCase(
+        id='override-yields-to-run-settings',
+        capabilities=(Thinking(effort='high', override=True),),
+        run_settings=ModelSettings(thinking='low'),
+        expected='low',
+    ),
+    _LayerCase(
+        id='override-yields-to-following-capability',
+        capabilities=(Thinking(effort='high', override=True), _SetThinking(thinking='low')),
+        expected='low',
+    ),
+    _LayerCase(
+        id='disable-applies-when-nothing-set',
+        capabilities=(Thinking(effort=False),),
+        expected=False,
+    ),
+    _LayerCase(
+        id='disable-yields-to-agent-settings',
+        capabilities=(Thinking(effort=False),),
+        agent_settings=ModelSettings(thinking='high'),
+        expected='high',
+    ),
+    _LayerCase(
+        id='disable-with-override-beats-agent-settings',
+        capabilities=(Thinking(effort=False, override=True),),
+        agent_settings=ModelSettings(thinking='high'),
+        expected=False,
+    ),
+    _LayerCase(
+        id='provider-specific-setting-is-not-yielded-to',
+        capabilities=(Thinking(effort='high'),),
+        # `Thinking` yields only to the unified `thinking` setting it contributes itself, not to
+        # provider-specific escape hatches, which win at the model layer anyway (see
+        # `TestAnthropicThinkingTranslation.test_provider_specific_takes_precedence`).
+        agent_settings={'anthropic_thinking': {'type': 'adaptive'}},
+        expected='high',
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in _LAYER_CASES])
+async def test_thinking_settings_layering(case: _LayerCase):
+    """`Thinking` contributes a default: it applies only when no earlier layer set `thinking`.
+
+    Settings layers merge model defaults, then agent-level settings, then capabilities in
+    order (outermost first), then run-level settings, with later layers winning.
+    """
+    captured_params: list[ModelRequestParameters] = []
+
+    def _capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured_params.append(info.model_request_parameters)
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    model = FunctionModel(
+        _capture,
+        profile=ModelProfile(supports_thinking=True),
+        settings=case.model_level_settings,
+    )
+    agent = Agent(model, model_settings=case.agent_settings, capabilities=list(case.capabilities))
+    await agent.run('test', model_settings=case.run_settings)
+
+    assert captured_params[0].thinking == case.expected
 
 
 @pytest.mark.skipif(not google_imports(), reason='google-genai not installed')

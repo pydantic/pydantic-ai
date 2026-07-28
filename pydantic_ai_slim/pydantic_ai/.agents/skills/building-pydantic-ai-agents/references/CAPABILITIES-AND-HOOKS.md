@@ -54,6 +54,11 @@ Supported effort values:
 - `'high'`
 - `'xhigh'`
 
+`Thinking` contributes a default: it applies only when nothing has already set `thinking`, so a value
+from the model's settings, from `Agent(model_settings=...)`, or from a capability outside it wins.
+Use `Thinking(effort='high', override=True)` to beat those earlier layers. Per-run `model_settings`
+win either way.
+
 ## Intercept Agent Lifecycle with Hooks
 
 Use `Hooks` for decorator-based lifecycle interception.

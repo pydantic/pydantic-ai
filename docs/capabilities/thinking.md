@@ -34,6 +34,44 @@ The [`Thinking.effort`][pydantic_ai.capabilities.Thinking.effort] value accepts:
 These are the same values accepted by the underlying `thinking` model setting.
 When omitted, the model uses its default behavior. Provider-specific settings (documented in the sections below) take precedence when both are set.
 
+### Precedence
+
+`Thinking` contributes a *default*: it applies only when nothing has already set `thinking`. A value
+from the model's own settings, from `Agent(model_settings=...)`, or from a capability positioned
+outside it therefore wins, so being explicit is never silently ignored:
+
+```python {title="thinking_precedence.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking
+
+agent = Agent(
+    'anthropic:claude-opus-4-7',
+    model_settings={'thinking': 'low'},
+    capabilities=[Thinking(effort='high')],
+)  # thinking: 'low'
+```
+
+To state the opposite intent, set [`override`][pydantic_ai.capabilities.Thinking.override] and the
+capability's effort beats every earlier layer:
+
+```python {title="thinking_override.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking
+
+agent = Agent(
+    'anthropic:claude-opus-4-7',
+    model_settings={'thinking': 'low'},
+    capabilities=[Thinking(effort='high', override=True)],
+)  # thinking: 'high'
+```
+
+Either way, per-run `model_settings` are merged after all capabilities and win, as do capabilities
+listed after this one. See [model (run) settings](../agent.md#model-run-settings) for the full layering.
+
+`Thinking` only yields to the unified `thinking` setting. Provider-specific settings like
+`anthropic_thinking` take precedence at the model layer regardless, so setting one alongside the
+capability leaves the provider-specific value in charge.
+
 ### Provider translation
 
 The `Thinking` capability maps each effort value to the selected provider's native format:

@@ -257,7 +257,9 @@ print(result.output)
 #> Hello! How can I help you today?
 ```
 
-The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] where `ctx.model_settings` contains the merged result of all layers resolved before this capability (model defaults and agent-level settings).
+The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] where `ctx.model_settings` contains the merged result of all layers resolved before this capability (model defaults, agent-level settings, and capabilities positioned outside this one).
+
+Inspect `ctx.model_settings` to contribute a setting only when nothing has set it yet, rather than overriding a more explicit choice — return an empty [`ModelSettings`][pydantic_ai.settings.ModelSettings] to contribute nothing. This is how [`Thinking`][pydantic_ai.capabilities.Thinking] [defers to an explicit `thinking` value](thinking.md#precedence).
 
 ## Selecting the model
 

@@ -1761,6 +1761,7 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Effort',
                         },
+                        'override': {'title': 'Override', 'type': 'boolean'},
                     },
                     'title': 'spec_params_Thinking',
                     'type': 'object',
