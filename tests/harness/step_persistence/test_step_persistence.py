@@ -8,6 +8,7 @@ agent run (e.g. the path-traversal guard on `FileStepStore`).
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1630,6 +1631,83 @@ class TestRunIdIsPerCall:
 
 
 # ---------------------------------------------------------------------------
+# list_snapshots (read seam consumed by `conversation_search`)
+# ---------------------------------------------------------------------------
+
+
+class TestListSnapshots:
+    async def test_in_memory_returns_all_in_write_order(self) -> None:
+        store = InMemoryStepStore()
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[]))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=[]))
+
+        snaps = await store.list_snapshots(run_id='r1')
+        assert [s.step_index for s in snaps] == [0, 1]
+        assert await store.list_snapshots(run_id='missing') == []
+
+    async def test_file_returns_all_in_write_order(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        first: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='first message')])]
+        second = first + [ModelResponse(parts=[TextPart(content='second message')])]
+        await store.save_snapshot(
+            ContinuableSnapshot(run_id='r1', step_index=0, messages=first, conversation_id='conv')
+        )
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=second))
+
+        snaps = await store.list_snapshots(run_id='r1')
+        assert [s.step_index for s in snaps] == [0, 1]
+        assert snaps[0].conversation_id == 'conv'
+        assert len(snaps[1].messages) == 2
+        assert await store.list_snapshots(run_id='missing') == []
+
+    async def test_file_skips_corrupt_wrong_typed_and_unreadable(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        store = FileStepStore(tmp_path, media_store=None)
+        await store.save_snapshot(
+            ContinuableSnapshot(
+                run_id='r1',
+                step_index=0,
+                messages=[ModelRequest(parts=[UserPromptPart(content='the good one')])],
+            )
+        )
+        snap_dir = tmp_path / 'r1' / 'snapshots'
+        (snap_dir / '5.json').write_text('{not valid json', encoding='utf-8')
+        (snap_dir / '7.json').write_text(
+            json.dumps({'step_index': 'not-an-int', 'timestamp': '2026-01-01T00:00:00+00:00', 'messages': []}),
+            encoding='utf-8',
+        )
+        # A directory with an int stem raises OSError on read_text.
+        (snap_dir / '9.json').mkdir()
+        # A non-int stem is not a snapshot file at all.
+        (snap_dir / 'notes.json').write_text('{}', encoding='utf-8')
+
+        with caplog.at_level(logging.WARNING):
+            snaps = await store.list_snapshots(run_id='r1')
+
+        assert [s.step_index for s in snaps] == [0]
+        messages = [record.message for record in caplog.records]
+        assert any('unreadable' in message for message in messages)
+        assert any('unparsable' in message for message in messages)
+
+    async def test_file_returns_empty_without_snapshot_dir(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        assert await store.list_snapshots(run_id='never-ran') == []
+
+    async def test_default_skips_interrupted_include_flag_returns_them(self, tmp_path: Path) -> None:
+        stores: list[InMemoryStepStore | FileStepStore] = [InMemoryStepStore(), FileStepStore(tmp_path)]
+        for store in stores:
+            await store.save_snapshot(_complete_snapshot('r1', 0, 'settled'))
+            await store.save_snapshot(_interrupted_snapshot('r1', 1, 'frontier'))
+
+            default = await store.list_snapshots(run_id='r1')
+            assert [(s.step_index, s.state) for s in default] == [(0, 'complete')]
+
+            everything = await store.list_snapshots(run_id='r1', include_interrupted=True)
+            assert [(s.step_index, s.state) for s in everything] == [(0, 'complete'), (1, 'interrupted')]
+
+
+# ---------------------------------------------------------------------------
 # Snapshot state: interrupted rescues and the read-path gate
 # ---------------------------------------------------------------------------
 
@@ -1977,3 +2055,72 @@ class TestLiveHistoryInvariant:
         assert any(
             isinstance(part, ToolReturnPart) and part.tool_call_id == 'lookup-1' for part in snap.messages[-1].parts
         )
+
+
+class TestAtomicFileWrites:
+    """`FileStepStore` swaps files into place so a concurrent reader never sees a partial one."""
+
+    @staticmethod
+    def _residue(root: Path) -> list[Path]:
+        return sorted(root.rglob('*.tmp'))
+
+    async def test_writes_leave_no_temporary_residue(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path, media_store=None)
+        await store.register_run(RunRecord(run_id='r1', conversation_id='conv'))
+        for step_index in range(3):
+            await store.save_snapshot(
+                ContinuableSnapshot(
+                    run_id='r1',
+                    step_index=step_index,
+                    messages=[ModelRequest(parts=[UserPromptPart(content=f'step {step_index}')])],
+                )
+            )
+
+        assert self._residue(tmp_path) == []
+        record = await store.get_run(run_id='r1')
+        assert record is not None and record.conversation_id == 'conv'
+        assert [s.step_index for s in await store.list_snapshots(run_id='r1')] == [0, 1, 2]
+
+    async def test_a_failed_swap_keeps_the_previous_file_and_cleans_up(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = FileStepStore(tmp_path, media_store=None)
+        await store.save_snapshot(
+            ContinuableSnapshot(
+                run_id='r1',
+                step_index=0,
+                messages=[ModelRequest(parts=[UserPromptPart(content='the durable one')])],
+            )
+        )
+
+        def boom(src: object, dst: object) -> None:
+            raise OSError('replace failed')
+
+        monkeypatch.setattr('pydantic_ai_harness.step_persistence._store.os.replace', boom)
+        with pytest.raises(OSError, match='replace failed'):
+            await store.save_snapshot(
+                ContinuableSnapshot(
+                    run_id='r1',
+                    step_index=1,
+                    messages=[ModelRequest(parts=[UserPromptPart(content='the lost one')])],
+                )
+            )
+
+        monkeypatch.undo()
+        assert self._residue(tmp_path) == []
+        snaps = await store.list_snapshots(run_id='r1')
+        assert [s.step_index for s in snaps] == [0]
+        surviving = snaps[0].messages[0]
+        assert isinstance(surviving, ModelRequest)
+        assert [getattr(part, 'content', None) for part in surviving.parts] == ['the durable one']
+
+    async def test_a_stray_temporary_does_not_enter_a_snapshot_scan(self, tmp_path: Path) -> None:
+        """A `.tmp` sibling is invisible to both the sequence counter and the reader."""
+        store = FileStepStore(tmp_path, media_store=None)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[]))
+        (tmp_path / 'r1' / 'snapshots' / '1.json.deadbeef.tmp').write_text('{half-writ', encoding='utf-8')
+
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=[]))
+
+        assert [s.step_index for s in await store.list_snapshots(run_id='r1')] == [0, 1]
+        assert (tmp_path / 'r1' / 'snapshots' / '1.json').exists()
