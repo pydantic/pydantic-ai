@@ -12895,149 +12895,47 @@ async def test_openai_responses_phase_streamed(allow_model_requests: None):
     assert text_parts[0].provider_details == snapshot({'phase': 'final_answer'})
 
 
-async def test_openai_responses_phase_streamed_on_part_start(allow_model_requests: None):
-    """`phase` is on the `PartStartEvent`, so commentary can be filtered out as it streams.
+async def test_openai_responses_phase_streamed_on_part_start(allow_model_requests: None, openai_api_key: str):
+    """Real cassette: `phase` rides the `PartStartEvent`, so commentary can be filtered as it streams.
 
-    Not a VCR test: this pins the exact event ordering within a single text part, which a cassette
-    replay can't hold stable — a re-recording chunks the deltas differently and the assertion is
-    about which event carries `phase`, not about the wire format.
+    The API announces `phase` on `output_item.added` — before the first delta — so a consumer knows
+    what kind of text a part holds the moment it opens, without buffering the part to find out.
     """
-    base_response = resp.Response(
-        id='resp_001',
-        model='gpt-5.5',
-        object='response',
-        created_at=1704067200,
-        output=[],
-        parallel_tool_calls=True,
-        tool_choice='auto',
-        tools=[],
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        instructions='Briefly narrate what you are about to do before calling each tool.',
     )
 
-    def message_events(
-        item_id: str,
-        phase: Literal['commentary', 'final_answer'],
-        deltas: list[str],
-        output_index: int,
-    ) -> list[resp.ResponseStreamEvent]:
-        text = ''.join(deltas)
-        return [
-            resp.ResponseOutputItemAddedEvent(
-                item=ResponseOutputMessage.model_construct(
-                    id=item_id,
-                    content=[],
-                    role='assistant',
-                    status='in_progress',
-                    type='message',
-                    phase=phase,
-                ),
-                output_index=output_index,
-                type='response.output_item.added',
-                sequence_number=0,
-            ),
-            *[
-                resp.ResponseTextDeltaEvent(
-                    content_index=0,
-                    delta=delta,
-                    item_id=item_id,
-                    output_index=output_index,
-                    type='response.output_text.delta',
-                    sequence_number=0,
-                    logprobs=[],
-                )
-                for delta in deltas
-            ],
-            resp.ResponseTextDoneEvent(
-                content_index=0,
-                item_id=item_id,
-                output_index=output_index,
-                text=text,
-                type='response.output_text.done',
-                sequence_number=0,
-                logprobs=[],
-            ),
-            resp.ResponseOutputItemDoneEvent(
-                item=ResponseOutputMessage.model_construct(
-                    id=item_id,
-                    content=cast(list[Content], [ResponseOutputText(text=text, type='output_text', annotations=[])]),
-                    role='assistant',
-                    status='completed',
-                    type='message',
-                    phase=phase,
-                ),
-                output_index=output_index,
-                type='response.output_item.done',
-                sequence_number=0,
-            ),
-        ]
+    @agent.tool_plain
+    async def get_capital(country: str) -> str:
+        return 'Potato City'
 
-    stream: list[resp.ResponseStreamEvent] = [
-        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
-        *message_events('msg_001', 'commentary', ['Let me ', 'think.'], output_index=0),
-        *message_events('msg_002', 'final_answer', ['Paris', '.'], output_index=1),
-        resp.ResponseCompletedEvent(
-            response=base_response.model_copy(update={'status': 'completed'}),
-            type='response.completed',
-            sequence_number=0,
-        ),
-    ]
+    text_part_starts: list[tuple[str, Any]] = []
+    text_delta_count = 0
+    deltas_carrying_phase: list[dict[str, Any]] = []
+    async with agent.run_stream_events('What is the capital of PotatoLand?') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                text_part_starts.append((event.part.content, (event.part.provider_details or {}).get('phase')))
+            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                text_delta_count += 1
+                if event.delta.provider_details is not None:
+                    deltas_carrying_phase.append(event.delta.provider_details)
 
-    mock_client = MockOpenAIResponses.create_mock_stream(stream)
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model=model)
-
-    events: list[Any] = []
-    async with agent.iter(user_prompt='What is the capital of France?') as agent_run:
-        async for node in agent_run:
-            if Agent.is_model_request_node(node):
-                async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
-                        events.append(event)
-
-    # Each part's `phase` is on its `PartStartEvent`, so a consumer can decide whether to forward
-    # the deltas that follow without buffering the whole part.
-    assert events == snapshot(
-        [
-            PartStartEvent(
-                index=0,
-                part=TextPart(
-                    content='Let me ', id='msg_001', provider_name='openai', provider_details={'phase': 'commentary'}
-                ),
-            ),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='think.')),
-            PartEndEvent(
-                index=0,
-                part=TextPart(
-                    content='Let me think.',
-                    id='msg_001',
-                    provider_name='openai',
-                    provider_details={'phase': 'commentary'},
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=1,
-                part=TextPart(
-                    content='Paris', id='msg_002', provider_name='openai', provider_details={'phase': 'final_answer'}
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='.')),
-            PartEndEvent(
-                index=1,
-                part=TextPart(
-                    content='Paris.', id='msg_002', provider_name='openai', provider_details={'phase': 'final_answer'}
-                ),
-            ),
-        ]
-    )
+    # Each part's phase is known as it opens, and the content is only the first chunk, not the whole part.
+    assert text_part_starts == snapshot([('I', 'commentary'), ('The', 'final_answer')])
+    # The phase opens the part and is not repeated on any of the deltas that follow.
+    assert text_delta_count == snapshot(23)
+    assert deltas_carrying_phase == []
 
 
 async def test_openai_responses_phase_streamed_without_deltas(allow_model_requests: None):
     """`phase` is still captured when a gateway emits `output_text.done` without any deltas.
 
-    Not a VCR test: OpenAI always sends deltas, so this fallback exists for OpenAI-compatible
-    gateways whose streams we can't record.
+    Not a VCR test: OpenAI itself always sends deltas — `test_openai_responses_phase_streamed_on_part_start`
+    records them for every text part — so this fallback only ever runs against OpenAI-compatible gateways
+    whose streams we have no way to record.
     """
     base_response = resp.Response(
         id='resp_001',
