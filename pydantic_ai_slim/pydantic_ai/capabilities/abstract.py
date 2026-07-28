@@ -468,10 +468,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         result: AgentRunResult[Any],
     ) -> AgentRunResult[Any]:
-        """Called after the agent run completes. Can modify the result.
+        """Called after the agent run produces a result. Can modify the result.
 
-        Not called when the run is cancelled before completing: cancellation skips downstream
-        hooks. Put cancellation-safe cleanup in [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
+        Not called when the run ends without a result (e.g. a cancellation that nothing
+        recovered from). It IS called when a result was produced while a cancellation was
+        pending or absorbed upstream — but before the backstop's cancellation re-check, so the
+        cancellation still propagates after this hook returns and the run still ends cancelled.
+        Put cancellation-safe cleanup in [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
         (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
         """
         return result
