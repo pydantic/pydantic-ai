@@ -1456,7 +1456,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Hand off to the model class for any history shapes the active provider can't
         # ship on the wire — currently typed `NativeToolSearch*Part` instances translated
-        # to local-shape `ToolSearch*Part` when the profile doesn't support `ToolSearchTool`.
+        # to local-shape `ToolSearch*Part` when they came from another provider or the
+        # profile doesn't support `ToolSearchTool`.
         #
         # Lives on `Model.prepare_messages` rather than inline here for two reasons:
         # 1. The translation depends on `self.profile`, which is per-model state.

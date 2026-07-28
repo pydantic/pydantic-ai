@@ -67,6 +67,8 @@ On any PR, we may push commits to your branch, open a follow-up PR that supersed
 
 Please don't spend effort chasing green CI, addressing every automated review comment, or rebasing for merge conflicts on a PR we haven't pre-aligned on. If we take the change forward, that polish gets thrown away when we rewrite. Get the approach working, then stop and ping us on Slack.
 
+Do not force-push updates to an open PR. Rewriting its commits invalidates previous reviews; push follow-up commits instead. We will squash them when merging.
+
 ### Automated review is advisory, not a gate
 
 PRs are automatically reviewed by Devin and our own tooling. These reviews are advisory:

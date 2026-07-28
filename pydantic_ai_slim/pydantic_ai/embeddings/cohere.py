@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -154,6 +155,7 @@ class CohereEmbeddingModel(EmbeddingModel):
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        check_allow_model_requests()
         inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(CohereEmbeddingSettings, settings)
 
@@ -214,8 +216,11 @@ class CohereEmbeddingModel(EmbeddingModel):
         return _MAX_INPUT_TOKENS.get(self.model_name)
 
     async def count_tokens(self, text: str) -> int:
+        # The guard goes below the capability check, not above it: without a v1 client this path never reaches
+        # Cohere, so it should report that token counting is unsupported regardless of `ALLOW_MODEL_REQUESTS`.
         if self._v1_client is None:
             raise NotImplementedError('Counting tokens requires the Cohere v1 client')
+        check_allow_model_requests()
         try:
             result = await self._v1_client.tokenize(
                 model=self.model_name,
