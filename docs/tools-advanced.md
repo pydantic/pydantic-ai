@@ -813,6 +813,34 @@ To force the local `keywords` algorithm on a provider that natively supports too
     * Local-shape `search_tools` history rendered onto a native-supporting provider (Anthropic, OpenAI) is promoted to the provider's native tool-search wire so the discovered tools' schemas get unlocked from `defer_loading=True` without forcing the model to re-search.
     * Native-shape `tool_search` history rendered onto another provider — whether or not the target has its own native tool search — is translated to the provider-agnostic `search_tools` exchange first, then rendered in the target's supported shape. A provider's own native history retains its exact replay shape.
 
+#### Tool-availability history portability
+
+Stored history can describe a tool becoming callable as either a model-driven search or an
+application-driven availability change. Pydantic AI preserves that distinction when the history is
+replayed against a different model:
+
+| Stored representation | Anthropic with `tool_addition` | Anthropic with native search only | OpenAI Responses with `additional_tools` | OpenAI Responses without `additional_tools` | Gemini | OpenAI Chat Completions |
+|---|---|---|---|---|---|---|
+| Local `search_tools` call and result | Native search | Native search | Native search | Local search | Local search | Local search |
+| Anthropic native search | Native search | Native search | Native search | Local search | Local search | Local search |
+| OpenAI native search | Native search | Native search | Native search | Local search | Local search | Local search |
+| [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] | `tool_addition` | Local search | `additional_tools` | Local search | Local search | Local search |
+| `search_tools` result with `metadata['discovered_tools']` | Native search | Native search | Native search | Local search | Local search | Local search |
+
+Here, **native search** means a paired provider-native search call and result plus the native search
+tool. The revealed tool remains in the deferred corpus, keeping its wire definition stable. **Local
+search** means a paired `search_tools` function call and result plus the local search tool; the
+revealed tool is present as an eager function tool. A provider-native availability change includes
+neither a search exchange nor a search tool.
+
+A genuine search is evidence of what the model did: it chose a query and received matches. Rewriting
+that exchange as `tool_addition` or `additional_tools` would incorrectly turn model-driven discovery
+into application-driven control. Provider-native availability changes are therefore used only for
+[`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. On targets without
+that control primitive, the delta is represented by a complete local search exchange so the tool
+does not silently appear. This also keeps the search tool and search-shaped history consistent on
+every target.
+
 !!! note "Tool discovery and message history"
     Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.
 

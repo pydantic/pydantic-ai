@@ -10,6 +10,30 @@ Loaded function tools are recorded in durable message history with `ToolAvailabi
 
 Provider adapters project that control state without changing the history. OpenAI Responses uses an `additional_tools` input item for addition-only changes on GPT-5.6, GPT-5.5, GPT-5.4 Mini, GPT-5.1, and GPT-4.1 models. Unsupported OpenAI models and changes containing removals use the synthesized `search_tools` exchange. Do not add `tool_search` alongside `additional_tools`, and do not copy tool definitions into `ToolAvailabilityDeltaPart`.
 
+### Tool-availability history portability
+
+Stored history can describe availability through model-driven discovery or application-driven
+control. Preserve that distinction when switching models:
+
+| Stored representation | Anthropic with `tool_addition` | Anthropic with native search only | OpenAI Responses with `additional_tools` | OpenAI Responses without `additional_tools` | Gemini | OpenAI Chat Completions |
+|---|---|---|---|---|---|---|
+| Local `search_tools` call and result | Native search | Native search | Native search | Local search | Local search | Local search |
+| Anthropic native search | Native search | Native search | Native search | Local search | Local search | Local search |
+| OpenAI native search | Native search | Native search | Native search | Local search | Local search | Local search |
+| `ToolAvailabilityDeltaPart` | `tool_addition` | Local search | `additional_tools` | Local search | Local search | Local search |
+| `search_tools` result with `metadata['discovered_tools']` | Native search | Native search | Native search | Local search | Local search | Local search |
+
+**Native search** is a paired provider-native search call and result with the native search tool; the
+revealed tool remains in the deferred corpus. **Local search** is a paired `search_tools` function
+call and result with the local search tool; the revealed tool is eager in the function-tool list.
+Provider-native availability changes include neither a search exchange nor a search tool.
+
+A genuine search records a query chosen by the model and the matches it received. Never rewrite it
+as `tool_addition` or `additional_tools`, which would recast discovery as application-driven
+control. Use those provider-native control items only for `ToolAvailabilityDeltaPart`. Where the
+target has no availability-change primitive, synthesize a complete local search exchange so the
+tool never appears without an explanation.
+
 Be opinionated: review every capability for whether `defer_loading=True` would benefit the system before accepting eager loading. If the model does not need a piece of information, a specialist instruction set, or a tool schema on most turns, do not put it in the eager prompt by default.
 
 Use this for specialist behavior where instructions and tools should travel together:
