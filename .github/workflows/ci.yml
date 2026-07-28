@@ -121,12 +121,15 @@ jobs:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     # Use Ubicloud 4-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
     # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
+    # `github.event.pull_request` is null on push/tag runs, so those need their own clause to
+    # reach Ubicloud -- without it main and release runs silently fall back to `ubuntu-latest`.
     runs-on: >-
       ${{
         !contains(github.event.pull_request.labels.*.name, 'ci:slow')
         && matrix.install.name == 'all-extras'
         && (
-          github.event.pull_request.head.repo.full_name == github.repository
+          github.event_name == 'push'
+          || github.event.pull_request.head.repo.full_name == github.repository
           || contains(github.event.pull_request.labels.*.name, 'ci:fast')
         )
         && 'ubicloud-premium-4'
@@ -244,11 +247,13 @@ jobs:
     name: test on ${{ matrix.python-version }} (lowest-versions)
     # Use Ubicloud 4-core runners for maintainers or opted in via 'ci:fast' label
     # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
+    # See the note on the `test` job for why push/tag runs need their own clause.
     runs-on: >-
       ${{
         !contains(github.event.pull_request.labels.*.name, 'ci:slow')
         && (
-          github.event.pull_request.head.repo.full_name == github.repository
+          github.event_name == 'push'
+          || github.event.pull_request.head.repo.full_name == github.repository
           || contains(github.event.pull_request.labels.*.name, 'ci:fast')
         )
         && 'ubicloud-premium-4'
