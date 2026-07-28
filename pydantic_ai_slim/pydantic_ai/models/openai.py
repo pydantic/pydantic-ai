@@ -113,6 +113,7 @@ from . import (
     check_allow_model_requests,
     download_item,
     get_user_agent,
+    unsynthesized_tool_availability_delta_error,
 )
 from ._tool_choice import resolve_tool_choice
 
@@ -1666,7 +1667,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                         content=part.model_response(),
                     )
             elif isinstance(part, ToolAvailabilityDeltaPart):
-                assert False, '`ToolAvailabilityDeltaPart` must be synthesized before Chat Completions mapping'
+                raise unsynthesized_tool_availability_delta_error()  # pragma: no cover
             else:
                 assert_never(part)
         if file_content:

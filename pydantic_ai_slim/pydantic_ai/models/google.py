@@ -35,6 +35,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -62,6 +63,7 @@ from . import (
     check_allow_model_requests,
     download_item,
     get_user_agent,
+    unsynthesized_tool_availability_delta_error,
 )
 from ._tool_choice import resolve_tool_choice
 
@@ -1068,6 +1070,8 @@ class GoogleModel(Model[Client]):
                                     }
                                 }
                             )
+                    elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                        raise unsynthesized_tool_availability_delta_error()
                     else:
                         assert_never(part)
 

@@ -16509,6 +16509,41 @@ async def test_enqueue_system_prompt_part():
     assert injected is not None
 
 
+async def test_enqueue_tool_availability_delta_part():
+    """A `ToolAvailabilityDeltaPart` enqueues as a request part, not as user content.
+
+    It's a `ModelRequestPart` like the rest, so it has to be coalesced into the `ModelRequest`
+    alongside a user prompt. Falling through to the user-content branch instead would bury the
+    change inside a `UserPromptPart`, where every adapter's delta rendering would miss it.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='announce', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def announce(ctx: RunContext[object]) -> str:
+        ctx.enqueue(ToolAvailabilityDeltaPart(added=['lookup_exchange_rate']), 'Use it.')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    injected = next(
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest) and any(isinstance(p, ToolAvailabilityDeltaPart) for p in msg.parts)
+    )
+    assert [type(part).__name__ for part in injected.parts] == snapshot(['ToolAvailabilityDeltaPart', 'UserPromptPart'])
+
+
 async def test_enqueue_interleaved_response_and_request():
     """One `enqueue` call can inject an interleaved `ModelResponse` + `ModelRequest` exchange.
 

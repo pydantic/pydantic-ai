@@ -26,16 +26,23 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model
-from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
-from pydantic_ai.providers.anthropic import AnthropicProvider
-from pydantic_ai.providers.google import GoogleProvider
-from pydantic_ai.providers.openai import OpenAIProvider
 
 from .cassette_utils import single_request_body
+from .conftest import try_import
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+with try_import() as imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='anthropic, google or openai not installed'),
+    pytest.mark.anyio,
+    pytest.mark.vcr,
+]
 
 Origin = Literal['R1', 'R2', 'R3', 'R4', 'R5']
 Target = Literal['T1', 'T2', 'T3', 'T4', 'T5', 'T6']

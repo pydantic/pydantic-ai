@@ -1720,6 +1720,16 @@ class ToolAvailabilityDeltaPart:
     part_kind: Literal['tool-availability-delta'] = 'tool-availability-delta'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Render the change as trace content.
+
+        Tool names are recorded regardless of `include_content`: they aren't user content, they're
+        already visible in the request's tool definitions, and a run where the model suddenly can —
+        or can't — call something is unreadable without them.
+        """
+        changes = [f'+{name}' for name in self.added] + [f'-{name}' for name in self.removed]
+        return [_otel_messages.TextPart(type='text', content=f'Tool availability changed: {", ".join(changes)}')]
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 

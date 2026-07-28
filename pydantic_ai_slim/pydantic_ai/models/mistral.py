@@ -42,6 +42,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -61,6 +62,7 @@ from . import (
     check_allow_model_requests,
     download_item,
     get_user_agent,
+    unsynthesized_tool_availability_delta_error,
 )
 from ._tool_choice import resolve_tool_choice
 
@@ -598,6 +600,8 @@ class MistralModel(Model[Mistral]):
                         tool_call_id=part.tool_call_id,
                         content=part.model_response(),
                     )
+            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                raise unsynthesized_tool_availability_delta_error()
             else:
                 assert_never(part)
         if file_content:

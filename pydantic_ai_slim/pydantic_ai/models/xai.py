@@ -37,6 +37,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -50,6 +51,7 @@ from ..models import (
     StreamedResponse,
     check_allow_model_requests,
     download_item,
+    unsynthesized_tool_availability_delta_error,
 )
 from ..native_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, WebSearchTool, XSearchTool
 from ..output import OutputObjectDefinition
@@ -375,6 +377,8 @@ class XaiModel(Model[AsyncClient]):
                     xai_messages.append(user(part.model_response()))
                 else:
                     tool_results.append(part)
+            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                raise unsynthesized_tool_availability_delta_error()
             else:
                 assert_never(part)
 

@@ -1705,6 +1705,20 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     return new_messages if changed else messages
 
 
+def unsynthesized_tool_availability_delta_error() -> AssertionError:
+    """The error for a `ToolAvailabilityDeltaPart` that reached an adapter with no way to render it.
+
+    `prepare_messages` projects every delta to the local tool-search exchange unless the profile
+    advertises native support, so only the adapters that asked for it ever see the part. Anywhere
+    else means that projection didn't run — a bug in the pipeline rather than something a caller can
+    cause, which is why the adapters raise instead of dropping the part and silently telling the
+    model nothing about the tools that appeared.
+    """
+    return AssertionError(
+        '`ToolAvailabilityDeltaPart` should have been synthesized into a tool-search exchange before mapping'
+    )
+
+
 def _synthesize_tool_availability_delta_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Project tool availability changes to the local tool-search exchange supported by every model."""
     import hashlib

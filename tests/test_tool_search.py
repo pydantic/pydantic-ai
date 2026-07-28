@@ -6437,9 +6437,7 @@ def _vercel_tool_history_roundtrip(messages: list[ModelMessage]) -> list[ModelMe
 
 
 def _ag_ui_tool_history_roundtrip(messages: list[ModelMessage]) -> list[ModelMessage]:
-    return AGUIAdapter.load_messages(  # pyright: ignore[reportUnknownMemberType]
-        AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.13')  # pyright: ignore[reportUnknownMemberType]
-    )
+    return AGUIAdapter.load_messages(AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.13'))
 
 
 def _portable_tool_history(representation: Literal['local', 'native', 'delta']) -> list[ModelMessage]:
