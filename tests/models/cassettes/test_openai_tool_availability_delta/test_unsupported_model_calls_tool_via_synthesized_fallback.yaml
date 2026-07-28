@@ -1,0 +1,163 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '840'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Call lookup_refund_policy with order_id order-123. Do not answer directly.
+        role: user
+      - content: I will load the refund capability.
+        role: assistant
+      - arguments: '{"queries":["lookup_refund_policy"]}'
+        call_id: load-refunds
+        name: search_tools
+        type: function_call
+      - call_id: load-refunds
+        output: '{"discovered_tools":[{"name":"lookup_refund_policy"}]}'
+        type: function_call_output
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Look up the refund policy for an order.
+        name: lookup_refund_policy
+        parameters:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '8086'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '9587'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785212029
+      created_at: 1785212019
+      error: null
+      frequency_penalty: 0.0
+      id: resp_03ab818bb26b880c006a682c73c1f481959efc2a2796a93ca2
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqaCx9zJXu7pTY01-FtJVlFCu-Lq814t8loFdp7aTJKBsqef2yePPfc6Cn2blHY1O_nDqKGjHRCUh-Czq0y8nUv89KlqGQ9XQvF_5uyK5jvjpadY7gX68es8m0SP0F94eOmu5B9mYbU3UpsiLqkPsIMksnn7A7BDdcVbxnBOfKgtcF_15NrWifNBUb0VDCWEzy24iU2pFODZ_XZE2oGhkXlPpYH0w6AQ-107QFcihnqUVZ1EWJwX6NT4LBfYtVxpng0g0vTNcLGVolHW81pA9avUGysj7LVXt96v-kKISdSiNU4qHITvb9DupeP0W4qomle9-4_Hpy1BH-WAaJBzoH7mX8xPUuNr60E-g61mJn6BIJocsT8cq8KpF9FB5jzvS9-xZN7RPuOjEKRNRvvJiw2qX0fB9adyecFpF3Uz-_uWrZdrW1Rr9Y6rwNFih5DPiMEKZjxM0SxvYSmLaFzk1QYEu3EvOgq649fjrS3X1-yGS6aOtO_JbrRCav4JrhizHv2gk_JNIvWy1jbueZTHQUvOgjKD8o-zWV8t5puNbsCplEM2c5dbRW9y1WRglnKUOspFUlocE2K2oohZ90z-V8k0n2MEt8-SNlT2XPkhTzjbh3e8U-azvYXQF2QBMbswdqDkCuA2wIatPlz_OQFDOWZdZxwQSoYqk64im30P2ByW_1FVt_OZjKNpEtPeKl8XdYIHFbE9obWovTLifynntoglkJXBmsajgbo9fwQeVuRQzZ8Fxu69m1YJz1LyrsYweHlnBiltFZYEI_KWVARph1Y9yWKbJjkPwKQvUCbPslxo2iV9EIGldpz7ok1sVMcjn0j7YZYNtd_mMsWz2RVYrRR370H2GlshgwJBiNPwCKgnjbJXyZXhxGlbd2t8iqDUdPuJZDY1HMfWOMkpAwEdJTlerhl3Arr69folhERCtXrMQu3Q_Az0wnbaFjP7v0M9RURsE75ZcdqrwRib0rcjhJf37_mF4Td0G8Y9x8FgR8emsBycJWkHc9MlpWSkhZVPxohF7ffoqCj9UUsYyAP0VreqVE8_SqI74gv5SViz4ORh4LZwivVGLkmjsVFfWArFh-BejTphn2Yl_2k0LCOyDvVFumcKsQva6KsATxre6K6em2EFtldlcGyau1mpvLt31Aq2-mVhNNBERICRjliJDuroWx9ZO3AsQKeKwZAG4V57_TsS3l3d6pmEp3Vap0ew4N8oqJOuAuZD2ojHmHO0I-PMlPFm6DYwgmYfVZYWwX3pns7CxHmlVqx7Fgn3X8Dg_sq6798dtkNCcC7m1JR9elVqOD1zu4nxAXmX9uSU1JUgdfvrNkHn98XTIW57Yz53GS2Gwg_A_DTWy2ZeDkaKtx7_SW1sTAcRc-tcXstyhKQZ_U22bUXdPn6qz4rGeaKF6DkORRPBfWaZ29riH544I4g88d-3iQn1DQUk8drm268vYVoON6mmAQm7LKMkNd2_XwDb4iL9AuOwd5UC41aLkVlgw_Hj8ag1MUaAoX8UYu_ZI2tIqOcRCDAiaLhPP--jg39S4hdazdFPiamNudkYPxJs3CM9NLhFkW6I_zlQIxeKFXynOo1fQL7bR7EfkchiZ7J2o9XUsT9Hx5z4ObzMd8goS3x2gkBkwuhJHGE5S6uZ59eGosDLUZikyE68t7UfcwsR44SPpk9Ht1yAcqFXRLd3vGZVqghm45-qzYWhZ9aOxvFfSCb4JO5E1DNFHZiJW3nzrXaUGIln-ES0nrefy25igMJpMWkUnY-rasmzy1ti_BvhOD_m9R6TKa23GoP5A-wtHCUPhMBNuYl-b3DduTRf8OipnmnSLWjJngb-3DJgLY1Vbry1eYGxry14Im9pNAeZO11hwOcEVJ7xheOlKHDyiZsDnpVdYZwJpzbNige1t2VmbxuxrGnyxYGrH22uCebIaFnyZRBQF53BTGww1QTy27J0K1UW1DoxsWLJgD-lCUUmWoXVw1ymgxbVS4MAYLxwV-J7j84Hq5HT22ccif6T02KEct8AZ9nDGmsVvzmA5D_z_VtUCzGW5fFCX8BbWTiDZfo3YRFb8sMMgPBFgaDwqTt8MXttek4eeBRvwRT0uxYeSzHuKtdD4BUHUOwkBDaKgkxfSRgaYzK2q_g_A1iJazUmmPlnHkUaMGweiOXOuwyU9DgCpJfvHbCRezAlVMQlWt4hFFSKypymhvV6ZBDirC5g3Ina2jBAf1B_yZZXjOt0f-4qpZ3r7CnA-7IFGRJjw9KpWkr78rs5vL8-H3oedHAk7qIi5OewBWVvFbawnH1vfKB4b94yHTCDFs2jTXFau--DlqwlwSupVVURPrr1NGPZFHQ_aK0iAzd3Wva67ThSoMSK3jbemssAhkBPL8G46typI-IQC9ocWmWtXZat0g1KO_vqQUf9L6DIC9zn_40CkzUQ77jyednccqUDDEtyQuKcMh_Pdm7V-Y99_9QMFXos618GllVp70YI_dQHPy6xzY4Tva-8GQDCLd_B0Mu9od2_dAft3UzWIBYdZu0kaNa8D-IyHO6Xdq7WQd6QDw2r9G87poXsXa7qIvuS3wrcmHN-fbC2ZbXwivCdv95MPm_dIILsCRYYU7uQr15CN2tPsXAzAbEgFmAt56HXXF5ZXutL2inhCJHpN9GPkqif6Q3oUcG4FslTsYYqka19Uyd5i5p7QYxiVpa6ftujab3_1LfUus1RmpCWL_d_0ICke2xtTJ_OJ83GC_rsx7LG7bjEr_O5zrL9Lf3KH_9DKgFo-HI8uyAX6CXkSh4S2Nhr20J_d_HgRYk42CY3d-3eLUhagZgeQxV1iKGlFdkOn5No9D-2N2qRJw-yYBBLO3Hi7Ub6ZCwKhlghOcgDtxxitasdP6sjxZ6zrcgkl-rrcEbKqx_SmQDU5NfoRQZBEoY-bJ5Xw32XmR0zONpGVWdOeCPYJf7TI4aKnbycY4YWoejOay3p5QAPVkAAMii_Vghc84JGIqFkOrLUP_dV8lorjy4F7f0p74UIhjnprIMriqnzu7ssTPL59Lk25Ns0QQsTudH6BSyf_0T8IlqwuEmK-3ZBId_-Iu_M43xr3-r4sIE03u8KiM_yznLrMEEUP3n78i-L2CoRXTU7cbJOJLTr97E0x17NTr1AG9Qg8KT4y1o8PiHzDgcGE0CuiojFg3vftAp-R1fKV3FAUqx89FHgQxfkuN1JD3bASA4BUeXn2n9uYr_2fiU3g_FPOskZ0qRNKyTsXAYqTIqs6eeMUOTuX5K3hVmzGiFkCmSRfultIqRamZd_xhilA5XtM4EjTOxFfzX7EmKzJnBGZbDwpqaLR7-FOXn-MwGFHYLbnB0iGxW5K1K1HyCexfAB2DU69BuFPqp31Pqp1CxvQsjNciGQsuEwXL2Fdx2Gn0EJQecFV7crFBXoh_QMDZSN9hXNukIm-mwlNjVOC3yE5d3Ur1NW_dsoT5auXSVKkaODg8E07ppuWXHjpAnMZ5OafAmVbtTSRTwBNgburKZlupYMyWFapu6DJFw_M2F-ud73kN8zWn_WsqLc8frHG1gO1DhFaWrV2ijTHGME4Uap4L7ZWHT03Ao2caXrHJn6nmwXEqm9czasEbIkjA9YlC87RE3R3h1gog5a1WdFVxmnjOyKkyJ570SUZjsHsNYNa-jl0D3UqHIdK65OZSCDBmoJrSjoJ1_Qhv0hIdjhqANosLmqtfuNSBpb5HcdO-C9LT8THHUMNhOz2Du9YHCzXZy6czFPw8BygFPunvFRZUGqps0JD43ZvY4E1hO0ipmvdaBQsGdeSXdua7vMjph4b2kWlcIzScR4njJEW2xnJfYRasL96y6FVpmkWn8JELemIrUvdiJh2BaMRNyLlQKt9b0wgRhovHBaEkZFnifCZQwMXM4X9THprv2p_yZ_ASCGcIUD3V5-3EU3zhBG35Nrgdt2pRBJSNZhCNzzp4LSy0sEQsNM56O-IsJmisUGZ22oZv0LqOWM-lePU9w8sTGQIZy8ji26KJMc1NzCmUhO78LaXh8po5H27GYNyEc-oOR3zXva2i6yadUJzB4wmVgClmeQkvhwRUeUnRCglPCMgPzdI9QvnqLMSrhx6eVsLmAvUE60VgD7jcVBGnja2iT4krnnQ2uosi1C7pQwcJpOmWdi9j3mZ4XvrnabttbZGScWNYNzqQeUYNrvJ7ImvhaYJeJquhS02kVcehGu_juxUvyHf1vfGlPCnjV_eBxS2Yr-eLa7Ev6fd0VUvkkQ91ftlLT17IpiUl04m8FTY2c_He8DSEmJmjbdr_1BPiHZd6FGDh3qb8XvHsEvFyWn8HqeOfVa3qR67RJvDjRv-IdByjo8a9UPmDeXSgVCwSFTE9p2JoUynDWn7NmJj4g2i5r63g6nkwnsy-FQ36RF0rvb9RxRy8ZDWDWwtbtkuhCmxCCFnP09DGwd5OlR1h_DwvOPe5nIK3AhftSRiKRJKoqejYahX5l8qCHgiqQIkes71QeT4neVIPs3ikziwFhtkpitTd2jcdk0-3czlCr0B58elp1WWjciBWixSCPOSvLLAUsjR_5XkBPTixVjc3NEK4fPxhCZjoDeedTXma806sX7cQRG-2ESEfh36Y-NfXM6ijL4tO2UBeIRYMAs65wxSphqPPtf9iOIwsytGpBSLF70tfjL_oVdZ_EgnMEKwSnobRxrnuOkBVc03m7nynAeJIGLi_eK6R1KaTjzA0bp1zQweWkhaelRxlvYcb9tW9y5c7yHCqn6WtknLSkv7gFDExIR7FJu7YvOXhyFDju3BcC2ZBGQGzpzUQDGeI8rw-KFWaAYyM-seaB_PlJtYpSOjHG70kZgVSX-VZco0I95KbC3LbQiDlRT7KprIUS7oA2YqI8oi0PpMg8e3Ep3XWuQ3QrGYCQq8yUGQvFhr353fCrmaOSGkWIh7K3rfCmDsaOb6qM3mBSNarMhUGsMXo1iU7VoCGr09xojHZVJkP_UtBiUeRRNQgI2se6ON_acsYabHpJtO8ARcHGtPEXg3I_ewHvtN3BLjXJ0Xv9dC6PTM0bvSpwlMC1p8UIrJUReMoSeAI-wfTelf4DSvWxwx4cj2teXzBsmsSxRGG6anJp4Pr9G-rSiAtHPy_hAJsvIoPUSSzUWIsz39DljMWO_frTyELyCPZKoCAeoo7xNv_gLUI5R96aokzP6rIPAAbYMfFpHt7quY_386i9VKdZ2ikrcZofpwwLXsgNGKamz-C09tEf39psutoH_ELxwbL2WWEgFWOagcWgIzJr01zt-A2Gmwl5Pubbl9ed3wPWyn7YBej5B9DOM8WNfG_WUGwIW6bgKjhPDq7a8cI0FDZWm2OB85dENFOm670gIQ45K8Bs2qK-ceeED88pJcITIsSu_is7_9spMZJZiPxWektzr5lerCtCZbb9MDV9ARdGJf3WSA68VDHVPQh7GNi9EhzisU_m2AOHL-yoR2WucAd-EYR7PSKyBsgrlKvtWC3xmqK7IqJQRt-_Px0dVo6mBd3gZA_xDF7Bmbak8Wjqkc5HSgUJsg8A81-YM-fEfAXJQ5eGejWRAzCDcJY5sUd-Q_7yodaB_I8NVu-6x8nY5pQsJfEdM2K9XiNJyy8TlAhHGyNRExa1_mhOu4SoisPdHSNHMtirQWGEXVGU9huTuPe98qr53oHlyKEg3jJK9Uy_7VjBesB8Mps4n8cVgCZACySQqYdQ7-O2Fi4YL9fzd1Uk4gTTb6B7chdCoqitaauo_sln_mbg9AA8fnHndWReJ_mXukbVKRvESR53oHRD0CSbWepmrxerzK54K_4sN2r5pStrM6FJdh559gPjhA64kQ2ovKTxuEYO6ZvuKpQCkFic4_HiuQV_ekQGYVo6KEoe1dbXUC9qpiYMYhafxTO8857a9HgCbbXKO6tEIuJrzUPiqmT7HonqoYh7py2qPY1TsNwUwUkqam2adUCnWDwZPrepWTZPjwAqZOxQgHnbDWXSgFnbX9DbgivPaibYAO-d4Cf9zr4vHpCImFPnV6C5kPVQQU7yg1lE4U_OgxhkEvA5tG3
+        id: rs_03ab818bb26b880c006a682c7416a88195b2a2760d94c668b8
+        summary: []
+        type: reasoning
+      - arguments: '{"order_id":"order-123"}'
+        call_id: call_dnTfpc9FMcWkrOOnldXHoIJK
+        id: fc_03ab818bb26b880c006a682c7cfba481958aa6fb1194fc2474
+        name: lookup_refund_policy
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: current_turn
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Look up the refund policy for an order.
+        name: lookup_refund_policy
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 122
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 809
+        output_tokens_details:
+          reasoning_tokens: 768
+        total_tokens: 931
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
