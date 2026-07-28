@@ -19,6 +19,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.profiles import ModelProfile
 
 from ._inline_snapshot import snapshot
 from .conftest import IsStr
@@ -163,7 +164,223 @@ def test_handle_text_deltas_with_think_tags():
     )
 
 
-def test_handle_tool_call_deltas():
+def test_handle_text_deltas_with_think_tags_split_across_chunks():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    thinking_tags = ModelProfile().thinking_tags
+    start_tag, end_tag = thinking_tags
+
+    events = list(
+        manager.handle_text_delta(vendor_part_id='content', content=start_tag[:1], thinking_tags=thinking_tags)
+    )
+    assert events == []
+
+    events = list(
+        manager.handle_text_delta(
+            vendor_part_id='content',
+            content=start_tag[1:] + '\nthinking content',
+            thinking_tags=thinking_tags,
+        )
+    )
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start'),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='\nthinking content', part_delta_kind='thinking'),
+                event_kind='part_delta',
+            ),
+        ]
+    )
+
+    events = list(
+        manager.handle_text_delta(
+            vendor_part_id='content',
+            content=end_tag + '\nNormal content.',
+            thinking_tags=thinking_tags,
+        )
+    )
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=1, part=TextPart(content='\nNormal content.', part_kind='text'), event_kind='part_start'
+            ),
+        ]
+    )
+
+    parts = manager.get_parts()
+    assert len(parts) == 2
+    assert isinstance(parts[0], ThinkingPart)
+    assert parts[0].content == '\nthinking content'
+    assert isinstance(parts[1], TextPart)
+    assert parts[1].content == '\nNormal content.'
+
+
+def test_handle_text_deltas_with_think_tags_single_chunk_with_trailing_text():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    thinking_tags = ModelProfile().thinking_tags
+    start_tag, end_tag = thinking_tags
+
+    events = list(
+        manager.handle_text_delta(
+            vendor_part_id='content',
+            content=f'{start_tag}\nthinking content{end_tag}\nNormal content.',
+            thinking_tags=thinking_tags,
+        )
+    )
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start'),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='\nthinking content', part_delta_kind='thinking'),
+                event_kind='part_delta',
+            ),
+            PartStartEvent(
+                index=1, part=TextPart(content='\nNormal content.', part_kind='text'), event_kind='part_start'
+            ),
+        ]
+    )
+
+    parts = manager.get_parts()
+    assert len(parts) == 2
+    assert isinstance(parts[0], ThinkingPart)
+    assert parts[0].content == '\nthinking content'
+    assert isinstance(parts[1], TextPart)
+    assert parts[1].content == '\nNormal content.'
+
+
+def test_flush_thinking_tag_buffer_emits_partial_start_tag_as_text():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    thinking_tags = ModelProfile().thinking_tags
+    start_tag, _ = thinking_tags
+
+    list(
+        manager.handle_text_delta(
+            vendor_part_id='content',
+            content='Hello ' + start_tag[:5],
+            thinking_tags=thinking_tags,
+        )
+    )
+    events = list(manager.flush_thinking_tag_buffer(vendor_part_id='content', thinking_tags=thinking_tags))
+    assert events == snapshot(
+        [
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(content_delta='<thin', part_delta_kind='text'),
+                event_kind='part_delta',
+            ),
+        ]
+    )
+    assert manager.get_parts() == snapshot([TextPart(content='Hello <thin', part_kind='text')])
+
+
+def test_flush_thinking_tag_buffer_emits_partial_end_tag_as_thinking():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    thinking_tags = ModelProfile().thinking_tags
+    start_tag, end_tag = thinking_tags
+
+    list(
+        manager.handle_text_delta(
+            vendor_part_id='content',
+            content=f'{start_tag}\nthinking',
+            thinking_tags=thinking_tags,
+        )
+    )
+    list(
+        manager.handle_text_delta(
+            vendor_part_id='content',
+            content=end_tag[:5],
+            thinking_tags=thinking_tags,
+        )
+    )
+    events = list(manager.flush_thinking_tag_buffer(vendor_part_id='content', thinking_tags=thinking_tags))
+    assert events == snapshot(
+        [
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='</thi', part_delta_kind='thinking'),
+                event_kind='part_delta',
+            ),
+        ]
+    )
+    assert manager.get_parts() == snapshot([ThinkingPart(content='\nthinking</thi', part_kind='thinking')])
+
+
+def test_handle_text_deltas_with_think_tags_text_before_start():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    thinking_tags = ModelProfile().thinking_tags
+    start_tag, end_tag = thinking_tags
+
+    events = list(
+        manager.handle_text_delta(
+            vendor_part_id='content',
+            content=f'pre-{start_tag}\nthinking{end_tag}',
+            thinking_tags=thinking_tags,
+        )
+    )
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='pre-', part_kind='text'), event_kind='part_start'),
+            PartStartEvent(index=1, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start'),
+            PartDeltaEvent(
+                index=1,
+                delta=ThinkingPartDelta(content_delta='\nthinking', part_delta_kind='thinking'),
+                event_kind='part_delta',
+            ),
+        ]
+    )
+
+
+def test_handle_text_deltas_with_think_tags_partial_end_tag_overlap_only():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    thinking_tags = ModelProfile().thinking_tags
+    start_tag, end_tag = thinking_tags
+
+    list(
+        manager.handle_text_delta(
+            vendor_part_id='content',
+            content=f'{start_tag}\nthinking',
+            thinking_tags=thinking_tags,
+        )
+    )
+    events = list(
+        manager.handle_text_delta(
+            vendor_part_id='content',
+            content=end_tag[:1],
+            thinking_tags=thinking_tags,
+        )
+    )
+    assert events == []
+
+
+def test_handle_text_deltas_with_think_tags_vendor_part_id_none():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    thinking_tags = ModelProfile().thinking_tags
+    start_tag, end_tag = thinking_tags
+
+    list(
+        manager.handle_text_delta(
+            vendor_part_id=None,
+            content=f'{start_tag}\nthinking{end_tag}\npost',
+            thinking_tags=thinking_tags,
+        )
+    )
+    events = list(manager.flush_thinking_tag_buffer(vendor_part_id=None, thinking_tags=thinking_tags))
+    assert events == []
+    assert manager.get_parts() == snapshot(
+        [
+            ThinkingPart(content='\nthinking', part_kind='thinking'),
+            TextPart(content='\npost', part_kind='text'),
+        ]
+    )
+
+
+def test_append_embedded_thinking_content_errors_without_thinking_part():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+
+    with pytest.raises(UnexpectedModelBehavior, match='Cannot append embedded thinking content'):
+        list(manager._append_embedded_thinking_content('content', 'thinking', None, None))
+
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name=None, args='{"arg1":', tool_call_id=None)

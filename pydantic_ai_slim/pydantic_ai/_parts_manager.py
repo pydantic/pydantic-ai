@@ -44,6 +44,16 @@ VendorId = Hashable
 Type alias for a vendor identifier, which can be any hashable type (e.g., a string, UUID, etc.)
 """
 
+
+def _suffix_prefix_overlap(text: str, tag: str) -> int:
+    """Return the length of the longest suffix of `text` that is a prefix of `tag`."""
+    max_overlap = min(len(text), len(tag) - 1)
+    for overlap in range(max_overlap, 0, -1):
+        if tag.startswith(text[-overlap:]):
+            return overlap
+    return 0
+
+
 ManagedPart = ModelResponsePart | ToolCallPartDelta
 """
 A union of types that are managed by the ModelResponsePartsManager.
@@ -74,6 +84,8 @@ class ModelResponsePartsManager:
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
     _tool_kind_by_name: dict[str, ToolPartKind] = field(default_factory=dict[str, ToolPartKind], init=False, repr=False)
     """Cached `{tool_name: tool_kind}` built from `function_tools` at construction time."""
+    _thinking_tag_buffer: str = field(default='', init=False, repr=False)
+    """Buffered suffix that may be the start of a thinking tag split across stream chunks."""
 
     def __post_init__(self) -> None:
         self._tool_kind_by_name = {
@@ -153,36 +165,49 @@ class ModelResponsePartsManager:
         Raises:
             UnexpectedModelBehavior: If attempting to apply text content to a part that is not a TextPart.
         """
+        if thinking_tags is not None:
+            yield from self._handle_text_delta_with_thinking_tags(
+                vendor_part_id=vendor_part_id,
+                content=content,
+                thinking_tags=thinking_tags,
+                id=id,
+                provider_name=provider_name,
+                provider_details=provider_details,
+                ignore_leading_whitespace=ignore_leading_whitespace,
+            )
+            return
+
+        yield from self._handle_plain_text_delta(
+            vendor_part_id=vendor_part_id,
+            content=content,
+            id=id,
+            provider_name=provider_name,
+            provider_details=provider_details,
+            ignore_leading_whitespace=ignore_leading_whitespace,
+        )
+
+    def _handle_plain_text_delta(
+        self,
+        *,
+        vendor_part_id: VendorId | None,
+        content: str,
+        id: str | None = None,
+        provider_name: str | None = None,
+        provider_details: dict[str, Any] | None = None,
+        ignore_leading_whitespace: bool = False,
+    ) -> Iterator[ModelResponseStreamEvent]:
         existing_text_part_and_index: tuple[TextPart, int] | None = None
 
         if vendor_part_id is None:
-            # If the vendor_part_id is None, check if the latest part is a TextPart to update
             existing_text_part_and_index = self._latest_part_if_of_type(TextPart)
         else:
-            # Otherwise, attempt to look up an existing TextPart by vendor_part_id
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)
             if part_index is not None:
                 existing_part = self._parts[part_index]
-
-                if thinking_tags and isinstance(existing_part, ThinkingPart):
-                    # We may be building a thinking part instead of a text part if we had previously seen a thinking tag
-                    if content == thinking_tags[1]:
-                        # When we see the thinking end tag, we're done with the thinking part and the next text delta will need a new part
-                        self._handle_embedded_thinking_end(vendor_part_id)
-                        return
-                    yield from self._handle_embedded_thinking_content(
-                        existing_part, part_index, content, provider_name, provider_details
-                    )
-                    return
-                elif isinstance(existing_part, TextPart):
+                if isinstance(existing_part, TextPart):
                     existing_text_part_and_index = existing_part, part_index
                 else:
                     raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
-
-        if thinking_tags and content == thinking_tags[0]:
-            # When we see a thinking start tag (which is a single token), we'll build a new thinking part instead
-            yield from self._handle_embedded_thinking_start(vendor_part_id, provider_name, provider_details)
-            return
 
         if existing_text_part_and_index is None:
             # This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
@@ -190,12 +215,10 @@ class ModelResponsePartsManager:
             if ignore_leading_whitespace and (len(content) == 0 or content.isspace()):
                 return
 
-            # There is no existing text part that should be updated, so create a new one
             part = TextPart(content=content, id=id, provider_name=provider_name, provider_details=provider_details)
             new_part_index = self._append_part(part, vendor_part_id)
             yield PartStartEvent(index=new_part_index, part=part)
         else:
-            # Update the existing TextPart with the new content delta
             existing_text_part, part_index = existing_text_part_and_index
 
             part_delta = TextPartDelta(
@@ -205,6 +228,145 @@ class ModelResponsePartsManager:
             )
             self._parts[part_index] = part_delta.apply(existing_text_part)
             yield PartDeltaEvent(index=part_index, delta=part_delta)
+
+    def _handle_text_delta_with_thinking_tags(
+        self,
+        *,
+        vendor_part_id: VendorId | None,
+        content: str,
+        thinking_tags: tuple[str, str],
+        id: str | None = None,
+        provider_name: str | None = None,
+        provider_details: dict[str, Any] | None = None,
+        ignore_leading_whitespace: bool = False,
+    ) -> Iterator[ModelResponseStreamEvent]:
+        start_tag, end_tag = thinking_tags
+        data = self._thinking_tag_buffer + content
+        self._thinking_tag_buffer = ''
+
+        in_thinking = self._is_in_embedded_thinking(vendor_part_id)
+        index = 0
+        while index < len(data):
+            if not in_thinking:
+                start_index = data.find(start_tag, index)
+                if start_index == -1:
+                    remaining = data[index:]
+                    overlap = _suffix_prefix_overlap(remaining, start_tag)
+                    if overlap:
+                        text_content = remaining[:-overlap]
+                        self._thinking_tag_buffer = remaining[-overlap:]
+                    else:
+                        text_content = remaining
+                    if text_content:
+                        yield from self._handle_plain_text_delta(
+                            vendor_part_id=vendor_part_id,
+                            content=text_content,
+                            id=id,
+                            provider_name=provider_name,
+                            provider_details=provider_details,
+                            ignore_leading_whitespace=ignore_leading_whitespace,
+                        )
+                    break
+
+                if start_index > index:
+                    yield from self._handle_plain_text_delta(
+                        vendor_part_id=vendor_part_id,
+                        content=data[index:start_index],
+                        id=id,
+                        provider_name=provider_name,
+                        provider_details=provider_details,
+                        ignore_leading_whitespace=ignore_leading_whitespace,
+                    )
+
+                yield from self._handle_embedded_thinking_start(vendor_part_id, provider_name, provider_details)
+                in_thinking = True
+                index = start_index + len(start_tag)
+            else:
+                end_index = data.find(end_tag, index)
+                if end_index == -1:
+                    remaining = data[index:]
+                    overlap = _suffix_prefix_overlap(remaining, end_tag)
+                    if overlap:
+                        thinking_content = remaining[:-overlap]
+                        self._thinking_tag_buffer = remaining[-overlap:]
+                    else:
+                        thinking_content = remaining
+                    if thinking_content:
+                        yield from self._append_embedded_thinking_content(
+                            vendor_part_id, thinking_content, provider_name, provider_details
+                        )
+                    break
+
+                if end_index > index:
+                    yield from self._append_embedded_thinking_content(
+                        vendor_part_id, data[index:end_index], provider_name, provider_details
+                    )
+
+                self._handle_embedded_thinking_end(vendor_part_id)
+                in_thinking = False
+                index = end_index + len(end_tag)
+
+    def flush_thinking_tag_buffer(
+        self,
+        *,
+        vendor_part_id: VendorId | None,
+        thinking_tags: tuple[str, str],
+        id: str | None = None,
+        provider_name: str | None = None,
+        provider_details: dict[str, Any] | None = None,
+        ignore_leading_whitespace: bool = False,
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Flush any buffered partial thinking tag content at the end of a stream."""
+        if not self._thinking_tag_buffer:
+            return
+        buffered = self._thinking_tag_buffer
+        self._thinking_tag_buffer = ''
+        if self._is_in_embedded_thinking(vendor_part_id):
+            yield from self._append_embedded_thinking_content(vendor_part_id, buffered, provider_name, provider_details)
+        else:
+            yield from self._handle_plain_text_delta(
+                vendor_part_id=vendor_part_id,
+                content=buffered,
+                id=id,
+                provider_name=provider_name,
+                provider_details=provider_details,
+                ignore_leading_whitespace=ignore_leading_whitespace,
+            )
+
+    def _is_in_embedded_thinking(self, vendor_part_id: VendorId | None) -> bool:
+        if vendor_part_id is None:
+            latest = self._latest_part_if_of_type(ThinkingPart)
+            return latest is not None
+        part_index = self._vendor_id_to_part_index.get(vendor_part_id)
+        if part_index is None:
+            return False
+        return isinstance(self._parts[part_index], ThinkingPart)
+
+    def _append_embedded_thinking_content(
+        self,
+        vendor_part_id: VendorId | None,
+        content: str,
+        provider_name: str | None,
+        provider_details: dict[str, Any] | None,
+    ) -> Iterator[ModelResponseStreamEvent]:
+        if vendor_part_id is None:
+            existing_thinking_part_and_index = self._latest_part_if_of_type(ThinkingPart)
+        else:
+            part_index = self._vendor_id_to_part_index.get(vendor_part_id)
+            if part_index is None:
+                raise UnexpectedModelBehavior('Cannot append embedded thinking content without a ThinkingPart')
+            part = self._parts[part_index]
+            if not isinstance(part, ThinkingPart):
+                raise UnexpectedModelBehavior('Cannot append embedded thinking content without a ThinkingPart')
+            existing_thinking_part_and_index = part, part_index
+
+        if existing_thinking_part_and_index is None:
+            raise UnexpectedModelBehavior('Cannot append embedded thinking content without a ThinkingPart')
+
+        existing_part, part_index = existing_thinking_part_and_index
+        yield from self._handle_embedded_thinking_content(
+            existing_part, part_index, content, provider_name, provider_details
+        )
 
     def handle_thinking_delta(
         self,
