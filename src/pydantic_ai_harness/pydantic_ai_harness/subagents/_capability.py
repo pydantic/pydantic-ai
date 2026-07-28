@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.agent import Agent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler
+from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
@@ -21,6 +22,7 @@ from pydantic_ai_harness.subagents._disk import (
     resolve_folders,
 )
 from pydantic_ai_harness.subagents._effort import clamp_effort
+from pydantic_ai_harness.subagents._models import ModelOption, as_option, model_label, validate_restriction
 from pydantic_ai_harness.subagents._toolset import SubAgent, SubAgentToolset
 
 if TYPE_CHECKING:
@@ -29,6 +31,12 @@ if TYPE_CHECKING:
 ToolResolver = Callable[[str], 'Sequence[AgentToolset[object]] | None']
 """Maps one tool name from a disk definition's `tools` list to the toolsets that
 provide it, or `None` when the name is unknown (the loader warns and skips it)."""
+
+
+def _option_line(key: str, option: ModelOption) -> str:
+    """One model-menu line for the prompt listing: the key, its model, its hint."""
+    label = f'- {key} ({model_label(option.model)})'
+    return f'{label}: {option.description}' if option.description else label
 
 
 @dataclass
@@ -46,6 +54,11 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     steering message, and optional `name`/`description` overrides). A delegate's
     name is its `SubAgent.name`, or the agent's own `name` when unset; two
     explicitly-passed delegates resolving to the same name is an error.
+
+    Delegations run on the sub-agent's own model unless a `models` menu is
+    configured, in which case `delegate_task` also takes a `model` argument naming
+    one of the menu's keys, so the parent routes each task to the model that fits
+    it. A `SubAgent` can restrict which keys it accepts (`SubAgent.models`).
 
     Sub-agents are also loaded from disk by default: each markdown agent definition
     under `./.agents/agents/` and `~/.agents/agents/` (or the `.claude/` equivalent)
@@ -82,6 +95,26 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     """The sub-agents to expose, each a `SubAgent` pairing an agent with its
     per-delegate run controls. See `SubAgent`. These take precedence over any
     disk-loaded agents of the same name."""
+
+    models: Mapping[str, Model | KnownModelName | str | ModelOption] = field(
+        default_factory=dict[str, 'Model | KnownModelName | str | ModelOption']
+    )
+    """A menu of models the parent can route an individual delegation to, keyed by
+    the name the parent uses to pick one. Off by default: with no menu the delegate
+    tool has no `model` argument and every delegation runs the way it always did.
+
+    Each value is a model reference, or a `ModelOption` carrying a routing hint and
+    its own `ModelSettings` (so one key can mean "same model, more thinking"). The
+    keys and their descriptions are listed in the system prompt, so name them for
+    the job -- `'fast'`, `'deep'` -- rather than for the vendor. `SubAgent.models`
+    restricts which of them a given delegate accepts.
+
+    ```python
+    from pydantic_ai_harness.subagents import SubAgents
+
+    SubAgents(models={'fast': 'anthropic:claude-haiku-4-5', 'deep': 'anthropic:claude-opus-4-7'})
+    ```
+    """
 
     agent_folders: str | Sequence[Path] | None = 'agents'
     """Where to load markdown agent definitions from, in addition to `agents`.
@@ -153,6 +186,10 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     """Sub-agents keyed by resolved name, built in `__post_init__` and passed to
     the toolset. Insertion order matches `agents` for a stable prompt listing."""
 
+    _menu: dict[str, ModelOption] = field(default_factory=dict[str, ModelOption], init=False, repr=False, compare=False)
+    """`models` normalized to `ModelOption` entries, built in `__post_init__`.
+    Insertion order matches `models` for a stable prompt listing and enum."""
+
     _call_counts: dict[str, dict[str, int]] = field(
         default_factory=dict[str, 'dict[str, int]'], init=False, repr=False, compare=False
     )
@@ -187,6 +224,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
                 continue
             by_name[name] = sub_agent
         self._by_name = by_name
+        self._menu = {key: as_option(value) for key, value in self.models.items()}
+        for name, sub_agent in by_name.items():
+            validate_restriction(name, sub_agent.models, self._menu)
 
     def _load_disk_agents(self) -> list[SubAgent[AgentDepsT]]:
         """Build a `SubAgent` for every markdown definition in `agent_folders`.
@@ -254,18 +294,27 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             self._call_counts.pop(ctx.run_id or '', None)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        """Static, cache-stable listing of the available sub-agents."""
+        """Static, cache-stable listing of the available sub-agents and models."""
         if not self._by_name:
             return None
         lines: list[str] = []
         for name, sub_agent in self._by_name.items():
             description = sub_agent.description or sub_agent.agent.description
-            lines.append(f'- {name}: {description}' if description else f'- {name}')
+            restriction = f' (models: {", ".join(sub_agent.models)})' if sub_agent.models else ''
+            lines.append(f'- {name}: {description}{restriction}' if description else f'- {name}{restriction}')
         listing = '\n'.join(lines)
-        return (
+        instructions = (
             f'You can delegate self-contained tasks to these sub-agents using the `{self.tool_name}` '
             f'tool. Each runs in its own fresh context and does not see this conversation, so pass '
             f'everything it needs.\n\nAvailable sub-agents:\n{listing}'
+        )
+        if not self._menu:
+            return instructions
+        options = '\n'.join(_option_line(key, option) for key, option in self._menu.items())
+        return (
+            f'{instructions}\n\nPass one of these keys as `model` to run a sub-agent on it, matching the '
+            f"option to how hard the task is. Omit `model` to use the sub-agent's default. A sub-agent "
+            f'listed with its own `(models: ...)` accepts only those.\n\nAvailable models:\n{options}'
         )
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
@@ -282,6 +331,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             tool_retries=self.tool_retries,
             contain_errors=self.contain_errors,
             call_counts=self._call_counts,
+            models=self._menu,
         )
 
     @classmethod

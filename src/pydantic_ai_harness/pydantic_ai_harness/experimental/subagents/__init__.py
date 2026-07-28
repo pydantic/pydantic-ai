@@ -8,6 +8,7 @@ from pydantic_ai_harness.experimental._warn import warn_moved
 from pydantic_ai_harness.subagents import (
     MINIMUM_EFFORT_FLOOR,
     AgentOverride,
+    ModelOption,
     SubAgent,
     SubAgents,
     SubAgentToolset,
@@ -20,6 +21,7 @@ warn_moved('subagents', 'subagents')
 __all__ = [
     'MINIMUM_EFFORT_FLOOR',
     'AgentOverride',
+    'ModelOption',
     'SubAgent',
     'SubAgentToolset',
     'SubAgents',

@@ -48,6 +48,7 @@ A delegate's name -- how the parent model refers to it, and how it is listed in 
 - The sub-agent runs with its own message history, so `task` must be self-contained.
 - An unknown `agent_name` raises `ModelRetry`, so the model can correct itself.
 - The result returned to the parent is `str(result.output)`.
+- With a `models` menu configured, the tool takes an extra `model` argument (see below).
 
 ## Deps, usage, tools, and capabilities
 
@@ -84,11 +85,50 @@ orchestrator = Agent(
 
 | Field | Effect |
 |---|---|
+| `models` | Which keys of the `SubAgents` model menu this delegate may run on, and which one it runs on by default: the first key listed. See "Per-delegation model selection" below. |
 | `usage_limits` | A request/token budget for one delegation. The child runs with its own usage accounting, so the budget counts only that child's requests and tokens (not the parent's or siblings'), even when `forward_usage=True`. The tradeoff: that child's tokens no longer aggregate into the parent's `usage`. Reaching the budget is a soft outcome (see below), not a run-stopping `UsageLimitExceeded`. |
 | `timeout_seconds` | A wall-clock budget for one delegation. When the child exceeds it, its run is cancelled and the parent gets a soft steering message instead of hanging on the child. The cancelled child's `event_stream_handler` (if any) stops receiving events without a terminal event. |
 | `max_calls` | The maximum number of delegations to this sub-agent per parent run. Once reached, further delegations return a soft budget-exhausted message without running the child. Counts are scoped to one `Agent.run` (a `run_id`) and cleared when it ends, so each parent run and each level of a nested tree budgets independently. |
 | `on_failure` | A steering message returned to the parent for any soft degradation of this delegate, in place of the built-in default. Setting it also makes child failures soft (see below). |
 | `contain_errors` | Whether an unexpected crash in this delegate is caught and returned to the parent as a bounded `ModelRetry` instead of aborting the parent run (see below). Unset inherits the `SubAgents(contain_errors=...)` default (off). |
+
+## Per-delegation model selection
+
+The orchestrator knows how hard a task is at the moment it writes the brief, so it is the right place to decide which model runs it. Configure a `models` menu and the delegate tool gains a `model` argument that names one of its keys.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents
+
+reviewer = Agent('anthropic:claude-sonnet-4-6', name='reviewer', description='Reviews a diff')
+linter = Agent('anthropic:claude-sonnet-4-6', name='linter', description='Runs the linter and reports failures')
+
+orchestrator = Agent(
+    'anthropic:claude-opus-4-7',
+    capabilities=[
+        SubAgents(
+            agents=[SubAgent(reviewer), SubAgent(linter, models=['fast'])],
+            models={
+                'fast': 'anthropic:claude-haiku-4-5',
+                'standard': 'anthropic:claude-sonnet-4-6',
+                'deep': ModelOption(
+                    'anthropic:claude-opus-4-7',
+                    description='hard reasoning, multi-file changes',
+                    settings=ModelSettings(thinking='xhigh'),
+                ),
+            },
+        )
+    ],
+)
+```
+
+- **Off by default.** With no `models` menu the `model` argument is not in the tool schema at all, and every delegation runs exactly as it did before.
+- **The keys are the interface.** They are listed in the system prompt with each entry's model and description, and the tool schema offers them as an enum, so the model picks from the menu instead of inventing a model name. Name them for the job (`'fast'`, `'deep'`), not for the vendor.
+- **An entry is a model or a `ModelOption`.** `ModelOption(model, description=..., settings=...)` adds a routing hint and per-option `ModelSettings`, so one key can mean "same model, more thinking". Those settings merge over the sub-agent's own `model_settings`, which keeps the parts the option does not set.
+- **Resolution order.** The key the parent passed, else the delegate's first allowed key (see below), else the delegate's own model, else the parent run's model.
+- **A delegate can be restricted.** `SubAgent(linter, models=['fast'])` pins that delegate to `fast`: the first listed key is what it runs on when the parent passes no `model`, and the others are refused with a `ModelRetry`. The restriction is rendered in the prompt listing (`- linter: Runs the linter (models: fast)`). Restricting to a key the menu does not define is a `ValueError` at construction.
+- **A rejected key costs nothing.** An unknown or unavailable key comes back as a `ModelRetry` listing the valid options, before the delegate's `max_calls` budget is charged.
 
 ## Failure handling
 
@@ -182,6 +222,7 @@ When the same name appears in more than one source, the higher-precedence one wi
 ```python
 SubAgents(
     agents=(),             # Sequence[SubAgent[AgentDepsT]] -- each pairs an agent with its run controls
+    models={},             # Mapping[str, Model | str | ModelOption] -- per-delegation model menu (off when empty)
     agent_folders='agents',# folder-name str (convention) | Sequence[Path] | None (disable)
     agent_overrides={},    # Mapping[str, AgentOverride] -- per-disk-agent model/effort override
     tool_resolver=None,    # Callable[[str], Sequence[AgentToolset[object]] | None] -- disk-agent tool mapping
@@ -200,6 +241,7 @@ SubAgent(
     agent,                 # AbstractAgent[AgentDepsT, Any] -- the child agent to run
     name=None,             # delegate name; defaults to the agent's own `name`
     description=None,      # prompt-listing description; defaults to the agent's own `description`
+    models=None,           # Sequence[str] -- menu keys this delegate may run on; the first is its default
     usage_limits=None,     # per-delegation request/token budget (isolated accounting)
     timeout_seconds=None,  # per-delegation wall-clock budget
     max_calls=None,        # max delegations to this sub-agent per parent run

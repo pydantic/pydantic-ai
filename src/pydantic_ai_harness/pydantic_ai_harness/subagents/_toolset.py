@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Generic
 
 from pydantic_ai.agent import AbstractAgent, EventStreamHandler
@@ -21,7 +21,9 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 # Private import: pydantic-ai has no public way to tell capability-contributed
@@ -29,7 +31,13 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import UsageLimits
 
+from pydantic_ai_harness.subagents._models import ModelOption, validate_restriction
+
 logger = logging.getLogger(__name__)
+
+_MODEL_ARG = 'model'
+"""Name of the delegate tool's model-selection argument, shared by the function
+signature and the schema rewrite that shapes it to the configured menu."""
 
 # Signals that must always reach the parent run, even when a delegate has
 # `contain_errors` on. Containing the first five would break the agent graph
@@ -70,6 +78,14 @@ class SubAgent(Generic[AgentDepsT]):
     description: str | None = None
     """Description for the system-prompt listing. Defaults to the agent's own
     `description` when unset; a delegate with neither is listed by name alone."""
+
+    models: Sequence[str] | None = None
+    """Which of `SubAgents.models` this delegate may run on, as menu keys, and
+    which one it runs on by default: the first key listed. Leave it unset to let
+    the parent pick any configured option and to fall back to the delegate's own
+    model when it picks none. Set it to pin a delegate to one option
+    (`models=['fast']`) or to bound an expensive delegate to a subset. Naming a key
+    the menu does not define is an error."""
 
     usage_limits: UsageLimits | None = None
     """Request/token budget for one delegation. When set, the child runs with
@@ -137,6 +153,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     inherited when enabled; any `shared_capabilities` are applied to every
     sub-agent run; and sub-agent events are streamed to `event_stream_handler`
     when one is set. Per-delegate run controls come from each `SubAgent`.
+
+    When a `models` menu is configured, the delegate tool takes an extra `model`
+    argument carrying a menu key, so the parent routes each delegation to the
+    model that fits the task. Without a menu the argument is not offered at all.
     """
 
     def __init__(
@@ -151,6 +171,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         tool_retries: int | None,
         contain_errors: bool,
         call_counts: dict[str, dict[str, int]],
+        models: Mapping[str, ModelOption] | None = None,
     ) -> None:
         super().__init__()
         self._agents: dict[str, SubAgent[AgentDepsT]] = dict(agents)
@@ -160,10 +181,38 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         self._event_stream_handler = event_stream_handler
         self._tool_name = tool_name
         self._contain_errors = contain_errors
+        self._models: dict[str, ModelOption] = dict(models or {})
+        for name, sub_agent in self._agents.items():
+            validate_restriction(name, sub_agent.models, self._models)
         # Run-scoped delegation counts, keyed by run_id then sub-agent name.
         # Shared with the capability, which clears each run's entry in wrap_run.
         self._call_counts = call_counts
-        self.add_function(self.delegate_task, name=tool_name, retries=tool_retries)
+        self.add_function(self.delegate_task, name=tool_name, retries=tool_retries, prepare=self._prepare_delegate)
+
+    def _prepare_delegate(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
+        """Shape the delegate tool's `model` argument to the configured menu.
+
+        With no menu the argument is dropped from the schema, so a capability that
+        does not opt in exposes exactly the tool it did before. With a menu the
+        argument becomes an enum of its keys, so the model picks from the offered
+        options rather than inventing a model name. The result depends only on
+        static configuration, which keeps the tool schema cache-stable.
+        """
+        schema: ObjectJsonSchema = {**tool_def.parameters_json_schema}
+        properties: dict[str, object] = {**schema.get('properties', {})}
+        if self._models:
+            properties[_MODEL_ARG] = {
+                'type': 'string',
+                'enum': list(self._models),
+                'description': (
+                    'Which model to run the sub-agent on, as one of the keys listed in the instructions. '
+                    "Omit it to use the sub-agent's default model."
+                ),
+            }
+        else:
+            properties.pop(_MODEL_ARG, None)
+        schema['properties'] = properties
+        return replace(tool_def, parameters_json_schema=schema)
 
     def _inherited_toolsets(self, ctx: RunContext[AgentDepsT]) -> list[AbstractToolset[AgentDepsT]] | None:
         """The parent agent's own toolsets, excluding capability-contributed ones.
@@ -202,7 +251,31 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         counts[agent_name] = counts.get(agent_name, 0) + 1
         return counts[agent_name] > max_calls
 
-    async def delegate_task(self, ctx: RunContext[AgentDepsT], agent_name: str, task: str) -> str:
+    def _resolve_model(self, agent_name: str, sub_agent: SubAgent[AgentDepsT], key: str | None) -> ModelOption | None:
+        """The menu option one delegation runs on, or `None` to leave the model as it was.
+
+        An unset `key` falls back to the delegate's own first allowed option, and
+        to no option at all when the delegate allows the whole menu.
+
+        Raises:
+            ModelRetry: the key is not on the menu, or not one this delegate allows.
+        """
+        allowed = sub_agent.models
+        if key is None:
+            return self._models[allowed[0]] if allowed else None
+        option = self._models.get(key)
+        if option is None:
+            available = ', '.join(self._models) or '(none configured)'
+            raise ModelRetry(f'Unknown model {key!r}. Available models: {available}.')
+        if allowed is not None and key not in allowed:
+            raise ModelRetry(
+                f'Sub-agent {agent_name!r} cannot run on model {key!r}. Available models for it: {", ".join(allowed)}.'
+            )
+        return option
+
+    async def delegate_task(
+        self, ctx: RunContext[AgentDepsT], agent_name: str, task: str, model: str | None = None
+    ) -> str:
         """Delegate a self-contained task to a named sub-agent and return its result.
 
         The sub-agent runs in its own fresh context and does not see this
@@ -213,11 +286,17 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             agent_name: Name of the sub-agent to run. Must be one of the agents
                 listed in the instructions.
             task: The complete, self-contained instruction for the sub-agent.
+            model: Which model to run the sub-agent on, as one of the model keys
+                listed in the instructions. Omit it to use the sub-agent's default
+                model. Only offered when a model menu is configured.
         """
         sub_agent = self._agents.get(agent_name)
         if sub_agent is None:
             available = ', '.join(sorted(self._agents))
             raise ModelRetry(f'Unknown sub-agent {agent_name!r}. Available sub-agents: {available}.')
+
+        # Resolved before the call budget is charged, so a bad model key costs nothing.
+        option = self._resolve_model(agent_name, sub_agent, model)
 
         if sub_agent.max_calls is not None and self._budget_exhausted(ctx, agent_name, sub_agent.max_calls):
             return self._steer(
@@ -240,13 +319,22 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             usage = ctx.usage if self._forward_usage else None
             usage_limits = None
 
-        # A sub-agent with no model of its own (e.g. one loaded from disk) inherits
-        # the parent run's model; one that brought its own keeps it.
-        model = None if sub_agent.agent.model is not None else ctx.model
+        # A selected menu option decides the model and how it runs. Without one, a
+        # sub-agent with no model of its own (e.g. one loaded from disk) inherits the
+        # parent run's model, and one that brought its own keeps it.
+        run_model: Model | KnownModelName | str | None
+        settings: ModelSettings | None
+        if option is not None:
+            run_model = option.model
+            settings = option.settings
+        else:
+            run_model = None if sub_agent.agent.model is not None else ctx.model
+            settings = None
         run = sub_agent.agent.run(
             task,
             deps=ctx.deps,
-            model=model,
+            model=run_model,
+            model_settings=settings,
             usage=usage,
             usage_limits=usage_limits,
             toolsets=toolsets,
