@@ -5639,7 +5639,8 @@ def test_openai_normalize_tool_search_args_raises_on_unrecognized_shape() -> Non
 # has any tool search active", not "strategy is custom".
 
 
-async def test_anthropic_promotes_local_search_history_with_default_native_strategy() -> None:
+@pytest.mark.parametrize('model_name', ['claude-sonnet-4-6', 'claude-opus-4-8'])
+async def test_anthropic_promotes_local_search_history_with_default_native_strategy(model_name: str) -> None:
     """Local-shape `ToolSearch*Part` from a prior cross-provider turn must render
     into Anthropic's native tool_search wire when the current turn is the default
     server-executed strategy (`ToolSearchTool()` / `strategy=None`).
@@ -5651,15 +5652,13 @@ async def test_anthropic_promotes_local_search_history_with_default_native_strat
     discovered tools' schemas from `defer_loading=true` once it sees the
     `tool_reference` block.
 
-    Currently fails because `_build_custom_tool_search_replay_blocks` is gated on
-    `strategy='custom'`, so the default-strategy case falls through and the return
-    is rendered as a plain `tool_result` carrying stringified content — the
-    discovered tools stay hidden and the model has to re-search.
+    The model matrix covers both Anthropic replay tiers: native tool search without
+    mid-conversation tool deltas, and the newer `tool_addition` path.
     """
     pytest.importorskip('anthropic')
 
     model = AnthropicModel(
-        'claude-sonnet-4-6',
+        model_name,
         provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(())),
     )
 
@@ -5679,10 +5678,8 @@ async def test_anthropic_promotes_local_search_history_with_default_native_strat
             ],
         ),
     ]
-    # Default native strategy (NOT 'custom') — currently the gate that activates the
-    # tool_reference replay re-formatting only fires for `strategy='custom'`. The
-    # discovered tool ships on the wire with `defer_loading=True`; the replay
-    # reference unlocks its schema server-side.
+    # Default native strategy (NOT 'custom'). The discovered tool ships on the wire
+    # with `defer_loading=True`; the replay reference unlocks its schema server-side.
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='get_weather', defer_loading=True)],
         native_tools=[ToolSearchTool()],
@@ -5752,7 +5749,8 @@ async def test_anthropic_promotes_local_search_history_with_named_native_strateg
     assert tool_result['content'] == [{'type': 'tool_reference', 'tool_name': 'calculate'}]
 
 
-async def test_openai_promotes_local_search_history_with_default_native_strategy() -> None:
+@pytest.mark.parametrize('model_name', ['gpt-5.6', 'gpt-5'])
+async def test_openai_promotes_local_search_history_with_default_native_strategy(model_name: str) -> None:
     """Local-shape `ToolSearch*Part` from a prior cross-provider turn must render
     into OpenAI's client-executed tool-search replay items when tool-search replay is active.
 
@@ -5763,7 +5761,7 @@ async def test_openai_promotes_local_search_history_with_default_native_strategy
     pytest.importorskip('openai')
 
     model = OpenAIResponsesModel(
-        'gpt-5.4-mini',
+        model_name,
         provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())),
     )
 
