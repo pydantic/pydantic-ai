@@ -5968,6 +5968,46 @@ async def test_anthropic_replays_openai_native_search_history() -> None:
     assert tool_results[0]['content'] == [{'type': 'tool_reference', 'tool_name': 'get_weather'}]
 
 
+def test_native_search_history_replay_is_stable_across_a_b_a_switch() -> None:
+    """Preparing the same stored history for A → B → A never mutates its native shape."""
+    pytest.importorskip('openai')
+    pytest.importorskip('anthropic')
+
+    anthropic_model = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(())),
+    )
+    openai_model = OpenAIResponsesModel(
+        'gpt-5.4-mini',
+        provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='find a weather tool')]),
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(
+                    args={'queries': ['weather']}, tool_call_id='ant_1', provider_name='anthropic'
+                ),
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_weather'}]},
+                    tool_call_id='ant_1',
+                    provider_name='anthropic',
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+    ]
+
+    first_anthropic = anthropic_model.prepare_messages(history)
+    openai = openai_model.prepare_messages(history)
+    second_anthropic = anthropic_model.prepare_messages(history)
+
+    assert first_anthropic is second_anthropic is history
+    assert isinstance(message_part(history, NativeToolSearchCallPart, message_index=1), NativeToolSearchCallPart)
+    assert isinstance(message_part(openai, ToolSearchCallPart, message_index=1), ToolSearchCallPart)
+    assert isinstance(message_part(openai, ToolSearchReturnPart, message_index=2), ToolSearchReturnPart)
+
+
 # --- `strategy='keywords'` on natively-supporting providers ---
 #
 # `'keywords'` is a strategy CHOICE: "use the keyword-overlap algorithm". The execution
