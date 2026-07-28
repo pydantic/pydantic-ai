@@ -129,7 +129,7 @@ Loading a capability updates the capability state immediately, but the loaded bu
 
 ## Cross-provider behavior
 
-On-demand capabilities work on every model. Where the provider exposes a native progressive-disclosure surface — Anthropic tool search on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI Responses `tool_search` on GPT-5.4+ — Pydantic AI uses that surface so deferred function tools stay out of the prompt prefix. Standalone deferred tools can use the provider's hosted search; tools owned by on-demand capabilities use client-executed local search through the native surface so tools from unloaded capabilities cannot leak. On other providers, a local `search_tools` function tool handles discovery: the initial context shrinks the same way, but cache stability across loads is not guaranteed.
+On-demand capabilities work on every model. Where the provider exposes a native progressive-disclosure surface, Pydantic AI keeps deferred function tools out of the prompt prefix. Anthropic uses its native tool-change blocks where supported. OpenAI Responses uses `additional_tools` for addition-only loads on GPT-5.6, GPT-5.5, GPT-5.4 Mini, GPT-5.1, and GPT-4.1 models. Other models use a synthesized `search_tools` exchange; the initial context shrinks the same way, but cache stability across loads is not guaranteed. Changes containing removals on OpenAI also use that fallback because `additional_tools` only adds tools.
 
 ### Cache implications {#cache-implications}
 
@@ -138,7 +138,7 @@ Calling the `load_capability` tool reveals capability behavior between requests.
 | What loads | Cache prefix |
 |---|---|
 | Instructions only | **Stable** — instructions land in the message history, not the request prefix. |
-| Function tools on a model with native [tool search](../tools-advanced.md#tool-search) (OpenAI Responses, Anthropic) | **Stable** — the function tools visible to the provider don't change across loads. |
+| Function tools on a model with a native tool-change projection (supported OpenAI Responses and Anthropic models) | **Stable** — the function tools visible in the request prefix don't change across loads. |
 | Function tools on other models (local `search_tools` fallback) | **May break between turns** — function-tool visibility changes as capabilities load. |
 | Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |
 
@@ -451,4 +451,4 @@ Each file shows up in the model's catalog as its `id` plus `description`; the bo
     - **[Native tools](../native-tools.md)** — [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP] all defer the same way as function tools (see [Cache implications](#cache-implications)).
     - **[Hooks](../hooks.md)** — lifecycle hooks declared on a deferred capability (or via a deferred [`Hooks`][pydantic_ai.capabilities.Hooks] capability) stay dormant until the model opts in.
     - **[Message history](../message-history.md)** — loaded state round-trips through history, so persisted conversations resume in the same state (see [Resumable across runs](#resumable-across-runs)).
-Capability loads that reveal function tools are persisted in message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. This lets resumed and durable runs reconstruct the available tool set without representing an application-driven load as a tool search performed by the model.
+Capability loads that reveal function tools are persisted in message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. This lets resumed and durable runs reconstruct the available tool set without representing an application-driven load as a tool search performed by the model. OpenAI Responses sends addition-only changes through `additional_tools` on supported models; unsupported models and changes containing removals use the synthesized tool-search fallback.

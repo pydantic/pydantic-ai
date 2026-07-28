@@ -8,6 +8,8 @@ Capabilities on demand are bundle-level progressive disclosure for Pydantic AI. 
 
 Loaded function tools are recorded in durable message history with `ToolAvailabilityDeltaPart`. Treat it as framework control state: it names tools that became available or unavailable, while their current definitions remain in the model request parameters.
 
+Provider adapters project that control state without changing the history. OpenAI Responses uses an `additional_tools` input item for addition-only changes on GPT-5.6, GPT-5.5, GPT-5.4 Mini, GPT-5.1, and GPT-4.1 models. Unsupported OpenAI models and changes containing removals use the synthesized `search_tools` exchange. Do not add `tool_search` alongside `additional_tools`, and do not copy tool definitions into `ToolAvailabilityDeltaPart`.
+
 Be opinionated: review every capability for whether `defer_loading=True` would benefit the system before accepting eager loading. If the model does not need a piece of information, a specialist instruction set, or a tool schema on most turns, do not put it in the eager prompt by default.
 
 Use this for specialist behavior where instructions and tools should travel together:
