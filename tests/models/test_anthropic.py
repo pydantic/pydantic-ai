@@ -37,6 +37,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    RunContext,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -11119,6 +11120,111 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
     assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
 
 
+@pytest.mark.parametrize('capabilities', [None, [ToolSearch()]])
+async def test_anthropic_bare_tool_search_is_stripped_for_capability_only_corpus(
+    allow_model_requests: None, capabilities: list[ToolSearch[None]] | None
+):
+    """A bare explicit `ToolSearch()` is semantically identical to the auto-injected capability."""
+    response = completion_message(
+        [BetaTextBlock(text='Done.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        capabilities=[refunds, *(capabilities or [])],
+    )
+    await agent.run('Hello')
+
+    [request] = get_mock_chat_completion_kwargs(mock_client)
+    assert not any(tool.get('name') == 'search_tools' for tool in request['tools'])
+
+
+async def test_anthropic_keyword_tool_search_is_kept_for_capability_only_corpus(allow_model_requests: None):
+    """An explicit keyword strategy keeps its search surface for a capability-only corpus."""
+    response = completion_message(
+        [BetaTextBlock(text='Done.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        capabilities=[refunds, ToolSearch(strategy='keywords')],
+    )
+    await agent.run('Hello')
+
+    [request] = get_mock_chat_completion_kwargs(mock_client)
+    assert any(tool.get('name') == 'search_tools' for tool in request['tools'])
+
+
+async def test_anthropic_callable_tool_search_is_kept_and_reachable_for_capability_only_corpus(
+    allow_model_requests: None,
+):
+    """A custom callable keeps its search surface and is invoked after its capability loads."""
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='load-1', input={'id': 'refunds'}, name='load_capability', type='tool_use')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+        completion_message(
+            [
+                BetaToolUseBlock(
+                    id='search-1',
+                    input={'queries': ['refund']},
+                    name='search_tools',
+                    type='tool_use',
+                )
+            ],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+        completion_message(
+            [BetaTextBlock(text='Done.', type='text')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    calls: list[tuple[Sequence[str], Sequence[str]]] = []
+
+    def search(ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+        calls.append((queries, [tool.name for tool in tools]))
+        return ['lookup_refund_policy']
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        capabilities=[refunds, ToolSearch(strategy=search)],
+    )
+    result = await agent.run('Find the refund tool.')
+
+    assert result.output == 'Done.'
+    assert calls == [(['refund'], [])]
+    requests = get_mock_chat_completion_kwargs(mock_client)
+    assert all(any(tool.get('name') == 'search_tools' for tool in request['tools']) for request in requests)
+
+
 @pytest.mark.vcr()
 async def test_anthropic_explicit_tool_search_keeps_search_surface(
     allow_model_requests: None, anthropic_api_key: str, vcr: Any
@@ -11222,7 +11328,7 @@ async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
 
 
 @pytest.mark.parametrize(
-    ('model_name', 'calls_revealed_tool'),
+    ('model_name', 'strips_search_surface'),
     [
         pytest.param('claude-haiku-4-5', False, id='claude-haiku-4-5'),
         pytest.param('claude-fable-5', True, id='claude-fable-5'),
@@ -11234,7 +11340,7 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
     anthropic_api_key: str,
     vcr: Any,
     model_name: str,
-    calls_revealed_tool: bool,
+    strips_search_surface: bool,
 ):
     """Record model-specific behavior for standalone deferred capability reveals."""
     model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
@@ -11256,19 +11362,18 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
     request_bodies = [json.loads(request.body) for request in vcr.requests]
     assert len(request_bodies) >= 2
     for request_body in request_bodies:
-        assert not any(
+        has_search_surface = any(
             tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'}
             for tool in request_body['tools']
         )
+        assert has_search_surface is not strips_search_surface
         [lookup_tool] = [tool for tool in request_body['tools'] if tool.get('name') == 'lookup_refund_policy']
         assert lookup_tool['defer_loading'] is True
     called_revealed_tool = any(
         part.tool_name == 'lookup_refund_policy'
         for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
     )
-    assert called_revealed_tool is calls_revealed_tool
-    if not calls_revealed_tool:
-        assert 'unable to make the call' in result.output
+    assert called_revealed_tool
 
 
 @pytest.mark.vcr()

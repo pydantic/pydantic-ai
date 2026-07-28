@@ -137,6 +137,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'anthropic_default_code_execution_tool_version': '20250825',
     'anthropic_supported_code_execution_tool_versions': ('20250825',),
     'anthropic_supports_task_budgets': False,
+    'anthropic_honors_tool_reference_without_tool_use_definition': False,
     # GoogleModelProfile subclass defaults
     'google_supports_tool_combination': False,
     'google_supports_server_side_tool_invocations': False,
@@ -192,6 +193,7 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_supports_effort': True,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_honors_tool_reference_without_tool_use_definition': True,
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
         }
     )
@@ -788,6 +790,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_honors_tool_reference_without_tool_use_definition': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1567,6 +1570,7 @@ def test_vercel_anthropic_claude_sonnet():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_honors_tool_reference_without_tool_use_definition': True,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
@@ -1661,6 +1665,7 @@ def test_heroku_returns_openai_transformer():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_forced_tool_choice': True,
+            'anthropic_honors_tool_reference_without_tool_use_definition': True,
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),

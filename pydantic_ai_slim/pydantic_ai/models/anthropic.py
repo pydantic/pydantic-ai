@@ -61,6 +61,8 @@ from ..native_tools import (
     WebSearchTool,
 )
 from ..native_tools._tool_search import (
+    TOOL_SEARCH_FUNCTION_TOOL_NAME,
+    TOOL_SEARCH_IS_DEFAULT_CONFIGURATION_METADATA_KEY,
     ToolSearchArgs,
     ToolSearchMatch,
     ToolSearchTool,
@@ -1404,13 +1406,22 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tool_search_corpus = [
             tool_def for tool_def in tool_defs.values() if tool_def.with_native == ToolSearchTool.kind
         ]
-        # Anthropic accepts deferred tools and application-driven `tool_reference` reveals
-        # without a search tool. Remove the search surface only when the entire corpus is
-        # capability-owned, so there is nothing the model can discover by searching.
+        # Some Anthropic models accept application-driven `tool_reference` reveals when
+        # the replayed search tool is absent from wire `tools[]`. Remove a semantically
+        # bare search surface only for models verified to support that reveal shape and
+        # when the entire corpus is capability-owned.
         capability_only_corpus = bool(tool_search_corpus) and all(
             tool_def.defer_loading_on_wire for tool_def in tool_search_corpus
         )
-        if capability_only_corpus:
+        has_explicit_tool_search_configuration = any(
+            tool_def.name == TOOL_SEARCH_FUNCTION_TOOL_NAME
+            and (tool_def.metadata or {}).get(TOOL_SEARCH_IS_DEFAULT_CONFIGURATION_METADATA_KEY) is False
+            for tool_def in tool_defs.values()
+        )
+        honors_reveal_without_search_tool = self.profile.get(
+            'anthropic_honors_tool_reference_without_tool_use_definition', False
+        )
+        if capability_only_corpus and not has_explicit_tool_search_configuration and honors_reveal_without_search_tool:
             tool_defs = {
                 name: replace(tool_def, with_native=None) if tool_def.defer_loading_on_wire else tool_def
                 for name, tool_def in tool_defs.items()

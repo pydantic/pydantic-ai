@@ -207,6 +207,12 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             tool_description=self.tool_description,
             parameter_description=self.parameter_description,
             enable_fallback=self.strategy not in ('bm25', 'regex'),
+            is_default_configuration=(
+                self.strategy is None
+                and self.max_results == 10
+                and self.tool_description is None
+                and self.parameter_description is None
+            ),
         )
 
     async def before_model_request(

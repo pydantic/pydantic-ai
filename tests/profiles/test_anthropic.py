@@ -345,6 +345,22 @@ def test_model_profile_fable_5():
     assert profile.get('anthropic_supports_forced_tool_choice') is False
 
 
+@pytest.mark.parametrize('model_name', ['claude-fable-5', 'claude-sonnet-4-6'])
+def test_model_profile_honors_tool_reference_without_tool_use_definition(model_name: str):
+    """Only models with a successful recorded capability reveal opt into omitting `search_tools`."""
+    profile = anthropic_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('anthropic_honors_tool_reference_without_tool_use_definition') is True
+
+
+@pytest.mark.parametrize('model_name', ['claude-haiku-4-5', 'claude-sonnet-5', 'claude-opus-4-8'])
+def test_model_profile_requires_tool_use_definition_for_tool_reference(model_name: str):
+    """Unverified models retain the conservative default and keep `search_tools` declared."""
+    profile = anthropic_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('anthropic_honors_tool_reference_without_tool_use_definition') is False
+
+
 def test_model_profile_mythos_rejects_forced_tool_choice():
     """Claude Mythos Preview rejects a forced `tool_choice` outright, like Fable 5.
 

@@ -108,6 +108,13 @@ class AnthropicModelProfile(ModelProfile, total=False):
     (or an explicit list of tools) raises a `UserError`.
     """
 
+    anthropic_honors_tool_reference_without_tool_use_definition: bool
+    """Whether a `tool_reference` reveal works when its `tool_use` tool is absent from wire `tools[]`. Default: `False`.
+
+    Some Anthropic models require the replayed `search_tools` tool to remain declared
+    for its `tool_reference` result to unlock the referenced tool.
+    """
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,
@@ -237,6 +244,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-opus-4-8',
         )
     )
+    honors_tool_reference_without_tool_use_definition = model_name.startswith(('claude-fable-5', 'claude-sonnet-4-6'))
 
     # Native tool search requires the `tool_search_tool_bm25_20251119` /
     # `tool_search_tool_regex_20251119` API types, which post-date Claude 4.0. In
@@ -290,6 +298,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
         anthropic_supports_forced_tool_choice=supports_forced_tool_choice,
+        anthropic_honors_tool_reference_without_tool_use_definition=honors_tool_reference_without_tool_use_definition,
         supported_native_tools=supported_native_tools,
     )
 

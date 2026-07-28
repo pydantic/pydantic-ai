@@ -50,6 +50,7 @@ from ..messages import (
 )
 from ..native_tools._tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
+    TOOL_SEARCH_IS_DEFAULT_CONFIGURATION_METADATA_KEY,
     ToolSearchFunc,
     ToolSearchMatch,
     ToolSearchReturnContent,
@@ -281,6 +282,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     keyword algorithm; and on providers that DO support it, only the native tool reaches
     the wire (no redundant `search_tools` slot that could confuse the model)."""
 
+    is_default_configuration: bool = True
+    """Whether this toolset came from a semantically bare `ToolSearch()` capability."""
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
@@ -379,6 +383,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             parameters_json_schema=schema,
             tool_kind='tool-search',
             unless_native=unless_native,
+            metadata={TOOL_SEARCH_IS_DEFAULT_CONFIGURATION_METADATA_KEY: self.is_default_configuration},
         )
 
         return _SearchTool(
