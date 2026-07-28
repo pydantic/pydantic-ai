@@ -349,6 +349,34 @@ def test_tool_call_buffer_changes_are_atomic_when_typed_promotion_fails(mocker: 
     assert manager.get_parts() == [ToolCallPart('tool', 'initial buffered accepted', 'call')]
 
 
+@pytest.mark.parametrize('complete', [False, True])
+def test_tool_call_buffer_restored_when_materialized_update_fails(complete: bool):
+    """Mixed string/dict argument failures cannot be produced reliably by provider cassettes."""
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    manager.handle_tool_call_delta(
+        vendor_part_id='tool',
+        tool_name='tool' if complete else None,
+        args='initial',
+        tool_call_id='call',
+    )
+    manager.handle_tool_call_delta(vendor_part_id='tool', args=' buffered')
+
+    with pytest.raises(UnexpectedModelBehavior, match='Cannot apply dict deltas to non-dict tool arguments'):
+        manager.handle_tool_call_delta(vendor_part_id='tool', args={'discarded': True})
+
+    expected_part = (
+        ToolCallPart('tool', 'initial buffered', 'call')
+        if complete
+        else ToolCallPartDelta(args_delta='initial buffered', tool_call_id='call')
+    )
+    assert manager.get_part_by_vendor_id('tool') == expected_part
+
+    manager.handle_tool_call_delta(vendor_part_id='tool', args=' accepted')
+    if not complete:
+        manager.handle_tool_call_delta(vendor_part_id='tool', tool_name='tool')
+    assert manager.get_parts() == [ToolCallPart('tool', 'initial buffered accepted', 'call')]
+
+
 def test_equality_and_repr_materialize_string_buffers():
     """Manager equality and repr are internal state contracts outside provider responses."""
 
