@@ -195,13 +195,12 @@ attributes showing the queue depth and configured limits. The `name` parameter o
 ## Handling HTTP Errors
 
 When a provider returns a 4xx or 5xx response, Pydantic AI raises a
-[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError].  In addition to the
-[`status_code`][pydantic_ai.exceptions.ModelHTTPError.status_code] and
-[`body`][pydantic_ai.exceptions.ModelHTTPError.body], the exception now exposes the
-provider's **response headers** via the
-[`headers`][pydantic_ai.exceptions.ModelHTTPError.headers] attribute (a
-`dict[str, str]` with lowercase keys, or `None` for providers that don't surface headers,
-such as gRPC-based providers).
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. The exception exposes the
+[`status_code`][pydantic_ai.exceptions.ModelHTTPError.status_code], the response
+[`body`][pydantic_ai.exceptions.ModelHTTPError.body], and the provider's
+**response headers** via the [`headers`][pydantic_ai.exceptions.ModelHTTPError.headers]
+attribute (a `dict[str, str]` with lowercase keys, or `None` for providers that don't
+surface headers, such as gRPC-based providers).
 
 The motivating use case is propagating the `Retry-After` header from a 429 response to a
 caller's own HTTP client.  A convenience property
@@ -213,7 +212,7 @@ delta-seconds and HTTP-date formats:
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5.2')
 
 try:
     result = agent.run_sync('What is the capital of France?')
