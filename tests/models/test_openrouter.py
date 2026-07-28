@@ -1039,7 +1039,7 @@ async def test_openrouter_prepare_request_does_not_mutate_caller_settings() -> N
         openrouter_models=['vendor/model'],
         openrouter_provider={'only': ['provider']},
         openrouter_usage={'include': True},
-        extra_body={'caller_key': 'kept'},
+        extra_body={'caller_key': 'kept', 'plugins': [{'id': 'custom'}]},
     )
     original = deepcopy(settings)
     params = ModelRequestParameters(native_tools=[WebSearchTool(search_context_size='medium')])
@@ -1054,9 +1054,10 @@ async def test_openrouter_prepare_request_does_not_mutate_caller_settings() -> N
 
     first_extra_body = cast(dict[str, Any], first.get('extra_body', {}))
     second_extra_body = cast(dict[str, Any], second.get('extra_body', {}))
-    # Each prepared request carries exactly one web plugin (no duplication).
-    assert first_extra_body['plugins'] == [{'id': 'web'}]
-    assert second_extra_body['plugins'] == [{'id': 'web'}]
+    # Each prepared request appends exactly one web plugin beside the caller's own (no duplication),
+    # and the caller's `plugins` list itself is never appended to (covered by `settings == original`).
+    assert first_extra_body['plugins'] == [{'id': 'custom'}, {'id': 'web'}]
+    assert second_extra_body['plugins'] == [{'id': 'custom'}, {'id': 'web'}]
     # openrouter_* values are moved into extra_body without stripping the caller's originals.
     assert first_extra_body['models'] == ['vendor/model']
     assert first_extra_body['provider'] == {'only': ['provider']}

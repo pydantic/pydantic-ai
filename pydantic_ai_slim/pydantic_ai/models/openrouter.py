@@ -698,7 +698,9 @@ def _openrouter_settings_to_openai_settings(
 
     for native_tool in model_request_parameters.native_tools:
         if isinstance(native_tool, WebSearchTool):
-            extra_body.setdefault('plugins', []).append({'id': 'web'})
+            # Rebuild rather than append: `dict(...)` above is shallow, so an `extra_body['plugins']`
+            # the caller passed in is still their list object.
+            extra_body['plugins'] = [*extra_body.get('plugins', []), {'id': 'web'}]
             extra_body['web_search_options'] = {'search_context_size': native_tool.search_context_size}
 
     model_settings['extra_body'] = extra_body
