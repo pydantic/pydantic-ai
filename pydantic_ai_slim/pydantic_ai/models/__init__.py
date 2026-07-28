@@ -139,10 +139,8 @@ class ModelRequestParameters:
     revealed_tool_names: Annotated[set[str], Field(exclude=True)] = field(default_factory=set[str], repr=False)
     """Deferred tools currently revealed through tool search or capability loading."""
 
-    capability_owned_deferred_tool_names: Annotated[set[str], Field(exclude=True)] = field(
-        default_factory=set[str], repr=False
-    )
-    """Deferred corpus members owned by an on-demand capability."""
+    deferred_capability_ids: Annotated[set[str], Field(exclude=True)] = field(default_factory=set[str], repr=False)
+    """IDs of on-demand capabilities."""
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
@@ -1557,7 +1555,7 @@ def _resolve_tool_search_native_for_capability_owned_corpus(
     provider wire. Explicit named-native strategies (`'bm25'`/`'regex'`) keep their
     server-side search surface unchanged.
     """
-    capability_owns_corpus = any(t.name in params.capability_owned_deferred_tool_names for t in params.function_tools)
+    capability_owns_corpus = any(t.capability_id in params.deferred_capability_ids for t in params.function_tools)
     if not capability_owns_corpus:
         return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
 

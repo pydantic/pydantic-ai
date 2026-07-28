@@ -772,12 +772,10 @@ async def _prepare_request_parameters(
         native_tools=native_tools,
         revealed_tool_names=run_context.discovered_tool_names
         | {tool_def.name for tool_def in function_tools if tool_def.capability_id in run_context.loaded_capability_ids},
-        capability_owned_deferred_tool_names={
-            tool_def.name
-            for tool_def in function_tools
-            if tool_def.capability_id is not None
-            and (capability := run_context.capabilities.get(tool_def.capability_id)) is not None
-            and capability.defer_loading is True
+        deferred_capability_ids={
+            capability_id
+            for capability_id, capability in run_context.capabilities.items()
+            if capability.defer_loading is True
         },
         output_mode=output_schema.mode,
         output_tools=output_tools,

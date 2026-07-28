@@ -6127,7 +6127,7 @@ def test_capability_gated_tool_search_keeps_named_native_strategy(strategy: str)
     params = ModelRequestParameters(
         function_tools=[_capability_owned_corpus_tool()],
         native_tools=[ToolSearchTool(strategy=cast(Any, strategy), optional=True)],
-        capability_owned_deferred_tool_names={'lookup_refund_policy'},
+        deferred_capability_ids={'refunds'},
     )
     _, prepared = M().prepare_request(None, params)
     assert prepared.native_tools == [ToolSearchTool(strategy=cast(Any, strategy), optional=True)]
@@ -6146,7 +6146,7 @@ def test_capability_gated_tool_search_promotes_default_strategy_to_custom() -> N
     params = ModelRequestParameters(
         function_tools=[_local_search_tools_def(), _capability_owned_corpus_tool()],
         native_tools=[ToolSearchTool(strategy=None, optional=True)],
-        capability_owned_deferred_tool_names={'lookup_refund_policy'},
+        deferred_capability_ids={'refunds'},
     )
     _, prepared = M().prepare_request(None, params)
 
@@ -6169,7 +6169,7 @@ def test_capability_gated_tool_search_skips_other_natives_and_leaves_custom_stra
         function_tools=[_local_search_tools_def(), _capability_owned_corpus_tool()],
         # WebSearchTool listed first so the promotion loop must `continue` past it.
         native_tools=[WebSearchTool(), ToolSearchTool(strategy='custom', optional=True)],
-        capability_owned_deferred_tool_names={'lookup_refund_policy'},
+        deferred_capability_ids={'refunds'},
     )
     _, prepared = M().prepare_request(None, params)
 

@@ -1408,13 +1408,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # tool. Remove the search surface when the entire corpus is capability-owned,
         # since capability-owned tools are never searchable.
         capability_only_corpus = bool(tool_search_corpus) and all(
-            tool_def.name in model_request_parameters.capability_owned_deferred_tool_names
+            tool_def.capability_id in model_request_parameters.deferred_capability_ids
             for tool_def in tool_search_corpus
         )
         if capability_only_corpus:
             tool_defs = {
                 name: replace(tool_def, with_native=None)
-                if name in model_request_parameters.capability_owned_deferred_tool_names
+                if tool_def.capability_id in model_request_parameters.deferred_capability_ids
                 else tool_def
                 for name, tool_def in tool_defs.items()
                 if tool_def.tool_kind != 'tool-search'
