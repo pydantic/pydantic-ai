@@ -141,13 +141,17 @@ def test_embedding_content_part_tracks_the_messages_union():
     assert members(EmbeddingContentPart) == members(UserContent) - {CachePoint, UploadedFile}
 
 
-def test_embedding_group_round_trips_with_its_discriminator():
-    """`EmbeddingGroup` carries a `kind` like every other member of `EmbeddingInput`, and it stays out
-    of the repr the way the `messages` content types keep theirs out.
+def test_embedding_group_serialization_round_trips():
+    """`EmbeddingGroup` carries a `kind` like the `messages` content types do, and keeps it out of the
+    repr the same way.
+
+    `EmbeddingInput` is not a tagged union — `str` is a member and carries no `kind`, so validation
+    doesn't route through it. What `kind` buys is a serialized form that can be told apart from a
+    `TextContent`, which also has a `content` field.
 
     Unit rather than VCR: `kind` never reaches a provider. What it pins is the serialized form of an
-    input a user stores alongside its vector, where adding or renaming the discriminator later would
-    strand what they already wrote.
+    input a user stores alongside its vector, where adding or renaming the tag later would strand
+    what they already wrote.
     """
     adapter = TypeAdapter(list[EmbeddingInput])
     inputs: list[EmbeddingInput] = ['a kiwi fruit', EmbeddingGroup(['a caption', ImageUrl(url=KIWI_IMAGE_URL)])]

@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import Literal, TypeAlias
 
 from pydantic_ai import _utils
@@ -60,8 +60,10 @@ class EmbeddingGroup:
     content: Sequence[EmbeddingContentPart]
     """The parts to embed together, in order."""
 
+    _: KW_ONLY
+
     kind: Literal['embedding-group'] = 'embedding-group'
-    """Type identifier, this is available on all parts as a discriminator."""
+    """Type identifier, so a serialized input can be told apart from a bare content part."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
