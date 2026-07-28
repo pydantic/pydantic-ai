@@ -875,8 +875,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     log_level: mcp_types.LoggingLevel | None
     """Log level requested from the server via `logging/setLevel` after initialization.
 
-    This is supported by MCP SDK v1 and MCP SDK v2 legacy sessions. `None` (default) leaves the
-    server's default log level alone. Combine with `log_handler` to receive log messages.
+    This is supported by MCP SDK v1 and MCP SDK v2 legacy sessions; a modern session warns and
+    leaves it unapplied. `None` (default) leaves the server's default log level alone. Combine with
+    `log_handler` to receive log messages.
     """
 
     _id: str | None
@@ -962,9 +963,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             elicitation_handler: A FastMCP-shaped elicitation handler that receives MCP
                 `elicitation/create` requests from the server.
             log_handler: A FastMCP-shaped log handler that receives log messages from the server.
-            log_level: Log level requested via `logging/setLevel` after initialization. MCP SDK v2
-                modern sessions reject this option because the method was removed from the protocol;
-                legacy sessions remain supported despite the upstream deprecation.
+            log_level: Log level requested via `logging/setLevel` after initialization. A modern MCP
+                session warns and skips it because the method was removed from the protocol; legacy
+                sessions remain supported despite the upstream deprecation.
             progress_handler: A FastMCP-shaped progress handler.
             message_handler: A FastMCP-shaped message handler called for every server-sent message.
                 Pydantic AI installs its own message handler internally to invalidate caches on
@@ -990,6 +991,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 if `sampling_model` and `sampling_handler` are both passed, or if `headers` and
                 `http_client` are both passed.
         """
+        self._server_initiated_handlers: list[str] = []
         if isinstance(client, FastMCPClient):
             forwarded_values: dict[str, Any] = {
                 'sampling_handler': sampling_handler,
@@ -1061,6 +1063,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 roots=roots,
             )
             self._user_message_handler = message_handler
+            if resolved_sampling_handler is not None:
+                self._server_initiated_handlers.append('sampling_model' if sampling_model else 'sampling_handler')
+            if elicitation_handler is not None:
+                self._server_initiated_handlers.append('elicitation_handler')
 
         self._id = id
         self.max_retries = max_retries
@@ -1144,6 +1150,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         existing session continue using the previously configured handler.
         """
         self.sampling_model = model
+        if 'sampling_model' not in self._server_initiated_handlers:
+            self._server_initiated_handlers.append('sampling_model')
         self.client.set_sampling_callback(_build_sampling_handler(model))  # pyright: ignore[reportUnknownMemberType]
 
     @property
@@ -1186,19 +1194,33 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                         capabilities = init_result.capabilities
                         instructions = init_result.instructions
                     server_capabilities = ServerCapabilities.from_mcp_sdk(capabilities)
+                    # A modern session removed every server-initiated request: `logging/setLevel`
+                    # is gone from the protocol, and SEP-2577 dropped sampling and elicitation.
+                    # Options configuring them can't be honoured, so warn and carry on rather than
+                    # failing a connection over a feature the application doesn't depend on.
+                    modern_session = self.client.initialize_result is None
+                    if self._server_initiated_handlers and modern_session:
+                        names = ', '.join(f'`{name}`' for name in self._server_initiated_handlers)
+                        warnings.warn(
+                            f'{names} will never be called: this server negotiated a modern MCP session, '
+                            'and SEP-2577 removed server-initiated sampling and elicitation from the protocol.',
+                            stacklevel=2,
+                        )
                     if self.log_level is not None:
-                        if self.client.initialize_result is None:
-                            raise exceptions.UserError(
-                                '`log_level` is not supported by modern MCP sessions because '
-                                '`logging/setLevel` was removed from the protocol'
+                        if modern_session:
+                            warnings.warn(
+                                '`log_level` was not applied: this server negotiated a modern MCP session, '
+                                'and `logging/setLevel` was removed from the protocol.',
+                                stacklevel=2,
                             )
-                        with warnings.catch_warnings():
-                            warnings.filterwarnings(
-                                'ignore',
-                                message='The logging capability is deprecated.*',
-                                category=Warning,
-                            )
-                            await self.client.session.set_logging_level(self.log_level)
+                        else:
+                            with warnings.catch_warnings():
+                                warnings.filterwarnings(
+                                    'ignore',
+                                    message='The logging capability is deprecated.*',
+                                    category=Warning,
+                                )
+                                await self.client.session.set_logging_level(self.log_level)
                     self._exit_stack = exit_stack.pop_all()
                     self._server_info = server_info
                     self._server_capabilities = server_capabilities

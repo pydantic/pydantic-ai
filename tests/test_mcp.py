@@ -15,6 +15,7 @@ import functools
 import json
 import re
 import sys
+import warnings
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -1195,15 +1196,43 @@ class TestMCPToolsetIntegration:
         async with toolset:
             assert toolset.is_running
 
-    async def test_log_level_is_rejected_by_modern_session(
+    async def test_log_level_warns_but_connects_on_modern_session(
         self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None
     ):
-        """`logging/setLevel` left the protocol in the 2026-07-28 revision, so a modern session
-        can't honour `log_level` and says so rather than silently ignoring it."""
+        """`logging/setLevel` left the protocol in the 2026-07-28 revision. An unapplied log level
+        doesn't stop an application from working, so the session opens and warns rather than
+        failing — raising would turn an upstream protocol removal into a break on our side."""
         toolset = MCPToolset(fastmcp_server, log_level='warning')
-        with pytest.raises(UserError, match='`log_level` is not supported by modern MCP sessions'):
+        with pytest.warns(UserWarning, match='`log_level` was not applied'):
             async with toolset:
-                pass
+                assert toolset.is_running
+
+    async def test_sampling_and_elicitation_warn_on_modern_session(
+        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None
+    ):
+        """SEP-2577 removed server-initiated sampling and elicitation, so a handler configured
+        against a modern session can never fire. The names are reported together, so a user setting
+        both learns about both."""
+
+        async def elicitation_handler(message: str, response_type: Any, params: Any, ctx: Any) -> Any:
+            raise AssertionError('elicitation handler should never be called')  # pragma: no cover
+
+        toolset = MCPToolset(
+            fastmcp_server,
+            sampling_model=TestModel(custom_output_text='sampled'),
+            elicitation_handler=elicitation_handler,
+        )
+        with pytest.warns(UserWarning, match=r'`sampling_model`, `elicitation_handler` will never be called'):
+            async with toolset:
+                assert toolset.is_running
+
+    async def test_sampling_and_elicitation_do_not_warn_on_legacy_session(self, fastmcp_server: FastMCP[None]):
+        """The warning is specific to a modern session — a legacy one still delivers both."""
+        toolset = MCPToolset(fastmcp_server, sampling_model=TestModel(custom_output_text='sampled'))
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            async with toolset:
+                assert toolset.is_running
 
     async def test_server_metadata_read_from_era_neutral_properties(
         self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch
