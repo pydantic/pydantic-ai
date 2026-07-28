@@ -295,6 +295,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
         return _MAX_INPUT_TOKENS.get(self._model_name)
 
     async def count_tokens(self, text: str) -> int:
+        check_allow_model_requests()
         try:
             response = await self._client.aio.models.count_tokens(
                 model=self._model_name,

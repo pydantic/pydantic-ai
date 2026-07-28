@@ -143,6 +143,24 @@ async def test_voyageai_embedding_model_blocks_requests_when_disabled():
             await model.embed('hello', input_type='query')
 
 
+@pytest.mark.skipif(not google_imports_successful(), reason='google not installed')
+async def test_google_embedding_model_blocks_count_tokens_when_disabled():
+    model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key='test-key'))
+
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.count_tokens('hello')
+
+
+@pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed')
+async def test_cohere_embedding_model_blocks_count_tokens_when_disabled():
+    model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key='test-key'))
+
+    with pydantic_ai.models.override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.count_tokens('hello')
+
+
 STSB_BERT_TINY_MODEL = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
 # Pinned so a warm HF cache is served without revalidating files against the Hub.
 # Keep in sync with the HF cache keys and warmup commands in .github/workflows/ci.yml;

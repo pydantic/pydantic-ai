@@ -149,6 +149,9 @@ async def test_bedrock_model_blocks_requests_when_disabled():
         async with model.request_stream(messages, None, model_request_parameters):
             pass
 
+    with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+        await model.count_tokens(messages, None, model_request_parameters)
+
 
 def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
     """Instantiate a BedrockConverseModel wired to always raise the given error."""
@@ -274,7 +277,7 @@ async def test_bedrock_request_non_http_error(allow_model_requests: None):
     )
 
 
-async def test_bedrock_count_tokens_non_http_error():
+async def test_bedrock_count_tokens_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'count_tokens')
     model = _bedrock_model_with_client_error(error)
     params = ModelRequestParameters()

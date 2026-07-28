@@ -1192,8 +1192,11 @@ ALLOW_MODEL_REQUESTS = True
 This global setting allows you to disable request to most models, e.g. to make sure you don't accidentally
 make costly requests to a model during tests.
 
-The testing models [`TestModel`][pydantic_ai.models.test.TestModel] and
-[`FunctionModel`][pydantic_ai.models.function.FunctionModel] are no affected by this setting.
+The testing models [`TestModel`][pydantic_ai.models.test.TestModel],
+[`FunctionModel`][pydantic_ai.models.function.FunctionModel] and
+[`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] are not affected by this setting, nor is
+[`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel],
+which runs locally and so has no per-call provider cost.
 """
 
 
@@ -1201,7 +1204,10 @@ def check_allow_model_requests() -> None:
     """Check if model requests are allowed.
 
     If you're defining your own models that have costs or latency associated with their use, you should call this in
-    [`Model.request`][pydantic_ai.models.Model.request] and [`Model.request_stream`][pydantic_ai.models.Model.request_stream].
+    every method that reaches the provider: [`Model.request`][pydantic_ai.models.Model.request],
+    [`Model.request_stream`][pydantic_ai.models.Model.request_stream], [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens],
+    [`EmbeddingModel.embed`][pydantic_ai.embeddings.EmbeddingModel.embed] and
+    [`EmbeddingModel.count_tokens`][pydantic_ai.embeddings.EmbeddingModel.count_tokens].
 
     Raises:
         RuntimeError: If model requests are not allowed.

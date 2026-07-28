@@ -635,6 +635,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> usage.RequestUsage:
+        check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
