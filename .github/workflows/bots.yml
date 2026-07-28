@@ -216,27 +216,38 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           # Reviewing a fork PR means reading the fork's code, so this job checks
-          # it out. v7 refuses that by default from `pull_request_target`; the
-          # pwn-request risk it guards is already covered here — no credentials
-          # persist, the reviewer only reads (never executes) the fork's code,
-          # and the guard below rejects any PR that edits the agent config this
-          # job loads. See https://gh.io/securely-using-pull_request_target.
+          # it out. v7 refuses that by default from `pull_request_target`. What
+          # makes it acceptable here is narrower than "no pwn-request risk": the
+          # steps below still hold a write-scoped token and the API keys, and
+          # `persist-credentials: false` only keeps the token out of `.git/config`.
+          # The actual mitigations are that (a) no step builds, installs or runs
+          # the checked-out code, and (b) the guard below rejects any PR touching
+          # a file that ends up in the reviewer's context — which for an LLM is
+          # the real execution boundary, since reading a poisoned instruction file
+          # is the attack. Whenever the prompt starts loading a new path, add it
+          # there. See https://gh.io/securely-using-pull_request_target.
           allow-unsafe-pr-checkout: true
 
       - name: Check for modified config files
         # Runs for ALL PRs, not just forks: a same-repo branch (e.g. an automated
         # agent's branch built from an untrusted issue) can carry a poisoned
-        # CLAUDE.md/AGENTS.md/.claude just as a fork can, and the review step below
-        # checks out that head and loads its root CLAUDE.md into the reviewer's
-        # system prompt. Compare the immutable base...head SHAs via the diff media
-        # type (not `gh pr diff`, which reads the live PR head -- a force-push could
-        # slip a config edit past this guard while different code runs; TOCTOU) and
-        # match the per-file `diff --git` headers (the compare JSON `.files` array
-        # caps at 300 entries, so it could hide an edit in a large PR).
+        # instruction file just as a fork can, and the review step below checks out
+        # that head. The path list covers every file the reviewer ingests from the
+        # checkout, not just the ones Claude Code autoloads: the root `CLAUDE.md`
+        # (system prompt) and `.claude/`, but equally `agent_docs/` and the
+        # per-directory `AGENTS.md` files, which the prompt tells the reviewer to
+        # read, and `.agents/skills/`. `CLAUDE.local.md`/`.mcp.json` are gitignored,
+        # but `.gitignore` only advises `git add` -- a force-added one still checks
+        # out and still gets loaded. Compare the immutable base...head SHAs via the
+        # diff media type (not `gh pr diff`, which reads the live PR head -- a
+        # force-push could slip a config edit past this guard while different code
+        # runs; TOCTOU) and match the per-file `diff --git` headers (the compare JSON
+        # `.files` array caps at 300 entries, so it could hide an edit in a large
+        # PR). Paths with spaces come through quoted, hence the `"` terminator.
         run: |
           CHANGED=$(gh api "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" -H 'Accept: application/vnd.github.v3.diff' | grep '^diff --git ')
-          if echo "$CHANGED" | grep -qiE '/(AGENTS\.md|CLAUDE\.md)( |$)|/\.claude/'; then
-            echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping douwebot for security."
+          if echo "$CHANGED" | grep -qiE '/(AGENTS\.md|CLAUDE\.md|CLAUDE\.local\.md|\.mcp\.json)( |"|$)|/(\.claude|\.agents|agent_docs)/'; then
+            echo "::error::PR modifies agent config the reviewer loads (AGENTS.md, CLAUDE.md, CLAUDE.local.md, .mcp.json, .claude/, .agents/, agent_docs/). Skipping douwebot for security."
             exit 1
           fi
         env:
