@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .base import EmbeddingModel
-from .input import EmbeddingInput, EmbeddingModality
+from .input import EmbeddingInput
+from .profile import EmbeddingModelProfile
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
@@ -65,8 +66,8 @@ class WrapperEmbeddingModel(EmbeddingModel):
         return self.wrapped.system
 
     @property
-    def supported_modalities(self) -> frozenset[EmbeddingModality]:
-        return self.wrapped.supported_modalities
+    def profile(self) -> EmbeddingModelProfile:
+        return self.wrapped.profile
 
     @property
     def settings(self) -> EmbeddingSettings | None:

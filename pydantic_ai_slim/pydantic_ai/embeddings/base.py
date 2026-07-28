@@ -6,6 +6,7 @@ from pydantic_ai.messages import TextContent
 
 from ._modality import embedding_modality
 from .input import EmbeddingGroup, EmbeddingInput, EmbeddingModality, embedding_parts
+from .profile import DEFAULT_EMBEDDING_PROFILE, EmbeddingModelProfile
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings, merge_embedding_settings
 
@@ -62,16 +63,13 @@ class EmbeddingModel(ABC):
         raise NotImplementedError()
 
     @property
-    def supported_modalities(self) -> frozenset[EmbeddingModality]:
-        """The modalities this model can embed.
+    def profile(self) -> EmbeddingModelProfile:
+        """What this model can accept: its modalities, and whether it can embed a group as one vector.
 
-        Defaults to text only. Models that support images, audio, video or documents should override
-        this, keyed by model name where support differs between the models a class covers.
-
-        Inputs are checked against this in [`prepare_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_embed],
-        so an unsupported input raises a [`UserError`][pydantic_ai.exceptions.UserError] instead of a provider error.
+        Defaults to text only, one part per input. Models that accept more should override this, keyed
+        by model name where support differs between the models a class covers.
         """
-        return _TEXT_ONLY
+        return DEFAULT_EMBEDDING_PROFILE
 
     @abstractmethod
     async def embed(
@@ -100,7 +98,7 @@ class EmbeddingModel(ABC):
         """Prepare the inputs and settings for embedding.
 
         This method normalizes inputs to a list, checks them against the model's
-        [`supported_modalities`][pydantic_ai.embeddings.EmbeddingModel.supported_modalities], and merges settings.
+        [`profile`][pydantic_ai.embeddings.EmbeddingModel.profile], and merges settings.
         Subclasses should call this at the start of their `embed()` implementation, or
         [`prepare_text_embed()`][pydantic_ai.embeddings.EmbeddingModel.prepare_text_embed] if they only support text.
 
@@ -110,27 +108,38 @@ class EmbeddingModel(ABC):
 
         Returns:
             A tuple of (normalized inputs list, merged settings). An item may be an
-            [`EmbeddingGroup`][pydantic_ai.embeddings.EmbeddingGroup] of several parts, which
-            `supported_modalities` can't refuse because it describes modalities rather than fusion —
-            embed its parts into one vector, or reject it, but don't pass it on as if it were one part.
+            [`EmbeddingGroup`][pydantic_ai.embeddings.EmbeddingGroup] of several parts if the profile
+            says the model can embed one — combine its parts into a single vector, but don't pass it
+            on as if it were one part.
 
         Raises:
-            UserError: If an input uses a modality the model doesn't support.
+            UserError: If an input uses a modality the model doesn't support, or groups several parts
+                when the model embeds one part per input.
         """
         # Test for a single input rather than for a sequence: a batch is any iterable, including
         # generators and the array types embedding callers commonly hold their corpus in.
         items = [inputs] if isinstance(inputs, EmbeddingInput) else list(inputs)
 
-        supported = self.supported_modalities
+        profile = self.profile
+        supported = profile.get('supported_modalities', _TEXT_ONLY)
+        grouped = profile.get('supports_grouped_inputs', False)
+
         for item in items:
-            for part in embedding_parts(item):
+            parts = embedding_parts(item)
+            for part in parts:
                 if (modality := embedding_modality(part)) not in supported:
                     # Attributed to Pydantic AI rather than to the model: some models we haven't
-                    # implemented the modality for, such as Bedrock's Nova-2, do support it.
+                    # implemented the modality for do support it.
                     raise UserError(
                         f'Pydantic AI does not support {modality} inputs for `{self.model_name}`. '
                         f'Supported modalities: {", ".join(sorted(supported))}.'
                     )
+            # A group of one is nothing to combine, so it embeds like the bare part it wraps.
+            if len(parts) > 1 and not grouped:
+                raise UserError(
+                    f'`{self.model_name}` embeds one part per input and cannot combine an `EmbeddingGroup` '
+                    'into a single vector; pass the parts as separate inputs to embed them separately.'
+                )
 
         settings = merge_embedding_settings(self._settings, settings) or {}
 
@@ -160,21 +169,15 @@ class EmbeddingModel(ABC):
 
         texts: list[str] = []
         for item in items:
+            # A group of one is nothing to combine, so it embeds like the bare part it wraps; a longer
+            # one never reaches here, as `prepare_embed()` refuses it unless the profile allows groups.
+            if isinstance(item, EmbeddingGroup) and len(item.content) == 1:
+                item = item.content[0]
+
             if isinstance(item, str):
                 texts.append(item)
             elif isinstance(item, TextContent):
                 texts.append(item.content)
-            elif isinstance(item, EmbeddingGroup):
-                # One part is nothing to fuse, so it embeds like the bare part it wraps.
-                if len(item.content) == 1 and isinstance(part := item.content[0], str | TextContent):
-                    texts.append(part if isinstance(part, str) else part.content)
-                    continue
-                # An all-text `EmbeddingGroup` clears the modality gate, so the reason it can't be
-                # embedded here is the fusion, not the modality — say that rather than "isn't text".
-                raise UserError(
-                    f'`{self.model_name}` can only embed a single text part per input; '
-                    'pass the parts as separate inputs to embed them separately.'
-                )
             else:
                 raise UserError(f'`{self.model_name}` only supports plain text inputs, got `{type(item).__name__}`.')
 

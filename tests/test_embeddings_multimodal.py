@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import struct
 import zlib
 from collections.abc import Callable, Sequence
@@ -20,6 +21,7 @@ from pydantic_ai.embeddings import (
     EmbeddingInput,
     EmbeddingModality,
     EmbeddingModel,
+    EmbeddingModelProfile,
     EmbeddingResult,
     EmbeddingSettings,
     TestEmbeddingModel,
@@ -45,7 +47,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import try_import
+from .conftest import IsStr, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -67,7 +69,8 @@ with try_import() as voyageai_imports_successful:
     from pydantic_ai.providers.voyageai import VoyageAIProvider
 
 with try_import() as bedrock_imports_successful:
-    from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
+    from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel, BedrockEmbeddingSettings
+    from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as google_imports_successful:
     from google.genai.types import Content, Part
@@ -239,11 +242,11 @@ async def test_combined_content_yields_one_embedding(tiny_image: BinaryImage):
     assert result.inputs == [content]
 
 
-def test_wrapper_delegates_supported_modalities():
+def test_wrapper_delegates_profile():
     """Unit rather than VCR: delegation is provider-independent, and the wrapper reaching the wrong
-    model's modalities would gate a request that should have been allowed — a negative no cassette shows.
+    model's profile would gate a request that should have been allowed — a negative no cassette shows.
     """
-    assert WrapperEmbeddingModel(TestEmbeddingModel()).supported_modalities == TestEmbeddingModel().supported_modalities
+    assert WrapperEmbeddingModel(TestEmbeddingModel()).profile == TestEmbeddingModel().profile
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
@@ -268,7 +271,9 @@ async def test_combined_content_on_text_only_model_raises(gemini_api_key: str):
     model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
 
     with pytest.raises(
-        UserError, match=r'can only embed a single text part per input; pass the parts as separate inputs'
+        UserError,
+        match=r'`gemini-embedding-001` embeds one part per input and cannot combine an `EmbeddingGroup` '
+        r'into a single vector; pass the parts as separate inputs',
     ):
         await Embedder(model).embed_documents(EmbeddingGroup(['a kiwi', 'fruit']))
 
@@ -290,8 +295,8 @@ class _OverreachingEmbeddingModel(EmbeddingModel):
         return 'test'
 
     @property
-    def supported_modalities(self) -> frozenset[EmbeddingModality]:
-        return frozenset({'text', 'image'})
+    def profile(self) -> EmbeddingModelProfile:
+        return {'supported_modalities': frozenset({'text', 'image'})}
 
     async def embed(
         self,
@@ -329,7 +334,7 @@ async def test_prepare_text_embed_rejects_a_single_part_that_is_not_text():
     """
     embedder = Embedder(_OverreachingEmbeddingModel())
 
-    with pytest.raises(UserError, match=r'`overreaching-model` can only embed a single text part per input'):
+    with pytest.raises(UserError, match=r'`overreaching-model` only supports plain text inputs, got `ImageUrl`\.'):
         await embedder.embed_documents(EmbeddingGroup([ImageUrl(url='https://example.com/img.png')]))
 
 
@@ -633,11 +638,14 @@ def test_google_preview_supports_every_modality(gemini_api_key: str):
     """
     provider = GoogleProvider(api_key=gemini_api_key)
 
-    assert GoogleEmbeddingModel('gemini-embedding-2-preview', provider=provider).supported_modalities == snapshot(
-        frozenset({'text', 'image', 'audio', 'video', 'document'})
+    assert GoogleEmbeddingModel('gemini-embedding-2-preview', provider=provider).profile == snapshot(
+        {
+            'supported_modalities': frozenset({'text', 'image', 'audio', 'video', 'document'}),
+            'supports_grouped_inputs': True,
+        }
     )
-    assert GoogleEmbeddingModel('gemini-embedding-001', provider=provider).supported_modalities == snapshot(
-        frozenset({'text'})
+    assert GoogleEmbeddingModel('gemini-embedding-001', provider=provider).profile == snapshot(
+        {'supported_modalities': frozenset({'text'}), 'supports_grouped_inputs': False}
     )
 
 
@@ -710,6 +718,220 @@ async def test_google_rejects_more_images_than_one_input_may_hold(gemini_api_key
 
     with pytest.raises(ModelHTTPError, match=r'at most 6 image parts per input instance, but 7 were provided'):
         await Embedder(model).embed_documents(content, settings=GoogleEmbeddingSettings(dimensions=128))
+
+
+@pytest.fixture
+def bedrock_invoke_model_spy(monkeypatch: pytest.MonkeyPatch) -> Callable[[Provider[Any]], list[dict[str, Any]]]:
+    """Capture the JSON bodies sent to `invoke_model`, which the cassette holds only as a blob."""
+
+    def spy(provider: Provider[Any]) -> list[dict[str, Any]]:
+        captured: list[dict[str, Any]] = []
+        original = provider.client.invoke_model
+
+        def invoke_model(**kwargs: Any) -> Any:
+            captured.append(json.loads(kwargs['body']))
+            return original(**kwargs)
+
+        monkeypatch.setattr(provider.client, 'invoke_model', invoke_model)
+        return captured
+
+    return spy
+
+
+@dataclass
+class _NovaMultimodalCase:
+    """One input to Nova 2, asserted at the wire and at the result."""
+
+    id: str
+    inputs: Callable[[_Assets], EmbeddingInput]
+    expected_body: dict[str, Any]
+
+
+# Nova takes exactly one part per request, so every case is a single input; `dimensions=256` keeps the
+# recorded response to a readable size rather than Nova's 3072-float default.
+_NOVA_MULTIMODAL_CASES: list[_NovaMultimodalCase] = [
+    _NovaMultimodalCase(
+        id='text',
+        inputs=lambda _: 'a kiwi fruit',
+        expected_body=snapshot(
+            {
+                'taskType': 'SINGLE_EMBEDDING',
+                'singleEmbeddingParams': {
+                    'embeddingPurpose': 'GENERIC_INDEX',
+                    'text': {'value': 'a kiwi fruit', 'truncationMode': 'NONE'},
+                    'embeddingDimension': 256,
+                },
+            }
+        ),
+    ),
+    _NovaMultimodalCase(
+        id='image',
+        inputs=lambda assets: assets.image,
+        expected_body=snapshot(
+            {
+                'taskType': 'SINGLE_EMBEDDING',
+                'singleEmbeddingParams': {
+                    'embeddingPurpose': 'GENERIC_INDEX',
+                    'image': {'format': 'jpeg', 'source': {'bytes': IsStr()}},
+                    'embeddingDimension': 256,
+                },
+            }
+        ),
+    ),
+    _NovaMultimodalCase(
+        id='audio',
+        inputs=lambda assets: assets.audio,
+        expected_body=snapshot(
+            {
+                'taskType': 'SINGLE_EMBEDDING',
+                'singleEmbeddingParams': {
+                    'embeddingPurpose': 'GENERIC_INDEX',
+                    'audio': {'format': 'mp3', 'source': {'bytes': IsStr()}},
+                    'embeddingDimension': 256,
+                },
+            }
+        ),
+    ),
+    _NovaMultimodalCase(
+        id='video',
+        inputs=lambda assets: assets.video,
+        # `embeddingMode` is required, and only the combined mode keeps one input to one vector.
+        expected_body=snapshot(
+            {
+                'taskType': 'SINGLE_EMBEDDING',
+                'singleEmbeddingParams': {
+                    'embeddingPurpose': 'GENERIC_INDEX',
+                    'video': {
+                        'format': 'mp4',
+                        'source': {'bytes': IsStr()},
+                        'embeddingMode': 'AUDIO_VIDEO_COMBINED',
+                    },
+                    'embeddingDimension': 256,
+                },
+            }
+        ),
+    ),
+    _NovaMultimodalCase(
+        id='image-url',
+        inputs=lambda _: ImageUrl(url=KIWI_IMAGE_URL),
+        # Nova takes bytes inline, so a URL is downloaded first and arrives as its detected media type.
+        expected_body=snapshot(
+            {
+                'taskType': 'SINGLE_EMBEDDING',
+                'singleEmbeddingParams': {
+                    'embeddingPurpose': 'GENERIC_INDEX',
+                    'image': {'format': 'jpeg', 'source': {'bytes': IsStr()}},
+                    'embeddingDimension': 256,
+                },
+            }
+        ),
+    ),
+]
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed')
+@pytest.mark.vcr
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in _NOVA_MULTIMODAL_CASES])
+async def test_nova_multimodal(
+    case: _NovaMultimodalCase,
+    assets: _Assets,
+    bedrock_provider: BedrockProvider,
+    disable_ssrf_protection_for_vcr: None,
+    bedrock_invoke_model_spy: Callable[[Provider[Any]], list[dict[str, Any]]],
+):
+    """Nova 2 embeds text, images, audio and video — the second model to validate the input interface.
+
+    Where `gemini-embedding-2` takes a whole batch in one request and can combine parts, Nova takes one
+    part per request, so the same `Embedder` call fans out into one `invoke_model` per input. The spy
+    asserts the body current code builds; the cassette only holds it as an opaque blob.
+    """
+    model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+    captured = bedrock_invoke_model_spy(bedrock_provider)
+
+    inputs = case.inputs(assets)
+    result = await Embedder(model).embed_documents(inputs, settings=BedrockEmbeddingSettings(dimensions=256))
+
+    # `IsStr()` stands in for the base64 payload, which is the whole file and belongs in the cassette.
+    assert captured == [case.expected_body]
+    assert len(result.embeddings) == 1
+    assert len(result.embeddings[0]) == 256
+    assert result.inputs == [inputs]
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed')
+def test_bedrock_profiles_differ_per_model(bedrock_provider: BedrockProvider):
+    """One class, three capabilities: only Nova takes more than text, and none of them can group.
+
+    Unit rather than VCR: a profile gates requests before they are made, so the negative half never
+    reaches a provider, and the positive half is already recorded by `test_nova_multimodal`.
+    """
+
+    def profile(model_name: str) -> EmbeddingModelProfile:
+        return BedrockEmbeddingModel(model_name, provider=bedrock_provider).profile
+
+    assert profile('amazon.nova-2-multimodal-embeddings-v1:0') == snapshot(
+        {'supported_modalities': frozenset({'text', 'image', 'audio', 'video'}), 'supports_grouped_inputs': False}
+    )
+    assert profile('amazon.titan-embed-text-v2:0') == snapshot(
+        {'supported_modalities': frozenset({'text'}), 'supports_grouped_inputs': False}
+    )
+    assert profile('cohere.embed-v4:0') == snapshot(
+        {'supported_modalities': frozenset({'text'}), 'supports_grouped_inputs': False}
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed')
+async def test_nova_refuses_to_group_parts_it_cannot_combine(
+    bedrock_provider: BedrockProvider, tiny_image: BinaryImage
+):
+    """Nova accepts the image and the text separately but cannot fuse them, and says so before requesting.
+
+    This is the pair of capabilities that `supported_modalities` alone can't express: Nova clears the
+    modality gate for both parts, and is still the wrong model for a caption-plus-image vector, because
+    `singleEmbeddingParams` takes exactly one of `text`/`image`/`audio`/`video`.
+    """
+    model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+
+    with pytest.raises(
+        UserError,
+        match=r'`amazon\.nova-2-multimodal-embeddings-v1:0` embeds one part per input and cannot combine '
+        r'an `EmbeddingGroup` into a single vector',
+    ):
+        await Embedder(model).embed_documents(EmbeddingGroup(['a kiwi fruit', tiny_image]))
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed')
+async def test_nova_refuses_a_pdf(bedrock_provider: BedrockProvider, document_content: BinaryContent):
+    """Nova has no document modality: it takes document *pages* as images, which the caller rasterizes.
+
+    The one modality `gemini-embedding-2` takes and Nova doesn't, which is why the modality set is per
+    model rather than a single "multimodal" flag.
+    """
+    model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+
+    with pytest.raises(
+        UserError,
+        match=r'Pydantic AI does not support document inputs for `amazon\.nova-2-multimodal-embeddings-v1:0`\. '
+        r'Supported modalities: audio, image, text, video\.',
+    ):
+        await Embedder(model).embed_documents(document_content)
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed')
+async def test_nova_refuses_a_media_type_it_has_no_format_for(bedrock_provider: BedrockProvider):
+    """A modality Nova embeds, in a container it doesn't: refused locally rather than as a 400.
+
+    Nova validates `format` against the bytes it detects, so an unmapped media type has no `format` to
+    send at all — a gap the modality gate can't catch, since the modality itself is supported.
+    """
+    model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+
+    with pytest.raises(
+        UserError,
+        match=r'`amazon\.nova-2-multimodal-embeddings-v1:0` does not accept `image/bmp` content\. '
+        r'Supported media types: audio/mp3, ',
+    ):
+        await Embedder(model).embed_documents(BinaryContent(data=b'\x00', media_type='image/bmp'))
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')

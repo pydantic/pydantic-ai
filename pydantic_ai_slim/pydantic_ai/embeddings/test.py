@@ -9,6 +9,7 @@ from pydantic_ai.usage import RequestUsage
 
 from .base import EmbeddingModel
 from .input import EmbeddingInput, EmbeddingModality, embedding_parts
+from .profile import EmbeddingModelProfile
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
@@ -100,9 +101,9 @@ class TestEmbeddingModel(EmbeddingModel):
         return self._provider_name
 
     @property
-    def supported_modalities(self) -> frozenset[EmbeddingModality]:
-        """Every modality, so multimodal code can be tested against this model."""
-        return _ALL_MODALITIES
+    def profile(self) -> EmbeddingModelProfile:
+        """Every modality, and grouping, so multimodal code can be tested against this model."""
+        return {'supported_modalities': _ALL_MODALITIES, 'supports_grouped_inputs': True}
 
     async def embed(
         self,

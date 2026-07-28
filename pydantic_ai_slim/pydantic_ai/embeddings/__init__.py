@@ -21,6 +21,7 @@ from .input import (
     embedding_parts,
 )
 from .instrumented import InstrumentedEmbeddingModel, instrument_embedding_model
+from .profile import DEFAULT_EMBEDDING_PROFILE, EmbeddingModelProfile
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings, merge_embedding_settings
 from .test import TestEmbeddingModel
@@ -35,6 +36,8 @@ __all__ = [
     'EmbeddingContentPart',
     'EmbeddingInput',
     'EmbeddingModality',
+    'EmbeddingModelProfile',
+    'DEFAULT_EMBEDDING_PROFILE',
     'embedding_parts',
     'merge_embedding_settings',
     'KnownEmbeddingModelName',

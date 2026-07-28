@@ -13,6 +13,7 @@ from pydantic_ai.usage import RequestUsage
 
 from .base import EmbeddingModel
 from .input import EmbeddingContentPart, EmbeddingInput, EmbeddingModality, embedding_parts
+from .profile import EmbeddingModelProfile
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
@@ -226,11 +227,11 @@ class GoogleEmbeddingModel(EmbeddingModel):
         return self._provider.name
 
     @property
-    def supported_modalities(self) -> frozenset[EmbeddingModality]:
-        """The modalities this model can embed; `gemini-embedding-2` also accepts images, audio, video and PDFs."""
+    def profile(self) -> EmbeddingModelProfile:
+        """`gemini-embedding-2` also accepts images, audio, video and PDFs, and combines parts into one vector."""
         if self._model_name in _MULTIMODAL_MODELS:
-            return _MULTIMODAL_MODALITIES
-        return super().supported_modalities
+            return {'supported_modalities': _MULTIMODAL_MODALITIES, 'supports_grouped_inputs': True}
+        return super().profile
 
     async def embed(
         self,
