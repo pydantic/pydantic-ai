@@ -56,15 +56,19 @@ realtime does not expose `temperature`. Input transcription defaults to `'auto'`
 
 !!! note "Capturing input transcripts needs a deployed transcription model"
     Azure resolves the input-transcription model against your resource's own **deployments**, not
-    OpenAI's hosted models. The default (`gpt-realtime-whisper`) is not a deployment, so on a resource
-    without a transcription deployment, input transcription fails with `DeploymentNotFound`. The failed
-    turn remains represented in history as retained audio when available, or as a content-less user
-    [`SpeechPart`][pydantic_ai.messages.SpeechPart] otherwise, but its words are not captured. To capture
-    transcripts, deploy a transcription model (e.g. `whisper`) and set it via
+    OpenAI's hosted models, so on a resource without a matching deployment input transcription fails
+    with `DeploymentNotFound` on every turn — including for the default, `gpt-realtime-whisper`. The
+    failed turn remains represented in history as retained audio when available, or as a content-less
+    user [`SpeechPart`][pydantic_ai.messages.SpeechPart] otherwise, but its words are not captured.
+
+    To capture transcripts, deploy a **realtime-capable** transcription model — `gpt-realtime-whisper`
+    (which makes the default work as-is) or `gpt-4o-transcribe` — and point
     `input_transcription_model` on
-    [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]. If you don't
-    need transcripts, disable transcription with `input_transcription_model=None`; pass
-    `audio_retention='input_audio'` if the spoken turn should be kept as audio rather than a content-less part.
+    [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] at the
+    deployment name. A classic `whisper` deployment is *not* accepted here and is rejected with the same
+    `DeploymentNotFound`. If you don't need transcripts, disable transcription with
+    `input_transcription_model=None`; pass `audio_retention='input_audio'` if the spoken turn should be
+    kept as audio rather than a content-less part.
 
 ## Browser WebRTC and Microsoft Entra ID
 

@@ -147,6 +147,16 @@ _INPUT_TRANSCRIPTION_TYPES = frozenset(
 )
 _FUNCTION_CALL_DONE_TYPES = frozenset({'response.function_call_arguments.done'})
 
+# Azure resolves the input-transcription model against the resource's own deployments rather than
+# OpenAI's hosted models, so the default fails on every turn until a transcription model is deployed.
+# Azure's own message names only the affected item, saying nothing about the cause or the fix, so the
+# remedy is appended to it. Keyed on the provider's error code, which no other provider sends.
+_MISSING_TRANSCRIPTION_DEPLOYMENT_CODE = 'DeploymentNotFound'
+_MISSING_TRANSCRIPTION_DEPLOYMENT_HELP = (
+    'The transcription model is not deployed on this Azure OpenAI resource. Deploy one and set '
+    '`input_transcription_model` to its deployment name, or set it to `None` to disable transcription.'
+)
+
 
 def tool_def_to_openai(tool: ToolDefinition) -> dict[str, Any]:
     """Convert a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] to the OpenAI realtime tool format."""
@@ -612,10 +622,14 @@ def _map_input_transcription_event(
     if not is_str_dict(data.get('error')):
         raise ValueError('`error` must be an object')
     event = ConversationItemInputAudioTranscriptionFailedEvent.construct(**data)
+    message = event.error.message or ''
+    code = event.error.code or None
+    if code == _MISSING_TRANSCRIPTION_DEPLOYMENT_CODE:
+        message = f'{message} {_MISSING_TRANSCRIPTION_DEPLOYMENT_HELP}'.strip()
     return InputTranscriptionFailedEvent(
-        message=event.error.message or '',
+        message=message,
         type=event.error.type or None,
-        code=event.error.code or None,
+        code=code,
         item_id=event.item_id or None,
         content_index=event.content_index,
     )

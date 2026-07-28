@@ -68,7 +68,7 @@ def bedrock_client() -> AsyncAnthropicBedrock:
     )
 
 
-async def test_anthropic_bedrock_count_tokens_unexpected_response(env: TestEnv):
+async def test_anthropic_bedrock_count_tokens_unexpected_response(allow_model_requests: None, env: TestEnv):
     """Pins the defensive `UnexpectedModelBehavior` branch for a malformed Bedrock response.
 
     Mocks `client.post` to return a body without `inputTokens` — a shape no real Bedrock
