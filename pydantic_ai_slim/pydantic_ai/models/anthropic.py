@@ -803,6 +803,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         This is the last step before sending the request to the API.
         Most preprocessing has happened in `prepare_request()`.
         """
+        if any(
+            isinstance(part, ToolAvailabilityDeltaPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        ):
+            model_request_parameters = replace(
+                model_request_parameters,
+                native_tools=[
+                    tool for tool in model_request_parameters.native_tools if not isinstance(tool, ToolSearchTool)
+                ],
+            )
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters, model_settings)
 

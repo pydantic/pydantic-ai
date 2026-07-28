@@ -1,0 +1,111 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1042'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Find the exchange-rate tool.
+          type: text
+        role: user
+      - content:
+        - id: srvtoolu_search_call_1
+          input:
+            query: exchange rate
+          name: tool_search_tool_bm25
+          type: server_tool_use
+        - content:
+            tool_references:
+            - tool_name: lookup_exchange_rate
+              type: tool_reference
+            type: tool_search_tool_search_result
+          tool_use_id: srvtoolu_search_call_1
+          type: tool_search_tool_result
+        role: assistant
+      - content:
+        - text: Acknowledge the available exchange-rate tool without calling it.
+          type: text
+        role: user
+      model: claude-opus-4-8
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - defer_loading: true
+        description: Look up an exchange rate.
+        input_schema:
+          additionalProperties: false
+          properties:
+            currency:
+              type: string
+          required:
+          - currency
+          type: object
+        name: lookup_exchange_rate
+      - name: tool_search_tool_bm25
+        type: tool_search_tool_bm25_20251119
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '867'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-b668cdc74ebfd98ddbab337563bf8a5a-8a880f1fe69cda5b-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: |-
+          I found the exchange-rate tool. Here are its details:
+
+          **`lookup_exchange_rate`** -- Look up an exchange rate.
+          - **Parameter:** `currency` (string, required)
+
+          The tool is available and ready to use whenever you'd like to look up a specific exchange rate. Just let me know which currency you're interested in, and I can call it for you.
+        type: text
+      id: msg_011CdTswD2umku7JoN7zFgCa
+      model: claude-opus-4-8
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 853
+        output_tokens: 116
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

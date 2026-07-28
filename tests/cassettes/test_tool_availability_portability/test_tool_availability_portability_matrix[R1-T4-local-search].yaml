@@ -1,0 +1,209 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1655'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Find the exchange-rate tool.
+        role: user
+      - arguments: '{"queries":["exchange rate"]}'
+        call_id: search_call_1
+        name: search_tools
+        type: function_call
+      - call_id: search_call_1
+        output: '{"discovered_tools":[{"name":"lookup_exchange_rate"}]}'
+        type: function_call_output
+      - content: Acknowledge the available exchange-rate tool without calling it.
+        role: user
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Look up an exchange rate.
+        name: lookup_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            currency:
+              type: string
+          required:
+          - currency
+          type: object
+        strict: true
+        type: function
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
+        name: search_tools
+        parameters:
+          additionalProperties: false
+          properties:
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
+          required:
+          - queries
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '5108'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '3362'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785215387
+      created_at: 1785215384
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0fd34735459d14d5006a68399820c08193bcf1a741813472ac
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqaDmbPPRKoJRvcP3VYDi3_u8svP-9PVftjNI_VPXjX280GdACfr0UxGmPDHu0fQeE_5LNUlI20AoqHMExUlIgz5VYh_ew0P1HwTrlutAs3j1W8genWot1Opqop5wDflI6zfWpovaeLlssHBFsNHfENoHDvAS9ElufUvmcZ0WNvQw-lBZ7K0kHF3ymMQR3OyzzujV73CpZtgYIZix6EEuMdXbx_ZJEsMe1i21QV1JjeqwduiKbURNbHLRKTyPTpdtAKk7dEfi-by5EwET2i9hvQonlpPhuY0cQbIwpkYGrwSGTuLQisbB8qhn-H89LPjpf3RneIM0v8Cl0PdHY2IdAuXmfwZd_I_E0bi3Ki1rWC3D48nj9NluCXc_ls1m1uG_7AnP_CFyakaWpc2PN9ioSGw8wDCC6Cjwl_S_JyxPXdEK0FybOI1SO4MsligcXqwjsrLxxDt2oGWpiZfUfm477-8vPA2swAlVI8hocz1KnxYZJ0bRgk4XlWRg9io8lVXcgw8fVsI7OvXHbT-ebMgUK4jAUo_zxtilYCl8H0s62p1SKKEyddBvHC_BeuKTrIneWqzmbpGeMs4_L-znXOk4Jpwu5CGgWNW5yeHDDzdiK5k-3GhM6kyLlXxjne8ITURkmuA9ZqquLIOQqLAZ6bUDMk3cf1aPqp5QH7XsIopOtnZ_sx_ZYUR-WgVcGCXWwhva4bVdJ36DJzyl2ct6X9F9dllmJaQhgg3WxeuPdDO4ZQEdBlIB_dIsZ84SkaCKDS7YrDV0FFO52YgGeGdkM6XTXrVvPM89f2PQ4fJiWMuSA1nkIXGgxuopQXuZ_Y2AxIY-hDlVhGvaSl5M0njjCZwNmA5fOZHJSMiK3fNBxnoLTKWhE07JV1-xQFzsgSDa6x2bJOUCyp5JMeM_ShV40Z70MVzPoV-HY9mDGScMCA3P6GZChEmlnDNtwBN--xkpS87sIVvFqPpZ7QOd01dfQBtTUu_nYPmdMiWEkWuWUxJYXKM0TSCHLlvlW0e8HHKGdMprC0Ag_DJGaQ8U5Ei1-k_nWKaPrz-39HgF16qAP9oqXjWM8fMKweUkELcqaOWQ8zJv3noitNttmplbR0amM9LhyMN3e8v-eF_Id4s3I0qI7gp7CStw7gSKmVNaK6JHn0w4HINRQLx4fxEhgRWyFy5McHVJOpJ_8CAN4Antupe3XVD9uvGMlRCvdOrWarGoOMSkbLmlSI1Hlk2VW-VoiTvAd0uK0xjVB2XEii2UVn9nfRlKhJ8QX-fRW6vtgLutuRGZzk64AHEVqlvf5wuk0n5GlqIuvy9tFgUUSJ2ePMKQkgMrB_JM_oeXhZW_4bXWRAOTika8EUw_8RlUEWxj0tINGqHt_IGol7Gk3V5RjTvW3dCK1WydlcOPZtEeIKb11JQo0OyRfh0piJFm_SxOAH6wnwQ0lal_aGipbJI7fzCWBl7fnWy6uYgPCclNPfGYYujkDSmCT8-pl9Rz-HodXOLAV9l9QAMngWZQus421IGILoEhv5LO5GPsONkT9fJ8iqGBP-0qSIv29MxpFuW5F05mOZ7M68L2xZJIabLftKW6GOSQBc4keUqXrE-EOFTvYuMM29XsCflZlDUp3Ls9Lv5sgugm65UvjV8EHigJSQS-UKjBu3pmaP4GplETUBfmYdRv2CSFkEUVLBekpsVPsH8qnpmEfcItsDtQP82OQzpKI8rbqcrYJCUlEz6VC9V9PuRekg1YQ-L2xTxvwZy5PddZn6ocUjbw4TC906PyoXsJsfFTs8xQMdPArifFtuCdXSfcjL4yw-k0LMyRUuSfSMQDDzeG_LJ27g5WmDm_jYRFeo_Hj-hqbFpNRvVqB6nCljTMV_eqduozjXMggMJRi55tAfxhTqGvphGRY8XmFLSiiy7I6c0_xqKuRaChNlX3ISiidKDffVFiK4FZi0MJ0CXE6NdG2jg==
+        id: rs_0fd34735459d14d5006a683998b1048193ab43be78044e7d18
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: I can access an exchange-rate tool named lookup_exchange_rate. It accepts a parameter currency (for example,
+            "EUR" or "JPY") and returns the corresponding exchange rate. I'm not calling it now. If you want me to use it,
+            tell me the currency code.
+          type: output_text
+        id: msg_0fd34735459d14d5006a68399a7cf88193bc587fa9fe94ec1c
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: current_turn
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Look up an exchange rate.
+        name: lookup_exchange_rate
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            currency:
+              type: string
+          required:
+          - currency
+          type: object
+        strict: true
+        type: function
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
+        name: search_tools
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
+          required:
+          - queries
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 234
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 219
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 453
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -824,7 +824,7 @@ replayed against a different model:
 | Local `search_tools` call and result | Native search | Native search | Native search | Local search | Local search | Local search |
 | Anthropic native search | Native search | Native search | Native search | Local search | Local search | Local search |
 | OpenAI native search | Native search | Native search | Native search | Local search | Local search | Local search |
-| [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] | `tool_addition` | Local search | `additional_tools` | Local search | Local search | Local search |
+| [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] | `tool_addition` | Native search | `additional_tools` | Local search | Local search | Local search |
 | `search_tools` result with `metadata['discovered_tools']` | Native search | Native search | Native search | Local search | Local search | Local search |
 
 Here, **native search** means a paired provider-native search call and result plus the native search
