@@ -2435,10 +2435,37 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         profile: OpenAIModelProfile,
     ) -> _ResponsesRequestParams:
         """Build typed request parameters shared by Responses API calls."""
-        function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
+        additional_tool_names = {
+            name
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart)
+            for name in part.added
+        }
+        wire_request_parameters = model_request_parameters
+        if additional_tool_names:
+            function_tools = [
+                tool for tool in model_request_parameters.function_tools if tool.name not in additional_tool_names
+            ]
+            has_deferred_tool_search_corpus = any(
+                tool.with_native == ToolSearchTool.kind and tool.defer_loading for tool in function_tools
+            )
+            native_tools = [
+                tool
+                for tool in model_request_parameters.native_tools
+                if has_deferred_tool_search_corpus or not isinstance(tool, ToolSearchTool)
+            ]
+            wire_request_parameters = replace(
+                model_request_parameters,
+                function_tools=function_tools,
+                native_tools=native_tools,
+            )
+
+        function_tools, tool_choice = self._get_responses_tool_choice(model_settings, wire_request_parameters)
         extra_native_tools = model_settings.get('openai_native_tools', ())
         tools: list[responses.ToolParam] = (
-            self._get_native_tools(model_request_parameters) + list(extra_native_tools) + function_tools
+            self._get_native_tools(wire_request_parameters) + list(extra_native_tools) + function_tools
         )
         if not tools:
             tool_choice = None
@@ -3060,7 +3087,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(part, ToolAvailabilityDeltaPart):
                         tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}
                         additional_tools = [
-                            self._map_tool_definition(tool_defs_by_name[name])
+                            self._map_tool_definition(
+                                replace(tool_defs_by_name[name], defer_loading=False, with_native=None)
+                            )
                             for name in part.added
                             if name in tool_defs_by_name
                         ]
