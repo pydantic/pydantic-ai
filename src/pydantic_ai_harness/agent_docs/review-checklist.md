@@ -18,7 +18,9 @@ Use this before opening a PR or reviewing a capability change.
 - The implementation uses Pydantic AI hooks/toolsets instead of duplicating core
   runtime behavior.
 - Capability ordering is justified when present.
-- Dependency changes were made through `uv` and have a clear reason.
+- Dependency changes are required, linked to an issue, and made through `uv`;
+  every PR touching `pyproject.toml` or `uv.lock` carries
+  `dependencies:approved` for the current head.
 - A capability that adds heavy CI machinery (a Docker image, an external service
   with a secret, a large system binary, live network calls) scopes its expensive
   job to its own paths and keeps the aggregate check green when that job is

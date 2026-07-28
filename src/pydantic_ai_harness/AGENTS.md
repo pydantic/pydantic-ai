@@ -117,9 +117,9 @@ Applies to docs, READMEs, docstrings, comments, commit messages, and PR text.
 
 ## Package management
 
-- Use `uv` for all dependency operations
-- Never edit `pyproject.toml` or `uv.lock` directly -- use `uv add`, `uv remove`
-- External PRs that change dependencies are auto-closed by CI
+- Change dependencies only when required. Use `uv` and link an issue.
+- PRs touching `pyproject.toml` or `uv.lock` require the
+  `dependencies:approved` label; pushes clear approval.
 
 ## Commands
 
@@ -172,7 +172,6 @@ need.
 
 ## Contributing rules for AICAs
 
-- Never change `pyproject.toml` or `uv.lock` -- if a dependency is needed, open an issue
 - Always link sources for any claims made during research
 - Run `make lint && make typecheck && make test` before every commit
 - Commit messages should summarize the "why", not the "what"

@@ -114,8 +114,6 @@ warnings where practical.
 - Avoid `Any` in new public signatures.
 - Avoid casts. Fix the type shape instead.
 - Keep defaults conservative and easy to explain.
-- Do not add package dependencies without a clear issue and package-manager
-  command.
 - New remote-execution capabilities cap tool output with
   `max_output_bytes` / `max_output_lines` (the `modal_sandbox` names), not a new
   spelling. The released `max_output_chars` (shell) and `max_read_lines`
