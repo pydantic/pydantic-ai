@@ -1190,7 +1190,7 @@ async def main():
 
 Some capabilities are intentionally out of scope:
 
-- **Browser-direct transport (WebRTC).** Sessions run server-side over WebSocket; there is no direct browser-to-provider WebRTC path.
+- **WebRTC beyond OpenAI and Azure OpenAI.** Browser-direct media with a server sideband is available on OpenAI and Azure OpenAI (see [Browser / WebRTC](#browser-webrtc)); Gemini Live and xAI have no equivalent, so those run over the server-side WebSocket. A sideband session carries control only: it never sees audio bytes, so its audio methods raise and `audio_retention` must stay `'transcript_only'`.
 - **Telephony (SIP).** Connecting a session to a phone call over SIP is not built in.
 - **Session resumption beyond automatic reconnect.** You can't persist a handle and resume a session in a later process; recovery is limited to in-process [reconnection](#reconnecting).
 - **Bounded structured-output runs.** A session has no `output_type` or `session.run()` with an output schema — [delegate to a text agent](#delegating-to-a-text-agent) for structured results.
