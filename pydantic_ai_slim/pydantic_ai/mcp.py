@@ -1119,7 +1119,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         `auto_initialize=False`). This method performs the lazy initialization on the first
         operation that needs server capabilities or info.
 
-        This method is idempotent — calling it multiple times is safe.
+        This method is idempotent and concurrency-safe — multiple concurrent callers
+        serialize on the enter lock so only one sends the handshake.
         """
         if self._initialized:
             return
@@ -1127,13 +1128,21 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             raise ValueError(
                 f'`{self.__class__.__name__}._ensure_initialized` called before entering the toolset context'
             )
-        # Perform the deferred initialization
-        init_result = await self.client.initialize()
-        self._server_info = init_result.serverInfo
-        self._server_capabilities = ServerCapabilities.from_mcp_sdk(init_result.capabilities)
-        self._instructions = init_result.instructions
-        if self.log_level is not None:
-            await self.client.session.set_logging_level(self.log_level)
+        async with self._enter_lock:
+            # Double-check after acquiring the lock (another coroutine may have initialized)
+            if self._initialized:
+                return
+            # Perform the deferred initialization — assign state atomically after all
+            # operations succeed so a partial failure doesn't leave stale _server_info.
+            init_result = await self.client.initialize()
+            server_info = init_result.serverInfo
+            server_capabilities = ServerCapabilities.from_mcp_sdk(init_result.capabilities)
+            instructions = init_result.instructions
+            if self.log_level is not None:
+                await self.client.session.set_logging_level(self.log_level)
+            self._server_info = server_info
+            self._server_capabilities = server_capabilities
+            self._instructions = instructions
 
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
@@ -1183,7 +1192,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """Return the server's instructions if `include_instructions` is enabled."""
         if not self.include_instructions:
             return None
-        if not self._initialized or self._instructions is None:
+        if not self._initialized:
+            if not self.is_running:
+                return None
+            await self._ensure_initialized()
+        if self._instructions is None:
             return None
         # Instructions are captured once during `__aenter__` and don't change across runs while
         # the toolset stays entered — so they're static from the agent's perspective, not dynamic.
