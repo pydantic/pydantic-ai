@@ -136,10 +136,12 @@ class ModelRequestParameters:
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
-    revealed_tool_names: Annotated[set[str], Field(exclude=True)] = field(default_factory=set[str])
+    revealed_tool_names: Annotated[set[str], Field(exclude=True)] = field(default_factory=set[str], repr=False)
     """Deferred tools currently revealed through tool search or capability loading."""
 
-    capability_owned_deferred_tool_names: Annotated[set[str], Field(exclude=True)] = field(default_factory=set[str])
+    capability_owned_deferred_tool_names: Annotated[set[str], Field(exclude=True)] = field(
+        default_factory=set[str], repr=False
+    )
     """Deferred corpus members owned by an on-demand capability."""
 
     tool_search_is_default_configuration: Annotated[bool, Field(exclude=True)] = True
