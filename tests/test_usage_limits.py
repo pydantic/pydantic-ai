@@ -338,6 +338,7 @@ async def test_multi_agent_usage_no_incr():
         'gen_ai.usage.output_tokens': 13,
         'gen_ai.usage.details.custom1': 10,
         'gen_ai.usage.details.custom2': 20,
+        'gen_ai.usage.details.custom3': 0,
     }
 
 
@@ -553,6 +554,22 @@ def test_usage_pydantic_core_serialization_subclass():
             'future_tokens': 42,
         }
     )
+
+
+def test_usage_opentelemetry_attributes_include_zero_details():
+    usage = RequestUsage(
+        details={
+            'reasoning_tokens': 0,
+            'accepted_prediction_tokens': 2,
+            'input_tokens': 3,
+            'output_tokens': 4,
+        }
+    )
+
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.details.reasoning_tokens': 0,
+        'gen_ai.usage.details.accepted_prediction_tokens': 2,
+    }
 
 
 def test_cache_hit_ratio():
