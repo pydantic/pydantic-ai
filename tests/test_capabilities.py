@@ -14564,6 +14564,11 @@ def test_thread_executor_deprecated_alias() -> None:
         from pydantic_ai.capabilities import ThreadExecutor
     assert ThreadExecutor is UseThreadExecutor
 
+    # The defining module resolves the old name too, so unpickling keeps working.
+    with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `UseThreadExecutor`'):
+        from pydantic_ai.capabilities.thread_executor import ThreadExecutor as submodule_thread_executor
+    assert submodule_thread_executor is UseThreadExecutor
+
 
 async def test_thread_executor_capability() -> None:
     tool_threads: list[str] = []

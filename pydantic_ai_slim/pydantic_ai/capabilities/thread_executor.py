@@ -53,3 +53,19 @@ class UseThreadExecutor(AbstractCapability[Any]):
     ) -> AgentRunResult[Any]:
         with _utils.using_thread_executor(self.executor):
             return await handler()
+
+
+def __getattr__(name: str) -> object:
+    if name == 'ThreadExecutor':
+        import warnings
+
+        from pydantic_ai._warnings import PydanticAIDeprecationWarning
+
+        warnings.warn(
+            '`ThreadExecutor` has been renamed to `UseThreadExecutor`. '
+            'Update your imports; this deprecated alias will be removed in a future release.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return UseThreadExecutor
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

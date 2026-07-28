@@ -163,15 +163,10 @@ __all__ = [
 
 def __getattr__(name: str) -> object:
     if name == 'ThreadExecutor':
-        import warnings
+        # The deprecated alias (and its warning) lives in the defining module, so
+        # `pydantic_ai.capabilities.thread_executor.ThreadExecutor` lookups -- including
+        # unpickling -- resolve too.
+        from . import thread_executor
 
-        from pydantic_ai._warnings import PydanticAIDeprecationWarning
-
-        warnings.warn(
-            '`ThreadExecutor` has been renamed to `UseThreadExecutor`. '
-            'Update your imports; this deprecated alias will be removed in a future release.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return UseThreadExecutor
+        return thread_executor.ThreadExecutor
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
