@@ -11262,7 +11262,7 @@ async def test_anthropic_explicit_tool_search_keeps_search_surface(
     def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
         return f'{order_id}: refund allowed'
 
-    def search_only_tool(query: str) -> str:  # pragma: no cover
+    def search_only_tool(query: str) -> str:
         return query
 
     agent: Agent[None, str] = Agent(
