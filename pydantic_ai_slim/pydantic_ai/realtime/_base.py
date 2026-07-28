@@ -20,11 +20,11 @@ from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, 
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol
 
 from typing_extensions import TypeAliasType, TypedDict, assert_never
 
-from ..exceptions import UnexpectedModelBehavior, UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -74,8 +74,19 @@ overlapping turns stay correct); only the exact split at a turn boundary is appr
 """
 
 
-class RealtimeError(UnexpectedModelBehavior):
-    """A fatal realtime connection or protocol error."""
+class RealtimeError(ModelAPIError):
+    """A realtime connection or protocol failure: the session could not be opened, or is over.
+
+    Raised when the handshake fails, the provider closes the session, a send fails, or
+    [reconnecting][pydantic_ai.realtime.ReconnectPolicy] gives up. A rejected WebSocket upgrade is the
+    exception: it carries an HTTP status, so it raises
+    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] like a regular request.
+
+    A subclass of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], since losing the connection
+    to a realtime provider is the same kind of failure as a request-response call that couldn't reach
+    the API. Catch it specifically to separate the session's own failures from those of any text agent
+    the session [delegates to](../realtime/index.md#delegating-to-a-text-agent).
+    """
 
 
 @dataclass
@@ -132,7 +143,12 @@ class RealtimeModelSettings(TypedDict, total=False):
     """
 
     voice: str
-    """Voice used for audio output, e.g. `alloy` (OpenAI), `Puck` (Gemini), or `eve` (xAI)."""
+    """Voice used for audio output, e.g. `alloy` (OpenAI), `Puck` (Gemini), or `eve` (xAI).
+
+    Each provider ships its own voices, so this stays a plain string;
+    [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] narrows it
+    to the ones OpenAI documents.
+    """
 
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None
     """Model used to transcribe the user's audio input, so their turns are captured into history.
@@ -197,7 +213,7 @@ class ImageInput:
 
     Not every provider accepts image input. [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send]
     checks the model profile and raises [`UserError`][pydantic_ai.exceptions.UserError] when images are
-    unsupported; a direct low-level connection may raise `NotImplementedError`.
+    unsupported, as does a direct low-level connection asked for an input it can't send.
     """
 
     data: bytes
@@ -405,6 +421,37 @@ class TurnCompleteEvent:
 
     event_kind: Literal['turn_complete'] = 'turn_complete'
     """Event type identifier, used as a discriminator."""
+
+
+@dataclass(frozen=True)
+class TranscriptUpdate:
+    """One incremental transcript update, carrying everything needed to render it.
+
+    Yielded by [`RealtimeSession.stream_transcripts(delta=True)`][pydantic_ai.realtime.RealtimeSession.stream_transcripts].
+    A realtime session is duplex, so both speakers' transcripts stream at the same time and a caption
+    UI needs to know not just *what* was said but *which* turn to put it in — otherwise two
+    consecutive turns by the same speaker run together.
+    """
+
+    index: int
+    """Identifies the turn this update belongs to, stable for the life of the session.
+
+    Use it as the key for whatever you render a turn into: every update with the same `index` belongs
+    to the same speech part.
+    """
+
+    speaker: Literal['user', 'assistant']
+    """Who is speaking."""
+
+    delta: str
+    """The new text, to append to what you already rendered for this `index`."""
+
+    transcript: str
+    """The full transcript of this turn so far, including `delta`.
+
+    Provided so a renderer can replace rather than append, which avoids having to accumulate
+    correctly (and to recover if an update was dropped because the consumer fell behind).
+    """
 
 
 @dataclass
@@ -669,6 +716,11 @@ class RealtimeModelProfile(TypedDict, total=False):
     [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting — OpenAI's `gpt-realtime-2*`
     reasoning models and Gemini's native-audio models. When `False` (the default), a `thinking` setting
     is ignored with a warning rather than sent to a model that would reject it."""
+    supports_async_tool_calls: bool
+    """Whether the model runs tool calls asynchronously without blocking generation.
+
+    Gemini Live maps this to `Behavior.NON_BLOCKING` on function declarations and
+    `FunctionResponseScheduling.WHEN_IDLE` on function responses."""
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The [native tools][pydantic_ai.native_tools.AbstractNativeTool] the model runs server-side, e.g.
     [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].
@@ -691,6 +743,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_session_seeding': False,
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
+    'supports_async_tool_calls': False,
     'supported_native_tools': frozenset(),
     'audio_input_sample_rate': 24000,
     'audio_output_sample_rate': 24000,
@@ -801,6 +854,20 @@ class RealtimeConnection(ABC):
     and events are consumed by iterating the connection.
     """
 
+    transport_errors: ClassVar[tuple[type[Exception], ...]] = ()
+    """The exception types this connection's transport raises when the link to the provider fails.
+
+    A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] maps these to
+    [`RealtimeError`][pydantic_ai.realtime.RealtimeError] so a failed send surfaces as the same typed
+    error as a failed receive, instead of leaking a `websockets` or provider-SDK exception the caller
+    has no reason to expect from a model call. Leave empty if `send` already raises typed errors.
+
+    The mapping covers the whole of [`send`][pydantic_ai.realtime.codec.RealtimeConnection.send], so
+    anything it does *besides* writing to the transport — converting content, downloading media —
+    must not raise these types, or a local failure would be reported as a lost connection. Do that
+    work before the first frame goes out.
+    """
+
     @abstractmethod
     async def send(self, content: RealtimeInput) -> None:
         """Feed content into the session.
@@ -809,8 +876,8 @@ class RealtimeConnection(ABC):
         text, images, tool results, manual turn controls, cancellation, and truncation; Gemini accepts
         audio, text, images, and tool results. A high-level
         [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] checks profile-gated operations and
-        raises [`UserError`][pydantic_ai.exceptions.UserError]; direct low-level connections may raise
-        `NotImplementedError`.
+        raises [`UserError`][pydantic_ai.exceptions.UserError], as does a connection handed an input it
+        can't send.
         """
         raise NotImplementedError
 
@@ -999,7 +1066,18 @@ class ReconnectPolicy:
     """
 
     max_attempts: int = 3
-    """Number of re-dial attempts before giving up and raising [`RealtimeError`][pydantic_ai.realtime.RealtimeError]."""
+    """Number of re-dial attempts per drop before giving up and raising [`RealtimeError`][pydantic_ai.realtime.RealtimeError]."""
+    max_reconnects: int = 50
+    """Total successful reconnects allowed for the life of the session.
+
+    `max_attempts` bounds the retries for a single drop, and resets once a dial succeeds, so on its
+    own it cannot stop a session that reconnects, drops, and reconnects forever. This bounds the whole
+    session instead.
+
+    The default is generous for the case this exists to serve: providers end sessions at a duration
+    cap (OpenAI at 60 minutes) and a long-running session legitimately renews at that boundary, so 50
+    covers days of continuous conversation. It only bites a server that hangs up as fast as we dial.
+    """
     base_delay: float = 0.5
     """Base backoff delay in seconds; doubles each attempt up to `max_delay`."""
     max_delay: float = 30.0
@@ -1008,11 +1086,17 @@ class ReconnectPolicy:
     """Whether to apply random jitter to each backoff delay to avoid thundering herds."""
 
 
-async def reconnect_with_backoff(policy: ReconnectPolicy, attempt: Callable[[], Awaitable[bool]]) -> bool:
+async def reconnect_with_backoff(
+    policy: ReconnectPolicy, attempt: Callable[[], Awaitable[bool]], *, reconnects_used: int = 0
+) -> bool:
     """Retry `attempt` with exponential backoff (and optional jitter) until it succeeds or attempts run out.
 
     `attempt` performs one provider-specific re-dial and returns whether it succeeded.
+    `reconnects_used` is how many times this session has already reconnected, checked against the
+    policy's session-wide budget so a server that hangs up as fast as we dial cannot loop forever.
     """
+    if reconnects_used >= policy.max_reconnects:
+        return False
     for i in range(policy.max_attempts):
         delay = min(policy.max_delay, policy.base_delay * (2**i))
         if policy.jitter:
@@ -1113,16 +1197,13 @@ def seed_speech_content(
     """
     if part.transcript is not None:
         return part.transcript
+    if part.audio is None:
+        # A content-less placeholder preserves the turn in history but carries nothing to replay.
+        return ''
     if part.speaker == 'assistant':
         raise UserError(
             f'An assistant `SpeechPart` without a transcript cannot be seeded into {provider_name} realtime history. '
             'Enable output transcription or filter the part from `message_history` before connecting.'
-        )
-    if part.audio is None:
-        raise UserError(
-            'A user `SpeechPart` without a transcript or retained audio cannot be seeded into realtime history. '
-            'Enable `input_transcription_model` or `audio_retention`, or filter the part from `message_history` '
-            'before connecting.'
         )
     if not part.audio.is_audio:
         raise UserError(

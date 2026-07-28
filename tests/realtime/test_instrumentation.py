@@ -34,12 +34,23 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
 
 from pydantic_ai import Agent
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SpeechPart,
+    TextPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
+    InputSpeechStartEvent,
     RealtimeEvent,
     RealtimeModel,
     RealtimeModelProfile,
@@ -57,6 +68,7 @@ from pydantic_ai.realtime.codec import (
     ToolCall,
     Transcript,
 )
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .test_session import make_tool_manager
@@ -194,7 +206,7 @@ async def test_owner_error_marks_active_chat_and_session_spans() -> None:
 
     spans = {span.name: span for span in exporter.get_finished_spans()}
     assert spans['chat gpt-realtime'].status.is_ok is False
-    assert spans['realtime gpt-realtime'].status.is_ok is False
+    assert spans['invoke_agent agent'].status.is_ok is False
     assert all(span.events for span in spans.values())
 
 
@@ -230,7 +242,7 @@ async def test_nested_agent_run_nests_under_session_span() -> None:
         _ = [e async for e in session]
 
     by_id = {s.context.span_id: s for s in exporter.get_finished_spans() if s.context is not None}
-    session_span = next(s for s in by_id.values() if s.name == 'realtime gpt-realtime')
+    session_span = next(s for s in by_id.values() if s.name == 'invoke_agent agent')
     tool_span = next(s for s in by_id.values() if s.name == 'execute_tool analyze')
     # the delegated sub-agent run is a real root agent span, nested under the tool span
     agent_span = next(s for s in by_id.values() if s.name.startswith('agent run') or s.name.startswith('invoke_agent'))
@@ -257,14 +269,17 @@ async def test_session_and_tool_spans_with_usage() -> None:
         _ = [e async for e in session]
 
     spans = {s.name: s for s in exporter.get_finished_spans()}
-    assert set(spans) == {'realtime gpt-realtime', 'chat gpt-realtime', 'execute_tool get_weather'}
+    assert set(spans) == {'invoke_agent assistant', 'chat gpt-realtime', 'execute_tool get_weather', 'turn complete'}
 
-    sess = spans['realtime gpt-realtime']
+    sess = spans['invoke_agent assistant']
     assert sess.attributes is not None
     # The semconv operation-name enum has no realtime value, so the session span reports the
     # session as an agent invocation like the classic agent-run span.
     assert sess.attributes['gen_ai.operation.name'] == 'invoke_agent'
-    assert sess.attributes['gen_ai.request.model'] == 'gpt-realtime'
+    # The session span reports the model under `model_name` like the classic agent-run span (not
+    # `gen_ai.request.model`, which stays on the child `chat`/turn spans).
+    assert sess.attributes['model_name'] == 'gpt-realtime'
+    assert 'gen_ai.request.model' not in sess.attributes
     assert sess.attributes['gen_ai.agent.name'] == 'assistant'
     # `gen_ai.output.type` reports the configured output modality; the default is spoken audio,
     # which the semconv enum calls `speech`. Set on both the session span and the `chat` spans.
@@ -294,6 +309,225 @@ async def test_session_and_tool_spans_with_usage() -> None:
     assert tool.parent is not None and tool.parent.span_id == sess.context.span_id
 
 
+async def test_session_and_chat_spans_carry_request_config() -> None:
+    # `model_request_parameters` (native tools included) and `model_settings` are sent once at connect, so
+    # they're set on the session span and duplicated onto each per-turn `chat` span — matching where the
+    # classic path carries them, so Logfire renders native tools / tool definitions per step.
+    settings, exporter = _settings()
+    conn = _Connection(
+        [
+            ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        provider_name='openai',
+        provider_url='https://api.openai.com/v1',
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[ToolDefinition(name='get_weather')],
+            native_tools=[WebSearchTool()],
+        ),
+        model_settings=RealtimeModelSettings(voice='alloy', max_tokens=4096),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    # The config is identical on the session span and every per-turn `chat` span.
+    for name in ('invoke_agent agent', 'chat gpt-realtime'):
+        attributes = spans[name].attributes
+        assert attributes is not None
+        # `model_request_parameters` is serialized whole, so the session's configured native tools are
+        # inspectable — the reason for surfacing it (e.g. to see which native tools the API was given).
+        params = json.loads(str(attributes['model_request_parameters']))
+        assert [t['kind'] for t in params['native_tools']] == ['web_search']
+        assert [t['name'] for t in params['function_tools']] == ['get_weather']
+        # The realtime settings vocabulary (voice, ...) is serialized as-is: it has no OTel-spec home.
+        assert json.loads(str(attributes['model_settings'])) == {'voice': 'alloy', 'max_tokens': 4096}
+        # Function/output tools are also emitted as `gen_ai.tool.definitions`, like the classic `chat` span.
+        assert json.loads(str(attributes['gen_ai.tool.definitions'])) == [
+            {'type': 'function', 'name': 'get_weather', 'parameters': {'type': 'object', 'properties': {}}}
+        ]
+        # `max_tokens` is the one realtime setting with an OTel-spec `gen_ai.request.*` home.
+        assert attributes['gen_ai.request.max_tokens'] == 4096
+        # `model_request_parameters` is declared an object so Logfire renders it richly (not a raw string).
+        assert json.loads(str(attributes['logfire.json_schema']))['properties']['model_request_parameters'] == {
+            'type': 'object'
+        }
+
+    # The `chat` span keeps the semconv `chat` operation and `chat {model}` span name, but renders (via
+    # `logfire.msg`) as `response {model}`: it covers one `ModelResponse`, and no request was sent. It is
+    # deliberately not called a "turn" — a turn that calls tools produces several of these spans, and the
+    # turn boundary is the separate `turn complete` span.
+    chat_attributes = spans['chat gpt-realtime'].attributes
+    assert chat_attributes is not None
+    assert chat_attributes['gen_ai.operation.name'] == 'chat'
+    assert chat_attributes['logfire.msg'] == 'response gpt-realtime'
+
+
+async def test_request_config_respects_include_model_request_parameters() -> None:
+    # `include_model_request_parameters=False` drops the serialized config blobs and tool definitions from
+    # both spans, but `gen_ai.request.max_tokens` — a plain spec attribute — is still emitted, mirroring the
+    # classic path where `model_settings_attributes` runs ungated.
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    settings = InstrumentationSettings(tracer_provider=provider, include_model_request_parameters=False)
+    conn = _Connection(
+        [ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'), TurnCompleteEvent()]
+    )
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+        model_settings=RealtimeModelSettings(max_tokens=4096),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    for name in ('invoke_agent agent', 'chat gpt-realtime'):
+        attributes = spans[name].attributes
+        assert attributes is not None
+        assert 'model_request_parameters' not in attributes
+        assert 'model_settings' not in attributes
+        assert 'gen_ai.tool.definitions' not in attributes
+        # The spec-standard setting is still emitted when the serialized blobs are gated off.
+        assert attributes['gen_ai.request.max_tokens'] == 4096
+
+
+async def test_session_span_records_lifecycle_spans() -> None:
+    # Barge-ins and turn boundaries have no span of their own, so they surface as zero-duration child
+    # spans under the session span, making the stream's progression visible. Names are lowercase;
+    # `interrupted` is attached only when true (a clean turn carries no null attribute).
+    settings, exporter = _settings()
+    conn = _Connection(
+        [
+            InputSpeechStartEvent(),
+            Transcript(text='wait', is_final=True),
+            TurnCompleteEvent(interrupted=True),
+        ]
+    )
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    _ = await collect_events(session)
+
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    session_span = spans['invoke_agent agent']
+    lifecycle = {name: dict(spans[name].attributes or {}) for name in ('user speech started', 'turn complete')}
+    assert lifecycle == {'user speech started': {}, 'turn complete': {'interrupted': True}}
+    # They nest under the session span, not the `chat` span.
+    assert session_span.context is not None
+    for name in ('user speech started', 'turn complete'):
+        parent = spans[name].parent
+        assert parent is not None and parent.span_id == session_span.context.span_id
+
+
+async def test_session_span_turn_complete_omits_interrupted_when_false() -> None:
+    # A clean (uninterrupted) turn records the `turn complete` span with no `interrupted` attribute,
+    # rather than a null one.
+    settings, exporter = _settings()
+    conn = _Connection([Transcript(text='hi', is_final=True), TurnCompleteEvent()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    _ = await collect_events(session)
+
+    turn_complete = next(s for s in exporter.get_finished_spans() if s.name == 'turn complete')
+    assert dict(turn_complete.attributes or {}) == {}
+
+
+async def test_session_span_name_follows_instrumentation_version() -> None:
+    # The session span follows the configured instrumentation version's agent-run naming: semconv
+    # `invoke_agent {name}` from v3 on, and a bare operation name on v2 (where the classic agent-run
+    # span is likewise a bare `agent run`).
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    with pytest.warns(PydanticAIDeprecationWarning, match='versions 2, 3, and 4 are deprecated'):
+        settings = InstrumentationSettings(tracer_provider=provider, version=2)
+    conn = _Connection([TurnCompleteEvent()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    _ = await collect_events(session)
+
+    assert [s.name for s in exporter.get_finished_spans() if s.name != 'turn complete'] == snapshot(['realtime'])
+
+
+async def test_chat_span_records_interrupted_response_state() -> None:
+    # A response cut off by a barge-in is recorded on the span covering that response, so a reader
+    # can see *which* response was cut off rather than only that an interruption happened somewhere.
+    # A response that ends normally carries no state attribute.
+    settings, exporter = _settings()
+    conn = _Connection([Transcript(text='hello there', is_final=False), TurnCompleteEvent(interrupted=True)])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    _ = await collect_events(session)
+
+    chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
+    assert chat.attributes is not None
+    assert chat.attributes['pydantic_ai.response.state'] == 'interrupted'
+
+    settings, exporter = _settings()
+    conn = _Connection([Transcript(text='hello there', is_final=False), TurnCompleteEvent()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    _ = await collect_events(session)
+
+    chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
+    assert chat.attributes is not None
+    assert 'pydantic_ai.response.state' not in chat.attributes
+
+
+async def test_interrupt_records_lifecycle_span_with_audio_offset() -> None:
+    # A barge-in records an `interrupt` lifecycle span; when the caller passes `audio_end_ms` (the ms of
+    # output audio actually played before truncating), it's recorded so the trace shows how far the
+    # response got before the user cut in.
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection([TurnCompleteEvent()]), _ok_runner, instrumentation=settings, model_name='gpt-realtime'
+    )
+    async with session:
+        await session.interrupt(audio_end_ms=1500)
+        _ = [event async for event in session]
+
+    interrupt = next(s for s in exporter.get_finished_spans() if s.name == 'interrupt')
+    assert dict(interrupt.attributes or {}) == {'audio_end_ms': 1500}
+
+
+async def test_interrupt_without_offset_records_bare_lifecycle_span() -> None:
+    # A cancel without truncation (no `audio_end_ms`) still records the `interrupt` marker, with no
+    # null attribute.
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection([TurnCompleteEvent()]), _ok_runner, instrumentation=settings, model_name='gpt-realtime'
+    )
+    async with session:
+        await session.interrupt()
+        _ = [event async for event in session]
+
+    interrupt = next(s for s in exporter.get_finished_spans() if s.name == 'interrupt')
+    assert dict(interrupt.attributes or {}) == {}
+
+
+async def test_unnamed_agent_session_span_defaults_agent_name() -> None:
+    # An agent with no `name=` still gets `agent_name='agent'` on its session span (both the semconv
+    # `gen_ai.agent.name` and legacy `agent_name` keys), mirroring the classic run span. Backends that
+    # group runs by `agent_name` (e.g. Logfire's Runs view) would otherwise skip an unnamed session.
+    settings, exporter = _settings()
+    agent: Agent[None, str] = Agent()
+    agent.instrument = settings
+    conn = _Connection([Transcript(text='hi', is_final=True), TurnCompleteEvent()])
+
+    async with agent.realtime(_Model(conn)).session() as session:
+        _ = [event async for event in session]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.agent.name'] == 'agent'
+    assert sess.attributes['agent_name'] == 'agent'
+
+
 async def test_output_type_reflects_text_modality() -> None:
     # With `output_modality='text'` the model replies as plain text rather than speech, and the
     # session and `chat` spans report `gen_ai.output.type='text'` (threaded from the model settings
@@ -307,7 +541,7 @@ async def test_output_type_reflects_text_modality() -> None:
     ).session() as session:
         _ = [e async for e in session]
     spans = {s.name: s for s in exporter.get_finished_spans()}
-    for name in ('realtime gpt-realtime', 'chat gpt-realtime'):
+    for name in ('invoke_agent assistant', 'chat gpt-realtime'):
         attributes = spans[name].attributes
         assert attributes is not None
         assert attributes['gen_ai.output.type'] == 'text'
@@ -352,7 +586,7 @@ async def test_chat_spans_split_on_tool_call_are_session_children() -> None:
         _ = [e async for e in session]
 
     finished = exporter.get_finished_spans()
-    sess = next(s for s in finished if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in finished if s.name == 'invoke_agent agent')
     chats = [s for s in finished if s.name == 'chat gpt-realtime']
     tool = next(s for s in finished if s.name == 'execute_tool get_weather')
     assert len(chats) == 2
@@ -421,11 +655,13 @@ async def test_conversation_span_tree() -> None:
     assert _span_tree(exporter) == snapshot(
         [
             {
-                'realtime gpt-realtime': [
+                'invoke_agent assistant': [
                     {'chat gpt-realtime': []},
                     {'execute_tool get_weather': []},
                     {'chat gpt-realtime': []},
+                    {'turn complete': []},
                     {'chat gpt-realtime': []},
+                    {'turn complete': []},
                 ]
             }
         ]
@@ -472,7 +708,7 @@ async def test_explicit_capability_produces_session_chat_and_tool_spans() -> Non
     async with agent.realtime(_Model(conn)).session() as session:
         _ = [e async for e in session]
     spans = {s.name for s in exporter.get_finished_spans()}
-    assert spans == {'realtime gpt-realtime', 'chat gpt-realtime', 'execute_tool get_weather'}
+    assert spans == {'invoke_agent assistant', 'chat gpt-realtime', 'execute_tool get_weather', 'turn complete'}
 
 
 async def test_explicit_capability_settings_win_over_instrument() -> None:
@@ -496,9 +732,10 @@ async def test_explicit_capability_settings_win_over_instrument() -> None:
     async with agent.realtime(_Model(conn)).session() as session:
         _ = [e async for e in session]
     assert {s.name for s in cap_exporter.get_finished_spans()} == {
-        'realtime gpt-realtime',
+        'invoke_agent assistant',
         'chat gpt-realtime',
         'execute_tool get_weather',
+        'turn complete',
     }
     assert not inst_exporter.get_finished_spans()
 
@@ -521,7 +758,7 @@ async def test_session_captures_transcript_messages() -> None:
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
 
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert json.loads(str(sess.attributes['pydantic_ai.all_messages'])) == [
         {'role': 'user', 'parts': [{'type': 'text', 'content': 'hello there'}]},
@@ -536,6 +773,9 @@ async def test_session_captures_transcript_messages() -> None:
     }
     # No seeded history, so there is no prior-messages boundary to mark.
     assert 'pydantic_ai.new_message_index' not in sess.attributes
+    # `final_result` mirrors the classic run span: the most recent assistant reply, which the Logfire UI
+    # renders as the run's final response.
+    assert sess.attributes['final_result'] == 'hi, how can I help?'
 
 
 async def test_session_span_includes_resolved_run_attributes() -> None:
@@ -551,7 +791,7 @@ async def test_session_span_includes_resolved_run_attributes() -> None:
     async with agent.realtime(_Model(conn), metadata={'tier': 'gold'}).session() as session:
         _ = [event async for event in session]
 
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent assistant')
     assert sess.attributes is not None
     assert sess.attributes['gen_ai.agent.description'] == 'Handles realtime conversations.'
     assert json.loads(str(sess.attributes['gen_ai.system_instructions'])) == [
@@ -562,6 +802,9 @@ async def test_session_span_includes_resolved_run_attributes() -> None:
         'gen_ai.system_instructions': {'type': 'array'},
         'pydantic_ai.all_messages': {'type': 'array'},
         'metadata': {},
+        # The agent always resolves a (possibly empty) `ModelRequestParameters`, declared here so the
+        # session span renders it as an object.
+        'model_request_parameters': {'type': 'object'},
     }
 
 
@@ -580,7 +823,7 @@ async def test_session_span_marks_seeded_history_boundary() -> None:
     )
     _ = await collect_events(session)
 
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert sess.attributes['pydantic_ai.new_message_index'] == 2
     all_messages = json.loads(str(sess.attributes['pydantic_ai.all_messages']))
@@ -592,7 +835,13 @@ async def test_include_content_false_redacts_transcript_messages() -> None:
     # With `include_content=False` the conversation *structure* is still emitted (matching the
     # classic agent-run span); per-part content is redacted by `otel_message_parts`.
     settings, exporter = _settings(include_content=False)
-    conn = _Connection([InputTranscript(text='secret', is_final=True), TurnCompleteEvent()])
+    conn = _Connection(
+        [
+            InputTranscript(text='secret', is_final=True),
+            Transcript(text='secret reply', is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
     session = RealtimeSession(
         conn,
         _ok_runner,
@@ -602,14 +851,17 @@ async def test_include_content_false_redacts_transcript_messages() -> None:
         metadata={'tier': 'gold'},
     )
     _ = await collect_events(session)
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert json.loads(str(sess.attributes['pydantic_ai.all_messages'])) == [
         {'role': 'user', 'parts': [{'type': 'text'}]},
+        {'role': 'assistant', 'parts': [{'type': 'text'}], 'finish_reason': 'stop'},
     ]
     assert 'secret' not in str(sess.attributes['pydantic_ai.all_messages'])
     assert 'gen_ai.system_instructions' not in sess.attributes
     assert json.loads(str(sess.attributes['metadata'])) == {'tier': 'gold'}
+    # `final_result` carries reply content, so it is redacted with `include_content=False`.
+    assert 'final_result' not in sess.attributes
 
 
 async def test_session_span_sets_conversation_id() -> None:
@@ -621,7 +873,7 @@ async def test_session_span_sets_conversation_id() -> None:
     conn = _Connection([TurnCompleteEvent()])
     async with agent.realtime(_Model(conn), conversation_id='conv-123').session() as session:
         _ = [event async for event in session]
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert sess.attributes['gen_ai.conversation.id'] == 'conv-123'
 
@@ -631,21 +883,22 @@ async def test_session_span_omits_conversation_id_when_unset() -> None:
     conn = _Connection([TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert 'gen_ai.conversation.id' not in sess.attributes
 
 
 async def test_session_span_without_model_or_usage() -> None:
     settings, exporter = _settings()
-    conn = _Connection([TurnCompleteEvent()])  # no model/agent name, no Usage event
+    conn = _Connection([TurnCompleteEvent()])  # no model name, no Usage event
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings)
     _ = await collect_events(session)
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert sess.attributes['gen_ai.operation.name'] == 'invoke_agent'
-    assert 'gen_ai.request.model' not in sess.attributes
-    assert 'gen_ai.agent.name' not in sess.attributes
+    assert 'model_name' not in sess.attributes
+    # The agent name defaults to `'agent'` even without an explicit name, mirroring the classic run span.
+    assert sess.attributes['gen_ai.agent.name'] == 'agent'
     assert 'gen_ai.agent.description' not in sess.attributes
     assert 'gen_ai.system_instructions' not in sess.attributes
     assert 'metadata' not in sess.attributes
@@ -702,7 +955,7 @@ async def test_chat_span_closed_for_contentless_response() -> None:
     ]
     response = session.new_messages()[0]
     assert isinstance(response, ModelResponse)
-    assert response.parts == []
+    assert response.parts == [SpeechPart(speaker='assistant')]
     assert session.usage.requests == 1
 
 
@@ -720,7 +973,7 @@ async def test_session_usage_without_aggregated_attribute_names() -> None:
     )
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
-    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert sess.attributes['gen_ai.usage.input_tokens'] == 10
     assert 'gen_ai.aggregated_usage.input_tokens' not in sess.attributes
@@ -967,8 +1220,8 @@ async def test_early_break_finishes_chat_span(caplog: pytest.LogCaptureFixture) 
     # These are all spans this path starts. They must be exported before the owner block returns,
     # without GC or extra event-loop turns, and the session remains the explicit parent of `chat`.
     spans = {span.name: span for span in exporter.get_finished_spans()}
-    assert set(spans) == {'realtime gpt-realtime', 'chat gpt-realtime'}
-    session_span = spans['realtime gpt-realtime']
+    assert set(spans) == {'invoke_agent agent', 'chat gpt-realtime'}
+    session_span = spans['invoke_agent agent']
     chat_span = spans['chat gpt-realtime']
     assert session_span.context is not None
     assert chat_span.parent is not None and chat_span.parent.span_id == session_span.context.span_id
@@ -982,7 +1235,8 @@ async def test_early_break_finishes_running_tool_span(caplog: pytest.LogCaptureF
     """Owner exit cancels a running tool and finishes every span before returning."""
 
     class _IdleAfterTool(RealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover - tool is cancelled first
+        # Tool is cancelled first.
+        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover
             raise AssertionError
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
@@ -1017,8 +1271,8 @@ async def test_early_break_finishes_running_tool_span(caplog: pytest.LogCaptureF
     assert tool_task is not None and tool_task.done() and tool_task.cancelled()
     assert cancelled.is_set()
     spans = {span.name: span for span in exporter.get_finished_spans()}
-    assert set(spans) == {'realtime gpt-realtime', 'chat gpt-realtime', 'execute_tool get_weather'}
-    session_span = spans['realtime gpt-realtime']
+    assert set(spans) == {'invoke_agent agent', 'chat gpt-realtime', 'execute_tool get_weather'}
+    session_span = spans['invoke_agent agent']
     assert session_span.context is not None
     for child_name in ('chat gpt-realtime', 'execute_tool get_weather'):
         parent = spans[child_name].parent

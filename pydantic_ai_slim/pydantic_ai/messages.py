@@ -134,9 +134,12 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', '
   transparently for both `agent.run` and `agent.run_stream`, merging every segment into a single
   completed [`ModelResponse`][pydantic_ai.messages.ModelResponse], so a finished turn in the message
   history is never left in this state.
-- `'interrupted'`: streaming was explicitly stopped via
-  [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel] before the model
-  finished generating.
+- `'interrupted'`: generation was explicitly stopped before the model finished. Set when a streamed
+  response is cancelled via [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel],
+  and when a realtime turn is cut off by a barge-in or
+  [`RealtimeSession.interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] — in which case the
+  cut-off point is recorded on the last
+  [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms].
 """
 
 ModelRequestState: TypeAlias = Literal['complete', 'interrupted']
@@ -512,7 +515,12 @@ class TextContent:
     _: KW_ONLY
 
     metadata: Any = None
-    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM.
+
+    `ModelMessagesTypeAdapter` preserves this field, but as application-only data it is not
+    guaranteed to survive a round-trip through the UI adapters; see
+    [Storing and loading messages](../message-history.md#storing-and-loading-messages-to-json).
+    """
 
     kind: Literal['text-content'] = 'text-content'
     """Type identifier, this is available on all parts as a discriminator."""
@@ -1962,6 +1970,14 @@ class SpeechPart:
     (see the `audio_retention` setting), so this is usually `None`.
     """
 
+    interrupted_at_ms: int | None = None
+    """The offset into this part's audio where playback was interrupted, in milliseconds.
+
+    `None` when the part was not interrupted. It may also be `None` for an interrupted turn when
+    the provider reported the interruption without an offset. This is relative to this part's audio,
+    not wall-clock or session-relative time.
+    """
+
     id: str | None = None
     """The provider item ID, used to correlate the part with provider-side conversation items."""
 
@@ -3398,6 +3414,17 @@ class ToolCallPartDelta:
 @dataclass(repr=False, kw_only=True)
 class SpeechPartDelta:
     """A partial update (delta) for a `SpeechPart` to append transcript text and/or audio data."""
+
+    speaker: Literal['user', 'assistant'] | None = None
+    """Who is speaking, matching the [`SpeechPart`][pydantic_ai.messages.SpeechPart] this delta belongs to.
+
+    Realtime sessions are duplex: the user's transcript and the model's can stream at the same time,
+    interleaved delta by delta. Carrying the speaker here means rendering a live transcript needs
+    nothing but the delta itself — no correlating back to an earlier
+    [`PartStartEvent`][pydantic_ai.messages.PartStartEvent].
+
+    `None` only when a delta wasn't produced by a realtime session.
+    """
 
     transcript_delta: str | None = None
     """Incremental transcript text to append to the existing transcript, if any."""

@@ -63,7 +63,9 @@ from ._base import (
     inject_trace_context,
 )
 from ._openai_protocol import (
+    RealtimeHandshakeError,
     expect_event,
+    map_connect_errors,
     map_conversation_event,
     map_event as _map_openai_event,
     realtime_websocket_url,
@@ -134,6 +136,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     """
 
     _provider_name = 'xai'
+    _provider_label = 'xAI Grok Voice'
     _supports_tool_result_images = False
 
     def __init__(
@@ -298,6 +301,10 @@ class XaiRealtimeModel(RealtimeModel):
         instructions = get_instructions(messages) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
+        # Convert the history to seed items before dialing. Content this provider can't replay is the
+        # caller's mistake, not the API's, so it should surface as a `UserError` without a socket ever
+        # being opened -- and stay outside `map_connect_errors`, which is only about reaching the API.
+        seed = await seed_items(messages, profile=self.profile, provider_name=self.system)
 
         # `dial` opens and configures a connection. A reconnect closes the previous connection
         # (including one left half-open by a failed handshake), then resumes the captured conversation,
@@ -332,7 +339,10 @@ class XaiRealtimeModel(RealtimeModel):
                     await expect_event(ws, 'conversation.created', timeout=handshake_timeout)
                 )
                 if not isinstance(conversation, ConversationCreated):
-                    raise RuntimeError('xAI realtime `conversation.created` event did not include `conversation.id`')
+                    raise RealtimeHandshakeError(
+                        '`conversation.created` did not include a `conversation.id`, so the session '
+                        'cannot be resumed after a drop'
+                    )
                 conversation_id = conversation.conversation_id
                 if connection is not None:
                     connection.conversation_id = conversation_id
@@ -352,11 +362,15 @@ class XaiRealtimeModel(RealtimeModel):
             return ws
 
         try:
-            ws = await dial()
-            # Seed prior conversation once, after the initial handshake. Reconnects don't re-seed:
-            # xAI restores the server-side conversation and replays its item lifecycle events instead.
-            for item in await seed_items(messages, profile=self.profile, provider_name=self.system):
-                await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
+            # Map a rejected config or WebSocket upgrade to the same typed exceptions a regular request
+            # raises. The reconnect loop dials outside this manager, so it keeps treating a drop as
+            # retryable rather than fatal.
+            with map_connect_errors(self.model):
+                ws = await dial()
+                # Seed prior conversation once, after the initial handshake. Reconnects don't re-seed:
+                # xAI restores the server-side conversation and replays its item lifecycle events instead.
+                for item in seed:
+                    await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             connection = XaiRealtimeConnection(
                 ws,
                 dial=dial,

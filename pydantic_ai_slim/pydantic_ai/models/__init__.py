@@ -583,102 +583,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         return messages
 
     def _resolve_native_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
-        """Swap native tools and function-tool fallbacks/corpus based on profile support.
-
-        Four rules drive the per-tool filter:
-
-        1. `unless_native` matches a supported native tool → drop from wire.
-        2. `with_native` matches a supported native tool → keep on wire; the adapter
-           applies any native-tool-specific format (e.g. Anthropic / OpenAI's wire-side
-           `defer_loading` flag for `ToolSearchTool`).
-        3. `with_native` matches an *unsupported* native tool → the corpus member can't be
-           paired with its native tool on this provider, so its fate turns on discovery:
-           if `defer_loading=True` it's still undiscovered and is dropped from wire (the
-           model has no way to call it); otherwise it's already discovered and stays on wire
-           as a plain function tool, but sheds `with_native` — with no native tool present, an
-           adapter that derives a native flag from it (e.g. OpenAI's `defer_loading`) would
-           emit it unpaired and the provider would reject the request.
-        4. Otherwise → keep.
-
-        On top of the four-rule filter, two narrower drops apply, kept independent:
-
-        * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
-          optional native tool is silently dropped (no error raised). It does NOT govern the
-          corpus-empty drop below.
-        * The corpus-empty drop is specific to the framework-managed tool-search native tool's
-          corpus-management role: an *optional* `ToolSearchTool` is dropped when its
-          corpus ends up empty after filtering, since sending it with no deferred tools
-          to discover would waste a tool slot. A non-optional `ToolSearchTool` stays —
-          the user asked explicitly. Other native tools don't have a corpus and aren't subject
-          to this drop, so making `optional` a base-class field doesn't accidentally cause
-          e.g. `WebSearchTool(optional=True)` to be dropped here.
-        """
-        supported_types = self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-
-        supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
-        unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
-
-        supported_ids = {t.unique_id for t in supported_natives}
-        unsupported_ids = {t.unique_id for t in unsupported_natives}
-        optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
-        fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
-
-        without_fallback = unsupported_ids - fallback_ids - optional_ids
-        if without_fallback:
-            unsupported_names = [type(t).__name__ for t in unsupported_natives if t.unique_id in without_fallback]
-            supported_names = [t.__name__ for t in supported_types]
-            raise UserError(
-                f'Native tool(s) {unsupported_names} not supported by this model. '
-                f'Supported: {supported_names}. '
-                f'To use these tools with this model, provide a local fallback via '
-                f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
-                f"of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
-                f'MCP(local=True), ImageGeneration(local=my_func)). '
-                f'Some capabilities require an optional install group for the local fallback '
-                f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
-            )
-
-        tool_search_resolution = _resolve_tool_search_native_for_capability_owned_corpus(
-            supported_natives, params.function_tools
-        )
-        supported_natives = tool_search_resolution.native_tools
-        tool_search_kept_local = tool_search_resolution.keep_search_tools_local
-
-        function_tools: list[ToolDefinition] = []
-        for t in params.function_tools:
-            # Rule 1: drop local fallback when the native tool is supported — except for
-            # `search_tools` when tool search was kept local for capability visibility,
-            # where the local function tool is the callback the client-executed native
-            # surface dispatches to.
-            if t.unless_native and t.unless_native in supported_ids:
-                if not (tool_search_kept_local and t.unless_native == ToolSearchTool.kind):
-                    continue
-            # Rule 3: a corpus member whose native tool is unsupported can't be paired with that
-            # native tool on this provider; its fate turns on whether it's been discovered yet.
-            if t.with_native and t.with_native not in supported_ids:
-                # Still undiscovered → drop: the model has no way to call it on this provider.
-                if t.defer_loading:
-                    continue
-                # Already discovered → keep it callable as a plain function tool, but shed
-                # `with_native`: with no native tool on the wire, an adapter that derives a native
-                # flag from it (e.g. OpenAI's `defer_loading`) would emit it unpaired and the
-                # provider would reject the request.
-                t = replace(t, with_native=None)
-            # Rules 2 + 4: keep.
-            function_tools.append(t)
-
-        # Drop optional `ToolSearchTool` whose managed corpus is empty after filtering —
-        # nothing to discover, sending it would waste a tool slot. The `isinstance` check
-        # confines this to ToolSearchTool specifically: other native tools don't carry a corpus,
-        # so making `optional` a base-class field doesn't accidentally drop e.g.
-        # `WebSearchTool(optional=True)` here on absence of dependents.
-        remaining_corpus_ids = {t.with_native for t in function_tools if t.with_native}
-        supported_natives = [
-            t
-            for t in supported_natives
-            if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in remaining_corpus_ids
-        ]
-        return replace(params, native_tools=supported_natives, function_tools=function_tools)
+        """Swap native tools and function-tool fallbacks/corpus based on this model's profile support."""
+        return resolve_native_tool_swap(params, self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS))
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -1327,6 +1233,18 @@ def infer_model(  # noqa: C901
 
         model_kind = normalize_gateway_provider(model_kind)
 
+    if provider_name == 'bedrock-mantle':
+        from ..providers.bedrock_mantle import BedrockMantleProvider, bedrock_mantle_model_profile
+        from .bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
+
+        if not isinstance(provider, BedrockMantleProvider):
+            raise UserError('Bedrock Mantle models require a `BedrockMantleProvider`.')
+        # The profile carries the endpoint family (and raises for non-OpenAI models), so routing reads
+        # it rather than re-deriving the interface here.
+        if bedrock_mantle_model_profile(model_name).get('bedrock_mantle_interface') == 'chat':
+            return BedrockMantleChatModel(model_name, provider=provider)
+        return BedrockMantleResponsesModel(model_name, provider=provider)
+
     # OpenRouter, Cerebras, Ollama and Z.AI need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
@@ -1532,6 +1450,109 @@ def _customize_output_object(
     )
 
 
+def resolve_native_tool_swap(
+    params: ModelRequestParameters, supported_types: frozenset[type[AbstractNativeTool]]
+) -> ModelRequestParameters:
+    """Swap native tools and function-tool fallbacks/corpus based on the given supported-native-tool set.
+
+    Four rules drive the per-tool filter:
+
+    1. `unless_native` matches a supported native tool → drop from wire.
+    2. `with_native` matches a supported native tool → keep on wire; the adapter
+       applies any native-tool-specific format (e.g. Anthropic / OpenAI's wire-side
+       `defer_loading` flag for `ToolSearchTool`).
+    3. `with_native` matches an *unsupported* native tool → the corpus member can't be
+       paired with its native tool on this provider, so its fate turns on discovery:
+       if `defer_loading=True` it's still undiscovered and is dropped from wire (the
+       model has no way to call it); otherwise it's already discovered and stays on wire
+       as a plain function tool, but sheds `with_native` — with no native tool present, an
+       adapter that derives a native flag from it (e.g. OpenAI's `defer_loading`) would
+       emit it unpaired and the provider would reject the request.
+    4. Otherwise → keep.
+
+    On top of the four-rule filter, two narrower drops apply, kept independent:
+
+    * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
+      optional native tool is silently dropped (no error raised). It does NOT govern the
+      corpus-empty drop below.
+    * The corpus-empty drop is specific to the framework-managed tool-search native tool's
+      corpus-management role: an *optional* `ToolSearchTool` is dropped when its
+      corpus ends up empty after filtering, since sending it with no deferred tools
+      to discover would waste a tool slot. A non-optional `ToolSearchTool` stays —
+      the user asked explicitly. Other native tools don't have a corpus and aren't subject
+      to this drop, so making `optional` a base-class field doesn't accidentally cause
+      e.g. `WebSearchTool(optional=True)` to be dropped here.
+
+    This is a module-level function rather than a `Model` method so both the classic agent-run
+    path (via `Model._resolve_native_tool_swap`) and the realtime session path can share it —
+    `RealtimeModel` is not a `Model` subclass.
+    """
+    supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
+    unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
+
+    supported_ids = {t.unique_id for t in supported_natives}
+    unsupported_ids = {t.unique_id for t in unsupported_natives}
+    optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
+    fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
+
+    without_fallback = unsupported_ids - fallback_ids - optional_ids
+    if without_fallback:
+        unsupported_names = [type(t).__name__ for t in unsupported_natives if t.unique_id in without_fallback]
+        supported_names = [t.__name__ for t in supported_types]
+        raise UserError(
+            f'Native tool(s) {unsupported_names} not supported by this model. '
+            f'Supported: {supported_names}. '
+            f'To use these tools with this model, provide a local fallback via '
+            f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
+            f"of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
+            f'MCP(local=True), ImageGeneration(local=my_func)). '
+            f'Some capabilities require an optional install group for the local fallback '
+            f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
+        )
+
+    tool_search_resolution = _resolve_tool_search_native_for_capability_owned_corpus(
+        supported_natives, params.function_tools
+    )
+    supported_natives = tool_search_resolution.native_tools
+    tool_search_kept_local = tool_search_resolution.keep_search_tools_local
+
+    function_tools: list[ToolDefinition] = []
+    for t in params.function_tools:
+        # Rule 1: drop local fallback when the native tool is supported — except for
+        # `search_tools` when tool search was kept local for capability visibility,
+        # where the local function tool is the callback the client-executed native
+        # surface dispatches to.
+        if t.unless_native and t.unless_native in supported_ids:
+            if not (tool_search_kept_local and t.unless_native == ToolSearchTool.kind):
+                continue
+        # Rule 3: a corpus member whose native tool is unsupported can't be paired with that
+        # native tool on this provider; its fate turns on whether it's been discovered yet.
+        if t.with_native and t.with_native not in supported_ids:
+            # Still undiscovered → drop: the model has no way to call it on this provider.
+            if t.defer_loading:
+                continue
+            # Already discovered → keep it callable as a plain function tool, but shed
+            # `with_native`: with no native tool on the wire, an adapter that derives a native
+            # flag from it (e.g. OpenAI's `defer_loading`) would emit it unpaired and the
+            # provider would reject the request.
+            t = replace(t, with_native=None)
+        # Rules 2 + 4: keep.
+        function_tools.append(t)
+
+    # Drop optional `ToolSearchTool` whose managed corpus is empty after filtering —
+    # nothing to discover, sending it would waste a tool slot. The `isinstance` check
+    # confines this to ToolSearchTool specifically: other native tools don't carry a corpus,
+    # so making `optional` a base-class field doesn't accidentally drop e.g.
+    # `WebSearchTool(optional=True)` here on absence of dependents.
+    remaining_corpus_ids = {t.with_native for t in function_tools if t.with_native}
+    supported_natives = [
+        t
+        for t in supported_natives
+        if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in remaining_corpus_ids
+    ]
+    return replace(params, native_tools=supported_natives, function_tools=function_tools)
+
+
 @dataclass
 class _ToolSearchNativeResolution:
     native_tools: list[AbstractNativeTool]
@@ -1668,11 +1689,25 @@ def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) 
             if request_parts:
                 new_messages.append(replace(message, parts=request_parts))
         else:
+            # A barge-in cuts the model off mid-sentence, so the last speech part's transcript stops
+            # short. Note that inline, or a standard model reads the fragment as a complete utterance
+            # and may repeat itself. The note is written here, on the way to the model, and never
+            # persisted: history keeps the interruption on `SpeechPart.interrupted_at_ms`.
+            last_speech = max(
+                (index for index, part in enumerate(message.parts) if isinstance(part, SpeechPart)),
+                default=None,
+            )
             response_parts: list[ModelResponsePart] = []
-            for part in message.parts:
+            for index, part in enumerate(message.parts):
                 if isinstance(part, SpeechPart):
-                    if part.transcript:
-                        response_parts.append(TextPart(content=part.transcript))
+                    lines = [part.transcript] if part.transcript else []
+                    if part.interrupted_at_ms is not None:
+                        lines.append(f'[Interrupted after {part.interrupted_at_ms} ms]')
+                    elif message.state == 'interrupted' and index == last_speech:
+                        # The provider reported the interruption without an offset.
+                        lines.append('[Interrupted]')
+                    if lines:
+                        response_parts.append(TextPart(content='\n'.join(lines)))
                     # Assistant audio without a transcript has nothing to send.
                 else:
                     response_parts.append(part)

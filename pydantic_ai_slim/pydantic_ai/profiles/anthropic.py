@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from typing import Literal, TypeAlias
 
 from ..native_tools import (
+    AdvisorTool,
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
@@ -254,9 +255,25 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-haiku-4-5',
         )
     )
-    supported_native_tools = (
-        _ANTHROPIC_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _ANTHROPIC_BASE_BUILTINS
+    # The advisor tool's valid *executors* (the model driving generation) are Fable/Mythos 5, Opus
+    # 4.6-4.8, Sonnet 4.6/5, and Haiku 4.5. The executor/advisor pairing itself is validated API-side.
+    supports_advisor = model_name.startswith(
+        (
+            'claude-fable-5',
+            'claude-mythos-5',
+            'claude-opus-4-6',
+            'claude-opus-4-7',
+            'claude-opus-4-8',
+            'claude-sonnet-4-6',
+            'claude-sonnet-5',
+            'claude-haiku-4-5',
+        )
     )
+    supported_native_tools = _ANTHROPIC_BASE_BUILTINS
+    if supports_tool_search:
+        supported_native_tools = supported_native_tools | {ToolSearchTool}
+    if supports_advisor:
+        supported_native_tools = supported_native_tools | {AdvisorTool}
 
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),

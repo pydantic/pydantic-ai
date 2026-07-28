@@ -17,17 +17,20 @@ Application Default Credentials.
 from __future__ import annotations as _annotations
 
 import json
+import re
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
 from dataclasses import InitVar, dataclass, field
 from typing import Any, Literal, cast
+from urllib.parse import quote
 from weakref import WeakKeyDictionary
 
 from anyio import Lock
 from typing_extensions import assert_never
 
 try:
+    import websockets
     from google.genai import Client, errors as genai_errors, types as genai_types
     from google.genai.live import AsyncSession, ConnectionClosed
 except ImportError as _import_error:
@@ -38,7 +41,7 @@ except ImportError as _import_error:
 
 from .._instrumentation import get_instructions
 from .._utils import generate_tool_call_id
-from ..exceptions import UserError
+from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -86,6 +89,7 @@ from ..settings import ThinkingEffort, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._base import (
+    DEFAULT_REALTIME_PROFILE,
     AudioDelta,
     AudioInput,
     ImageInput,
@@ -93,6 +97,7 @@ from ._base import (
     InputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
+    RealtimeError,
     RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
@@ -148,8 +153,8 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     google_input_transcription: bool
     """Whether to transcribe input audio. Defaults to `True`.
 
-    When `False`, the session's `audio_retention` must be `'input_audio'` or `'all'` so user turns can be
-    recorded.
+    When `False`, user turns are recorded as retained audio when available, or as content-less
+    placeholders otherwise.
     """
     google_output_transcription: bool
     """Whether to transcribe output audio. Defaults to `True`.
@@ -179,6 +184,23 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
 
     google_enable_session_resumption: bool
     """Whether to request session-resumption handles. Defaults to `False`."""
+
+    google_async_tool_calls: bool
+    """Whether tool calls may run without pausing the model's speech. Defaults to `False`.
+
+    By default Gemini stops generating while a tool call is outstanding, so the caller hears silence
+    for as long as the tool takes. Enabling this declares tools `NON_BLOCKING` and returns their
+    results with `INTERRUPT` scheduling, so the model keeps talking (typically narrating what it's
+    doing) and the result cuts into that speech when it arrives.
+
+    This pays off for tools that take a noticeable moment. It is a poor trade for fast tools: the
+    result interrupts a reply the model has barely started, leaving an extra interrupted turn in
+    history with nothing in it. Verified live against `gemini-2.5-flash-native-audio-latest`.
+
+    Only the native-audio models honor it (see
+    [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]);
+    setting it on a model that doesn't warns and is ignored, rather than silently doing nothing.
+    """
 
 
 INPUT_SAMPLE_RATE = 16000
@@ -408,12 +430,13 @@ def _genai_user_parts(content: Sequence[str | BinaryContent]) -> list[genai_type
     ]
 
 
-def _tool_def_to_genai(tool: ToolDefinition) -> genai_types.FunctionDeclaration:
+def _tool_def_to_genai(tool: ToolDefinition, *, async_tool_calls: bool = False) -> genai_types.FunctionDeclaration:
     """Convert a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] to a Gemini function declaration."""
     return genai_types.FunctionDeclaration(
         name=tool.name,
         description=tool.description or None,
         parameters_json_schema=tool.parameters_json_schema,
+        behavior=genai_types.Behavior.NON_BLOCKING if async_tool_calls else None,
     )
 
 
@@ -551,34 +574,37 @@ def _ws_trace_context(client: Client) -> Generator[None]:
             headers.pop(key, None)
 
 
-@contextmanager
-def _ws_gateway_auth(client: Client) -> Generator[None]:
-    """Add the Pydantic AI Gateway bearer auth to the Gemini Live handshake headers for the connect only.
+# Matches the native Vertex Bidi WebSocket path the `google-genai` SDK dials (both API versions).
+_VERTEX_BIDI_PATH_RE = re.compile(r'/ws/google\.cloud\.aiplatform\.v1(?:beta1)?\.LlmBidiService/BidiGenerateContent')
 
-    The gateway authenticates on `Authorization: Bearer <key>`, added to REST calls by its `httpx`
-    request hook. That hook can't cover the Live handshake: `google-genai` dials the WebSocket with the
-    `websockets` library, bypassing the provider's `httpx` client, and on the Vertex Express-mode client
-    the gateway `GoogleCloudProvider` builds, the SDK carries the key only as `x-goog-api-key`. So the
-    gateway key (`client._api_client.api_key`) is mirrored into an `Authorization` header on the shared
-    HTTP options — which the SDK forwards as the handshake's `additional_headers` — and removed after the
-    connect so the shared client's later REST requests fall back to the request hook. A pre-existing
-    `Authorization` header (or an absent key) is left untouched. Guarded like `_single_ws_user_agent`:
-    custom/fake clients without the private HTTP options simply skip injection.
+
+@contextmanager
+def _ws_gateway_url_rewrite(model: str) -> Generator[None]:
+    """TEMPORARY: rewrite the Gemini Live handshake URL to the gateway's unified realtime path.
+
+    The `google-genai` SDK dials Vertex's native Bidi path
+    (`/proxy/<route>/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent`), but the
+    Pydantic AI Gateway's realtime relay currently only routes the OpenAI-shaped
+    `/proxy/<route>/v1/realtime?model=<model>` upgrade path, so a `gateway/google` session otherwise fails
+    the WebSocket upgrade with a 503. Until the gateway accepts the native Bidi path, rewrite the dialed
+    URI so a gateway session connects; the gateway relays the SDK's `setup` frame to the Vertex Bidi
+    upstream verbatim. Remove this once the gateway routes the Bidi path.
     """
-    raw_headers = getattr(getattr(getattr(client, '_api_client', None), '_http_options', None), 'headers', None)
-    api_key = getattr(getattr(client, '_api_client', None), 'api_key', None)
-    if not isinstance(raw_headers, dict) or not api_key:
-        yield
-        return
-    headers = cast('dict[str, str]', raw_headers)
-    if 'Authorization' in headers:
-        yield
-        return
-    headers['Authorization'] = f'Bearer {api_key}'
+    from google.genai import live
+
+    real_ws_connect = live.ws_connect  # pyright: ignore[reportPrivateImportUsage]
+
+    def rewritten(uri: str, *args: Any, **kwargs: Any) -> Any:
+        if _VERTEX_BIDI_PATH_RE.search(uri):
+            base = _VERTEX_BIDI_PATH_RE.sub('/v1/realtime', uri.partition('?')[0], count=1)
+            uri = f'{base}?model={quote(model)}'
+        return real_ws_connect(uri, *args, **kwargs)
+
+    live.ws_connect = rewritten  # pyright: ignore[reportPrivateImportUsage]
     try:
         yield
     finally:
-        headers.pop('Authorization', None)
+        live.ws_connect = real_ws_connect  # pyright: ignore[reportPrivateImportUsage]
 
 
 @dataclass
@@ -672,6 +698,24 @@ class GoogleRealtimeModel(RealtimeModel):
             multi_speaker_voice_config=multi_speaker_config,
             language_code=language_code,
         )
+
+    def _async_tool_calls(self, model_settings: GoogleRealtimeModelSettings | None) -> bool:
+        """Whether to run this session's tool calls without pausing the model's speech.
+
+        Opt-in, and only where the model actually honors it — the other Live families accept
+        `NON_BLOCKING` and then block anyway, so enabling it there would promise something the
+        provider doesn't deliver.
+        """
+        if not model_settings or not model_settings.get('google_async_tool_calls', False):
+            return False
+        if not self.profile.get('supports_async_tool_calls', False):
+            warnings.warn(
+                f'The {self.model!r} realtime model does not run tool calls without blocking '
+                'generation; ignoring the `google_async_tool_calls` setting.',
+                UserWarning,
+            )
+            return False
+        return True
 
     def _realtime_input_config(
         self, model_settings: GoogleRealtimeModelSettings
@@ -789,7 +833,13 @@ class GoogleRealtimeModel(RealtimeModel):
         # MCP types); a precisely-typed `list[Tool]` isn't assignable to it (list invariance).
         genai_tools: list[Any] = []
         if tools:
-            genai_tools.append(genai_types.Tool(function_declarations=[_tool_def_to_genai(t) for t in tools]))
+            genai_tools.append(
+                genai_types.Tool(
+                    function_declarations=[
+                        _tool_def_to_genai(t, async_tool_calls=self._async_tool_calls(settings)) for t in tools
+                    ]
+                )
+            )
         genai_tools.extend(_native_tool_to_genai(t) for t in native_tools or [])
         if genai_tools:
             config.tools = genai_tools
@@ -834,16 +884,48 @@ class GoogleRealtimeModel(RealtimeModel):
                 with ExitStack() as stack:
                     stack.enter_context(_single_ws_user_agent(client))
                     stack.enter_context(_ws_trace_context(client))
-                    # A gateway provider dials the WS itself and can't run the gateway's httpx auth hook,
-                    # so the bearer key is added to the handshake headers only when routing through it.
                     if self._gateway:
-                        stack.enter_context(_ws_gateway_auth(client))
+                        # TEMPORARY: reshape the dialed URL to the gateway's unified realtime path until
+                        # the gateway routes the native Vertex Bidi path (see `_ws_gateway_url_rewrite`).
+                        # The gateway bearer auth reaches the handshake via a static header set on the
+                        # client at build time (see `_set_google_ws_gateway_auth`), so no per-connect
+                        # header injection is needed here.
+                        stack.enter_context(_ws_gateway_url_rewrite(self.model))
                     session = await opening.__aenter__()
             cm = opening
             return session
 
         try:
-            session = await dial(None)
+            # A rejected config (unsupported `voice`, unknown model) closes the WebSocket, which the SDK
+            # surfaces as an `APIError`. Map it to the same typed exceptions a regular request raises,
+            # mirroring `GoogleModel`. Reconnects dial from the receive loop, which keeps handling the
+            # `APIError` as a retryable drop.
+            try:
+                session = await dial(None)
+            except genai_errors.APIError as e:
+                if (status_code := e.code) >= 400:
+                    raise ModelHTTPError(
+                        status_code=status_code,
+                        model_name=self.model,
+                        body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+                    ) from e
+                raise RealtimeError(model_name=self.model, message=str(e)) from e  # pragma: no cover
+            except websockets.InvalidStatus as e:
+                # A rejected WebSocket upgrade (e.g. bad key → 401) surfaces from `google-genai` as a raw
+                # `websockets` error rather than an `APIError`; the WebSocket is the API here, so map its
+                # HTTP status to `ModelHTTPError` like a regular request.
+                response = e.response
+                body = response.body.decode(errors='replace') if response.body else response.reason_phrase
+                raise ModelHTTPError(status_code=response.status_code, model_name=self.model, body=body) from e
+            except websockets.WebSocketException as e:
+                # Any other raw `websockets` handshake failure the SDK didn't wrap as an `APIError`; no HTTP
+                # status, so surface it as a `RealtimeError` rather than letting it escape untyped.
+                raise RealtimeError(model_name=self.model, message=f'WebSocket error during connect: {e}') from e
+            except OSError as e:
+                # The connection never came up: DNS failure, refused, reset, or the dial timing out
+                # (`TimeoutError` is an `OSError`). No HTTP status exists, so this is a `RealtimeError`
+                # too, rather than a bare built-in from what looks like an ordinary model call.
+                raise RealtimeError(model_name=self.model, message=f'Could not reach the realtime API: {e}') from e
             # Seed prior conversation once, after the initial connect, as inactive context turns (no
             # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
             # resumption restores server state, and a `ReconnectedEvent` starts a fresh turn.
@@ -851,10 +933,12 @@ class GoogleRealtimeModel(RealtimeModel):
                 await session.send_client_content(turns=turns, turn_complete=False)
             yield GoogleRealtimeConnection(
                 session,
+                profile=self.profile,
                 provider_name=self._provider.name,
                 dial=dial if reconnectable else None,
                 reconnect=self.reconnect if reconnectable else None,
                 input_transcription_enabled=settings.get('google_input_transcription', True),
+                async_tool_calls=self._async_tool_calls(settings),
             )
         finally:
             if cm is not None:
@@ -864,17 +948,28 @@ class GoogleRealtimeModel(RealtimeModel):
 class GoogleRealtimeConnection(RealtimeConnection):
     """A live connection to the Gemini Live API, backed by a `google-genai` session."""
 
+    # The SDK surfaces a closed socket as `ConnectionClosed` or an `APIError`; `OSError` covers the
+    # socket-level failures underneath both.
+    transport_errors = (ConnectionClosed, genai_errors.APIError, OSError)
+    # How this provider names itself in error messages.
+    _provider_label = 'Gemini Live'
+
     def __init__(
         self,
         session: AsyncSession,
         *,
+        profile: RealtimeModelProfile | None = None,
         provider_name: str = 'google',
         dial: Callable[[str | None], Awaitable[AsyncSession]] | None = None,
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
+        async_tool_calls: bool = False,
     ) -> None:
         self._session = session
+        self._profile = profile if profile is not None else DEFAULT_REALTIME_PROFILE
         self._input_transcription_enabled = input_transcription_enabled
+        self._reconnects_used = 0
+        self._async_tool_calls_enabled = async_tool_calls
         # Provider name stamped onto native-tool history parts (grounding / code execution), matching the
         # classic `GoogleModel` (`NativeToolCallPart.provider_name`), so a turn's history is provider-tagged
         # identically whether it came from a realtime session or a classic run.
@@ -944,10 +1039,19 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     id=gemini_id,
                     name=name,
                     response={'output': output},
+                    # `INTERRUPT`, not `WHEN_IDLE`: a non-blocking model keeps talking while the
+                    # tool runs, and `WHEN_IDLE` holds the result until it stops — by which point it
+                    # has usually answered from its own knowledge, so the tool's answer contradicts
+                    # what was already said. (Recorded live: a tool returning "foggy and 12 degrees"
+                    # while the model said "15 degrees with clouds".) A model calls a tool because it
+                    # needs the result, so cut in with it.
+                    scheduling=genai_types.FunctionResponseScheduling.INTERRUPT
+                    if self._async_tool_calls_enabled
+                    else None,
                 )
             )
         else:
-            raise NotImplementedError(f'Gemini Live does not support {type(content).__name__} input')
+            raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         # `session.receive()` yields a single model turn and then returns, so loop to keep serving
@@ -966,13 +1070,13 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     # No reconnect policy: a dropped connection is fatal. Surface it as a
                     # non-recoverable error and end the stream cleanly, rather than returning silently
                     # (mirroring the OpenAI provider), so callers don't treat a truncated turn as complete.
-                    yield SessionErrorEvent(message=f'Gemini realtime connection closed: {e}', recoverable=False)
+                    yield SessionErrorEvent(message=f'{self._provider_label} connection closed: {e}', recoverable=False)
                     return
                 if await self._try_reconnect():
                     yield ReconnectedEvent(state_restored=True)
                     continue
                 yield SessionErrorEvent(
-                    message=f'Gemini realtime connection closed; reconnect failed: {e}', recoverable=False
+                    message=f'{self._provider_label} connection closed; reconnect failed: {e}', recoverable=False
                 )
                 return
             # `receive()` returned normally → the turn ended; loop for the next one.
@@ -980,7 +1084,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
     async def _try_reconnect(self) -> bool:
         """Re-dial with exponential backoff, resuming from the latest handle; return whether it worked."""
         assert self._dial is not None and self._reconnect is not None
-        return await reconnect_with_backoff(self._reconnect, self._attempt_reconnect)
+        if not await reconnect_with_backoff(
+            self._reconnect, self._attempt_reconnect, reconnects_used=self._reconnects_used
+        ):
+            return False
+        self._reconnects_used += 1
+        return True
 
     async def _attempt_reconnect(self) -> bool:
         assert self._dial is not None

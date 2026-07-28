@@ -62,6 +62,12 @@ class BaseGoogleProvider(Provider[Client], ABC):
             'supported_native_tools': frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
             # Native-audio Gemini Live models support a thinking config (verified live).
             'supports_thinking': 'native-audio' in model_name,
+            # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with
+            # a slow tool, where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and
+            # `gemini-3.1-flash-live-preview` accepts the flag but still goes silent until the result
+            # lands. This gates the opt-in `google_async_tool_calls` setting; it is not enabled by
+            # merely being supported.
+            'supports_async_tool_calls': 'native-audio' in model_name,
         }
 
     def _build_http_options(
@@ -188,4 +194,8 @@ GoogleCloudLocation = Literal[
 ]
 """Regions available for Google Cloud.
 More details [here](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#genai-locations).
+
+This lists single-region values only. `GoogleCloudProvider` also accepts the `'global'` location and the
+`'us'`/`'eu'` multi-regions (routed to the `aiplatform.{us,eu}.rep.googleapis.com` data-residency endpoints)
+as separate union members on its `location` parameter.
 """

@@ -20,10 +20,12 @@ import base64
 import hashlib
 import json
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 
+import websockets
 from openai.types.realtime import (
     ConversationCreatedEvent,
     ConversationItem,
@@ -34,7 +36,7 @@ from openai.types.realtime import (
     ConversationItemInputAudioTranscriptionFailedEvent,
     RealtimeConversationItemFunctionCall,
     RealtimeConversationItemFunctionCallOutput,
-    RealtimeError,
+    RealtimeError as RealtimeErrorPayload,
     RealtimeErrorEvent,
     RealtimeResponse,
     RealtimeResponseStatus,
@@ -49,7 +51,7 @@ from openai.types.realtime import (
 from typing_extensions import assert_never
 
 from .._utils import is_str_dict
-from ..exceptions import UserError
+from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
     CompactionPart,
@@ -83,6 +85,7 @@ from ._base import (
     InputTranscript,
     InputTranscriptionFailedEvent,
     RealtimeCodecEvent,
+    RealtimeError,
     RealtimeModelProfile,
     SessionErrorEvent,
     ToolCall,
@@ -582,8 +585,8 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         error = event.error
         return SessionErrorEvent(
             message=_error_message(error),
-            type=error.type or None if isinstance(error, RealtimeError) else None,
-            code=error.code or None if isinstance(error, RealtimeError) else None,
+            type=error.type or None if isinstance(error, RealtimeErrorPayload) else None,
+            code=error.code or None if isinstance(error, RealtimeErrorPayload) else None,
             recoverable=True,  # a protocol `error` keeps the session open; a dropped connection does not
         )
 
@@ -592,7 +595,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
 def _map_input_transcription_event(
     data: dict[str, Any], event_type: str
-) -> InputTranscript | InputTranscriptionFailedEvent | SessionErrorEvent | None:
+) -> InputTranscript | InputTranscriptionFailedEvent | None:
     """Map input transcription progress and failure events."""
     if event_type == 'conversation.item.input_audio_transcription.delta':
         event = ConversationItemInputAudioTranscriptionDeltaEvent.construct(**data)
@@ -609,19 +612,6 @@ def _map_input_transcription_event(
     if not is_str_dict(data.get('error')):
         raise ValueError('`error` must be an object')
     event = ConversationItemInputAudioTranscriptionFailedEvent.construct(**data)
-    if event.error.code == 'DeploymentNotFound':
-        # A misconfiguration, not a transient per-utterance failure: Azure resolves the transcription
-        # model against the resource's own deployments, so the default fails on every turn until fixed —
-        # silently dropping user turns. Fail loudly instead of surfacing a recoverable event nobody reads.
-        return SessionErrorEvent(
-            message=(
-                'Input transcription failed: the transcription model is not deployed on this Azure '
-                'resource (DeploymentNotFound). Deploy a transcription model and set '
-                '`input_transcription_model` in the realtime model settings, or disable input '
-                'transcription with `input_transcription_model=None`.'
-            ),
-            recoverable=False,
-        )
     return InputTranscriptionFailedEvent(
         message=event.error.message or '',
         type=event.error.type or None,
@@ -631,11 +621,64 @@ def _map_input_transcription_event(
     )
 
 
-def _error_message(error: RealtimeError | object) -> str:
+def _error_message(error: RealtimeErrorPayload | object) -> str:
     """Extract a human-readable message from an OpenAI `error` payload."""
-    if isinstance(error, RealtimeError):
+    if isinstance(error, RealtimeErrorPayload):
         return error.message or json.dumps(error.model_dump(exclude_none=True))
+    if is_str_dict(error) and isinstance(message := error.get('message'), str):
+        return message
     return str(error)
+
+
+class RealtimeHandshakeError(Exception):
+    """A failure while establishing an OpenAI-protocol realtime session.
+
+    Covers the server rejecting the session with an `error` event, a frame we couldn't parse, and the
+    handshake timing out. Raised by [`expect_event`][pydantic_ai.realtime._openai_protocol.expect_event]
+    and mapped to a [`RealtimeError`][pydantic_ai.realtime.RealtimeError] by
+    [`map_connect_errors`][pydantic_ai.realtime._openai_protocol.map_connect_errors], so each of them
+    surfaces as a typed model exception rather than a bare protocol error or a built-in `TimeoutError`.
+    """
+
+    def __init__(self, error: object) -> None:
+        self.error = error
+        """The server's `error` payload when it rejected the session, otherwise a description of the failure."""
+        super().__init__(_error_message(error))
+
+
+@contextmanager
+def map_connect_errors(model_name: str) -> Generator[None]:
+    """Map realtime handshake failures to the typed exceptions the regular models raise.
+
+    Wrap the initial dial so anything that stops the session coming up surfaces as a
+    [`RealtimeError`][pydantic_ai.realtime.RealtimeError], or a
+    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] where the failure carries an HTTP status,
+    each naming the model — mirroring [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
+    Reconnects dial outside this manager so the reconnect loop keeps treating a drop as retryable.
+    """
+    try:
+        yield
+    except RealtimeHandshakeError as e:
+        # A rejected config, a malformed frame, or a timeout: all arrive over the open WebSocket and
+        # carry no HTTP status, so they map to `RealtimeError` like a regular non-status provider error.
+        raise RealtimeError(model_name=model_name, message=str(e)) from e
+    except websockets.InvalidStatus as e:
+        # The WebSocket upgrade itself was rejected (bad key → 401, unknown model → 404); this carries a
+        # real HTTP status, so it maps to `ModelHTTPError` exactly like a regular request.
+        response = e.response
+        body = response.body.decode(errors='replace') if response.body else response.reason_phrase
+        raise ModelHTTPError(status_code=response.status_code, model_name=model_name, body=body) from e
+    except websockets.WebSocketException as e:
+        # Any other WebSocket-level handshake failure — the server closed the socket mid-handshake (e.g. a
+        # gateway rejecting an unknown model) instead of sending an `error` event, a bad upgrade, etc.
+        # These carry no HTTP status, so they map to `RealtimeError` with the underlying detail, ensuring
+        # the session surfaces a typed error rather than dying silently.
+        raise RealtimeError(model_name=model_name, message=f'WebSocket error during realtime handshake: {e}') from e
+    except OSError as e:
+        # The connection never came up: DNS failure, refused, reset, or the dial timing out
+        # (`TimeoutError` is an `OSError`). No HTTP status exists, so this is a `RealtimeError` too --
+        # without this the caller would get a bare built-in from what looks like an ordinary model call.
+        raise RealtimeError(model_name=model_name, message=f'Could not reach the realtime API: {e}') from e
 
 
 @dataclass
@@ -761,14 +804,17 @@ async def expect_event(
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))
         except asyncio.TimeoutError:
-            raise TimeoutError(f'Timed out waiting for OpenAI realtime {expected_type!r} event') from None
-        if not isinstance(raw, str):  # pragma: no cover
-            raise TypeError(f'Expected a text message from the WebSocket, got {type(raw).__name__}')
-        data = loads_obj(raw)
+            raise RealtimeHandshakeError(f'timed out waiting for a {expected_type!r} event') from None
+        if not isinstance(raw, str):
+            raise RealtimeHandshakeError(f'expected a text frame, got {type(raw).__name__}')
+        try:
+            data = loads_obj(raw)
+        except ValueError as e:
+            raise RealtimeHandshakeError(f'received a malformed frame: {e}') from e
         event_type = data.get('type')
         if event_type == expected_type:
             return data
         if event_type == 'error':
-            raise RuntimeError(f'OpenAI realtime error during handshake: {_error_message(data.get("error"))}')
+            raise RealtimeHandshakeError(data.get('error'))
         if on_unexpected is not None:
             on_unexpected(data)

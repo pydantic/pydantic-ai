@@ -1679,6 +1679,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 """Call after_run, store the result override, and clear any pending error."""
                 nonlocal _run_error
                 r = await run_capability.after_run(run_ctx, result=r)
+                # Every completion path funnels through here — including `wrap_run`/`on_run_error`
+                # recovering from the very `CancelledError` an external cancel delivered. If that
+                # cancellation is still pending on this task, re-assert it rather than let the run
+                # finalize as a success.
+                _utils.raise_if_cancelling()
                 agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
                 _run_error = None
 
@@ -3100,8 +3105,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Resolve the capability layers and extract their contributions, exactly as `run`/`iter` do via
         # the shared helpers (`_base_run_capability` honors `override(root_capability=...)` the same way).
         # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, no deferred loader
-        # (`inject_deferred_loader=False`), once-only model settings (below), and the `_keep_native` /
-        # `supported_native_tools` gate (below). Keep this in sync with the `iter` call site.
+        # (`inject_deferred_loader=False`), once-only model settings (below), and the `_keep_native` drop
+        # plus the shared native ↔ local-tool swap (below). Keep this in sync with the `iter` call site.
         base_capability, base_is_override = self._base_run_capability()
         resolved_caps = await self._resolve_run_capabilities(
             run_context,
@@ -3133,21 +3138,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return isinstance(tool, AbstractNativeTool) and not (isinstance(tool, ToolSearchTool) and tool.optional)
 
         native_tools = [t for t in resolved_caps.native_tools if _keep_native(t)]
-
-        # Validate the full native-tool set (capability-contributed and `override(native_tools=...)`)
-        # against the model's declared support up front — mirroring the classic model's
-        # `supported_native_tools` check — so an unsupported tool fails with a clear error here, before
-        # connecting, rather than mid-session. This is the signal a caller or capability needs to fall
-        # back (e.g. to a local tool); the session itself does not fall back automatically.
         model_profile = model.profile
-        supported_native_tools = model_profile.get('supported_native_tools', frozenset())
-        if unsupported_native_tools := [t for t in native_tools if not isinstance(t, tuple(supported_native_tools))]:
-            unsupported = ', '.join(sorted(type(t).__name__ for t in unsupported_native_tools))
-            supported = ', '.join(sorted(t.__name__ for t in supported_native_tools)) or 'none'
-            raise exceptions.UserError(
-                f'The {model.model_name!r} realtime model does not support the {unsupported} native tool(s). '
-                f'Supported native tools: {supported}.'
-            )
 
         toolset = self._get_toolset(
             output_toolset=None,
@@ -3253,16 +3244,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     "'transcript_only' (transcripts still build the conversation history)."
                 )
 
+            model_request_parameters = models.ModelRequestParameters(
+                function_tools=resolved.tool_defs,
+                native_tools=resolved.native_tools,
+            )
+            # Run the same native ↔ local-tool fallback swap the classic agent-run path applies (via
+            # `Model._resolve_native_tool_swap`): drop an unsupported native tool when a local fallback
+            # (stamped `unless_native=...` by the capability's toolset) is present, drop the redundant
+            # local tool when the native tool IS supported, and raise the shared `UserError` (suggesting
+            # `local=...`) only when unsupported with no local fallback. Realtime models genuinely default
+            # to supporting no native tools, so the default here is `frozenset()`, not `SUPPORTED_NATIVE_TOOLS`.
+            model_request_parameters = models.resolve_native_tool_swap(
+                model_request_parameters, resolved.model_profile.get('supported_native_tools', frozenset())
+            )
+
             if message_history and not resolved.model_profile.get('supports_session_seeding', False):
                 raise exceptions.UserError(
                     f'The {resolved.model.model_name!r} realtime model does not support seeding a session with '
                     '`message_history`.'
                 )
-
-            model_request_parameters = models.ModelRequestParameters(
-                function_tools=resolved.tool_defs,
-                native_tools=resolved.native_tools,
-            )
             if provider_session is not None:
                 connection_manager = resolved.model.connect_webrtc(
                     provider_session,
@@ -3284,7 +3284,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model_name=resolved.model.model_name,
                     provider_name=resolved.model.system,
                     provider_url=resolved.model.base_url,
-                    agent_name=self.name,
+                    # Fall back to 'agent' like the classic run span (see `capabilities/instrumentation.py`)
+                    # so the session span always carries an `agent_name`; backends that group runs by it
+                    # (e.g. Logfire's Runs view) would otherwise skip an unnamed agent's realtime session.
+                    agent_name=self.name or 'agent',
                     usage=resolved.run_context.usage,
                     usage_limits=usage_limits,
                     audio_retention=audio_retention,
@@ -3301,6 +3304,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         else None
                     ),
                     output_modality=(resolved.model_settings or {}).get('output_modality', 'audio'),
+                    # Surfaced on the session span so the session's configured native tools and realtime
+                    # settings are inspectable, respecting `include_model_request_parameters`.
+                    model_request_parameters=model_request_parameters,
+                    model_settings=resolved.model_settings,
                 )
                 async with session:
                     yield session

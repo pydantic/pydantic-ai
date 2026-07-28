@@ -24,7 +24,10 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
     SpeechPart,
+    SpeechPartDelta,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -90,7 +93,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     async with agent.realtime(model).session(audio_retention='output_audio') as session:
         await session.send('Say a short greeting.')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -132,7 +135,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     part = response.parts[0]
     assert isinstance(part, SpeechPart)
     assert part.speaker == 'assistant'
-    assert part.transcript == snapshot('Hey there! Great to chat with you.')
+    assert part.transcript == snapshot('Hi there!')
     assert isinstance(part.audio, BinaryContent)
     assert part.audio.media_type == 'audio/wav'
     assert len(part.audio.data) > 0
@@ -148,6 +151,12 @@ async def test_audio_in_server_vad_turn(
     guard for the dropped-user-turn bug: without a transcription default, an audio-only turn produces
     neither an `InputTranscript` nor a retained recording, so `all_messages()` would hold only the
     assistant response.
+
+    It also guards live-transcript *attribution*. OpenAI transcribes the user's audio asynchronously,
+    so this recording interleaves the two speakers' transcripts delta by delta. Each delta must be
+    attributable on its own — via `SpeechPartDelta.speaker` — and the two concurrently-assembling
+    parts must hold distinct indices (they were both 0 once, which made the interleaved stream
+    impossible to split).
     """
     provider, _ = openai_ws_cassette
     model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
@@ -161,7 +170,7 @@ async def test_audio_in_server_vad_turn(
         for start in range(0, len(pcm), 4800):
             await session.send_audio(pcm[start : start + 4800])
         with anyio.fail_after(45):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -182,6 +191,28 @@ async def test_audio_in_server_vad_turn(
         ]
     )
 
+    # Reassembling both transcripts from the deltas alone — no correlating back to a `PartStartEvent` —
+    # recovers each speaker's turn intact, which is only possible if every delta names its speaker.
+    speakers_by_index = {
+        e.index: e.part.speaker for e in events if isinstance(e, PartStartEvent) and isinstance(e.part, SpeechPart)
+    }
+    streamed = {'user': '', 'assistant': ''}
+    for event in events:
+        if isinstance(event, PartDeltaEvent) and isinstance(delta := event.delta, SpeechPartDelta):
+            if delta.transcript_delta:
+                assert delta.speaker is not None
+                # The delta agrees with the part it belongs to, so either is usable on its own.
+                assert delta.speaker == speakers_by_index[event.index]
+                streamed[delta.speaker] += delta.transcript_delta
+    # Two parts assembled at once, on distinct indices, one per speaker.
+    assert sorted(speakers_by_index.values()) == ['assistant', 'user']
+    assert streamed['user'].strip() == snapshot('Hello, my name is Marcelo.')
+    # The model says a curly apostrophe, normalized here to a straight one: the smartquote
+    # pre-commit hook rewrites a literal curly quote in source, which would break the comparison.
+    assert streamed['assistant'].strip().replace('\u2019', "'") == snapshot(
+        'Hello, Marcelo! Great to meet you. How can I help you today?'
+    )
+
     messages = session.all_messages()
     # The spoken turn is transcribed into a user request ahead of the assistant's reply.
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
@@ -197,14 +228,14 @@ async def test_audio_in_server_vad_turn(
     assert session.usage == snapshot(
         RunUsage(
             input_tokens=41,
-            output_tokens=105,
+            output_tokens=164,
             input_audio_tokens=27,
-            output_audio_tokens=76,
+            output_audio_tokens=136,
             details={
                 'input_transcription_seconds': 3,
                 'input_text_tokens': 14,
                 'input_image_tokens': 0,
-                'output_text_tokens': 29,
+                'output_text_tokens': 28,
             },
             requests=1,
         )
@@ -229,7 +260,7 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     async with agent.realtime(model).session() as session:
         await session.send('What is the weather in London?')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -304,7 +335,7 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     ]
     final = messages[3]
     assert isinstance(final, ModelResponse)
-    assert (final.usage.input_tokens, final.usage.output_tokens) == (96, 13)
+    assert (final.usage.input_tokens, final.usage.output_tokens) == (103, 13)
     final_part = final.parts[0]
     # The session runs in text-output modality, so the reply is a `TextPart`, not a `SpeechPart`.
     assert isinstance(final_part, TextPart)
@@ -335,7 +366,7 @@ async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], 
     async with agent.realtime(model, message_history=history).session() as session:
         await session.send('What is my name and favorite color?')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -401,6 +432,7 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_images=True,
         supports_seeding_audio=True,
         supports_thinking=False,  # GA `gpt-realtime` is not a reasoning model
+        supports_async_tool_calls=True,  # the realtime models keep talking through a tool call
         supported_native_tools=frozenset(),
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,

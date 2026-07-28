@@ -51,6 +51,11 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             'supports_session_seeding': True,
             'supports_seeding_images': True,
             'supports_seeding_audio': True,
+            # The realtime models keep talking while a tool call is outstanding — they're tuned to
+            # emit filler ("let me check that") rather than going silent — so there's no per-tool
+            # wire flag to set, unlike Gemini. The session already runs tools in the background and
+            # defers `response.create` while a response is active, so this is true end to end.
+            'supports_async_tool_calls': True,
             'audio_input_sample_rate': 24000,
             'audio_output_sample_rate': 24000,
             # Reasoning effort is only accepted by the `gpt-realtime-2*` reasoning models; the GA

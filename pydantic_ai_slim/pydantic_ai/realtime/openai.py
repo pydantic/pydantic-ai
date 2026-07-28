@@ -20,6 +20,8 @@ from dataclasses import InitVar, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import quote
 
+from typing_extensions import TypeAliasType
+
 try:
     import websockets
     from openai.types.realtime import (
@@ -96,6 +98,7 @@ from ._openai_protocol import (
     ServerVAD,
     expect_event,
     loads_obj,
+    map_connect_errors,
     map_event,
     realtime_websocket_url,
     resolve_base_turn_detection,
@@ -120,14 +123,44 @@ __all__ = (
     'OpenAIRealtimeModel',
     'OpenAIRealtimeModelSettings',
     'OpenAIRealtimeConnection',
+    'KnownOpenAIRealtimeVoiceName',
     'ServerVAD',
     'SemanticVAD',
     'map_event',
 )
 
+KnownOpenAIRealtimeVoiceName = TypeAliasType(
+    'KnownOpenAIRealtimeVoiceName',
+    Literal[
+        'alloy',
+        'ash',
+        'ballad',
+        'cedar',
+        'coral',
+        'echo',
+        'marin',
+        'sage',
+        'shimmer',
+        'verse',
+    ],
+)
+"""The prebuilt voices OpenAI's realtime API ships, mirroring the `openai` SDK's own `Voice` union.
+
+The [`voice`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings.voice] setting also accepts any
+other string, so a voice OpenAI adds later works before this list catches up; a test pins the list
+against the SDK so it doesn't silently fall behind.
+"""
+
 
 class OpenAIRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Settings specific to OpenAI realtime models."""
+
+    voice: KnownOpenAIRealtimeVoiceName | str
+    """Voice used for audio output, e.g. `alloy`.
+
+    Narrows the cross-provider [`voice`][pydantic_ai.realtime.RealtimeModelSettings.voice] setting to
+    the voices OpenAI ships, for autocomplete; any other string is still accepted.
+    """
 
     openai_input_noise_reduction: Literal['near_field', 'far_field']
     """Noise reduction tuned for `near_field` (headset) or `far_field` (laptop/conference) microphones.
@@ -258,11 +291,26 @@ def _map_transcription_usage(usage: RealtimeTranscriptionUsage | None) -> Reques
     return RequestUsage(details=details) if details else None
 
 
+def _describe_close(ws: ClientConnection) -> str:
+    """Describe a close that `websockets` reported by ending iteration instead of raising."""
+    if (code := ws.close_code) is None:  # pragma: no cover
+        # Only reachable if iteration ends while the connection is still open, which `websockets`
+        # doesn't do; described generically rather than asserted so it can't mask a real close.
+        return 'stream ended'
+    reason = ws.close_reason
+    return f'received {code} {reason}' if reason else f'received {code}'
+
+
 class OpenAIRealtimeConnection(RealtimeConnection):
     """A live WebSocket connection to the OpenAI Realtime API."""
 
     _provider_name = 'openai'
+    # How this provider names itself in error messages; protocol clones (xAI, Azure) override it so a
+    # closed connection doesn't report the wrong vendor.
+    _provider_label = 'OpenAI Realtime'
     _supports_tool_result_images = True
+    # `OSError` covers the socket-level failures (reset, broken pipe) that `websockets` lets through.
+    transport_errors = (websockets.WebSocketException, OSError)
 
     def __init__(
         self,
@@ -282,6 +330,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._reconnect = reconnect
         self._restores_state_on_reconnect = False
         self._input_transcription_enabled = input_transcription_enabled
+        self._reconnects_used = 0
         self._observes_output_audio = observes_output_audio
         # The Realtime API rejects `response.create` while a response is already being generated.
         # We track that window and defer requests (e.g. a background tool result that lands while the
@@ -337,6 +386,18 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             )
             await self._request_response()
         elif isinstance(content, ToolResult):
+            # Normalize any follow-up content (downloading and re-encoding media) before the first
+            # frame goes out, so content this provider can't carry fails with nothing sent rather than
+            # leaving the result on the wire without the material that explains it.
+            item = (
+                await user_message_item(
+                    content.content,
+                    provider_name=self._provider_name,
+                    supports_images=self._supports_tool_result_images,
+                )
+                if content.content
+                else None
+            )
             await self._send_event(
                 {
                     'type': 'conversation.item.create',
@@ -347,13 +408,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     },
                 }
             )
-            if content.content and (
-                item := await user_message_item(
-                    content.content,
-                    provider_name=self._provider_name,
-                    supports_images=self._supports_tool_result_images,
-                )
-            ):
+            if item:
                 await self._send_event({'type': 'conversation.item.create', 'item': item})
             await self._request_response()
         elif isinstance(content, ImageInput):
@@ -408,7 +463,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     }
                 )
         else:
-            raise NotImplementedError(f'OpenAI Realtime does not support {type(content).__name__} input')
+            raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
 
     async def _request_response(self) -> None:
         """Ask the model to respond now, or defer until the active response completes."""
@@ -445,20 +500,30 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                         continue
                     for event in events:
                         yield event
-                return  # the upstream iterator ended without dropping
+                # `websockets` ends iteration silently on a *normal* close (1000/1001) and only raises
+                # on an abnormal one, but a session the server hung up on is over either way: OpenAI
+                # ends one that reaches its duration cap with `1001 Your session hit the maximum
+                # duration of 60 minutes.`. Handle it like a drop so a reconnect policy still runs and,
+                # without one, the consumer learns the conversation was cut off instead of seeing the
+                # stream quietly end.
+                closed = _describe_close(self._ws)
             except websockets.ConnectionClosed as e:
-                if self._reconnect is None or self._dial is None:
-                    # No reconnect policy: a dropped connection is fatal. Surface it as a
-                    # non-recoverable error and end the stream cleanly, rather than raising.
-                    yield SessionErrorEvent(message=f'OpenAI realtime connection closed: {e}', recoverable=False)
-                    return
-                if await self._try_reconnect():
-                    yield ReconnectedEvent(state_restored=self._restores_state_on_reconnect)
-                    continue
+                closed = str(e)
+
+            if self._reconnect is None or self._dial is None:
+                # No reconnect policy: a closed connection is fatal. Surface it as a non-recoverable
+                # error and end the stream cleanly, rather than raising.
                 yield SessionErrorEvent(
-                    message=f'OpenAI realtime connection closed; reconnect failed: {e}', recoverable=False
+                    message=f'{self._provider_label} connection closed: {closed}', recoverable=False
                 )
                 return
+            if await self._try_reconnect():
+                yield ReconnectedEvent(state_restored=self._restores_state_on_reconnect)
+                continue
+            yield SessionErrorEvent(
+                message=f'{self._provider_label} connection closed; reconnect failed: {closed}', recoverable=False
+            )
+            return
 
     def _is_cancelled_straggler(self, event_type: str | None, data: dict[str, Any]) -> bool:
         """Whether this frame is a trailing delta from a response cancelled on barge-in (drop it).
@@ -606,7 +671,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     async def _try_reconnect(self) -> bool:
         """Re-dial with exponential backoff; return whether a new connection was established."""
         assert self._reconnect is not None and self._dial is not None
-        return await reconnect_with_backoff(self._reconnect, self._attempt_reconnect)
+        if not await reconnect_with_backoff(
+            self._reconnect, self._attempt_reconnect, reconnects_used=self._reconnects_used
+        ):
+            return False
+        self._reconnects_used += 1
+        return True
 
     async def _attempt_reconnect(self) -> bool:
         assert self._dial is not None
@@ -936,6 +1006,10 @@ class OpenAIRealtimeModel(RealtimeModel):
         instructions = get_instructions(messages) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
+        # Convert the history to seed items before dialing. Content this provider can't replay is the
+        # caller's mistake, not the API's, so it should surface as a `UserError` without a socket ever
+        # being opened -- and stay outside `map_connect_errors`, which is only about reaching the API.
+        seed = await seed_items(messages, profile=self.profile, provider_name=self.system)
 
         # `dial` opens and configures a fresh connection. A reconnect closes the previous connection
         # (including one left half-open by a failed handshake) before opening the next, so sockets
@@ -964,11 +1038,15 @@ class OpenAIRealtimeModel(RealtimeModel):
             return ws
 
         try:
-            ws = await dial()
-            # Seed prior conversation once, after the initial handshake. Reconnects deliberately don't
-            # re-seed: server state is lost on drop and a `ReconnectedEvent` starts a fresh turn.
-            for item in await seed_items(messages, profile=self.profile, provider_name=self.system):
-                await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
+            # Map a rejected config or WebSocket upgrade to the same typed exceptions a regular request
+            # raises. The reconnect loop dials outside this manager, so it keeps treating a drop as
+            # retryable rather than fatal.
+            with map_connect_errors(self.model):
+                ws = await dial()
+                # Seed prior conversation once, after the initial handshake. Reconnects deliberately don't
+                # re-seed: server state is lost on drop and a `ReconnectedEvent` starts a fresh turn.
+                for item in seed:
+                    await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             yield self._connection_class(settings)(
                 ws,
                 dial=dial,

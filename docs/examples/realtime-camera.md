@@ -1,125 +1,122 @@
-This example sends microphone audio and one camera frame per second from a browser to a
-[Gemini Live realtime session](../realtime/index.md), then plays the model's spoken responses. You can ask
-about objects in view or show the assistant a sketch to redraw.
+This camera agent streams microphone audio and one camera frame per second into a
+[realtime session](../realtime/index.md), then plays and captions the spoken response. Point it at
+objects to ask about them, enable *Watch* for proactive narration, or show it a sketch to redraw.
 
-By default, the assistant includes a `redraw_diagram` function tool that hands a captured frame to a
-vision agent and renders the resulting diagram in the browser. Gemini 2.5 cannot combine function
-calling with native Google Search grounding, so drawing and web search are mutually exclusive. The
-default `CAMERA_DRAW=true` disables web search; set `CAMERA_DRAW=false` and leave
-`CAMERA_WEB_SEARCH=true` to use grounding instead.
+The example demonstrates:
 
-Demonstrates:
+- provider-agnostic [realtime sessions](../realtime/index.md) with profile-derived PCM sample rates
+- [image input](../realtime/index.md#images) using
+  [`BinaryContent`][pydantic_ai.messages.BinaryContent]
+- live vision with `turn_coverage='all_input'` and a *Watch* toggle
+- a regular function tool that delegates diagram rendering to a second
+  [`Agent`][pydantic_ai.Agent]
+- [web search](../realtime/index.md#built-in-tools-web-search) with
+  [`WebSearch`][pydantic_ai.capabilities.WebSearch] and clickable citations
+- a model picker and provider-aware voice, modality, VAD, and Gemini settings
 
-- [realtime sessions](../realtime/index.md) with the [Gemini provider][pydantic_ai.realtime.google.GoogleRealtimeModel]
-- [sending images](../realtime/index.md#images) — each camera frame is an
-  [`BinaryContent`][pydantic_ai.messages.BinaryContent] sent with [`send`][pydantic_ai.realtime.RealtimeSession.send]
-- [live vision](../realtime/index.md#images) — `turn_coverage='all_input'` plus a *Watch* toggle so the
-  assistant reacts to what changes, not just to your voice
-- function tools — the default `redraw_diagram` tool converts a sketch into a clean diagram
-- [web search](../realtime/index.md#built-in-tools-web-search) — the
-  [`WebSearch`][pydantic_ai.capabilities.WebSearch] capability (Grounding with Google Search), so it
-  can answer with current facts and render citations from native-tool return part events when drawing
-  is disabled
+## Run the example
 
-## Running the Example
-
-You'll need access to a **Gemini Live** model. The simplest path is a `GOOGLE_API_KEY` from
-[Google AI Studio](https://aistudio.google.com/apikey), in a `.env` file at the repo root:
+Add credentials for a picker model to the repository-root `.env`, for example:
 
 ```dotenv
-GOOGLE_API_KEY=...
+GOOGLE_API_KEY=your-google-api-key
 ```
 
-With [dependencies installed and your key set](./setup.md#usage), start the server:
+With [dependencies installed](./setup.md#usage), start the local server:
 
 ```bash
-uvicorn pydantic_ai_examples.realtime_camera.app:app
+uv run --all-packages uvicorn pydantic_ai_examples.realtime_camera.app:app
 ```
 
-Open <http://localhost:8000>, tap **Start**, allow camera and microphone access, and ask about what
-the camera sees.
+Open <http://localhost:8000>, select **Start**, and allow camera and microphone access.
 
-!!! note "Camera and mic need a secure context"
-    Browsers grant camera and microphone access on `localhost` or over HTTPS. Use the HTTPS setup
-    below when opening the example from another device.
+The picker accepts only the models listed in `ALLOWED_MODELS` in the example. Set
+`CAMERA_REALTIME_MODEL` before starting the server to add a different configured deployment to that
+allowlist and make it the default. The selected model's realtime profile supplies the browser's PCM
+input and output sample rates: Gemini input uses 16 kHz, while OpenAI and Azure input uses 24 kHz.
 
-### Triggering turns with Watch
+!!! warning "Keep the example local"
+    The WebSocket uses provider credentials from the server and has no user authentication. The
+    example checks same-host origins, allowlists model IDs, limits concurrent connections, and caps
+    message sizes, but these are development safeguards rather than production access control.
 
-Camera frames are passive context and do not trigger a model turn. Without speech or text input, the
-model stays quiet even as the scene changes.
+    Do not expose the server through a Cloudflare quick tunnel, ngrok, or a public reverse proxy.
+    For another device, deploy behind authentication and TLS on a network you control, with
+    user-level quotas and rate limits appropriate to your environment.
 
-The example handles this in two ways:
+## Watch mode
 
-1. The assistant always receives **every** frame (`turn_coverage='all_input'`), so the live scene is
-   in context whenever it *does* answer.
-2. The **Watch** toggle periodically sends a short text turn asking the model to describe changes or
-   stay silent when nothing notable changed.
+Camera frames add visual context but do not start a model turn. *Watch* periodically sends a short
+text turn while the model is idle, prompting it to report a visual change without interrupting
+speech already in progress. Set `CAMERA_WATCH_PROMPT` to customize that instruction.
 
-!!! note "`all_video` vs `all_input` on Vertex"
-    `turn_coverage='all_input'` is the default because it works on both supported Google API
-    surfaces. Vertex's `v1beta1` API does not accept `all_video` (all video, but audio only during
-    speech); use `all_input` on Vertex.
-
-With a native-audio model, proactive audio lets the model decide whether a Watch prompt needs a
-spoken response:
+Gemini native-audio models can decide that nothing needs saying:
 
 ```bash
-export CAMERA_PROACTIVE=true     # the model decides when to talk (native-audio only)
-export CAMERA_AFFECTIVE=true     # optional: emotion-aware delivery
+export CAMERA_PROACTIVE=true
+export CAMERA_AFFECTIVE=true
 ```
 
-!!! tip "Watch mode costs tokens"
-    Watch prompts the model on a timer, so it uses tokens even while no one is speaking. Turn it off
-    when timed scene updates are not needed.
+`CAMERA_TURN_COVERAGE` defaults to `all_input`, which works with both the Gemini Developer API and
+Vertex AI. Watch mode consumes tokens while enabled.
 
-### Use it from your phone (HTTPS)
+## Search and citations
 
-To use the example from a phone, expose the local server over HTTPS with a
-[Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
-(no account needed):
+With `CAMERA_WEB_SEARCH=true` (the default), the example adds
+[`WebSearch`][pydantic_ai.capabilities.WebSearch] when the selected model profile supports native
+search. Native-tool return events are converted into citation chips; the browser accepts only
+HTTP(S) source URLs.
+
+## Redraw a diagram
+
+With `CAMERA_DRAW=true` (the default), the realtime agent can call `redraw_diagram`. It gives a
+detailed textual description of the visible sketch to a separate vision-capable
+[`Agent`][pydantic_ai.Agent], which produces self-contained HTML. The browser displays that HTML in
+an opaque-origin iframe that blocks scripts and network access, and retains the PNG export action.
+
+Configure the drawing model independently:
 
 ```bash
-cloudflared tunnel --url http://localhost:8000
+export CAMERA_DRAW_MODEL=gateway/anthropic:claude-sonnet-5
 ```
 
-Open the printed `https://<random>.trycloudflare.com` URL on the phone, tap **Start**, and allow
-camera and microphone access. The tunnel also forwards the WebSocket. `ngrok http 8000` is an
-alternative.
+Drawing and web search remain enabled together when the selected realtime model supports both.
+Tools [run concurrently][pydantic_ai.agent.AgentRealtime.session], so drawing does not replace the
+voice conversation.
 
-### Using a work Google Cloud account (Vertex AI)
+## Vertex AI
 
-If your organization doesn't allow Gemini API keys, use **Vertex AI** with Application Default
-Credentials instead — no key at all:
+Use Application Default Credentials when your organization does not allow Gemini API keys:
 
 ```bash
 gcloud auth application-default login
 export GOOGLE_GENAI_USE_VERTEXAI=true
 export GOOGLE_CLOUD_PROJECT=your-project
-export GOOGLE_CLOUD_LOCATION=us-central1   # a region where the Live API is available
+export GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
-The demo detects `GOOGLE_GENAI_USE_VERTEXAI` and connects through Vertex; everything else is the same.
+## How the bridge works
 
-!!! note "Vertex model names differ"
-    The Live models available on Vertex aren't always named like their AI Studio counterparts, and
-    they vary by project and region. If a connection fails with "Publisher model … was not found",
-    list what you actually have and set `CAMERA_REALTIME_MODEL` to one of them:
+The browser and provider are connected by two small concurrent pumps in `_run_session`:
 
-    ```python {test="skip" lint="skip"}
-    from google import genai
+```text
+browser ── PCM16 + JPEG/text ──▶ FastAPI /ws ──▶ RealtimeSession
+browser ◀── PCM16 + JSON events ──────────────── RealtimeSession
+```
 
-    client = genai.Client(vertexai=True, project='your-project', location='us-central1')
-    print([m.name for m in client.models.list() if 'live' in (m.name or '')])
-    ```
+Before microphone capture begins, the server sends `session_config` over the JSON channel with the
+profile-derived audio rates. The inbound pump then forwards size-limited PCM, image, text, and Watch
+messages. The event pump returns audio, transcripts, barge-in notifications, grounding citations,
+drawing updates, and turn completion. Either side ending cancels the other pump and closes the
+session cleanly.
 
-## Example Code
+## Example code
 
-The server — it bridges the browser to a single Gemini Live session, forwarding mic audio and camera
-frames in, and audio and transcripts out:
+The server contains the realtime bridge and the subordinate Watch, grounding, and drawing helpers:
 
 ```snippet {path="/examples/pydantic_ai_examples/realtime_camera/app.py"}```
 
-The browser — it captures the camera and microphone, sends ~1 frame per second, plays the audio back,
-and drives the *Watch* toggle. Plain HTML and JavaScript, no build step:
+The build-free browser captures media, waits for session configuration, and renders every demo
+feature:
 
 ```snippet {path="/examples/pydantic_ai_examples/realtime_camera/index.html"}```

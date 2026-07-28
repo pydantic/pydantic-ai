@@ -119,6 +119,9 @@ async def test_audio_in_server_vad_turn(
         supports_session_seeding=True,
         supports_seeding_images=True,
         supports_seeding_audio=True,
+        # Inherited from the OpenAI realtime profile, which Azure delegates to wholesale: Voice Live
+        # serves the same models, and they keep talking while a tool call is outstanding.
+        supports_async_tool_calls=True,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supports_thinking=False,

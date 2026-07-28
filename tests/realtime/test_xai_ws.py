@@ -66,7 +66,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
     async with agent.realtime(model).session(audio_retention='output_audio') as session:
         await session.send('Say a short greeting.')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -113,9 +113,9 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
     assert session.usage == snapshot(
         RunUsage(
             input_tokens=5,
-            output_tokens=43,
-            output_audio_tokens=40,
-            details={'input_text_tokens': 5, 'output_text_tokens': 3},
+            output_tokens=42,
+            output_audio_tokens=39,
+            details={'input_text_tokens': 5, 'output_text_tokens': 3, 'billable_audio_seconds': 1},
             requests=1,
         )
     )
@@ -140,7 +140,7 @@ async def test_audio_in_server_vad_turn(
         for start in range(0, len(pcm), 4800):
             await session.send_audio(pcm[start : start + 4800])
         with anyio.fail_after(45):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -196,7 +196,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
     async with agent.realtime(model).session() as session:
         await session.send('What is the weather in London?')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 # The tool call rides in the first (mixed) turn, so stop only once the model has spoken
                 # a follow-up turn *after* the tool result — the actual answer.
@@ -268,7 +268,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
             provider_name='xai',
         )
     ]
-    assert (tool_response.usage.input_tokens, tool_response.usage.output_tokens) == (7, 82)
+    assert (tool_response.usage.input_tokens, tool_response.usage.output_tokens) == (7, 113)
     tool_return = messages[2]
     assert isinstance(tool_return, ModelRequest)
     assert tool_return.parts == [
@@ -281,7 +281,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
     ]
     final = messages[3]
     assert isinstance(final, ModelResponse)
-    assert (final.usage.input_tokens, final.usage.output_tokens) == (0, 137)
+    assert (final.usage.input_tokens, final.usage.output_tokens) == (0, 269)
     final_part = final.parts[0]
     assert isinstance(final_part, SpeechPart)
     assert final_part.transcript is not None and 'fog' in final_part.transcript.lower()
@@ -302,7 +302,7 @@ async def test_message_history_seeding(xai_ws_cassette: tuple[XaiProvider, Realt
     async with agent.realtime(model, message_history=history).session() as session:
         await session.send('What is my name and favorite color?')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -363,7 +363,7 @@ async def test_session_resumption_after_drop(xai_ws_cassette: tuple[XaiProvider,
     async with agent.realtime(model).session() as session:
         await session.send('Remember exactly: the code word is cobalt. Briefly acknowledge it.')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent) and not disconnected:
                     disconnected = True
@@ -450,6 +450,7 @@ def test_profile_allow_seeding() -> None:
         supports_session_seeding=True,
         supports_seeding_images=False,
         supports_seeding_audio=False,
+        supports_async_tool_calls=False,
         supported_native_tools=frozenset(),
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
