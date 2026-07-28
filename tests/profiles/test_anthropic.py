@@ -26,7 +26,14 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.native_tools import AdvisorTool
+    from pydantic_ai.native_tools import (
+        AdvisorTool,
+        CodeExecutionTool,
+        MCPServerTool,
+        MemoryTool,
+        WebFetchTool,
+        WebSearchTool,
+    )
     from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
@@ -425,30 +432,30 @@ def test_model_profile_opus_5():
     returns a 400 for `xhigh`/`max` effort while thinking is disabled, where 4.8 accepts it.
     """
     profile = anthropic_model_profile('claude-opus-5')
-    assert profile is not None
-
-    assert profile.get('supports_json_schema_output') is True
-    assert profile.get('anthropic_supports_adaptive_thinking') is True
-    assert profile.get('anthropic_supports_effort') is True
-    assert profile.get('anthropic_supports_xhigh_effort') is True
-    assert profile.get('anthropic_disallows_budget_thinking') is True
-    assert profile.get('anthropic_disallows_sampling_settings') is True
-    assert profile.get('anthropic_supports_task_budgets') is True
-    assert profile.get('anthropic_supports_dynamic_filtering') is True
-    assert profile.get('anthropic_supports_forced_tool_choice') is True
-    assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
-    assert profile.get('anthropic_supported_code_execution_tool_versions') == ('20250825', '20260120')
-
-    # Opus-only among the 5 family: fast mode
-    assert profile.get('anthropic_supports_fast_speed') is True
-
-    # Tool search and the advisor tool are both gated per-model in the profile
-    supported_native_tools = profile.get('supported_native_tools') or frozenset()
-    assert ToolSearchTool in supported_native_tools
-    assert AdvisorTool in supported_native_tools
+    assert profile == snapshot(
+        {
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'supports_json_schema_output': True,
+            'anthropic_supports_fast_speed': True,
+            'supports_thinking': True,
+            'anthropic_supports_adaptive_thinking': True,
+            'anthropic_supports_effort': True,
+            'anthropic_supports_dynamic_filtering': True,
+            'anthropic_supports_xhigh_effort': True,
+            'anthropic_disallows_budget_thinking': True,
+            'anthropic_disallows_sampling_settings': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': True,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_supports_task_budgets': True,
+            'anthropic_supports_forced_tool_choice': True,
+            'supported_native_tools': frozenset(
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+        }
+    )
 
     # The one divergence from Opus 4.8, which accepts `xhigh`/`max` with thinking disabled
-    assert profile.get('anthropic_disallows_top_effort_when_thinking_disabled') is True
     opus_4_8 = anthropic_model_profile('claude-opus-4-8')
     assert opus_4_8 is not None
     assert opus_4_8.get('anthropic_disallows_top_effort_when_thinking_disabled') is not True
