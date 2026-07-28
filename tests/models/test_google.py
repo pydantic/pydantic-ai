@@ -3816,7 +3816,7 @@ def test_google_gemini_api_sets_include_server_side_tool_invocations(
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='search')], native_tools=[WebSearchTool()])
     _tools, tool_config, _image_config = model._get_tool_config(params, GoogleModelSettings())  # pyright: ignore[reportPrivateUsage]
     assert tool_config is not None
-    assert tool_config['include_server_side_tool_invocations'] is True
+    assert tool_config.get('include_server_side_tool_invocations') is True
 
 
 async def test_google_vertexai_image_generation(
