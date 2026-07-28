@@ -26,26 +26,35 @@ never from `github.event`. For the safe outputs specifically that means frontmat
 `target:` plus `safe-outputs.needs:` — an out-of-scope `needs.*` expression compiles
 without error and evaluates to the empty string, silently discarding the review.
 
-## What actually confines `CI Review` to same-repo PRs
+## What confines `CI Review` to same-repo PRs
 
-`roles:`, and only `roles:`. It compiles to a `check_membership` step validating
-`github.actor`, which under `workflow_run` is the actor of the triggering CI run — on a
-fork PR, the external contributor, who has `read`. Any `roles:` list therefore skips
-every fork PR; forks are covered on demand by the `douwebot` label path, which is built
-for untrusted code.
+Two different gates, guarding two different things. Neither is redundant, and the
+distinction is the whole point: **`roles:` gates the actor, `eligibility` gates the
+code.**
 
-It is **not** gh-aw's `workflow_run` guard that does this. That guard is emitted whether
+**`eligibility` is what rejects forks.** It compares
+`workflow_run.head_repository.full_name` to `github.repository` on the event, and then
+the resolved PR's `isCrossRepository` — and skips on either. That is the check to look
+at when you want to know whether fork code can reach this workflow.
+
+**`roles:` gates who may trigger it, and is not a fork filter.** It compiles to a
+`check_membership` step validating `github.actor`, which under `workflow_run` is the
+actor of the triggering CI run. It does exclude external contributors, who have `read`.
+But a collaborator with write access can open a PR from their own fork, and that PR
+passes `roles:` — so `roles:` alone would leave fork code reaching the checkout. Forks
+are reviewed on demand via the `douwebot` label path, which is built for untrusted code.
+
+**gh-aw's own `workflow_run` guard is not a fork filter either.** It is emitted whether
 or not `roles:` is set, and asserts the *triggering run* belongs to this repository —
 true of a fork PR, whose `pull_request` CI run is owned by the base repo. It inspects
-`workflow_run.repository`, not `head_repository`. It bounds which runs may start us; it
-is not a fork filter.
+`workflow_run.repository`, not `head_repository`. It bounds which runs may start us,
+nothing more.
 
-This matters because `workflow_run` puts the workflow in base-repository context with
-full access to repository secrets, and the agent job checks out contributor-authored code
-and runs workspace scripts over it. Under `roles:` those are write-or-higher actors — the
-same bar gh-aw's own checkout enforces. Widening `roles:` would admit fork PRs to that
-checkout with nothing else standing in the way, and gh-aw's "Restore agent config folders
-from base branch" step would not backstop it: that step is gated on gh-aw's *own* PR
+All three matter because `workflow_run` puts the workflow in base-repository context
+with full access to repository secrets, and the agent job checks out contributor-authored
+code and runs workspace scripts over it. Weaken any one of them and that checkout starts
+accepting code the remaining gates do not cover. gh-aw will not backstop you: its
+"Restore agent config folders from base branch" step is gated on gh-aw's *own* PR
 checkout succeeding, which never happens under this trigger.
 
 ## A custom job named in `if:` must also appear in the prompt
