@@ -243,9 +243,27 @@ The remaining realtime control-plane events:
 | [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] | OpenAI/Azure/xAI detected speech onset, or Gemini reported activity that interrupted model output. |
 | [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | OpenAI/Azure/xAI detected the end of speech; Gemini does not emit this event. |
 | [`InputTranscriptionErrorEvent`][pydantic_ai.realtime.InputTranscriptionErrorEvent] | The provider could not transcribe a user audio turn. The session continues, and `item_id` and `content_index` identify the affected turn when available. |
-| [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn. `interrupted` reflects cancellation or barge-in across all providers. |
+| [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn — *not* necessarily the exchange: a turn that calls tools can complete more than once (see [Tool calls span turns](#tool-calls-span-turns)). `interrupted` reflects cancellation or barge-in across all providers. |
 | [`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] | The connection dropped and was automatically re-established. Conversation state is restored for Gemini and xAI; see [Reconnecting](#reconnecting). |
 | [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] | The provider reported a **recoverable** error mid-session; the session keeps running. Anything that ends the session raises instead — see [Errors](#errors). |
+
+### Tool calls span turns
+
+A turn that calls a tool does not produce one tidy turn boundary at the end. Every provider splits it
+into several [`ModelResponse`][pydantic_ai.messages.ModelResponse]s — one per step — and xAI Grok
+Voice goes further: it *speaks first and calls the tool after*, so its first `TurnCompleteEvent`
+arrives before [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], with a
+second one after the spoken answer. Measured on the same prompt and tool:
+
+| Provider | Events around the tool call |
+| --- | --- |
+| OpenAI, Azure OpenAI, Gemini Live | `FunctionToolCallEvent` → `FunctionToolResultEvent` → speech → `TurnCompleteEvent` |
+| xAI Grok Voice | speech → `FunctionToolCallEvent` → **`TurnCompleteEvent`** → `FunctionToolResultEvent` → speech → `TurnCompleteEvent` |
+
+So don't stop consuming on the first `TurnCompleteEvent` if a tool might run: keep iterating (as the
+example above does) and treat the event as "this turn ended", not "the exchange is over". The history
+lands the same everywhere — `ModelRequest`, `ModelResponse`, `ModelRequest`, `ModelResponse` — so code
+that reads [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] is unaffected.
 
 ## Core tasks
 
