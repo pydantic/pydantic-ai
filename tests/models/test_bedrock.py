@@ -3163,6 +3163,35 @@ async def test_bedrock_top_k_user_field_takes_precedence(
     assert kwargs['additionalModelRequestFields'] == {'top_k': 5}
 
 
+async def test_bedrock_top_p_zero_is_forwarded(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """`top_p=0.0` reaches the request as `inferenceConfig.topP` instead of being silently dropped.
+
+    `_map_inference_config` guarded `top_p` with a truthiness check, so the valid Converse
+    `topP` value `0.0` (range 0-1) never reached the request, while `temperature=0.0` two
+    lines above was forwarded via an `is not None` check.
+
+    No-network: the assertion is on the outgoing request shape, which a cassette matcher wouldn't pin.
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(top_p=0.0, temperature=0.0))
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert kwargs['inferenceConfig']['topP'] == 0.0
+    assert kwargs['inferenceConfig']['temperature'] == 0.0
+
+
 async def test_bedrock_top_k_nova_merges_with_user_inference_config(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
