@@ -1,19 +1,19 @@
-"""Deprecated import location for `pydantic_ai_harness.context`.
+"""Deprecated import location for `pydantic_ai_harness.repo_context`.
 
 This capability graduated out of `experimental`; importing from here still works but
-emits a `DeprecationWarning`. Import from `pydantic_ai_harness.context` instead.
+emits a `DeprecationWarning`. Import from `pydantic_ai_harness.repo_context` instead.
 """
 
-from pydantic_ai_harness.context import (
+from pydantic_ai_harness.experimental._warn import warn_moved
+from pydantic_ai_harness.repo_context import (
     AgentContextInventory,
     AssetRoot,
     ContextFile,
     RepoContext,
     RepoContextToolset,
 )
-from pydantic_ai_harness.experimental._warn import warn_moved
 
-warn_moved('context', 'context')
+warn_moved('context', 'repo_context')
 
 __all__ = [
     'AgentContextInventory',

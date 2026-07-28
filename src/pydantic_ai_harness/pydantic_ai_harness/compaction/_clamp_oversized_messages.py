@@ -39,7 +39,7 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
 
     A runaway generation -- a model response of repeated whitespace, a giant tool-call
     payload -- can produce one part so large the next request exceeds the provider's context
-    cap. The size-based strategies cannot help: `SlidingWindow` drops the *oldest* messages
+    cap. The size-based strategies cannot help: `SlidingWindowCompaction` drops the *oldest* messages
     (the offender is the newest), `ClearToolResults` only touches tool *results*, and feeding
     the history to `SummarizingCompaction` hits the same cap. This strategy truncates the
     offending part in place: it keeps a head slice and a tail slice and inserts a marker for

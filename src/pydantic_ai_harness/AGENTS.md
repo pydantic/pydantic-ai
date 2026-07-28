@@ -76,6 +76,15 @@ When implementing a new capability, reference these docs:
 - Installed `pydantic_ai.capabilities` source -- `AbstractCapability`, hook signatures, and composition behavior
 - Installed `pydantic_ai.toolsets` source -- `AbstractToolset`, `WrapperToolset`, and `ToolsetTool`
 
+## Capability naming
+
+Follow the naming convention in `agent_docs/capability-authoring.md` ("Naming
+Capabilities"): a noun when the capability names a thing (a tool or faculty the
+model uses, a subsystem, a named strategy); an imperative verb phrase when it
+acts on the run and one verb phrase states its entire contract. Never invent a
+nominalization for an action, and never name a capability after the problem it
+solves.
+
 ## Coding standards
 
 - Python 3.10+ (target version for pyright and ruff)

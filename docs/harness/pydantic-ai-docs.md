@@ -5,9 +5,9 @@ description: Give an agent a tool that locates and returns Pydantic AI documenta
 
 # Pydantic AI Docs
 
-`PyaiDocs` gives an agent a single tool, `read_pyai_docs(topic)`, that locates a Pydantic AI documentation page and returns it verbatim. Nothing is bundled into context up front. Each call resolves the topic from a configured local checkout first, then falls back to fetching the page from `pydantic/pydantic-ai:main`, so it works whether or not you have a local checkout (the remote fallback needs network access).
+`PydanticAIDocs` gives an agent a single tool, `read_pyai_docs(topic)`, that locates a Pydantic AI documentation page and returns it verbatim. Nothing is bundled into context up front. Each call resolves the topic from a configured local checkout first, then falls back to fetching the page from `pydantic/pydantic-ai:main`, so it works whether or not you have a local checkout (the remote fallback needs network access).
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/docs/)
+[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/pydantic_ai_docs/)
 
 > The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
 
@@ -17,23 +17,23 @@ An agent that authors Pydantic AI capabilities, hooks, tools, or toolsets needs 
 
 ## The solution
 
-`PyaiDocs` exposes one tool, `read_pyai_docs(topic)`, that locates the requested page and returns it verbatim. Each call resolves the topic from a configured local checkout first, then falls back to fetching the page from `pydantic/pydantic-ai:main`, so it works whether or not you have a local checkout (the remote fallback needs network access).
+`PydanticAIDocs` exposes one tool, `read_pyai_docs(topic)`, that locates the requested page and returns it verbatim. Each call resolves the topic from a configured local checkout first, then falls back to fetching the page from `pydantic/pydantic-ai:main`, so it works whether or not you have a local checkout (the remote fallback needs network access).
 
 The available topics are `capabilities`, `hooks`, `tools`, `tools-advanced`, `toolsets`, and `agent`.
 
 ## Usage
 
-Construct an `Agent` with `PyaiDocs()` in its `capabilities`. Point `local_docs_path` at a local Pydantic AI docs checkout to read from disk first, or omit it to always fetch from the remote source:
+Construct an `Agent` with `PydanticAIDocs()` in its `capabilities`. Point `local_docs_path` at a local Pydantic AI docs checkout to read from disk first, or omit it to always fetch from the remote source:
 
 ```python
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai_harness.docs import PyaiDocs
+from pydantic_ai_harness.pydantic_ai_docs import PydanticAIDocs
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    capabilities=[PyaiDocs(local_docs_path=Path('~/pydantic/ai/base/docs').expanduser())],
+    capabilities=[PydanticAIDocs(local_docs_path=Path('~/pydantic/ai/base/docs').expanduser())],
 )
 
 result = agent.run_sync('Read the toolsets docs, then explain how to build a FunctionToolset.')
@@ -61,30 +61,30 @@ The capability never runs git. Keep the local checkout current yourself; the rem
 | `local_docs_path` | `None` | Local pyai docs checkout to read first. Falls back to the `PYDANTIC_AI_HARNESS_DOCS_PATH` env var, then to the remote source. |
 | `cache` | `True` | Memoize each returned doc in-process for the capability's lifetime, so a topic is read or fetched at most once. |
 
-Caching lives on the capability instance and is shared across the toolsets it builds, so a memoized topic survives multiple agent runs that reuse the same `PyaiDocs`. Set `cache=False` to re-read or re-fetch on every call -- useful when the local checkout changes underneath a long-lived capability.
+Caching lives on the capability instance and is shared across the toolsets it builds, so a memoized topic survives multiple agent runs that reuse the same `PydanticAIDocs`. Set `cache=False` to re-read or re-fetch on every call -- useful when the local checkout changes underneath a long-lived capability.
 
 ## Agent spec (YAML/JSON)
 
-`PyaiDocs` works with Pydantic AI's [agent spec](/ai/core-concepts/agent-spec/) feature for defining agents in YAML or JSON. Its serialization name is `PyaiDocs`:
+`PydanticAIDocs` works with Pydantic AI's [agent spec](/ai/core-concepts/agent-spec/) feature for defining agents in YAML or JSON. Its serialization name is `PydanticAIDocs`:
 
 ```yaml
 # agent.yaml
 model: anthropic:claude-sonnet-4-6
 capabilities:
-  - PyaiDocs: {}
+  - PydanticAIDocs: {}
 ```
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.docs import PyaiDocs
+from pydantic_ai_harness.pydantic_ai_docs import PydanticAIDocs
 
-agent = Agent.from_file('agent.yaml', custom_capability_types=[PyaiDocs])
+agent = Agent.from_file('agent.yaml', custom_capability_types=[PydanticAIDocs])
 result = agent.run_sync('...')
 print(result.output)
 ```
 
-Pass `custom_capability_types` so the spec loader knows how to instantiate `PyaiDocs`.
+Pass `custom_capability_types` so the spec loader knows how to instantiate `PydanticAIDocs`.
 
 ## API reference
 
-::: pydantic_ai_harness.docs.PyaiDocs
+::: pydantic_ai_harness.pydantic_ai_docs.PydanticAIDocs

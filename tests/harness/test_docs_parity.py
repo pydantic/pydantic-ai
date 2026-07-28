@@ -23,11 +23,12 @@ _NAMESPACE_PACKAGES = {_PACKAGE / 'experimental'}
 
 
 def _is_deprecation_shim(package: Path) -> bool:
-    """A package left at a moved capability's old path re-exports it and calls `warn_moved`.
+    """A package left at a moved or renamed capability's old path re-exports it and warns.
 
     Such shims carry no docs of their own, so they are excluded from the capability tables.
     """
-    return 'warn_moved(' in (package / '__init__.py').read_text(encoding='utf-8')
+    source = (package / '__init__.py').read_text(encoding='utf-8')
+    return 'warn_moved(' in source or 'warn_module_renamed(' in source
 
 
 def _capability_packages() -> list[Path]:
@@ -118,19 +119,19 @@ _CAPABILITY_PAGE_META = {
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
-    'context.md': ('context', 'Context'),
-    'pydantic-ai-docs.md': ('docs', 'Pydantic AI Docs'),
+    'repo-context.md': ('repo_context', 'Repo Context'),
+    'pydantic-ai-docs.md': ('pydantic_ai_docs', 'Pydantic AI Docs'),
     'exa-search.md': ('exa', 'Exa Search'),
     'macroscope.md': ('macroscope', 'Macroscope'),
     'compaction.md': ('compaction', 'Compaction'),
-    'overflowing-tool-output.md': ('overflowing_tool_output', 'Overflowing Tool Output'),
-    'cache-stability.md': ('cache_stability', 'Cache Stability Monitor'),
+    'tool-output-limits.md': ('tool_output_limits', 'Tool Output Limits'),
+    'warn-on-cache-busts.md': ('warn_on_cache_busts', 'Warn On Cache Busts'),
     'step-persistence.md': ('step_persistence', 'Step Persistence'),
     'media.md': ('media', 'Media Externalization'),
     'subagents.md': ('subagents', 'Subagents'),
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
     'planning.md': ('planning', 'Planning'),
-    'runtime-authoring.md': ('runtime_authoring', 'Runtime Authoring'),
+    'capability-creation.md': ('capability_creation', 'Capability Creation'),
     'guardrails.md': ('guardrails', 'Input & Output Guardrails'),
     'localstack.md': ('localstack', 'LocalStack'),
     'acp.md': ('experimental/acp', 'ACP (Agent Client Protocol)'),

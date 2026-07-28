@@ -15,9 +15,9 @@ Agents take unstructured input from users and return unstructured output to call
 
 ## The solution
 
-Two capabilities -- `InputGuard` and `OutputGuard` -- each wrap a `guard` callable you supply. The guard inspects a value (the prompt, or the output) and returns one of four outcomes:
+Two capabilities -- `InputGuardrail` and `OutputGuardrail` -- each wrap a `guard` callable you supply. The guard inspects a value (the prompt, or the output) and returns one of four outcomes:
 
-| Outcome | `InputGuard` | `OutputGuard` |
+| Outcome | `InputGuardrail` | `OutputGuardrail` |
 |---|---|---|
 | **allow** | send the prompt to the model | return the output to the caller |
 | **block** | skip the model call; a refusal message becomes the response | raise `OutputBlocked` |
@@ -26,66 +26,66 @@ Two capabilities -- `InputGuard` and `OutputGuard` -- each wrap a `guard` callab
 
 The asymmetry between input `block` and output `block` is deliberate. Blocking the input spends no tokens, so a graceful refusal is almost always right. Blocking the output means the model already produced something you do not want exposed, so raising forces the caller to decide what to do next.
 
-Both `InputGuard`, `OutputGuard`, and their supporting types are top-level exports:
+Both `InputGuardrail`, `OutputGuardrail`, and their supporting types are top-level exports:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness import GuardResult, InputGuard, OutputGuard
+from pydantic_ai_harness import GuardrailResult, InputGuardrail, OutputGuardrail
 
 
 def no_secrets(prompt: str) -> bool:
     return 'api_key' not in prompt.lower()
 
 
-def no_pii(output: object) -> GuardResult:
+def no_pii(output: object) -> GuardrailResult:
     if 'SSN' in str(output):
-        return GuardResult.block('The response contained personal data.')
-    return GuardResult.allow()
+        return GuardrailResult.block('The response contained personal data.')
+    return GuardrailResult.allow()
 
 
 agent = Agent(
     'openai:gpt-5.4',
     capabilities=[
-        InputGuard(guard=no_secrets),
-        OutputGuard(guard=no_pii),
+        InputGuardrail(guard=no_secrets),
+        OutputGuardrail(guard=no_pii),
     ],
 )
 ```
 
-A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple case, or a `GuardResult` for the richer outcomes. Guards may also be async -- return an awaitable `bool`/`GuardResult`, for example to call a moderation API.
+A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple case, or a `GuardrailResult` for the richer outcomes. Guards may also be async -- return an awaitable `bool`/`GuardrailResult`, for example to call a moderation API.
 
-`OutputGuard` receives the output unchanged -- no automatic stringification. For a string output the guard reads it directly; for a typed (Pydantic model) output the guard gets the model instance, so pick the serialization that fits the check (read a field, or call `output.model_dump_json()` for JSON text). This avoids the trap of `str(MyModel(...))` producing a `MyModel(field=...)` repr that hides field contents from regex-based checks.
+`OutputGuardrail` receives the output unchanged -- no automatic stringification. For a string output the guard reads it directly; for a typed (Pydantic model) output the guard gets the model instance, so pick the serialization that fits the check (read a field, or call `output.model_dump_json()` for JSON text). This avoids the trap of `str(MyModel(...))` producing a `MyModel(field=...)` repr that hides field contents from regex-based checks.
 
-## `GuardResult`
+## `GuardrailResult`
 
-Construct a `GuardResult` with its classmethods, not the raw fields:
+Construct a `GuardrailResult` with its classmethods, not the raw fields:
 
 ```python
-from pydantic_ai_harness import GuardResult
+from pydantic_ai_harness import GuardrailResult
 
-GuardResult.allow()                 # let the value through
-GuardResult.block('reason')         # refuse; `reason` is optional (a default is used otherwise)
-GuardResult.replace(cleaned_value)  # substitute a sanitized value and continue
-GuardResult.retry('instruction')    # OutputGuard only: ask the model to redo the output
+GuardrailResult.allow()                 # let the value through
+GuardrailResult.block('reason')         # refuse; `reason` is optional (a default is used otherwise)
+GuardrailResult.replace(cleaned_value)  # substitute a sanitized value and continue
+GuardrailResult.retry('instruction')    # OutputGuardrail only: ask the model to redo the output
 ```
 
 The block/retry message is produced at the moment the guard decides, so it can carry the guard's own reasoning rather than a string frozen at construction time.
 
 ## Redaction (`replace`)
 
-Return `GuardResult.replace(value)` to sanitize rather than refuse. `InputGuard` rewrites the prompt sent to the model; `OutputGuard` substitutes the output returned to the caller.
+Return `GuardrailResult.replace(value)` to sanitize rather than refuse. `InputGuardrail` rewrites the prompt sent to the model; `OutputGuardrail` substitutes the output returned to the caller.
 
 ```python
-def scrub_emails(text: str) -> GuardResult:
+def scrub_emails(text: str) -> GuardrailResult:
     cleaned = EMAIL_RE.sub('[email]', text)
-    return GuardResult.replace(cleaned) if cleaned != text else GuardResult.allow()
+    return GuardrailResult.replace(cleaned) if cleaned != text else GuardrailResult.allow()
 
 
 agent = Agent(
     'openai:gpt-5.4',
     capabilities=[
-        InputGuard(guard=scrub_emails),   # strip PII before it reaches the model
-        OutputGuard(guard=scrub_emails),  # strip PII before it reaches the caller
+        InputGuardrail(guard=scrub_emails),   # strip PII before it reaches the model
+        OutputGuardrail(guard=scrub_emails),  # strip PII before it reaches the caller
     ],
 )
 ```
@@ -94,16 +94,16 @@ Input redaction requires sequential mode -- it is incompatible with `parallel=Tr
 
 ## Retry (`retry`)
 
-`OutputGuard` can send a bad output back to the model instead of blocking it. Return `GuardResult.retry(instruction)` -- the instruction is the retry prompt the model sees. This reuses pydantic-ai's normal retry machinery and counts against the run's output-retry budget.
+`OutputGuardrail` can send a bad output back to the model instead of blocking it. Return `GuardrailResult.retry(instruction)` -- the instruction is the retry prompt the model sees. This reuses pydantic-ai's normal retry machinery and counts against the run's output-retry budget.
 
 ```python
-def must_cite_sources(output: object) -> GuardResult:
+def must_cite_sources(output: object) -> GuardrailResult:
     if not has_citations(output):
-        return GuardResult.retry('Include at least one source citation.')
-    return GuardResult.allow()
+        return GuardrailResult.retry('Include at least one source citation.')
+    return GuardrailResult.allow()
 
 
-OutputGuard(guard=must_cite_sources)
+OutputGuardrail(guard=must_cite_sources)
 ```
 
 ## Accessing run context
@@ -112,14 +112,14 @@ A guard may take a `RunContext` as its first parameter when it needs run state -
 
 ```python
 from pydantic_ai import RunContext
-from pydantic_ai_harness import InputGuard
+from pydantic_ai_harness import InputGuardrail
 
 
 def tenant_policy(ctx: RunContext[MyDeps], prompt: str) -> bool:
     return ctx.deps.tier == 'pro' or 'advanced-feature' not in prompt
 
 
-InputGuard(guard=tenant_policy)
+InputGuardrail(guard=tenant_policy)
 ```
 
 ## Parallel input guards
@@ -127,7 +127,7 @@ InputGuard(guard=tenant_policy)
 A slow guard (an LLM classifier, a network call) run sequentially adds its latency to every turn. Set `parallel=True` to run the guard concurrently with the model call instead, overlapping the two so the guard adds no latency on the pass path. The model call is cancelled the moment the guard reports a violation.
 
 ```python
-InputGuard(guard=slow_async_classifier, parallel=True)
+InputGuardrail(guard=slow_async_classifier, parallel=True)
 ```
 
 Parallel mode trades tokens for latency: sequential mode never calls the model when the guard blocks, but parallel mode has already started the model call -- if the guard trips only after the model has responded, those tokens were spent. For fast local checks (regex, keyword lookup) sequential is the better default. `replace` is not available under `parallel=True`.
@@ -150,13 +150,13 @@ Any exception raised by the guard propagates as-is -- use `InputBlocked` / `Outp
 
 ## Streaming
 
-`OutputGuard` inspects the **final** output only -- during `run_stream()` partial chunks reach the caller before the guard runs, so a `block` or `replace` verdict cannot un-send content already streamed. Use `run()` / `run_sync()` when the output must be screened before any of it is exposed. `GuardResult.retry()` is **not** supported under `run_stream()` and surfaces there as `UnexpectedModelBehavior`. `InputGuard` (including `parallel=True`) works the same in streamed and non-streamed runs.
+`OutputGuardrail` inspects the **final** output only -- during `run_stream()` partial chunks reach the caller before the guard runs, so a `block` or `replace` verdict cannot un-send content already streamed. Use `run()` / `run_sync()` when the output must be screened before any of it is exposed. `GuardrailResult.retry()` is **not** supported under `run_stream()` and surfaces there as `UnexpectedModelBehavior`. `InputGuardrail` (including `parallel=True`) works the same in streamed and non-streamed runs.
 
 ## Tracing
 
 `replace` and `block` are recorded as spans on the active OpenTelemetry tracer, so a redaction or refusal shows up in [Logfire](https://pydantic.dev/logfire) traces (`guardrail redacted input`, `guardrail blocked output`, and so on) with `guardrail.*` attributes. Content attributes -- the original/replacement values for a redaction and the refusal `message` for a block -- are attached **only** when `RunContext.trace_include_content` is enabled, since these can quote the very content the guard exists to keep out of traces.
 
-`OutputGuard` positions its block/redact spans so they are always captured by an enclosing `Instrumentation` span regardless of capability order, while `InputGuard` runs innermost so any capability that morphs messages (a prompt rewriter, a context manager) runs first and the guard sees the final prompt the model will receive.
+`OutputGuardrail` positions its block/redact spans so they are always captured by an enclosing `Instrumentation` span regardless of capability order, while `InputGuardrail` runs innermost so any capability that morphs messages (a prompt rewriter, a context manager) runs first and the guard sees the final prompt the model will receive.
 
 ## Relationship to `pydantic-ai-shields`
 
@@ -165,16 +165,16 @@ Any exception raised by the guard propagates as-is -- use `InputBlocked` / `Outp
 ## API
 
 ```python
-InputGuard(
-    guard,              # Callable[..., bool | GuardResult | Awaitable[bool | GuardResult]]
+InputGuardrail(
+    guard,              # Callable[..., bool | GuardrailResult | Awaitable[bool | GuardrailResult]]
     parallel=False,     # run concurrently with the model call
 )
 
-OutputGuard(
-    guard,              # Callable[..., bool | GuardResult | Awaitable[bool | GuardResult]]
+OutputGuardrail(
+    guard,              # Callable[..., bool | GuardrailResult | Awaitable[bool | GuardrailResult]]
 )
 ```
 
-The guard callable takes the inspected value -- the prompt for `InputGuard`, the output for `OutputGuard` -- optionally preceded by a `RunContext`. `InputGuardFunc` and `OutputGuardFunc` are the exported signature aliases; `GuardrailError` is the base for `InputBlocked` and `OutputBlocked`.
+The guard callable takes the inspected value -- the prompt for `InputGuardrail`, the output for `OutputGuardrail` -- optionally preceded by a `RunContext`. `InputGuardrailFunc` and `OutputGuardrailFunc` are the exported signature aliases; `GuardrailError` is the base for `InputBlocked` and `OutputBlocked`.
 
 Source: [`pydantic_ai_harness/guardrails/`](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/guardrails/).

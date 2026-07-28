@@ -114,7 +114,7 @@ def test_snippet_problem_detects_each_failure_mode() -> None:
     # Valid: harness imports that resolve, star imports, plain imports, and non-harness imports.
     assert _snippet_problem('from pydantic_ai_harness import CodeMode') is None
     assert _snippet_problem('import pydantic_ai_harness.code_mode') is None
-    assert _snippet_problem('from pydantic_ai_harness.overflowing_tool_output import *') is None
+    assert _snippet_problem('from pydantic_ai_harness.tool_output_limits import *') is None
     assert _snippet_problem('from os import path\nimport sys') is None
     # Invalid: syntax, a module that does not exist, and a name that does not exist.
     assert 'does not parse' in (_snippet_problem('def (:') or '')

@@ -22,12 +22,12 @@ An agent that runs for many turns accumulates history: tool outputs, file reads,
 | Capability | Cost | What it does | Reach for it when |
 |---|---|---|---|
 | `ClampOversizedMessages` | zero-LLM | Head/tail-truncates a single oversized part (response text, tool-call args) | One runaway generation blew past the context cap and no other strategy can reach it |
-| `SlidingWindow` | zero-LLM | Drops the oldest whole messages down to a tail | You only need the recent turns and can discard old context entirely |
+| `SlidingWindowCompaction` | zero-LLM | Drops the oldest whole messages down to a tail | You only need the recent turns and can discard old context entirely |
 | `ClearToolResults` | zero-LLM | Blanks the content of old tool *results* in place, keeping the last `keep_pairs` | Tool outputs dominate context and can be re-fetched on demand (the cheap first tier) |
 | `DeduplicateFileReads` | zero-LLM | Blanks every file read superseded by a newer read of the same file | The agent re-reads files and only the latest version matters |
 | `SummarizingCompaction` | one LLM call | Summarizes older messages into a structured summary, keeping the recent tail | Old context still matters but must be compressed; use behind the cheap tiers |
 | `TieredCompaction` | escalates | Runs cheap passes first, summarizes only if still over `target_tokens` | You want a sensible default: spend the expensive summary only when needed |
-| `LimitWarner` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
+| `WarnNearLimits` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
 
 ## Triggers
 
@@ -75,7 +75,7 @@ A tier inside `TieredCompaction` is driven directly by the orchestrator, which r
 
 ## `ClampOversizedMessages`: surviving a runaway generation
 
-A single model response of repeated whitespace, or a single tool call with a giant payload, can produce one part so large the *next* request exceeds the provider's context cap. None of the other strategies can reach it: `SlidingWindow` drops the oldest messages but the offender is the newest; `ClearToolResults` only touches tool *results*; `LimitWarner` never edits history; and feeding the history to `SummarizingCompaction` hits the same cap.
+A single model response of repeated whitespace, or a single tool call with a giant payload, can produce one part so large the *next* request exceeds the provider's context cap. None of the other strategies can reach it: `SlidingWindowCompaction` drops the oldest messages but the offender is the newest; `ClearToolResults` only touches tool *results*; `WarnNearLimits` never edits history; and feeding the history to `SummarizingCompaction` hits the same cap.
 
 `ClampOversizedMessages` truncates the offending part in place, keeping a head slice and a tail slice with a `[clamped: removed N of M characters]` marker between them. Degenerate generations are low-entropy repetition, so a head/tail slice loses little.
 
@@ -159,17 +159,17 @@ agent = Agent('openai:gpt-4o', capabilities=[DeduplicateFileReads(file_key=file_
 
 With no `max_messages` or `max_tokens` trigger set, `DeduplicateFileReads` runs on every request. It is cheap and near-lossless, so that default is usually what you want.
 
-## `SlidingWindow`: keep only the recent tail
+## `SlidingWindowCompaction`: keep only the recent tail
 
-When the conversation exceeds the configured threshold, `SlidingWindow` discards the oldest whole messages down to a tail, preserving tool-call / tool-return pairs. Reach for it when you only need the recent turns and can discard old context entirely.
+When the conversation exceeds the configured threshold, `SlidingWindowCompaction` discards the oldest whole messages down to a tail, preserving tool-call / tool-return pairs. Reach for it when you only need the recent turns and can discard old context entirely.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.compaction import SlidingWindow
+from pydantic_ai_harness.compaction import SlidingWindowCompaction
 
 agent = Agent(
     'openai:gpt-4o',
-    capabilities=[SlidingWindow(max_messages=80, keep_messages=40)],
+    capabilities=[SlidingWindowCompaction(max_messages=80, keep_messages=40)],
 )
 ```
 
@@ -201,18 +201,18 @@ agent = Agent(
 
 The summary call is a real request to the model, so its full usage -- tokens **and** the request itself -- is folded into the run's `ctx.usage`. This is deliberate: it keeps cost honest, keeps the request count consistent (a model request that did not count as one would be the surprise), and lets a `UsageLimits` request limit catch a runaway compaction. A run-request or iteration limiter will therefore see compaction calls among its requests.
 
-## `LimitWarner`: warn instead of rewrite
+## `WarnNearLimits`: warn instead of rewrite
 
-`LimitWarner` never edits history. As the run approaches a configured limit, it injects an URGENT (then CRITICAL) warning as a trailing user turn, so the model wraps up rather than having its context rewritten under it. Models tend to pay more attention to user messages than system messages, which is why the warning is a user turn. Previous warnings from this capability are stripped before deciding whether to inject a new one.
+`WarnNearLimits` never edits history. As the run approaches a configured limit, it injects an URGENT (then CRITICAL) warning as a trailing user turn, so the model wraps up rather than having its context rewritten under it. Models tend to pay more attention to user messages than system messages, which is why the warning is a user turn. Previous warnings from this capability are stripped before deciding whether to inject a new one.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.compaction import LimitWarner
+from pydantic_ai_harness.compaction import WarnNearLimits
 
 agent = Agent(
     'openai:gpt-4o',
     capabilities=[
-        LimitWarner(
+        WarnNearLimits(
             max_iterations=40,
             max_context_tokens=100_000,
         )
@@ -235,7 +235,7 @@ The span name is the static `compact_messages`; the strategy is an attribute, no
 | Attribute | Type | Meaning |
 |---|---|---|
 | `gen_ai.conversation.compacted` | bool | Always `true`; the OpenTelemetry GenAI convention's flag for a compacted context |
-| `compaction.strategy` | str | Strategy class name (for example `SlidingWindow`, `SummarizingCompaction`) |
+| `compaction.strategy` | str | Strategy class name (for example `SlidingWindowCompaction`, `SummarizingCompaction`) |
 | `compaction.messages_before` | int | Message count before compaction |
 | `compaction.messages_after` | int | Message count after compaction |
 | `compaction.tokens_before` | int | Estimated token count before compaction |
@@ -245,7 +245,7 @@ The span name is the static `compact_messages`; the strategy is an attribute, no
 
 ## Out of scope
 
-These strategies compress or drop context *inside* the window. Moving large tool outputs *out* of the window -- overflowing them to a file the agent (or a subagent) can query on demand -- is a separate capability ([overflowing tool output](overflowing-tool-output.md)), not lossy truncation. Prefer it over capping individual tool outputs.
+These strategies compress or drop context *inside* the window. Moving large tool outputs *out* of the window -- overflowing them to a file the agent (or a subagent) can query on demand -- is a separate capability ([tool output limits](tool-output-limits.md)), not lossy truncation. Prefer it over capping individual tool outputs.
 
 ## API reference
 
@@ -259,8 +259,8 @@ The recommended default is `TieredCompaction`; the other strategies below can be
 
 ::: pydantic_ai_harness.compaction.DeduplicateFileReads
 
-::: pydantic_ai_harness.compaction.SlidingWindow
+::: pydantic_ai_harness.compaction.SlidingWindowCompaction
 
 ::: pydantic_ai_harness.compaction.SummarizingCompaction
 
-::: pydantic_ai_harness.compaction.LimitWarner
+::: pydantic_ai_harness.compaction.WarnNearLimits

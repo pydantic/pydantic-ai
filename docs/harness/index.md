@@ -117,19 +117,19 @@ Each capability is a self-contained battery you drop into an agent's `capabiliti
 | [Skills](skills.md) | Loads Agent Skill instructions only when the model needs them. | `skills` |
 | [FileSystem](filesystem.md) | Sandboxed file access scoped to a root directory: read, write, edit, search, and find files. Rejects path traversal above the root, resolves symlinks before authorizing, and keeps `.git/`, `.env`, key files, and secrets read-only by default. | -- |
 | [Shell](shell.md) | Command execution in a subprocess rooted at a working directory, gated by allowlists, denylists, timeouts, and optional environment-variable stripping (including a preset for common LLM provider credentials). | -- |
-| [Context](context.md) | Auto-loads repo context -- `CLAUDE.md`/`AGENTS.md` and repository structure -- so the agent starts a run already oriented in the project. | -- |
+| [Repo Context](repo-context.md) | Auto-loads repo context -- `CLAUDE.md`/`AGENTS.md` and repository structure -- so the agent starts a run already oriented in the project. | -- |
 | [Pydantic AI Docs](pydantic-ai-docs.md) | An on-demand `read_pyai_docs` tool that pulls Pydantic AI documentation into the run when the agent needs it, instead of preloading it. | -- |
 | [Exa Search](exa-search.md) | Web research backed by the [Exa](https://exa.ai) search API: `web_search` returns results with their most relevant excerpts, `get_page` reads a specific URL in full, and opt-in `deep_search` synthesizes a cited answer in one call. Output is budgeted per tool. | `exa` |
 | [Compaction](compaction.md) | Keeps a run within token limits: sliding-window trimming, LLM-powered summarization of older messages, and warnings before the context or iteration ceiling is hit. | -- |
-| [Overflowing Tool Output](overflowing-tool-output.md) | Reduces an oversized tool return when it is produced -- truncate, spill to a queryable file, or summarize -- so a large payload does not persist in history and get re-sent every request. | -- |
-| [Cache Stability Monitor](cache-stability.md) | Warns when a run's prompt-cache hit collapses between model requests -- a moved cacheable prefix or an expired provider cache -- reading the provider's own `cache_read_tokens` verdict. | -- |
+| [Tool Output Limits](tool-output-limits.md) | Reduces an oversized tool return when it is produced -- truncate, spill to a queryable file, or summarize -- so a large payload does not persist in history and get re-sent every request. | -- |
+| [Warn On Cache Busts](warn-on-cache-busts.md) | Warns when a run's prompt-cache hit collapses between model requests -- a moved cacheable prefix or an expired provider cache -- reading the provider's own `cache_read_tokens` verdict. | -- |
 | [Step Persistence](step-persistence.md) | Saves and restores full conversation state; snapshot, resume (`continue_run`), and fork (`fork_run`) a run. | -- |
 | [Media](media.md) | Offloads large `BinaryContent` to content-addressed stores (local or S3) so big media does not bloat message history. | -- |
 | [Subagents](subagents.md) | Delegates subtasks to specialized child agents through a delegate tool. | -- |
 | [Dynamic Workflow](dynamic-workflow.md) | Orchestrates sub-agents from a model-written Python script -- fan-out, chaining, and voting in a single tool call. | `dynamic-workflow` |
 | [Planning](planning.md) | Breaks a complex task into a structured plan before execution and tracks progress against it. | -- |
 | [Memory](memory.md) | Gives an agent a persistent, namespaced notebook with bounded prompt injection, on-demand search, and concurrency-safe stores. | -- |
-| [Runtime Authoring](runtime-authoring.md) | Lets an agent author, validate, and load real capabilities at runtime. | -- |
+| [Capability Creation](capability-creation.md) | Lets an agent author, validate, and load real capabilities at runtime. | -- |
 | [Guardrails](guardrails.md) | Validates user input before a run starts and model output after it completes -- block or redact, with structured results. | -- |
 | [Managed Prompt](managed-prompt.md) | Backs an agent's instructions with a [Logfire-managed prompt](https://logfire.pydantic.dev/docs/reference/advanced/prompt-management/), so you can version, label, and roll out prompt changes from the Logfire UI without redeploying -- with a code default that keeps the agent working when no remote value is available. | `logfire` |
 | [ACP](acp.md) *(experimental)* | Serves an agent to editors (Zed, etc.) over the [Agent Client Protocol](https://agentclientprotocol.com) -- streamed text, diff-rendered edits, and tool approval. | `acp` |

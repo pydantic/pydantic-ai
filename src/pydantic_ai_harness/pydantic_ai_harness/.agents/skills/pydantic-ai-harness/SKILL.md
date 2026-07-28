@@ -53,12 +53,12 @@ APIs are subject to change between releases; breaking changes ship deprecation w
 | `SubAgents` | `pydantic_ai_harness.subagents` | Delegate subtasks to specialized child agents |
 | `DynamicWorkflow` | `pydantic_ai_harness.dynamic_workflow` | Orchestrate sub-agents from a model-written Python script |
 | `Planning` | `pydantic_ai_harness.planning` | Break complex tasks into structured plans before execution |
-| compaction family (`SlidingWindow`, `SummarizingCompaction`, ...) | `pydantic_ai_harness.compaction` | Trim or summarize conversation history to stay within token limits |
-| `OverflowingToolOutput` | `pydantic_ai_harness.overflowing_tool_output` | Truncate, summarize, or spill large tool outputs |
-| `RepoContext` | `pydantic_ai_harness.context` | Auto-load CLAUDE.md/AGENTS.md and repo structure |
+| compaction family (`SlidingWindowCompaction`, `SummarizingCompaction`, ...) | `pydantic_ai_harness.compaction` | Trim or summarize conversation history to stay within token limits |
+| `ToolOutputLimits` | `pydantic_ai_harness.tool_output_limits` | Truncate, summarize, or spill large tool outputs |
+| `RepoContext` | `pydantic_ai_harness.repo_context` | Auto-load CLAUDE.md/AGENTS.md and repo structure |
 | `StepPersistence` | `pydantic_ai_harness.step_persistence` | Save, restore, resume, and fork run state |
-| `PyaiDocs` | `pydantic_ai_harness.docs` | On-demand `read_pyai_docs` tool for Pydantic AI docs |
-| `RuntimeAuthoring` | `pydantic_ai_harness.runtime_authoring` | Let an agent author, validate, and load real capabilities at runtime |
+| `PydanticAIDocs` | `pydantic_ai_harness.pydantic_ai_docs` | On-demand `read_pyai_docs` tool for Pydantic AI docs |
+| `CapabilityCreation` | `pydantic_ai_harness.capability_creation` | Let an agent author, validate, and load real capabilities at runtime |
 | media externalization | `pydantic_ai_harness.media` | Offload large `BinaryContent` to content-addressed stores |
 
 Still experimental: an ACP server adapter, imported from `pydantic_ai_harness.experimental.acp`. Importing it

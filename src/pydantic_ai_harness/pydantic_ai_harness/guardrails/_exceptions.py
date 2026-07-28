@@ -8,7 +8,7 @@ class GuardrailError(Exception):
 
 
 class InputBlocked(GuardrailError):
-    """Raised by a user-supplied input guard to hard-fail a run.
+    """Raised by a user-supplied input guardrail to hard-fail a run.
 
     Prefer returning `False` from the guard callable to trigger a graceful
     refusal via [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest].
@@ -17,4 +17,4 @@ class InputBlocked(GuardrailError):
 
 
 class OutputBlocked(GuardrailError):
-    """Raised by [`OutputGuard`][pydantic_ai_harness.OutputGuard] when the final output fails validation."""
+    """Raised by [`OutputGuardrail`][pydantic_ai_harness.OutputGuardrail] when the final output fails validation."""

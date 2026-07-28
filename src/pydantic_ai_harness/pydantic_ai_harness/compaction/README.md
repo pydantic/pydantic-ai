@@ -24,12 +24,12 @@ provider rejects an orphaned pair. The zero-LLM strategies never call a model.
 | Capability | Cost | What it does | Reach for it when |
 |---|---|---|---|
 | `ClampOversizedMessages` | zero-LLM | Head/tail-truncates a single oversized part (response text, tool-call args) | One runaway generation blew past the context cap and no other strategy can reach it |
-| `SlidingWindow` | zero-LLM | Drops the oldest whole messages down to a tail | You only need the recent turns and can discard old context entirely |
+| `SlidingWindowCompaction` | zero-LLM | Drops the oldest whole messages down to a tail | You only need the recent turns and can discard old context entirely |
 | `ClearToolResults` | zero-LLM | Blanks the content of old tool *results* in place, keeping the last `keep_pairs` | Tool outputs dominate context and can be re-fetched on demand (the cheap first tier) |
 | `DeduplicateFileReads` | zero-LLM | Blanks every file read superseded by a newer read of the same file | The agent re-reads files and only the latest version matters |
 | `SummarizingCompaction` | one LLM call | Summarizes older messages into a structured summary, keeping the recent tail | Old context still matters but must be compressed; use behind the cheap tiers |
 | `TieredCompaction` | escalates | Runs cheap passes first, summarizes only if still over `target_tokens` | You want a sensible default: spend the expensive summary only when needed |
-| `LimitWarner` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
+| `WarnNearLimits` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
 
 ## Triggers
 
@@ -44,8 +44,8 @@ whole history -- the failure it targets is one oversized part, not a large total
 
 A single model response of repeated whitespace, or a single tool call with a giant payload, can
 produce one part so large the *next* request exceeds the provider's context cap. None of the other
-strategies can reach it: `SlidingWindow` drops the oldest messages but the offender is the newest;
-`ClearToolResults` only touches tool *results*; `LimitWarner` never edits history; and feeding the
+strategies can reach it: `SlidingWindowCompaction` drops the oldest messages but the offender is the newest;
+`ClearToolResults` only touches tool *results*; `WarnNearLimits` never edits history; and feeding the
 history to `SummarizingCompaction` hits the same cap.
 
 `ClampOversizedMessages` truncates the offending part in place, keeping a head slice and a tail slice
@@ -99,9 +99,9 @@ TieredCompaction(
 )
 ```
 
-## `SlidingWindow` and `ClearToolResults` options
+## `SlidingWindowCompaction` and `ClearToolResults` options
 
-`SlidingWindow` keeps the last `keep_messages` down to a tail; pass `keep_tokens` instead for a token
+`SlidingWindowCompaction` keeps the last `keep_messages` down to a tail; pass `keep_tokens` instead for a token
 budget rather than a message count. By default `preserve_first_user_message=True` keeps the first user
 turn even when it falls outside the window, so the agent does not lose the original task.
 
@@ -111,7 +111,7 @@ cleared. Framework-typed tool results -- core's `search_tools` and `load_capabil
 left intact (a small token floor), because their structured content is re-parsed on later requests and
 rewriting it via `dataclasses.replace` would bypass validation and corrupt the part.
 
-## `LimitWarner` thresholds
+## `WarnNearLimits` thresholds
 
 Warnings begin at `warning_threshold` (default `0.7`, a fraction of the limit) and escalate to CRITICAL
 for iterations once the remaining request count drops to `critical_remaining_iterations` (default `3`).
@@ -209,7 +209,7 @@ to keep span cardinality low. Attributes:
 | Attribute | Type | Meaning |
 |---|---|---|
 | `gen_ai.conversation.compacted` | bool | Always `true`; the OpenTelemetry GenAI convention's flag for a compacted context |
-| `compaction.strategy` | str | Strategy class name (e.g. `SlidingWindow`, `SummarizingCompaction`) |
+| `compaction.strategy` | str | Strategy class name (e.g. `SlidingWindowCompaction`, `SummarizingCompaction`) |
 | `compaction.messages_before` | int | Message count before compaction |
 | `compaction.messages_after` | int | Message count after compaction |
 | `compaction.tokens_before` | int | Estimated token count before compaction |
