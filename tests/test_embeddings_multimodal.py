@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from vcr.cassette import Cassette
 
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings import (
@@ -51,6 +52,17 @@ with try_import() as logfire_imports_successful:
 with try_import() as openai_imports_successful:
     from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+with try_import() as cohere_imports_successful:
+    from pydantic_ai.embeddings.cohere import CohereEmbeddingModel
+    from pydantic_ai.providers.cohere import CohereProvider
+
+with try_import() as voyageai_imports_successful:
+    from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+    from pydantic_ai.providers.voyageai import VoyageAIProvider
+
+with try_import() as bedrock_imports_successful:
+    from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
 
 with try_import() as google_imports_successful:
     from google.genai.types import Content, Part
@@ -132,6 +144,12 @@ async def test_batch_can_be_any_iterable():
 
 
 async def test_combined_content_yields_one_embedding(tiny_image: BinaryImage):
+    """One sequence element yields one vector however many parts it holds, and keeps the container.
+
+    Unit rather than VCR: the Google cases pin the fusion on the wire, and what is left is the
+    accounting every model shares — a result entry per input, holding the `EmbeddingContent` the
+    caller passed rather than its parts.
+    """
     model = TestEmbeddingModel(dimensions=4)
     content = EmbeddingContent(['a kiwi fruit', tiny_image])
     result = await Embedder(model).embed_documents(content)
@@ -158,6 +176,11 @@ async def test_unsupported_modality_raises(gemini_api_key: str, tiny_image: Bina
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
 async def test_combined_content_on_text_only_model_raises(gemini_api_key: str):
+    """A model that can't fuse parts fails locally too, naming the fusion rather than the modality.
+
+    All-text parts clear the modality gate, so this is the second thing that stops a request before
+    it is made — and nothing reaches the provider for a cassette to witness.
+    """
     model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
 
     with pytest.raises(
@@ -232,22 +255,90 @@ async def test_lookup_by_text_finds_wrapped_text():
     assert result['a mango'] == result.embeddings[1]
 
 
-@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-@pytest.mark.vcr
-async def test_text_only_provider_reports_original_inputs(openai_api_key: str):
+@dataclass(frozen=True)
+class _TextOnlyProviderCase:
+    """One `prepare_text_embed()` call site, and the recording its request replays against."""
+
+    id: str
+    model: Callable[[pytest.FixtureRequest], EmbeddingModel]
+    """Built from a fixture at call time, so a case costs nothing when its extra isn't installed."""
+
+    cassette: str
+    """An existing recording of the same `embed_query('Hello, world!')` against this model.
+
+    Reused rather than re-recorded because the request is byte-identical: `prepare_text_embed()`
+    unwraps the `TextContent` before the provider builds its body, and the default VCR matcher
+    ignores the body regardless.
+    """
+
+    marks: tuple[pytest.MarkDecorator, ...]
+
+
+_TEXT_ONLY_PROVIDER_CASES = [
+    _TextOnlyProviderCase(
+        id='openai',
+        model=lambda request: OpenAIEmbeddingModel(
+            'text-embedding-3-small', provider=OpenAIProvider(api_key=request.getfixturevalue('openai_api_key'))
+        ),
+        cassette='../test_embeddings/TestOpenAI.test_query.yaml',
+        marks=(pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed'),),
+    ),
+    _TextOnlyProviderCase(
+        id='cohere',
+        model=lambda request: CohereEmbeddingModel(
+            'embed-v4.0', provider=CohereProvider(api_key=request.getfixturevalue('co_api_key'))
+        ),
+        cassette='../test_embeddings/TestCohere.test_query.yaml',
+        marks=(pytest.mark.skipif(not cohere_imports_successful(), reason='Cohere not installed'),),
+    ),
+    _TextOnlyProviderCase(
+        id='voyageai',
+        model=lambda request: VoyageAIEmbeddingModel(
+            'voyage-3.5', provider=VoyageAIProvider(api_key=request.getfixturevalue('voyage_api_key'))
+        ),
+        cassette='../test_embeddings/TestVoyageAI.test_query.yaml',
+        marks=(pytest.mark.skipif(not voyageai_imports_successful(), reason='VoyageAI not installed'),),
+    ),
+    _TextOnlyProviderCase(
+        id='bedrock-batched',
+        model=lambda request: BedrockEmbeddingModel(
+            'cohere.embed-v4:0', provider=request.getfixturevalue('bedrock_provider')
+        ),
+        cassette='../test_embeddings/TestBedrock.test_cohere_v4_minimal.yaml',
+        marks=(pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed'),),
+    ),
+    _TextOnlyProviderCase(
+        id='bedrock-per-input',
+        # Titan takes one input per request, so Bedrock reports the inputs from a second place.
+        model=lambda request: BedrockEmbeddingModel(
+            'amazon.titan-embed-text-v2:0', provider=request.getfixturevalue('bedrock_provider')
+        ),
+        cassette='../test_embeddings/TestBedrock.test_titan_v2_minimal.yaml',
+        marks=(pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed'),),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    'case',
+    [pytest.param(c, id=c.id, marks=(*c.marks, pytest.mark.vcr(c.cassette))) for c in _TEXT_ONLY_PROVIDER_CASES],
+)
+async def test_text_only_provider_reports_original_inputs(case: _TextOnlyProviderCase, request: pytest.FixtureRequest):
     """A text-only provider sends the unwrapped text but reports the input the caller passed.
 
-    `prepare_text_embed()` returns the inputs and the text to send separately, and all five text-only
-    providers pass the former to `EmbeddingResult.inputs`; this pins that fork end to end, so a
-    provider that regressed to reporting its own request payload would fail here.
+    `prepare_text_embed()` returns the inputs and the text to send separately, and every text-only
+    provider passes the former to `EmbeddingResult.inputs`. A case per call site pins that fork end to
+    end — Bedrock twice, since batching models and per-input models build the result separately — so a
+    provider that regressed to reporting its own request payload fails here.
+    `SentenceTransformerEmbeddingModel` is the one call site left unpinned: reaching it needs the
+    Hugging Face Hub outage handling that lives with its own tests.
     """
-    model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
-    tagged = TextContent(content='a kiwi fruit', metadata={'chunk': 7})
+    tagged = TextContent(content='Hello, world!', metadata={'chunk': 7})
 
-    result = await Embedder(model).embed_documents([tagged])
+    result = await Embedder(case.model(request)).embed_query(tagged)
 
     assert result.inputs == [tagged]
-    assert result['a kiwi fruit'] == result.embeddings[0]
+    assert result['Hello, world!'] == result.embeddings[0]
 
 
 @dataclass(frozen=True)
@@ -407,6 +498,7 @@ def _solid_png(red: int) -> BinaryImage:
 async def test_google_batches_more_images_than_the_documented_limit(
     gemini_api_key: str,
     google_embed_content_spy: Callable[[Provider[Client]], dict[str, Any]],
+    vcr: Cassette,
 ):
     """Seven single-image inputs go out as one `batchEmbedContents` call and come back as seven vectors.
 
@@ -420,6 +512,13 @@ async def test_google_batches_more_images_than_the_documented_limit(
 
     images = [_solid_png(red) for red in range(0, 7 * 32, 32)]
     result = await Embedder(model).embed_documents(images, settings=GoogleEmbeddingSettings(dimensions=128))
+
+    # The claim above is about HTTP, and the SDK spy alone would still pass if `google-genai` fanned
+    # the seven contents out into a call each. The recording is what says it didn't, and against which
+    # model id the batch endpoint was reached.
+    assert [request.uri for request in vcr.requests] == snapshot(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        ['https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents']
+    )
 
     contents: list[Content] = captured['contents']
     assert [len(content.parts or []) for content in contents] == [1] * 7
@@ -481,6 +580,12 @@ async def test_instrumentation_describes_non_text_inputs(capfire: CaptureLogfire
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_instrumentation_includes_binary_content(capfire: CaptureLogfire, tiny_image: BinaryImage):
+    """With `include_binary_content` the bytes ride along, base64-encoded beside the media type.
+
+    The positive half of `test_instrumentation_describes_non_text_inputs`. Unit rather than VCR: the
+    span is built from the inputs before any request, so a recording would only add a provider to an
+    assertion that has nothing provider-specific in it.
+    """
     model = TestEmbeddingModel(dimensions=2)
     embedder = Embedder(model, instrument=InstrumentationSettings(include_content=True))
 
