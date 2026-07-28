@@ -3118,7 +3118,9 @@ def _relocate_unfollowed_system_messages(
     indexes valid as later entries are removed.
     """
     for index, fallback_blocks in reversed(fallbacks):
-        if index + 1 < len(anthropic_messages) and anthropic_messages[index + 1]['role'] == 'assistant':
+        # Trailing is the position the feature exists for — an instruction enqueued right before the
+        # run, feeding the generation. Only an entry a *user* turn ended up behind has to fold back.
+        if index + 1 == len(anthropic_messages) or anthropic_messages[index + 1]['role'] == 'assistant':
             continue
         # A system entry is only ever emitted directly after a user message with content, so the
         # merge target is there and holds a block list rather than a bare string.
