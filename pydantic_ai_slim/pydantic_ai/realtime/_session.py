@@ -228,7 +228,7 @@ def _user_transcript_update(previous: str, text: str, *, cumulative: bool) -> tu
         return text, SpeechPartDelta(speaker='user', transcript_delta=stripped_text[len(stripped) :])
     if not previous:
         return text, SpeechPartDelta(speaker='user', transcript_delta=text)
-    return text, SpeechPartDelta(speaker='user', transcript_replacement=text)
+    return text, SpeechPartDelta(speaker='user', transcript_delta=text, replaces_transcript=True)
 
 
 def _parse_tool_args(raw: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -2091,17 +2091,12 @@ class RealtimeSession:
             if delta.audio_chunk:
                 for queue in self._audio_taps:
                     _put_tap(queue, delta.audio_chunk)
-            if delta.speaker is not None and (delta.transcript_delta or delta.transcript_replacement is not None):
-                # A replacement supersedes what was accumulated (the provider revised itself); an
-                # appended delta extends it. Either way `transcript` ends up the turn's full text, which
-                # is what a caption UI renders — so a revision reaches it instead of being dropped.
-                if (replacement := delta.transcript_replacement) is not None:
-                    transcript = text = replacement
-                    replaces_previous = True
-                else:
-                    text = delta.transcript_delta or ''
-                    transcript = self._transcript_so_far.get(event.index, '') + text
-                    replaces_previous = False
+            if delta.transcript_delta and delta.speaker is not None:
+                # A revision supersedes what was accumulated; an ordinary delta extends it. Either way
+                # `transcript` ends up the turn's full text, which is what a caption UI renders — so a
+                # revision reaches it instead of being dropped as an unrecognized shape.
+                text = delta.transcript_delta
+                transcript = text if delta.replaces_transcript else self._transcript_so_far.get(event.index, '') + text
                 self._transcript_so_far[event.index] = transcript
                 if self._transcript_delta_taps:
                     update = TranscriptUpdate(
@@ -2109,7 +2104,7 @@ class RealtimeSession:
                         speaker=delta.speaker,
                         delta=text,
                         transcript=transcript,
-                        replaces_previous=replaces_previous,
+                        replaces_transcript=delta.replaces_transcript,
                     )
                     for queue in self._transcript_delta_taps:
                         _put_tap(queue, update)

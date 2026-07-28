@@ -3427,17 +3427,16 @@ class SpeechPartDelta:
     """
 
     transcript_delta: str | None = None
-    """Incremental transcript text to append to the existing transcript, if any."""
+    """New transcript text, appended to the existing transcript — or replacing it, if
+    [`replaces_transcript`][pydantic_ai.messages.SpeechPartDelta.replaces_transcript] is set."""
 
-    transcript_replacement: str | None = None
-    """The full transcript so far, replacing what was accumulated, if any.
+    replaces_transcript: bool = False
+    """Whether `transcript_delta` is the whole transcript again rather than more of it.
 
-    Some providers stream a user's transcript as cumulative snapshots that can *revise* earlier
-    words rather than only extend them (xAI Grok Voice turns `'Hello?'` into `'Hello, my name is'`).
-    An append-only [`transcript_delta`][pydantic_ai.messages.SpeechPartDelta.transcript_delta] cannot
-    unsay text, so a revision arrives here instead: replace the transcript rendered so far with this.
-
-    Only one of `transcript_delta` and `transcript_replacement` is ever set on a delta.
+    Speech recognition is revisable: later audio can change how earlier audio is read, so a provider
+    may correct words it already transcribed instead of only adding to them. Appending would then
+    duplicate the corrected text, so such an update arrives with this set and the full transcript so
+    far in `transcript_delta` — replace what you have rendered rather than adding to it.
     """
 
     audio_chunk: bytes | None = None
@@ -3454,11 +3453,11 @@ class SpeechPartDelta:
         """Apply this delta to an existing `SpeechPart`.
 
         `transcript_delta` is appended to the part's transcript (a part with `transcript=None` gets
-        `transcript=transcript_delta`), while `transcript_replacement` overwrites it outright — that
-        is how a provider's revision of what it already transcribed is applied. `audio_chunk` is
-        appended to the part's retained audio data, but only if the part already has `audio` set: a
-        part with `audio=None` is not retaining audio, so the chunk is intentionally not stored — it
-        remains available on the delta itself for live playback.
+        `transcript=transcript_delta`), or replaces it when `replaces_transcript` is set — that is how
+        a provider's revision of what it already transcribed is applied. `audio_chunk` is appended to
+        the part's retained audio data, but only if the part already has `audio` set: a part with
+        `audio=None` is not retaining audio, so the chunk is intentionally not stored — it remains
+        available on the delta itself for live playback.
 
         Args:
             part: The existing model response part, which must be a `SpeechPart`.
@@ -3472,8 +3471,8 @@ class SpeechPartDelta:
         if not isinstance(part, SpeechPart):
             raise ValueError('Cannot apply SpeechPartDeltas to non-SpeechParts')
         transcript = part.transcript
-        if self.transcript_replacement is not None:
-            transcript = self.transcript_replacement
+        if self.replaces_transcript:
+            transcript = self.transcript_delta
         elif self.transcript_delta:
             transcript = (transcript or '') + self.transcript_delta
         audio = part.audio

@@ -388,7 +388,10 @@ async def test_cumulative_transcripts_revise_the_turn_instead_of_doubling_up() -
 
     assert [event for event in events if isinstance(event, PartDeltaEvent)] == [
         PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='Hello?')),
-        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_replacement='Hello, my name is')),
+        PartDeltaEvent(
+            index=0,
+            delta=SpeechPartDelta(speaker='user', transcript_delta='Hello, my name is', replaces_transcript=True),
+        ),
         PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta=' Marcelo.')),
     ]
     # The revision reaches the caption view, and `transcript` is the turn's real text throughout.
@@ -399,7 +402,7 @@ async def test_cumulative_transcripts_revise_the_turn_instead_of_doubling_up() -
             speaker='user',
             delta='Hello, my name is',
             transcript='Hello, my name is',
-            replaces_previous=True,
+            replaces_transcript=True,
         ),
         TranscriptUpdate(index=0, speaker='user', delta=' Marcelo.', transcript='Hello, my name is Marcelo.'),
     ]

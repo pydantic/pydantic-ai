@@ -370,9 +370,12 @@ class InputTranscript:
     cumulative: bool = False
     """Whether `text` is the whole transcript so far rather than an incremental piece.
 
-    Providers that stream cumulative snapshots may *revise* what they already transcribed, not just
-    extend it, so the session replaces its running transcript instead of guessing whether the text
-    appends. Leave `False` for incremental deltas.
+    Speech recognition is revisable, and a provider that streams cumulative snapshots may correct
+    what it already transcribed instead of only extending it. Setting this lets the session adopt
+    each snapshot as authoritative rather than guessing from prefixes whether the text appends;
+    it surfaces the difference to callers as a
+    [`SpeechPartDelta.replaces_transcript`][pydantic_ai.messages.SpeechPartDelta.replaces_transcript]
+    update. Leave `False` for incremental deltas.
     """
 
 
@@ -449,10 +452,8 @@ class TranscriptUpdate:
     """Who is speaking."""
 
     delta: str
-    """The new text, to append to what you already rendered for this `index`.
-
-    Unless `replaces_previous` is set, in which case this is the revised transcript, not an addition.
-    """
+    """The new text, to append to what you already rendered for this `index` — or to replace it with,
+    if `replaces_transcript` is set."""
 
     transcript: str
     """The full transcript of this turn so far, including `delta`.
@@ -462,13 +463,12 @@ class TranscriptUpdate:
     from this field alone is always correct, whatever the provider does.
     """
 
-    replaces_previous: bool = False
+    replaces_transcript: bool = False
     """Whether this update *revises* the turn's text rather than extending it.
 
-    Some providers stream a transcript as cumulative snapshots and can correct what they already
-    transcribed (xAI Grok Voice turns `'Hello?'` into `'Hello, my name is'`). Appending `delta` would
-    then double up the corrected words, so an appending renderer must replace on this flag. Renderers
-    that use `transcript` can ignore it.
+    Speech recognition is revisable: later audio can change how earlier audio is read, so a provider
+    may correct words it already transcribed. Appending `delta` would then duplicate the corrected
+    text. Renderers that use `transcript` never need this; only those appending `delta` do.
     """
 
 
