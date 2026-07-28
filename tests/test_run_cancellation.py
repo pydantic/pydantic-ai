@@ -622,16 +622,22 @@ async def test_direct_await_cancellation_carries_run_cancelled_on_all_versions()
 async def test_from_cancellation_through_asyncio_timeout():
     started = asyncio.Event()
     agent = Agent(TestModel())
+    # `Any` because `asyncio.Timeout` doesn't exist on Pyright's 3.10 target.
+    timeout_scope: list[Any] = []
 
     @agent.tool_plain
     async def slow_tool() -> str:
         started.set()
+        # Expire the enclosing timeout only now, so the model response is deterministically
+        # recorded before the cancellation lands (a fixed small timeout raced run progress in CI).
+        timeout_scope[0].reschedule(asyncio.get_running_loop().time())
         await asyncio.sleep(READINESS_WAIT_TIMEOUT)
         return 'slow'  # pragma: no cover
 
     with pytest.raises(TimeoutError) as exc_info:
         # This test is version-gated, but Pyright targets the package's Python 3.10 minimum.
-        async with asyncio.timeout(0.01):  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT) as scope:  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+            timeout_scope.append(scope)
             await agent.run('go')
 
     assert isinstance(exc_info.value, TimeoutError)

@@ -1126,6 +1126,40 @@ async def main():
         #> Cancelled after 2 messages
 ```
 
+Often you don't control which way cancellation will arrive: a caller that wraps `agent.run()` in a task for a stop gesture may also be running tools -- perhaps from another library -- that call `ctx.cancel_run()` internally. One handler covers both, since [`from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] returns a `RunCancelled` passed to it as-is:
+
+```python {title="run_cancel_either_way.py"}
+import asyncio
+
+from pydantic_ai import Agent, RunCancelled, RunContext
+
+agent = Agent('test')
+
+
+@agent.tool
+async def imported_tool(ctx: RunContext) -> str:
+    ctx.cancel_run()  # (1)!
+    return 'never reached'
+
+
+async def main():
+    task = asyncio.create_task(agent.run('Go'))
+    try:
+        await task
+    except (RunCancelled, asyncio.CancelledError) as exc:  # (2)!
+        cancelled = RunCancelled.from_cancellation(exc)
+        if cancelled is None:
+            raise  # (3)!
+        print(f'Cancelled after {len(cancelled.all_messages())} messages')
+        #> Cancelled after 2 messages
+```
+
+1. Here the tool cancels first-party, so `await task` raises `RunCancelled`; the handler below is identical if a stop button calls `task.cancel()` instead, which raises `CancelledError`.
+2. First-party cancellation arrives as `RunCancelled`, external as `CancelledError` -- `from_cancellation()` yields the run state either way.
+3. A cancellation with no attached run state is not this run's outcome -- e.g. an application shutdown -- so let it keep propagating.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
 Cancellation is terminal: capability hooks may observe it and clean up, but cannot recover the run to success — on Python 3.11+ this holds even if user code absorbs the delivered cancellation; on Python 3.10 it is best-effort. When first-party and external cancellation race, external cancellation wins. On Python 3.10, that race cannot be distinguished, so first-party cancellation wins instead.
 
 For fine-grained control over the agent graph, call [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] on the handle returned by [`agent.iter()`][pydantic_ai.agent.Agent.iter]:
