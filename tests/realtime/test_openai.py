@@ -2098,6 +2098,26 @@ async def test_connection_closed_yields_fatal_error() -> None:
 
 
 @pytest.mark.anyio
+async def test_reconnect_budget_bounds_a_flapping_server() -> None:
+    # `max_attempts` bounds the retries for one drop and resets whenever a dial succeeds, so a server
+    # that accepts a connection and immediately drops it would otherwise be reconnected forever. The
+    # session-wide budget is what makes that terminate.
+    policy = rt_openai.ReconnectPolicy(max_attempts=1, max_reconnects=2, base_delay=0, jitter=False)
+    dials = 0
+
+    async def dial() -> Any:
+        nonlocal dials
+        dials += 1
+        return FakeWebSocket([])
+
+    conn = rt_openai.OpenAIRealtimeConnection(FakeWebSocket([]), dial=dial, reconnect=policy)
+    assert await conn._try_reconnect() is True  # pyright: ignore[reportPrivateUsage]
+    assert await conn._try_reconnect() is True  # pyright: ignore[reportPrivateUsage]
+    # Budget spent: further drops are terminal rather than re-dialed, and we stop dialing entirely.
+    assert await conn._try_reconnect() is False  # pyright: ignore[reportPrivateUsage]
+    assert dials == 2
+
+
 async def test_reconnects_on_drop_and_resumes() -> None:
     transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'hi'})
     good = FakeWebSocket([transcript])

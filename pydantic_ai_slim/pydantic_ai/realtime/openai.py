@@ -309,6 +309,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._reconnect = reconnect
         self._restores_state_on_reconnect = False
         self._input_transcription_enabled = input_transcription_enabled
+        self._reconnects_used = 0
         self._observes_output_audio = observes_output_audio
         # The Realtime API rejects `response.create` while a response is already being generated.
         # We track that window and defer requests (e.g. a background tool result that lands while the
@@ -633,7 +634,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     async def _try_reconnect(self) -> bool:
         """Re-dial with exponential backoff; return whether a new connection was established."""
         assert self._reconnect is not None and self._dial is not None
-        return await reconnect_with_backoff(self._reconnect, self._attempt_reconnect)
+        if not await reconnect_with_backoff(
+            self._reconnect, self._attempt_reconnect, reconnects_used=self._reconnects_used
+        ):
+            return False
+        self._reconnects_used += 1
+        return True
 
     async def _attempt_reconnect(self) -> bool:
         assert self._dial is not None

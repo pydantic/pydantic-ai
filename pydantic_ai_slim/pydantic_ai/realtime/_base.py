@@ -896,7 +896,18 @@ class ReconnectPolicy:
     """
 
     max_attempts: int = 3
-    """Number of re-dial attempts before giving up and raising [`RealtimeError`][pydantic_ai.realtime.RealtimeError]."""
+    """Number of re-dial attempts per drop before giving up and raising [`RealtimeError`][pydantic_ai.realtime.RealtimeError]."""
+    max_reconnects: int = 50
+    """Total successful reconnects allowed for the life of the session.
+
+    `max_attempts` bounds the retries for a single drop, and resets once a dial succeeds, so on its
+    own it cannot stop a session that reconnects, drops, and reconnects forever. This bounds the whole
+    session instead.
+
+    The default is generous for the case this exists to serve: providers end sessions at a duration
+    cap (OpenAI at 60 minutes) and a long-running session legitimately renews at that boundary, so 50
+    covers days of continuous conversation. It only bites a server that hangs up as fast as we dial.
+    """
     base_delay: float = 0.5
     """Base backoff delay in seconds; doubles each attempt up to `max_delay`."""
     max_delay: float = 30.0
@@ -905,11 +916,17 @@ class ReconnectPolicy:
     """Whether to apply random jitter to each backoff delay to avoid thundering herds."""
 
 
-async def reconnect_with_backoff(policy: ReconnectPolicy, attempt: Callable[[], Awaitable[bool]]) -> bool:
+async def reconnect_with_backoff(
+    policy: ReconnectPolicy, attempt: Callable[[], Awaitable[bool]], *, reconnects_used: int = 0
+) -> bool:
     """Retry `attempt` with exponential backoff (and optional jitter) until it succeeds or attempts run out.
 
     `attempt` performs one provider-specific re-dial and returns whether it succeeded.
+    `reconnects_used` is how many times this session has already reconnected, checked against the
+    policy's session-wide budget so a server that hangs up as fast as we dial cannot loop forever.
     """
+    if reconnects_used >= policy.max_reconnects:
+        return False
     for i in range(policy.max_attempts):
         delay = min(policy.max_delay, policy.base_delay * (2**i))
         if policy.jitter:

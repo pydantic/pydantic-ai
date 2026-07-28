@@ -956,6 +956,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._session = session
         self._profile = profile if profile is not None else DEFAULT_REALTIME_PROFILE
         self._input_transcription_enabled = input_transcription_enabled
+        self._reconnects_used = 0
         self._async_tool_calls_enabled = async_tool_calls
         # Provider name stamped onto native-tool history parts (grounding / code execution), matching the
         # classic `GoogleModel` (`NativeToolCallPart.provider_name`), so a turn's history is provider-tagged
@@ -1071,7 +1072,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
     async def _try_reconnect(self) -> bool:
         """Re-dial with exponential backoff, resuming from the latest handle; return whether it worked."""
         assert self._dial is not None and self._reconnect is not None
-        return await reconnect_with_backoff(self._reconnect, self._attempt_reconnect)
+        if not await reconnect_with_backoff(
+            self._reconnect, self._attempt_reconnect, reconnects_used=self._reconnects_used
+        ):
+            return False
+        self._reconnects_used += 1
+        return True
 
     async def _attempt_reconnect(self) -> bool:
         assert self._dial is not None
