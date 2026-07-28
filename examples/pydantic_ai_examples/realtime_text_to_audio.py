@@ -82,6 +82,9 @@ async def main(prompt: str, output_path: str) -> None:
                     pass
         print()
 
+    if not audio:
+        raise RuntimeError('The realtime response completed without any audio')
+
     save_wav(output_path, bytes(audio))
     print(f'\nSaved {len(audio)} bytes of audio to {output_path}')
 

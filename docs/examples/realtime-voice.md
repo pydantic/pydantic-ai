@@ -12,6 +12,14 @@ Demonstrates:
 The agent exposes a single `get_weather` tool the model can call mid-conversation, and the terminal
 shows a running transcript of both sides of the conversation plus any tool calls.
 
+Both audio directions use bounded buffers, dropping the oldest audio rather than growing without
+limit: microphone capture that outruns the network drops the oldest block to preserve conversational
+latency, and playback that falls more than five seconds behind the model drops its oldest audio, so a
+machine that stutters glitches instead of ending the call. On barge-in the example clears queued
+*and* partially consumed playback audio, and reports the duration actually played to
+[`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt], so the provider truncates its
+transcript to what the user really heard.
+
 ## Running the Example
 
 The examples dependencies include

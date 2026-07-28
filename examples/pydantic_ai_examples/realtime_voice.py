@@ -17,7 +17,8 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import queue
+import threading
+from collections import deque
 from contextlib import suppress
 from functools import partial
 
@@ -30,6 +31,7 @@ from pydantic_ai.realtime import (
     InputSpeechStartEvent,
     PartDeltaEvent,
     PartEndEvent,
+    PartStartEvent,
     RealtimeEvent,
     RealtimeSession,
     SpeechPart,
@@ -55,6 +57,8 @@ logfire.instrument_pydantic_ai()
 SAMPLE_RATE = 24000
 CHANNELS = 1
 BLOCK_SIZE = 2400  # 100 ms per audio block
+MIC_QUEUE_BLOCKS = 10
+PLAYBACK_BUFFER_SECONDS = 5
 
 agent = Agent(
     instructions='You are a friendly voice assistant. Keep your replies short and conversational.'
@@ -74,45 +78,86 @@ def capture_mic(
     *_: object,
 ) -> None:
     """Microphone callback (PortAudio thread): hand captured audio to the event loop safely."""
-    loop.call_soon_threadsafe(mic_queue.put_nowait, bytes(indata))
+    loop.call_soon_threadsafe(enqueue_latest, mic_queue, bytes(indata))
 
 
-def fill_speaker(
-    play_queue: queue.Queue[bytes], carry: bytearray, outdata: bytearray, *_: object
-) -> None:
-    """Speaker callback: fill the block from buffered model audio, padding with silence on underrun."""
-    want = len(outdata)
-    while len(carry) < want:
+def enqueue_latest(audio_queue: asyncio.Queue[bytes], chunk: bytes) -> None:
+    """Keep microphone latency bounded by dropping the oldest block on overflow."""
+    if audio_queue.full():
         try:
-            carry.extend(play_queue.get_nowait())
-        except queue.Empty:
-            break
-    outdata[:] = bytes(carry[:want]).ljust(want, b'\x00')
-    del carry[:want]
+            audio_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+    audio_queue.put_nowait(chunk)
 
 
-def drain(play_queue: queue.Queue[bytes]) -> None:
-    """Drop any buffered playback audio (used for barge-in)."""
-    while True:
-        try:
-            play_queue.get_nowait()
-        except queue.Empty:
-            break
+class PlaybackBuffer:
+    """Thread-safe, bounded model-audio buffer with playback accounting."""
+
+    def __init__(self, max_bytes: int):
+        self._max_bytes = max_bytes
+        self._chunks: deque[bytes] = deque()
+        self._carry = bytearray()
+        self._buffered_bytes = 0
+        self._played_bytes = 0
+        self._lock = threading.Lock()
+
+    def start_turn(self) -> None:
+        with self._lock:
+            self._played_bytes = 0
+
+    def add(self, chunk: bytes) -> None:
+        with self._lock:
+            # If the speaker falls far enough behind that the model is seconds ahead of what the
+            # caller hears, drop the oldest audio rather than raise: a glitch is recoverable, and
+            # ending a live call because one machine stuttered is not.
+            while self._chunks and self._buffered_bytes + len(chunk) > self._max_bytes:
+                self._buffered_bytes -= len(self._chunks.popleft())
+            self._chunks.append(chunk)
+            self._buffered_bytes += len(chunk)
+
+    def fill(self, outdata: bytearray) -> None:
+        """Fill one speaker block, padding an underrun with silence."""
+        with self._lock:
+            want = len(outdata)
+            while len(self._carry) < want and self._chunks:
+                self._carry.extend(self._chunks.popleft())
+            played = min(want, len(self._carry))
+            outdata[:] = bytes(self._carry[:played]).ljust(want, b'\x00')
+            del self._carry[:played]
+            self._buffered_bytes -= played
+            self._played_bytes += played
+
+    def interrupt(self) -> int:
+        """Drop unheard audio and return milliseconds played in this turn."""
+        with self._lock:
+            self._chunks.clear()
+            self._carry.clear()
+            self._buffered_bytes = 0
+            played_ms = self._played_bytes * 1000 // (SAMPLE_RATE * CHANNELS * 2)
+            self._played_bytes = 0
+            return played_ms
+
+
+def fill_speaker(playback: PlaybackBuffer, outdata: bytearray, *_: object) -> None:
+    """Speaker callback (PortAudio thread)."""
+    playback.fill(outdata)
 
 
 async def handle_event(
     session: RealtimeSession,
     event: RealtimeEvent,
-    play_queue: queue.Queue[bytes],
-) -> bool:
-    """Handle one session event; return `True` to stop the session."""
+    playback: PlaybackBuffer,
+) -> None:
+    """Handle one session event."""
     match event:
         case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
-            play_queue.put_nowait(chunk)
+            playback.add(chunk)
         case InputSpeechStartEvent():
-            # Barge-in: drop buffered audio locally and cancel the model's turn.
-            drain(play_queue)
-            await session.interrupt()
+            # Keep provider history aligned with what reached the speaker before barge-in.
+            await session.interrupt(audio_end_ms=playback.interrupt())
+        case PartStartEvent(part=SpeechPart(speaker='assistant')):
+            playback.start_turn()
         case PartEndEvent(part=SpeechPart(speaker='user', transcript=transcript)):
             print(f'you: {transcript}')
         case PartEndEvent(part=SpeechPart(speaker='assistant', transcript=transcript)):
@@ -121,7 +166,6 @@ async def handle_event(
             print(f'[calling {call.tool_name}]')
         case FunctionToolResultEvent(part=result):
             print(f'[{result.tool_name} returned: {result.content}]')
-    return False
 
 
 async def stream_mic(session: RealtimeSession, mic_queue: asyncio.Queue[bytes]) -> None:
@@ -138,10 +182,10 @@ async def main():
         ) from _sounddevice_error
 
     loop = asyncio.get_running_loop()
-    mic_queue: asyncio.Queue[bytes] = asyncio.Queue()
-    play_queue: queue.Queue[bytes] = queue.Queue()
-    # Partial audio block held between speaker callbacks (touched by the callback thread only).
-    carry = bytearray()
+    mic_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=MIC_QUEUE_BLOCKS)
+    playback = PlaybackBuffer(
+        max_bytes=SAMPLE_RATE * CHANNELS * 2 * PLAYBACK_BUFFER_SECONDS
+    )
 
     stream_kwargs = dict(
         samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='int16', blocksize=BLOCK_SIZE
@@ -150,7 +194,7 @@ async def main():
         callback=partial(capture_mic, loop, mic_queue), **stream_kwargs
     )
     speaker = sounddevice.RawOutputStream(
-        callback=partial(fill_speaker, play_queue, carry), **stream_kwargs
+        callback=partial(fill_speaker, playback), **stream_kwargs
     )
 
     with mic, speaker:
@@ -161,8 +205,7 @@ async def main():
             print('Listening — start talking (Ctrl-C to quit).')
             try:
                 async for event in session:
-                    if await handle_event(session, event, play_queue):
-                        break
+                    await handle_event(session, event, playback)
             finally:
                 pump.cancel()
                 with suppress(asyncio.CancelledError):

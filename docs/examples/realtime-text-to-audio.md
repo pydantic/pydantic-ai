@@ -25,7 +25,8 @@ python/uv-run -m pydantic_ai_examples.realtime_text_to_audio "Tell me a fun fact
 ```
 
 The streamed PCM audio is saved to `realtime-response.wav` so you can listen to the result
-afterwards.
+afterwards. If the turn completes without audio, the script raises an error and does not create an
+empty WAV file.
 
 ## Example Code
 
