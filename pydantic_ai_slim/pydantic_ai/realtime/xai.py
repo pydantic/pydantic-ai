@@ -63,6 +63,7 @@ from ._base import (
     inject_trace_context,
 )
 from ._openai_protocol import (
+    RealtimeHandshakeError,
     expect_event,
     map_connect_errors,
     map_conversation_event,
@@ -135,6 +136,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     """
 
     _provider_name = 'xai'
+    _provider_label = 'xAI Grok Voice'
     _supports_tool_result_images = False
 
     def __init__(
@@ -333,7 +335,10 @@ class XaiRealtimeModel(RealtimeModel):
                     await expect_event(ws, 'conversation.created', timeout=handshake_timeout)
                 )
                 if not isinstance(conversation, ConversationCreated):
-                    raise RuntimeError('xAI realtime `conversation.created` event did not include `conversation.id`')
+                    raise RealtimeHandshakeError(
+                        '`conversation.created` did not include a `conversation.id`, so the session '
+                        'cannot be resumed after a drop'
+                    )
                 conversation_id = conversation.conversation_id
                 if connection is not None:
                     connection.conversation_id = conversation_id

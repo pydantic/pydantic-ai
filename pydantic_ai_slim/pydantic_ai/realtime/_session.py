@@ -499,7 +499,7 @@ class RealtimeSession:
 
     async def __aenter__(self) -> RealtimeSession:
         if self._entered or self._closed:
-            raise RuntimeError('This realtime session cannot be entered more than once.')
+            raise UserError('This realtime session cannot be entered more than once.')
         self._entered = True
         self._loop = asyncio.get_running_loop()
         self._pending_messages.bind(self._notify_asap_pending_messages)
@@ -931,11 +931,25 @@ class RealtimeSession:
         self._ensure_not_closed()
         self._start_pump()
         async with self._send_lock:
-            await self._connection.send(content)
+            try:
+                await self._connection.send(content)
+            except self._connection.transport_errors as e:
+                # A send that fails because the link is gone is the same failure the receive side
+                # reports; surface it as the same typed error rather than leaking a `websockets` or
+                # provider-SDK exception from what looks like an ordinary method call.
+                raise RealtimeError(
+                    model_name=self._error_model_name,
+                    message=f'Realtime connection failed while sending: {e}',
+                ) from e
+
+    @property
+    def _error_model_name(self) -> str:
+        """The model to attribute a provider failure to: the one asked for, else the one served."""
+        return self._model_name or self._connection.model_name or 'unknown'
 
     def _ensure_not_closed(self) -> None:
         if self._closed:
-            raise RuntimeError('This realtime session is closed.')
+            raise UserError('This realtime session is closed.')
 
     def _require_capability(self, supported: bool, method: str, feature: str) -> None:
         """Raise a clear `UserError` before sending when the model doesn't support `method`."""
@@ -1679,7 +1693,7 @@ class RealtimeSession:
                 # the consumer (rather than swallowing it) for observability. Only a non-recoverable
                 # error ends the session, by raising.
                 return [event]
-            raise RealtimeError(event.message)
+            raise RealtimeError(model_name=self._error_model_name, message=event.message)
         assert_never(event)
 
     # --- instrumentation --------------------------------------------------------------------------
@@ -2040,9 +2054,9 @@ class RealtimeSession:
 
     def _ensure_streamable(self) -> None:
         if not self._entered:
-            raise RuntimeError('Enter the realtime session with `async with` before streaming it.')
+            raise UserError('Enter the realtime session with `async with` before streaming it.')
         if self._closed:
-            raise RuntimeError('This realtime session is closed and cannot be streamed.')
+            raise UserError('This realtime session is closed and cannot be streamed.')
 
     def _start_pump(self) -> None:
         # Only once the session owns its context: before `__aenter__` there is no session span to
@@ -2083,13 +2097,13 @@ class RealtimeSession:
     async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
         """Read translated events from the session queue without owning session resources."""
         if not self._entered:
-            raise RuntimeError('Enter the realtime session with `async with` before iterating it.')
+            raise UserError('Enter the realtime session with `async with` before iterating it.')
         if self._closed:
-            raise RuntimeError('This realtime session is closed and cannot be iterated.')
+            raise UserError('This realtime session is closed and cannot be iterated.')
         if self._iterator_active:
-            raise RuntimeError('This realtime session is already being iterated.')
+            raise UserError('This realtime session is already being iterated.')
         if self._stream_exhausted:
-            raise RuntimeError('This realtime session event stream has already ended.')
+            raise UserError('This realtime session event stream has already ended.')
 
         self._iterator_active = True
         self._start_pump()

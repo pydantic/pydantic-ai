@@ -672,7 +672,7 @@ async def test_parallel_id_less_calls_do_not_collide() -> None:
 
 async def test_send_unsupported_raises() -> None:
     session = _RecordingSession()
-    with pytest.raises(NotImplementedError, match='object'):
+    with pytest.raises(UserError, match='Gemini Live does not support object input'):
         await _conn(session).send(object())  # type: ignore[arg-type]
 
 
@@ -1029,6 +1029,7 @@ async def test_connect_streams_events() -> None:
         TurnCompleteEvent(interrupted=False),
     ]
     assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
+    assert events[-1].message.startswith('Gemini Live connection closed: ')
 
 
 async def test_connect_maps_rejected_config_to_model_http_error() -> None:
@@ -1108,6 +1109,29 @@ async def test_connect_maps_other_websocket_errors_to_model_api_error() -> None:
         async with _connect(model, 'x'):
             pass  # pragma: no cover - connect raises before yielding
     assert exc_info.value.message == snapshot('WebSocket error during connect: handshake went sideways')
+
+
+async def test_connect_maps_unreachable_api_to_model_api_error() -> None:
+    # The connection never came up at all (DNS, refused, reset, dial timeout). The SDK doesn't wrap
+    # these, so without mapping the caller would get a bare `OSError` from what looks like an ordinary
+    # model call; there is no HTTP status, so it becomes a `ModelAPIError`.
+    class _UnreachableConnect:
+        async def __aenter__(self) -> Any:
+            raise ConnectionRefusedError('connection refused')
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover - never entered
+            return False
+
+    class _Live:
+        def connect(self, *, model: str, config: Any) -> _UnreachableConnect:
+            return _UnreachableConnect()
+
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})()})())
+    model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover - connect raises before yielding
+    assert exc_info.value.message == snapshot('Could not reach the realtime API: connection refused')
 
 
 async def test_connect_continues_after_empty_server_turn() -> None:

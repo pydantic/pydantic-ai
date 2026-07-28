@@ -969,6 +969,29 @@ async def test_connect_surfaces_handshake_connection_close(monkeypatch: pytest.M
     assert not isinstance(exc_info.value, ModelHTTPError)  # a close code is not an HTTP status
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ('frame', 'expected'),
+    [
+        pytest.param(b'\x00binary', 'expected a text frame, got bytes', id='binary'),
+        pytest.param('{not json', 'received a malformed frame: Expecting property name', id='invalid-json'),
+        pytest.param('[1, 2]', 'received a malformed frame: expected a JSON object, got list', id='not-an-object'),
+    ],
+)
+async def test_connect_surfaces_malformed_handshake_frame(
+    frame: Any, expected: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A frame we can't read during the handshake is a protocol failure, not a Python-level bug in the
+    # caller's code: it surfaces as `ModelAPIError` rather than a bare `TypeError`/`ValueError`.
+    ws = FakeWebSocket([frame])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    model = OpenAIRealtimeModel('gpt-realtime')
+    with pytest.raises(ModelAPIError, match=re.escape(expected)) as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover
+    assert exc_info.value.model_name == 'gpt-realtime'
+
+
 class HangingWebSocket(FakeWebSocket):
     """A websocket whose `recv` never returns, to exercise the handshake timeout."""
 
@@ -981,7 +1004,7 @@ async def test_connect_handshake_times_out(monkeypatch: pytest.MonkeyPatch) -> N
     ws = HangingWebSocket([])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime', settings=rt_openai.OpenAIRealtimeModelSettings(handshake_timeout=0.02))
-    with pytest.raises(TimeoutError, match=re.escape("'session.created'")):
+    with pytest.raises(ModelAPIError, match=re.escape("timed out waiting for a 'session.created' event")):
         async with _connect(model, 'x'):
             pass  # pragma: no cover
 
@@ -1001,7 +1024,7 @@ async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pyt
 
     monkeypatch.setattr(rt_openai.websockets, 'connect', _FailingConnect())
     model = OpenAIRealtimeModel('gpt-realtime')
-    with pytest.raises(ConnectionError, match='refused'):
+    with pytest.raises(ModelAPIError, match='Could not reach the realtime API: refused'):
         async with _connect(model, 'x'):
             pass  # pragma: no cover
 
@@ -1686,7 +1709,7 @@ async def test_connection_send_unsupported_raises() -> None:
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     # Every member of the RealtimeInput union is handled, so the defensive branch needs a non-member.
-    with pytest.raises(NotImplementedError, match='object'):
+    with pytest.raises(UserError, match='OpenAI Realtime does not support object input'):
         await conn.send(object())  # type: ignore[arg-type]
 
 
@@ -2125,7 +2148,7 @@ async def test_clean_close_is_reported_as_a_fatal_error() -> None:
     assert [event async for event in conn] == [
         SessionErrorEvent(
             message=(
-                'OpenAI realtime connection closed: received 1001 Your session hit the maximum duration of 60 minutes.'
+                'OpenAI Realtime connection closed: received 1001 Your session hit the maximum duration of 60 minutes.'
             ),
             recoverable=False,
         )

@@ -41,7 +41,7 @@ except ImportError as _import_error:
 
 from .._instrumentation import get_instructions
 from .._utils import generate_tool_call_id
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -97,6 +97,7 @@ from ._base import (
     InputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
+    RealtimeError,
     RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
@@ -908,7 +909,7 @@ class GoogleRealtimeModel(RealtimeModel):
                         model_name=self.model,
                         body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
                     ) from e
-                raise ModelAPIError(model_name=self.model, message=str(e)) from e  # pragma: no cover
+                raise RealtimeError(model_name=self.model, message=str(e)) from e  # pragma: no cover
             except websockets.InvalidStatus as e:
                 # A rejected WebSocket upgrade (e.g. bad key → 401) surfaces from `google-genai` as a raw
                 # `websockets` error rather than an `APIError`; the WebSocket is the API here, so map its
@@ -918,8 +919,13 @@ class GoogleRealtimeModel(RealtimeModel):
                 raise ModelHTTPError(status_code=response.status_code, model_name=self.model, body=body) from e
             except websockets.WebSocketException as e:
                 # Any other raw `websockets` handshake failure the SDK didn't wrap as an `APIError`; no HTTP
-                # status, so surface it as a `ModelAPIError` rather than letting it escape untyped.
-                raise ModelAPIError(model_name=self.model, message=f'WebSocket error during connect: {e}') from e
+                # status, so surface it as a `RealtimeError` rather than letting it escape untyped.
+                raise RealtimeError(model_name=self.model, message=f'WebSocket error during connect: {e}') from e
+            except OSError as e:
+                # The connection never came up: DNS failure, refused, reset, or the dial timing out
+                # (`TimeoutError` is an `OSError`). No HTTP status exists, so this is a `RealtimeError`
+                # too, rather than a bare built-in from what looks like an ordinary model call.
+                raise RealtimeError(model_name=self.model, message=f'Could not reach the realtime API: {e}') from e
             # Seed prior conversation once, after the initial connect, as inactive context turns (no
             # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
             # resumption restores server state, and a `ReconnectedEvent` starts a fresh turn.
@@ -941,6 +947,12 @@ class GoogleRealtimeModel(RealtimeModel):
 
 class GoogleRealtimeConnection(RealtimeConnection):
     """A live connection to the Gemini Live API, backed by a `google-genai` session."""
+
+    # The SDK surfaces a closed socket as `ConnectionClosed` or an `APIError`; `OSError` covers the
+    # socket-level failures underneath both.
+    transport_errors = (ConnectionClosed, genai_errors.APIError, OSError)
+    # How this provider names itself in error messages.
+    _provider_label = 'Gemini Live'
 
     def __init__(
         self,
@@ -1039,7 +1051,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 )
             )
         else:
-            raise NotImplementedError(f'Gemini Live does not support {type(content).__name__} input')
+            raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         # `session.receive()` yields a single model turn and then returns, so loop to keep serving
@@ -1058,13 +1070,13 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     # No reconnect policy: a dropped connection is fatal. Surface it as a
                     # non-recoverable error and end the stream cleanly, rather than returning silently
                     # (mirroring the OpenAI provider), so callers don't treat a truncated turn as complete.
-                    yield SessionErrorEvent(message=f'Gemini realtime connection closed: {e}', recoverable=False)
+                    yield SessionErrorEvent(message=f'{self._provider_label} connection closed: {e}', recoverable=False)
                     return
                 if await self._try_reconnect():
                     yield ReconnectedEvent(state_restored=True)
                     continue
                 yield SessionErrorEvent(
-                    message=f'Gemini realtime connection closed; reconnect failed: {e}', recoverable=False
+                    message=f'{self._provider_label} connection closed; reconnect failed: {e}', recoverable=False
                 )
                 return
             # `receive()` returned normally → the turn ended; loop for the next one.

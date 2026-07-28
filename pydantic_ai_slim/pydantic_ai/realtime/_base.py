@@ -19,11 +19,11 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from typing_extensions import TypeAliasType, TypedDict, assert_never
 
-from ..exceptions import UnexpectedModelBehavior, UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -72,8 +72,19 @@ overlapping turns stay correct); only the exact split at a turn boundary is appr
 """
 
 
-class RealtimeError(UnexpectedModelBehavior):
-    """A fatal realtime connection or protocol error."""
+class RealtimeError(ModelAPIError):
+    """A realtime connection or protocol failure: the session could not be opened, or is over.
+
+    Raised when the handshake fails, the provider closes the session, a send fails, or
+    [reconnecting][pydantic_ai.realtime.ReconnectPolicy] gives up. A rejected WebSocket upgrade is the
+    exception: it carries an HTTP status, so it raises
+    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] like a regular request.
+
+    A subclass of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], since losing the connection
+    to a realtime provider is the same kind of failure as a request-response call that couldn't reach
+    the API. Catch it specifically to separate the session's own failures from those of any text agent
+    the session [delegates to](../realtime/index.md#delegating-to-a-text-agent).
+    """
 
 
 @dataclass
@@ -200,7 +211,7 @@ class ImageInput:
 
     Not every provider accepts image input. [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send]
     checks the model profile and raises [`UserError`][pydantic_ai.exceptions.UserError] when images are
-    unsupported; a direct low-level connection may raise `NotImplementedError`.
+    unsupported, as does a direct low-level connection asked for an input it can't send.
     """
 
     data: bytes
@@ -759,6 +770,15 @@ class RealtimeConnection(ABC):
     and events are consumed by iterating the connection.
     """
 
+    transport_errors: ClassVar[tuple[type[Exception], ...]] = ()
+    """The exception types this connection's transport raises when the link to the provider fails.
+
+    A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] maps these to
+    [`RealtimeError`][pydantic_ai.realtime.RealtimeError] so a failed send surfaces as the same typed
+    error as a failed receive, instead of leaking a `websockets` or provider-SDK exception the caller
+    has no reason to expect from a model call. Leave empty if `send` already raises typed errors.
+    """
+
     @abstractmethod
     async def send(self, content: RealtimeInput) -> None:
         """Feed content into the session.
@@ -767,8 +787,8 @@ class RealtimeConnection(ABC):
         text, images, tool results, manual turn controls, cancellation, and truncation; Gemini accepts
         audio, text, images, and tool results. A high-level
         [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] checks profile-gated operations and
-        raises [`UserError`][pydantic_ai.exceptions.UserError]; direct low-level connections may raise
-        `NotImplementedError`.
+        raises [`UserError`][pydantic_ai.exceptions.UserError], as does a connection handed an input it
+        can't send.
         """
         raise NotImplementedError
 

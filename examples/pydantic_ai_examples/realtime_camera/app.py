@@ -67,7 +67,6 @@ from urllib.parse import urlsplit
 
 import anyio
 import logfire
-import websockets
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -566,7 +565,7 @@ async def _run_session(
                         break
             except WebSocketDisconnect:
                 pass
-            except (RealtimeError, websockets.exceptions.ConnectionClosed) as exc:
+            except RealtimeError as exc:
                 # Send-side recovery is not reconnect-aware yet; a provider drop ends this session and
                 # lets the browser reconnect. See https://github.com/pydantic/pydantic-ai/issues/6703.
                 logfire.exception('Realtime inbound pump failed')

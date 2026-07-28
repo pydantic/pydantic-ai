@@ -245,7 +245,7 @@ The remaining realtime control-plane events:
 | [`InputTranscriptionFailedEvent`][pydantic_ai.realtime.InputTranscriptionFailedEvent] | The provider could not transcribe a user audio turn. The session continues, and `item_id` and `content_index` identify the affected turn when available. |
 | [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn. `interrupted` reflects cancellation or barge-in across all providers. |
 | [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] | The connection dropped and was automatically re-established. Conversation state is restored for Gemini and xAI; see [Reconnecting](#reconnecting). |
-| [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] | The provider reported a **recoverable** error mid-session; the session keeps running. A non-recoverable error instead raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]. |
+| [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] | The provider reported a **recoverable** error mid-session; the session keeps running. Anything that ends the session raises instead — see [Errors](#errors). |
 
 ## Core tasks
 
@@ -782,6 +782,27 @@ model = GoogleRealtimeModel(
 )
 ```
 
+## Errors
+
+A realtime session raises the same exceptions as the rest of Pydantic AI — there is no separate
+realtime vocabulary to learn:
+
+| Exception | Raised when |
+| --- | --- |
+| [`UserError`][pydantic_ai.exceptions.UserError] | The app got something wrong: an operation the model doesn't support (`interrupt()` without truncation support), an invalid settings combination, missing credentials, or misusing the session (iterating before `async with`, sending after `close()`). |
+| [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] | The provider rejected the connection with an HTTP status — a bad key (401), an unknown model (404). Only the WebSocket upgrade can carry a status; once the socket is open there is no HTTP response left to report. |
+| [`RealtimeError`][pydantic_ai.realtime.RealtimeError] | The connection failed or ended: the handshake was rejected or timed out, the provider hung up, a send failed, or [reconnecting](#reconnecting) gave up. It subclasses [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so `except ModelAPIError` covers this and the HTTP case together. |
+| [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | A [`usage_limits`](#usage-and-cost) cap tripped. |
+
+Failures that leave the session usable are events instead: a provider error scoped to one operation
+arrives as a [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent], and a turn the provider
+couldn't transcribe as an
+[`InputTranscriptionFailedEvent`][pydantic_ai.realtime.InputTranscriptionFailedEvent].
+
+Exceptions surface from the call responsible where there is one (`await session.send_audio(...)`
+raises if the send fails), and otherwise from iterating the session, which is where the receive loop
+reports. A tool that raises propagates from iteration too, unchanged — the same as a classic run.
+
 ## One agent, many modalities: technical details
 
 ### Relationship to `run` / `iter`
@@ -1097,4 +1118,8 @@ A provider implements two ABCs: [`RealtimeModel`][pydantic_ai.realtime.RealtimeM
 translates into user-facing [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent]s). The OpenAI
 provider in [`pydantic_ai.realtime.openai`][pydantic_ai.realtime.openai] is a reference
 implementation; the same shape applies to Azure OpenAI, Gemini Live, xAI Grok Voice, and others. Inputs a provider
-doesn't support (e.g. `ImageInput`, or the manual turn-taking verbs) should raise `NotImplementedError`.
+doesn't support (e.g. `ImageInput`, or the manual turn-taking verbs) should raise
+[`UserError`][pydantic_ai.exceptions.UserError], and its
+[`transport_errors`][pydantic_ai.realtime.codec.RealtimeConnection.transport_errors] should name the
+exception types its transport raises when the link fails, so a failed send surfaces as
+[`RealtimeError`][pydantic_ai.realtime.RealtimeError] rather than a bare SDK exception.

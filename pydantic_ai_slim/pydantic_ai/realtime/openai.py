@@ -299,7 +299,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     """A live WebSocket connection to the OpenAI Realtime API."""
 
     _provider_name = 'openai'
+    # How this provider names itself in error messages; protocol clones (xAI, Azure) override it so a
+    # closed connection doesn't report the wrong vendor.
+    _provider_label = 'OpenAI Realtime'
     _supports_tool_result_images = True
+    # `OSError` covers the socket-level failures (reset, broken pipe) that `websockets` lets through.
+    transport_errors = (websockets.WebSocketException, OSError)
 
     def __init__(
         self,
@@ -446,7 +451,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     }
                 )
         else:
-            raise NotImplementedError(f'OpenAI Realtime does not support {type(content).__name__} input')
+            raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
 
     async def _request_response(self) -> None:
         """Ask the model to respond now, or defer until the active response completes."""
@@ -496,13 +501,15 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             if self._reconnect is None or self._dial is None:
                 # No reconnect policy: a closed connection is fatal. Surface it as a non-recoverable
                 # error and end the stream cleanly, rather than raising.
-                yield SessionErrorEvent(message=f'OpenAI realtime connection closed: {closed}', recoverable=False)
+                yield SessionErrorEvent(
+                    message=f'{self._provider_label} connection closed: {closed}', recoverable=False
+                )
                 return
             if await self._try_reconnect():
                 yield ReconnectedEvent(state_restored=self._restores_state_on_reconnect)
                 continue
             yield SessionErrorEvent(
-                message=f'OpenAI realtime connection closed; reconnect failed: {closed}', recoverable=False
+                message=f'{self._provider_label} connection closed; reconnect failed: {closed}', recoverable=False
             )
             return
 

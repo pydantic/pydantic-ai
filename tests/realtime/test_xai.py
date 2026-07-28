@@ -44,7 +44,7 @@ from pydantic_ai.realtime.codec import (
 )
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import try_import
+from ..conftest import IsStr, try_import
 from .ws_helpers import collect_codec_events, collect_session_events
 
 with try_import() as imports_successful:
@@ -718,7 +718,9 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
 
-    assert any(isinstance(e, SessionErrorEvent) and not e.recoverable for e in events)
+    # The message names xAI, not the OpenAI protocol whose connection class this reuses.
+    fatal = [e for e in events if isinstance(e, SessionErrorEvent) and not e.recoverable]
+    assert [e.message for e in fatal] == [IsStr(regex=r'xAI Grok Voice connection closed; reconnect failed: .*')]
     # The dropped socket is closed as the reconnect nulls `cm` before re-dialing; the refused re-dial
     # never enters its context manager, so `cm` stays `None` and teardown closes nothing further. A
     # regression that assigned `cm` before awaiting `__aenter__` would leave `'refused'` here.
@@ -740,7 +742,7 @@ async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pyt
             return False
 
     monkeypatch.setattr(rt_xai.websockets, 'connect', _FailingConnect())
-    with pytest.raises(ConnectionError, match='refused'):
+    with pytest.raises(ModelAPIError, match='Could not reach the realtime API: refused'):
         async with _connect(_model(), 'x'):
             pass  # pragma: no cover
 
@@ -750,7 +752,7 @@ async def test_connect_rejects_conversation_created_without_id(monkeypatch: pyte
     ws = FakeWebSocket([_created(), json.dumps({'type': 'conversation.created', 'conversation': {}})])
     monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(ws))
 
-    with pytest.raises(RuntimeError, match=r'did not include `conversation\.id`'):
+    with pytest.raises(RuntimeError, match=r'did not include a `conversation\.id`'):
         async with _connect(_model(reconnect=rt_xai.ReconnectPolicy()), 'x'):
             pass  # pragma: no cover
 

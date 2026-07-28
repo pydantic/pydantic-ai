@@ -23,6 +23,7 @@ from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelAPIError,
     ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -452,9 +453,9 @@ async def test_close_ends_views_and_is_idempotent() -> None:
         assert session.closed is True
         assert [chunk async for chunk in stream] == []
         assert await transcript_task == []
-        with pytest.raises(RuntimeError, match='This realtime session is closed'):
+        with pytest.raises(UserError, match='This realtime session is closed'):
             await session.send_audio(b'more audio')
-        with pytest.raises(RuntimeError, match='closed and cannot be streamed'):
+        with pytest.raises(UserError, match='closed and cannot be streamed'):
             await anext(session.stream_audio())
 
 
@@ -472,7 +473,7 @@ async def test_view_is_lazy_and_does_not_replay_events() -> None:
 async def test_view_requires_entered_session() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]))
 
-    with pytest.raises(RuntimeError, match='Enter the realtime session'):
+    with pytest.raises(UserError, match='Enter the realtime session'):
         await anext(session.stream_audio())
 
 
@@ -1876,6 +1877,43 @@ async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
     assert unretained.new_messages() == []
 
 
+async def test_transport_failure_while_sending_becomes_a_realtime_error() -> None:
+    # A send that fails because the link is gone is the same failure the receive side reports, so it
+    # surfaces as `RealtimeError` (a `ModelAPIError`) instead of leaking the transport's own exception.
+    # Only the types a connection declares are mapped: anything else is a bug, not a lost connection.
+    class _DisconnectedConnection(FakeRealtimeConnection):
+        transport_errors = (ConnectionResetError,)
+
+        async def send(self, content: RealtimeInput) -> None:
+            raise ConnectionResetError('connection reset by peer')
+
+    session = RealtimeSession(_DisconnectedConnection([]), model_name='gpt-realtime')
+    with pytest.raises(RealtimeError) as exc_info:
+        await session.send('anyone there?')
+    assert str(exc_info.value) == snapshot('Realtime connection failed while sending: connection reset by peer')
+    assert exc_info.value.model_name == 'gpt-realtime'
+    assert isinstance(exc_info.value.__cause__, ConnectionResetError)
+    assert isinstance(exc_info.value, ModelAPIError)
+
+    # A session built straight from a connection may not know any model id to attribute this to.
+    anonymous = RealtimeSession(_DisconnectedConnection([]))
+    with pytest.raises(RealtimeError) as exc_info:
+        await anonymous.send('anyone there?')
+    assert exc_info.value.model_name == 'unknown'
+
+
+async def test_undeclared_send_failure_is_left_alone() -> None:
+    # A connection that fails for a reason it didn't declare as a transport error is reporting a bug,
+    # not a lost connection; dressing it up as a `RealtimeError` would hide that.
+    class _BuggyConnection(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            raise ValueError('bug in the connection')
+
+    session = RealtimeSession(_BuggyConnection([]))
+    with pytest.raises(ValueError, match='bug in the connection'):
+        await session.send('hello')
+
+
 def test_remove_sent_request_ignores_unknown_request() -> None:
     # Unit test: the rollback helper is only ever called with the request the failing send just
     # reserved, so the not-found fall-through can't be reached through the public API — pin directly
@@ -2070,11 +2108,11 @@ async def test_concurrent_iteration_raises() -> None:
         assert isinstance(await anext(first), PartStartEvent)
 
         second = session.__aiter__()
-        with pytest.raises(RuntimeError, match='already being iterated'):
+        with pytest.raises(UserError, match='already being iterated'):
             await anext(second)
 
     late = session.__aiter__()
-    with pytest.raises(RuntimeError, match='closed'):
+    with pytest.raises(UserError, match='closed'):
         await anext(late)
 
 
@@ -2082,16 +2120,16 @@ async def test_direct_session_must_be_entered_and_streams_once() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]), _noop_runner)
 
     unentered = session.__aiter__()
-    with pytest.raises(RuntimeError, match='async with'):
+    with pytest.raises(UserError, match='async with'):
         await anext(unentered)
 
     async with session:
         assert [event async for event in session] == []
         exhausted = session.__aiter__()
-        with pytest.raises(RuntimeError, match='already ended'):
+        with pytest.raises(UserError, match='already ended'):
             await anext(exhausted)
 
-    with pytest.raises(RuntimeError, match='cannot be entered more than once'):
+    with pytest.raises(UserError, match='cannot be entered more than once'):
         await session.__aenter__()
 
 
