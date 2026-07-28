@@ -201,10 +201,21 @@ Each update carries its `speaker`, the new `delta` text, the turn's full `transc
 two turns apart — without it, consecutive turns by the same speaker run together in a caption UI.
 Because each update also carries the whole turn, a renderer can replace rather than append:
 
-```python {test="skip"}
-async for update in session.stream_transcripts(delta=True):
-    bubbles[update.index] = (update.speaker, update.transcript)
+```python
+from collections.abc import AsyncIterator
+
+from pydantic_ai.realtime import TranscriptUpdate
+
+bubbles: dict[int, tuple[str, str]] = {}
+
+
+async def show_captions(updates: AsyncIterator[TranscriptUpdate]) -> None:
+    async for update in updates:
+        bubbles[update.index] = (update.speaker, update.transcript)
 ```
+
+Feed it `session.stream_transcripts(delta=True)` the same way the example above feeds
+`stream_transcripts()` to `show_transcripts`.
 
 Transcript iterators buffer up to 512 items, dropping the oldest if a renderer falls behind.
 
