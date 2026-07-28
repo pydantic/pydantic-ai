@@ -1566,17 +1566,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             else:
                                 user_content_params.append(content)
                     elif isinstance(request_part, ToolAvailabilityDeltaPart):
+                        # Both block types carry a `tool_reference`, and the API rejects one naming a
+                        # tool this request doesn't declare: `tool_addition/tool_removal references
+                        # unknown tool '...'`. Replayed history routinely names tools that have since
+                        # gone — the turn announcing a removal is the last one that still declares it,
+                        # and a tool added then removed is absent from every turn after that. So a
+                        # block that can no longer be referenced is dropped, not asserted away: the
+                        # tool's absence from `tools` already tells the model what the block would.
                         available_tool_names = {tool.name for tool in model_request_parameters.function_tools}
-                        assert all(name in available_tool_names for name in request_part.added)
                         tool_availability_blocks.extend(
                             {'type': 'tool_addition', 'tool': {'type': 'tool_reference', 'name': name}}
                             for name in request_part.added
+                            if name in available_tool_names
                         )
-                        if request_part.removed:
-                            tool_availability_blocks.extend(
-                                {'type': 'tool_removal', 'tool': {'type': 'tool_reference', 'name': name}}
-                                for name in request_part.removed
-                            )
+                        tool_availability_blocks.extend(
+                            {'type': 'tool_removal', 'tool': {'type': 'tool_reference', 'name': name}}
+                            for name in request_part.removed
+                            if name in available_tool_names
+                        )
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
 

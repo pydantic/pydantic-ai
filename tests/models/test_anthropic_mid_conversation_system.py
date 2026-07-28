@@ -573,3 +573,43 @@ async def test_native_tool_availability_delta(allow_model_requests: None, anthro
             ],
         }
     )
+
+
+async def test_tool_availability_delta_drops_references_to_tools_that_are_gone(allow_model_requests: None):
+    """A delta naming a tool this request no longer declares renders nothing, instead of crashing.
+
+    Both block types carry a `tool_reference`, and the API rejects one that names a tool absent from
+    `tools` — verified live for each: `tool_addition/tool_removal references unknown tool
+    'lookup_exchange_rate'`, 400. Replayed history hits that constantly, because the turn that
+    announces a removal is the last one that still declares the tool, so on every later turn both
+    halves of the exchange name something that's gone. There's nothing to tell the model anyway: a
+    tool missing from `tools` is already unavailable.
+    """
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Help with a refund.')]),
+        ModelResponse(parts=[TextPart(content='Sure.')]),
+        ModelRequest(
+            parts=[
+                ToolAvailabilityDeltaPart(added=['temp_tool']),
+                UserPromptPart(content='Use it.'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Done.')]),
+        ModelRequest(
+            parts=[
+                ToolAvailabilityDeltaPart(removed=['temp_tool']),
+                UserPromptPart(content='And now?'),
+            ]
+        ),
+    ]
+
+    _system, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        history,
+        ModelRequestParameters(function_tools=[ToolDefinition(name='always_ready')]),
+        AnthropicModelSettings(),
+    )
+
+    assert [message['role'] for message in messages] == snapshot(['user', 'assistant', 'user', 'assistant', 'user'])
+    blocks = [block['type'] for message in messages for block in cast('list[dict[str, Any]]', message['content'])]
+    assert 'tool_addition' not in blocks and 'tool_removal' not in blocks
