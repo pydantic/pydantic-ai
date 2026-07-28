@@ -318,7 +318,8 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_images=True,
         supports_seeding_audio=False,
         supports_thinking=True,  # the default native-audio model supports a thinking config
-        supports_async_tool_calls=False,
+        # Supported, not enabled: gates the opt-in `google_async_tool_calls` setting.
+        supports_async_tool_calls=True,
         supported_native_tools=frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
         audio_input_sample_rate=16000,
         audio_output_sample_rate=24000,

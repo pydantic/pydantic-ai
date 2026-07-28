@@ -53,7 +53,32 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 | `google_input_transcription`, `google_output_transcription`, `google_transcription_language_codes` | Transcription on/off and language hints |
 | `google_context_compression` ([`ContextCompression`][pydantic_ai.realtime.google.ContextCompression]) | Sliding-window compression for long sessions |
 | `google_enable_session_resumption`, `reconnect` | Transparent resume on a dropped connection (see [Reconnecting](index.md#reconnecting)) |
+| `google_async_tool_calls` | Let tool calls run without pausing the model's speech (native-audio models; see below) |
 | `google_config_overrides` | Raw keys merged last into the `LiveConnectConfig` — forward-compat escape hatch |
+
+#### Tool calls that don't stop the conversation
+
+By default Gemini stops generating while a tool call is outstanding, so the caller hears silence for
+as long as the tool takes. Setting `google_async_tool_calls=True` declares tools non-blocking, and the
+model keeps talking — usually narrating what it's doing — with the tool's result cutting into that
+speech when it arrives.
+
+```python
+from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelSettings
+
+model = GoogleRealtimeModel(
+    'gemini-2.5-flash-native-audio-latest',
+    settings=GoogleRealtimeModelSettings(google_async_tool_calls=True),
+)
+```
+
+It's off by default because the trade only pays off for tools that take a noticeable moment. When a
+tool returns almost immediately, the result interrupts a reply the model has barely started, which
+leaves an extra interrupted turn in history with nothing in it. Turn it on for the slow tools that
+would otherwise leave dead air.
+
+Only the native-audio models honor it. The other Live models accept the flag and then block anyway,
+so setting it there warns and is ignored rather than quietly promising speech that never comes.
 
 !!! warning "Keep automatic VAD enabled"
     Do not set `AutomaticVAD(disabled=True)` through `RealtimeSession`: Pydantic AI does not expose

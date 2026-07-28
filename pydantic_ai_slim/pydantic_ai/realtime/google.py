@@ -184,6 +184,23 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     google_enable_session_resumption: bool
     """Whether to request session-resumption handles. Defaults to `False`."""
 
+    google_async_tool_calls: bool
+    """Whether tool calls may run without pausing the model's speech. Defaults to `False`.
+
+    By default Gemini stops generating while a tool call is outstanding, so the caller hears silence
+    for as long as the tool takes. Enabling this declares tools `NON_BLOCKING` and returns their
+    results with `INTERRUPT` scheduling, so the model keeps talking (typically narrating what it's
+    doing) and the result cuts into that speech when it arrives.
+
+    This pays off for tools that take a noticeable moment. It is a poor trade for fast tools: the
+    result interrupts a reply the model has barely started, leaving an extra interrupted turn in
+    history with nothing in it. Verified live against `gemini-2.5-flash-native-audio-latest`.
+
+    Only the native-audio models honor it (see
+    [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]);
+    setting it on a model that doesn't warns and is ignored, rather than silently doing nothing.
+    """
+
 
 INPUT_SAMPLE_RATE = 16000
 """Sample rate (Hz) Gemini expects for PCM16 input audio."""
@@ -412,15 +429,13 @@ def _genai_user_parts(content: Sequence[str | BinaryContent]) -> list[genai_type
     ]
 
 
-def _tool_def_to_genai(
-    tool: ToolDefinition, *, profile: RealtimeModelProfile | None = None
-) -> genai_types.FunctionDeclaration:
+def _tool_def_to_genai(tool: ToolDefinition, *, async_tool_calls: bool = False) -> genai_types.FunctionDeclaration:
     """Convert a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] to a Gemini function declaration."""
     return genai_types.FunctionDeclaration(
         name=tool.name,
         description=tool.description or None,
         parameters_json_schema=tool.parameters_json_schema,
-        behavior=genai_types.Behavior.NON_BLOCKING if profile and profile.get('supports_async_tool_calls') else None,
+        behavior=genai_types.Behavior.NON_BLOCKING if async_tool_calls else None,
     )
 
 
@@ -683,6 +698,24 @@ class GoogleRealtimeModel(RealtimeModel):
             language_code=language_code,
         )
 
+    def _async_tool_calls(self, model_settings: GoogleRealtimeModelSettings | None) -> bool:
+        """Whether to run this session's tool calls without pausing the model's speech.
+
+        Opt-in, and only where the model actually honors it — the other Live families accept
+        `NON_BLOCKING` and then block anyway, so enabling it there would promise something the
+        provider doesn't deliver.
+        """
+        if not model_settings or not model_settings.get('google_async_tool_calls', False):
+            return False
+        if not self.profile.get('supports_async_tool_calls', False):
+            warnings.warn(
+                f'The {self.model!r} realtime model does not run tool calls without blocking '
+                'generation; ignoring the `google_async_tool_calls` setting.',
+                UserWarning,
+            )
+            return False
+        return True
+
     def _realtime_input_config(
         self, model_settings: GoogleRealtimeModelSettings
     ) -> genai_types.RealtimeInputConfig | None:
@@ -800,7 +833,11 @@ class GoogleRealtimeModel(RealtimeModel):
         genai_tools: list[Any] = []
         if tools:
             genai_tools.append(
-                genai_types.Tool(function_declarations=[_tool_def_to_genai(t, profile=self.profile) for t in tools])
+                genai_types.Tool(
+                    function_declarations=[
+                        _tool_def_to_genai(t, async_tool_calls=self._async_tool_calls(settings)) for t in tools
+                    ]
+                )
             )
         genai_tools.extend(_native_tool_to_genai(t) for t in native_tools or [])
         if genai_tools:
@@ -895,6 +932,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 dial=dial if reconnectable else None,
                 reconnect=self.reconnect if reconnectable else None,
                 input_transcription_enabled=settings.get('google_input_transcription', True),
+                async_tool_calls=self._async_tool_calls(settings),
             )
         finally:
             if cm is not None:
@@ -913,10 +951,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         dial: Callable[[str | None], Awaitable[AsyncSession]] | None = None,
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
+        async_tool_calls: bool = False,
     ) -> None:
         self._session = session
         self._profile = profile if profile is not None else DEFAULT_REALTIME_PROFILE
         self._input_transcription_enabled = input_transcription_enabled
+        self._async_tool_calls_enabled = async_tool_calls
         # Provider name stamped onto native-tool history parts (grounding / code execution), matching the
         # classic `GoogleModel` (`NativeToolCallPart.provider_name`), so a turn's history is provider-tagged
         # identically whether it came from a realtime session or a classic run.
@@ -986,8 +1026,14 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     id=gemini_id,
                     name=name,
                     response={'output': output},
-                    scheduling=genai_types.FunctionResponseScheduling.WHEN_IDLE
-                    if self._profile.get('supports_async_tool_calls')
+                    # `INTERRUPT`, not `WHEN_IDLE`: a non-blocking model keeps talking while the
+                    # tool runs, and `WHEN_IDLE` holds the result until it stops — by which point it
+                    # has usually answered from its own knowledge, so the tool's answer contradicts
+                    # what was already said. (Recorded live: a tool returning "foggy and 12 degrees"
+                    # while the model said "15 degrees with clouds".) A model calls a tool because it
+                    # needs the result, so cut in with it.
+                    scheduling=genai_types.FunctionResponseScheduling.INTERRUPT
+                    if self._async_tool_calls_enabled
                     else None,
                 )
             )

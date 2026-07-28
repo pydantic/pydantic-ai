@@ -159,21 +159,16 @@ def test_tool_def_to_genai_with_and_without_description() -> None:
     assert without_desc.description is None
 
 
-@pytest.mark.parametrize(
-    ('profile', 'expect_non_blocking'),
-    [
-        (RealtimeModelProfile(), False),
-        (RealtimeModelProfile(supports_async_tool_calls=True), True),
-    ],
-)
-def test_tool_def_async_behavior(profile: RealtimeModelProfile, expect_non_blocking: bool) -> None:
+@pytest.mark.parametrize('async_tool_calls', [False, True])
+def test_tool_def_async_behavior(async_tool_calls: bool) -> None:
     # The expected enum is resolved in the body, not the `parametrize` decorator: decorators are
     # evaluated at collection time, before `pytestmark` can skip the module, so naming `genai_types`
     # there breaks collection wherever the `google` extra isn't installed.
     tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
-        ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'}), profile=profile
+        ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'}),
+        async_tool_calls=async_tool_calls,
     )
-    assert tool.behavior == (genai_types.Behavior.NON_BLOCKING if expect_non_blocking else None)
+    assert tool.behavior == (genai_types.Behavior.NON_BLOCKING if async_tool_calls else None)
 
 
 def test_native_tool_web_search_maps_to_google_search() -> None:
@@ -441,7 +436,9 @@ def test_profile() -> None:
         False,
     )
     assert profile.get('supported_native_tools') == frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
-    assert profile.get('supports_async_tool_calls') is False
+    # The default model is native-audio, the only Gemini family that honors `NON_BLOCKING`.
+    # Supported is not the same as enabled: it gates the opt-in `google_async_tool_calls` setting.
+    assert profile.get('supports_async_tool_calls') is True
     assert profile.get('audio_input_sample_rate') == 16000
     assert profile.get('audio_output_sample_rate') == 24000
 
@@ -501,6 +498,21 @@ def test_config_thinking_on_non_thinking_model_warns() -> None:
     with pytest.warns(UserWarning, match='does not support the `thinking` setting'):
         config = model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert config.thinking_config is None
+
+
+def test_async_tool_calls_opt_in_resolution() -> None:
+    # Opt-in and capability-gated: off unless asked for, and on only where the model honors it.
+    # A Live model that doesn't (verified live: it accepts `NON_BLOCKING` and blocks anyway) warns
+    # rather than quietly promising speech that never arrives.
+    on = GoogleRealtimeModelSettings(google_async_tool_calls=True)
+    native_audio = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')
+    assert native_audio._async_tool_calls(None) is False  # pyright: ignore[reportPrivateUsage]
+    assert native_audio._async_tool_calls(GoogleRealtimeModelSettings()) is False  # pyright: ignore[reportPrivateUsage]
+    assert native_audio._async_tool_calls(on) is True  # pyright: ignore[reportPrivateUsage]
+
+    half_cascade = GoogleRealtimeModel('gemini-live-2.5-flash-preview')
+    with pytest.warns(UserWarning, match='does not run tool calls without blocking generation'):
+        assert half_cascade._async_tool_calls(on) is False  # pyright: ignore[reportPrivateUsage]
 
 
 def test_config_minimal_text_no_transcription_no_vad() -> None:
@@ -582,18 +594,12 @@ async def test_send_tool_result_echoes_name() -> None:
     assert response.response == {'output': 'Sunny'}
 
 
-@pytest.mark.parametrize(
-    ('profile', 'expect_when_idle'),
-    [
-        (RealtimeModelProfile(), False),
-        (RealtimeModelProfile(supports_async_tool_calls=True), True),
-    ],
-)
-async def test_send_tool_result_async_scheduling(profile: RealtimeModelProfile, expect_when_idle: bool) -> None:
+@pytest.mark.parametrize('async_tool_calls', [False, True])
+async def test_send_tool_result_async_scheduling(async_tool_calls: bool) -> None:
     # As in `test_tool_def_async_behavior`, the expected enum is resolved in the body so collection
     # doesn't need the `google` extra.
     session = _RecordingSession()
-    conn = GoogleRealtimeConnection(cast('AsyncSession', session), profile=profile)
+    conn = GoogleRealtimeConnection(cast('AsyncSession', session), async_tool_calls=async_tool_calls)
     conn._map_message(  # pyright: ignore[reportPrivateUsage]
         genai_types.LiveServerMessage(
             tool_call=genai_types.LiveServerToolCall(
@@ -604,8 +610,10 @@ async def test_send_tool_result_async_scheduling(profile: RealtimeModelProfile, 
 
     await conn.send(ToolResult(tool_call_id='c1', output='Sunny'))
 
+    # `INTERRUPT`, so the result lands in the reply the model is already speaking rather than being
+    # queued until after it has answered from its own knowledge.
     assert session.tool_responses[0].scheduling == (
-        genai_types.FunctionResponseScheduling.WHEN_IDLE if expect_when_idle else None
+        genai_types.FunctionResponseScheduling.INTERRUPT if async_tool_calls else None
     )
 
 
