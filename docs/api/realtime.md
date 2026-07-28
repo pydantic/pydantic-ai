@@ -32,8 +32,9 @@ low-level codec events into the shared message/part event vocabulary from
 intercepting each [`ToolCall`][pydantic_ai.realtime.codec.ToolCall], running it, sending the
 [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] back, and emitting a
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] then a
-[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Every tool runs
-concurrently so the model can keep speaking while it works.
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Every tool runs in the
+background, so a slow one never blocks the session; whether the *model* keeps speaking meanwhile is
+provider-specific (see [Concurrent tools](../realtime/index.md#concurrent-tools)).
 
 ## Overview
 
@@ -65,6 +66,15 @@ these, or a precise [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessio
 [`ImageInput`][pydantic_ai.realtime.ImageInput]. Turn-taking and interruption go through the dedicated
 [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] methods (`commit_audio()`, `clear_audio()`,
 `create_response()`, `interrupt()`), not `send()`.
+
+**Consumption views** —
+[`RealtimeSession.stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] yields model
+audio chunks ready for playback, while
+[`RealtimeSession.stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts]
+yields finalized speech from both speakers or live deltas with `delta=True`. These bounded views can
+run concurrently with each other and with the session's raw event iterator.
+[`RealtimeSession.close()`][pydantic_ai.realtime.RealtimeSession.close] ends the session and every
+live view; [`RealtimeSession.closed`][pydantic_ai.realtime.RealtimeSession.closed] exposes its state.
 
 The low-level [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send] accepts the
 superset [`RealtimeInput`][pydantic_ai.realtime.codec.RealtimeInput], which additionally includes the
@@ -168,7 +178,7 @@ transcription at the end of each user turn. Authentication comes from an
 ## Azure OpenAI provider
 
 The Azure OpenAI realtime model reuses the OpenAI Realtime codec and connection, authenticates with
-[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider], and requires the `realtime` optional
-group (`pip install "pydantic-ai-slim[realtime]"`).
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider], and so needs the `realtime` and
+`openai` optional groups (`pip install "pydantic-ai-slim[realtime,openai]"`).
 
 ::: pydantic_ai.realtime.azure

@@ -8,8 +8,9 @@ import wave
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from threading import Event as ThreadEvent
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 from pydantic_core import SchemaValidator, core_schema
@@ -22,6 +23,7 @@ from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelAPIError,
     ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -71,6 +73,7 @@ from pydantic_ai.realtime import (
     RealtimeSession as _RealtimeSession,
     ReconnectedEvent,
     SessionUsageEvent,
+    TranscriptUpdate,
     TurnCompleteEvent,
 )
 from pydantic_ai.realtime._base import (
@@ -107,6 +110,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from ..conftest import IsDatetime, IsStr
 
 pytestmark = pytest.mark.anyio
+T = TypeVar('T')
 
 
 def _wav_content(pcm: bytes, sample_rate: int = 24000) -> BinaryContent:
@@ -186,6 +190,15 @@ async def collect_events(session: _RealtimeSession) -> list[RealtimeEvent]:
         return [event async for event in session]
 
 
+async def drain_events(session: _RealtimeSession) -> list[RealtimeEvent]:
+    """Drain an already-entered session."""
+    return [event async for event in session]
+
+
+async def aiter_to_list(iterator: AsyncIterator[T]) -> list[T]:
+    return [item async for item in iterator]
+
+
 def _profile(
     *,
     supports_image_input: bool = True,
@@ -243,6 +256,15 @@ class FakeRealtimeConnection(RealtimeConnection):
             self._release.set()
 
 
+class BlockingRealtimeConnection(FakeRealtimeConnection):
+    """Replay fixed events, then remain open until the session closes."""
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async for event in super().__aiter__():
+            yield event
+        await asyncio.Event().wait()
+
+
 class FakeRealtimeModel(RealtimeModel):
     """A model that yields a pre-built connection and records connect arguments."""
 
@@ -293,6 +315,168 @@ class FakeRealtimeModel(RealtimeModel):
 # --- event translation -------------------------------------------------------------------------
 
 
+async def test_consumption_views_run_concurrently_with_event_stream() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='hello', is_final=True),
+            AudioDelta(b'audio-1'),
+            Transcript(text='hi', is_final=False),
+            AudioDelta(b'audio-2'),
+            Transcript(text='hi there', is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        events, audio, transcripts, deltas = await asyncio.gather(
+            drain_events(session),
+            aiter_to_list(session.stream_audio()),
+            aiter_to_list(session.stream_transcripts()),
+            aiter_to_list(session.stream_transcripts(delta=True)),
+        )
+
+        assert events == [
+            PartStartEvent(index=0, part=SpeechPart(speaker='user', transcript='')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='hello')),
+            PartEndEvent(index=0, part=SpeechPart(speaker='user', transcript='hello')),
+            PartStartEvent(index=1, part=SpeechPart(speaker='assistant', transcript='')),
+            PartDeltaEvent(index=1, delta=SpeechPartDelta(speaker='assistant', audio_chunk=b'audio-1')),
+            PartDeltaEvent(index=1, delta=SpeechPartDelta(speaker='assistant', transcript_delta='hi')),
+            PartDeltaEvent(index=1, delta=SpeechPartDelta(speaker='assistant', audio_chunk=b'audio-2')),
+            PartDeltaEvent(index=1, delta=SpeechPartDelta(speaker='assistant', transcript_delta=' there')),
+            PartEndEvent(index=1, part=SpeechPart(speaker='assistant', transcript='hi there')),
+            TurnCompleteEvent(),
+        ]
+        assert audio == [b'audio-1', b'audio-2']
+        assert transcripts == [
+            SpeechPart(speaker='user', transcript='hello'),
+            SpeechPart(speaker='assistant', transcript='hi there'),
+        ]
+        # Each update names its turn, so a caption UI keeps the two speakers apart, and carries the
+        # turn's text so far so it can replace instead of accumulating itself.
+        assert deltas == [
+            TranscriptUpdate(index=0, speaker='user', delta='hello', transcript='hello'),
+            TranscriptUpdate(index=1, speaker='assistant', delta='hi', transcript='hi'),
+            TranscriptUpdate(index=1, speaker='assistant', delta=' there', transcript='hi there'),
+        ]
+
+
+async def test_audio_view_drops_oldest_chunk_on_overflow() -> None:
+    chunks = [bytes([index]) for index in range(40)]
+    session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
+
+    async with session:
+        assert [chunk async for chunk in session.stream_audio()] == chunks[-32:]
+        assert len(await drain_events(session)) == 41
+
+
+async def test_final_transcripts_survive_a_flood_of_deltas() -> None:
+    # The two speakers' transcripts stream at once, so a finalized user turn is routinely followed by
+    # a long run of assistant deltas. Final parts and deltas are separate subscriptions for exactly
+    # this reason: sharing one bounded queue and filtering on the way out let those deltas evict the
+    # finalized part a `delta=False` consumer was waiting for, losing it silently.
+    words = [f'word{index} ' for index in range(60)]
+    session = RealtimeSession(
+        FakeRealtimeConnection(
+            [
+                InputTranscript(text='what is the weather', is_final=True),
+                *[Transcript(text=''.join(words[: index + 1]), is_final=False) for index in range(len(words))],
+                Transcript(text=''.join(words), is_final=True),
+                TurnCompleteEvent(),
+            ]
+        )
+    )
+
+    async with session:
+        transcripts, _ = await asyncio.gather(
+            aiter_to_list(session.stream_transcripts()),
+            drain_events(session),
+        )
+
+    # Both speakers' finalized turns arrive, despite far more deltas than any single window holds.
+    assert [(part.speaker, part.transcript) for part in transcripts] == [
+        ('user', 'what is the weather'),
+        # Assistant transcripts are recorded verbatim; only user turns are stripped at finalization.
+        ('assistant', ''.join(words)),
+    ]
+
+
+async def test_send_only_session_still_runs_tools() -> None:
+    # Tool execution, turn tracking, and usage limits all run off the receive loop, and a caller who
+    # sends a prompt and then goes off to do something else has no reason to think iterating is what
+    # switches the agent on. Sending starts the loop, so the tool runs without anyone consuming.
+    ran = asyncio.Event()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        ran.set()
+        return 'done'
+
+    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='c1', tool_name='fast', args='{}')])
+    async with RealtimeSession(conn, runner) as session:
+        await session.send('do the task')
+        # No `async for` and no view: the agent still has to run the tool and return its result.
+        with anyio.fail_after(5):
+            await ran.wait()
+            while len(conn.sent) < 2:
+                await asyncio.sleep(0)
+    assert [type(sent).__name__ for sent in conn.sent] == ['TextInput', 'ToolResult']
+
+
+async def test_close_discards_buffered_view_items() -> None:
+    # Closing is a hangup, not a flush: whatever a view had buffered is dropped rather than delivered
+    # after the session is over. This is the case where a consumer is behind at close time, so the
+    # queue is non-empty -- distinct from closing a view that has already caught up.
+    session = RealtimeSession(BlockingRealtimeConnection([AudioDelta(bytes([index])) for index in range(5)]))
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'\x00'
+        # Let the pump run so the rest of the chunks pile up behind the consumer.
+        for _ in range(10):
+            await asyncio.sleep(0)
+        await session.close()
+        assert [chunk async for chunk in stream] == []
+
+
+async def test_close_ends_views_and_is_idempotent() -> None:
+    session = RealtimeSession(BlockingRealtimeConnection([AudioDelta(b'audio')]))
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'audio'
+        transcript_task = asyncio.create_task(aiter_to_list(session.stream_transcripts()))
+        await asyncio.sleep(0)
+        assert session.closed is False
+        await session.close()
+        await session.close()
+        assert session.closed is True
+        assert [chunk async for chunk in stream] == []
+        assert await transcript_task == []
+        with pytest.raises(UserError, match='This realtime session is closed'):
+            await session.send_audio(b'more audio')
+        with pytest.raises(UserError, match='closed and cannot be streamed'):
+            await anext(session.stream_audio())
+
+
+async def test_view_is_lazy_and_does_not_replay_events() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([AudioDelta(b'audio')]))
+
+    async with session:
+        unused_audio = session.stream_audio()
+        unused_transcripts = session.stream_transcripts()
+        assert [event async for event in session]
+        assert [chunk async for chunk in unused_audio] == []
+        assert [part async for part in unused_transcripts] == []
+
+
+async def test_view_requires_entered_session() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([]))
+
+    with pytest.raises(UserError, match='Enter the realtime session'):
+        await anext(session.stream_audio())
+
+
 async def test_assistant_transcript_partials_then_final() -> None:
     # Partial transcript deltas stream as PartDeltaEvents; the final (full-text) event adds nothing new.
     conn = FakeRealtimeConnection(
@@ -308,8 +492,8 @@ async def test_assistant_transcript_partials_then_final() -> None:
     assert events == snapshot(
         [
             PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='Hi ')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='there')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='Hi ')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='there')),
             PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='Hi there')),
             TurnCompleteEvent(),
         ]
@@ -334,7 +518,7 @@ async def test_assistant_transcript_final_only() -> None:
     assert events == snapshot(
         [
             PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='Hello world')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='Hello world')),
             PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='Hello world')),
             TurnCompleteEvent(),
         ]
@@ -475,8 +659,8 @@ async def test_user_transcript_final_becomes_request() -> None:
     assert events == snapshot(
         [
             PartStartEvent(index=0, part=SpeechPart(speaker='user', transcript='')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='what is ')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='the weather')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='what is ')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='the weather')),
             PartEndEvent(index=0, part=SpeechPart(speaker='user', transcript='what is the weather')),
         ]
     )
@@ -696,6 +880,59 @@ async def test_interrupted_turn_keeps_partial_transcript() -> None:
             )
         ]
     )
+
+
+async def test_explicit_interrupt_records_audio_offset_on_last_speech_part() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            Transcript(text='first', is_final=True, item_id='item-1'),
+            Transcript(text='second', is_final=True, item_id='item-2'),
+            TurnCompleteEvent(interrupted=True),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='m')
+
+    await session.interrupt(audio_end_ms=640)
+    _ = await collect_events(session)
+
+    assert session.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    SpeechPart(speaker='assistant', transcript='first', id='item-1'),
+                    SpeechPart(speaker='assistant', transcript='second', interrupted_at_ms=640, id='item-2'),
+                ],
+                model_name='m',
+                timestamp=IsDatetime(),
+                state='interrupted',
+            )
+        ]
+    )
+
+
+async def test_interrupted_turn_without_trailing_speech_records_no_offset() -> None:
+    # The offset is recorded on the last *speech* part, so a turn interrupted while the model was
+    # calling a tool (its trailing part is a `ToolCallPart`) walks past it to the speech before it.
+    # With no speech in the response at all, nothing is marked and `state='interrupted'` carries the
+    # whole meaning.
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='tc_1', tool_name='noop', args='', response_usage_follows=True),
+            TurnCompleteEvent(interrupted=True),
+        ]
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'ok'
+
+    session = RealtimeSession(conn, runner, model_name='m')
+
+    await session.interrupt(audio_end_ms=120)
+    _ = await collect_events(session)
+
+    response = next(m for m in session.new_messages() if isinstance(m, ModelResponse))
+    assert response.state == 'interrupted'
+    assert not any(isinstance(part, SpeechPart) for part in response.parts)
 
 
 async def test_speech_part_provider_item_id_and_gemini_fallback() -> None:
@@ -1065,14 +1302,17 @@ async def test_tool_completion_drained_between_events() -> None:
     session = RealtimeSession(conn, runner)
     events = await collect_events(session)
 
+    # The point is that the finished tool's result is drained while the upstream is still producing,
+    # rather than waiting for the stream to end. Its exact position among the audio deltas depends on
+    # how many event-loop checkpoints the send path takes, so read this as "early", not as a contract.
     assert [type(e).__name__ for e in events] == snapshot(
         [
             'PartStartEvent',
             'PartEndEvent',
             'FunctionToolCallEvent',
-            'FunctionToolResultEvent',
             'PartStartEvent',
             'PartDeltaEvent',
+            'FunctionToolResultEvent',
             'PartDeltaEvent',
         ]
     )
@@ -1140,7 +1380,8 @@ async def test_upstream_error_propagates_to_consumer() -> None:
 
 async def test_upstream_error_does_not_wait_for_running_tool() -> None:
     class _ExplodingAfterTool(RealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover - tool is cancelled first
+        # Tool is cancelled first.
+        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover
             raise AssertionError
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
@@ -1273,7 +1514,8 @@ async def test_tool_call_cancellation_cancels_running_tool() -> None:
         except asyncio.CancelledError:
             cancelled.set()
             raise
-        return 'never'  # pragma: no cover - always cancelled first
+        # Always cancelled first.
+        return 'never'  # pragma: no cover
 
     class _CancelAfterStart(FakeRealtimeConnection):
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
@@ -1637,6 +1879,61 @@ async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
     assert unretained.new_messages() == []
 
 
+async def test_transport_failure_while_sending_becomes_a_realtime_error() -> None:
+    # A send that fails because the link is gone is the same failure the receive side reports, so it
+    # surfaces as `RealtimeError` (a `ModelAPIError`) instead of leaking the transport's own exception.
+    # Only the types a connection declares are mapped: anything else is a bug, not a lost connection.
+    class _DisconnectedConnection(FakeRealtimeConnection):
+        transport_errors = (ConnectionResetError,)
+
+        async def send(self, content: RealtimeInput) -> None:
+            raise ConnectionResetError('connection reset by peer')
+
+    session = RealtimeSession(_DisconnectedConnection([]), model_name='gpt-realtime')
+    with pytest.raises(RealtimeError) as exc_info:
+        await session.send('anyone there?')
+    assert str(exc_info.value) == snapshot('Realtime connection failed while sending: connection reset by peer')
+    assert exc_info.value.model_name == 'gpt-realtime'
+    assert isinstance(exc_info.value.__cause__, ConnectionResetError)
+    assert isinstance(exc_info.value, ModelAPIError)
+
+    # `interrupt()` sends a truncate and a cancel as one group, so the link can also drop *between*
+    # them; the second send is mapped like the first, and the interruption is not recorded as having
+    # happened. A connection that failed on the first send would never reach the cancel at all.
+    class _DisconnectedAfterTruncate(FakeRealtimeConnection):
+        transport_errors = (ConnectionResetError,)
+
+        async def send(self, content: RealtimeInput) -> None:
+            if isinstance(content, CancelResponse):
+                raise ConnectionResetError('connection reset by peer')
+            self.sent.append(content)
+
+    interrupted = _DisconnectedAfterTruncate([])
+    session = RealtimeSession(interrupted, model_name='gpt-realtime')
+    with pytest.raises(RealtimeError, match='failed while sending'):
+        await session.interrupt(audio_end_ms=120)
+    assert interrupted.sent == [TruncateOutput(audio_end_ms=120)]
+    assert session._pending_interrupted_at_ms is None  # pyright: ignore[reportPrivateUsage]
+
+    # A session built straight from a connection may not know any model id to attribute this to.
+    anonymous = RealtimeSession(_DisconnectedConnection([]))
+    with pytest.raises(RealtimeError) as exc_info:
+        await anonymous.send('anyone there?')
+    assert exc_info.value.model_name == 'unknown'
+
+
+async def test_undeclared_send_failure_is_left_alone() -> None:
+    # A connection that fails for a reason it didn't declare as a transport error is reporting a bug,
+    # not a lost connection; dressing it up as a `RealtimeError` would hide that.
+    class _BuggyConnection(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            raise ValueError('bug in the connection')
+
+    session = RealtimeSession(_BuggyConnection([]))
+    with pytest.raises(ValueError, match='bug in the connection'):
+        await session.send('hello')
+
+
 def test_remove_sent_request_ignores_unknown_request() -> None:
     # Unit test: the rollback helper is only ever called with the request the failing send just
     # reserved, so the not-found fall-through can't be reached through the public API — pin directly
@@ -1733,6 +2030,34 @@ async def test_output_truncation_guard() -> None:
     assert conn.sent == [CancelResponse()]
 
 
+class SlowSendConnection(FakeRealtimeConnection):
+    """A connection that yields control inside `send`, so concurrent senders can interleave."""
+
+    async def send(self, content: RealtimeInput) -> None:
+        await asyncio.sleep(0)
+        await super().send(content)
+
+
+async def test_interrupt_truncate_and_cancel_cannot_be_split() -> None:
+    # `interrupt(audio_end_ms=...)` is two frames, and the cancel is only correct for the response the
+    # truncate targeted. On OpenAI-shaped providers a concurrent send starts a new response, so a frame
+    # landing in the gap would leave the cancel killing that one instead of the barge-in's target. The
+    # session's send lock has to keep the pair adjacent even when sends overlap.
+    conn = SlowSendConnection([])
+    session = RealtimeSession(conn, _noop_runner, model_name='m')
+
+    await asyncio.gather(
+        session.interrupt(audio_end_ms=100),
+        *(session.send('concurrent') for _ in range(3)),
+    )
+
+    kinds = [type(frame).__name__ for frame in conn.sent]
+    truncate = kinds.index('TruncateOutput')
+    assert kinds[truncate + 1] == 'CancelResponse', f'a frame was interleaved into the transaction: {kinds}'
+    # The concurrent sends still all got through, just never in the middle.
+    assert kinds.count('TextInput') == 3
+
+
 async def test_image_input_guard() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_image_input=False))
@@ -1779,7 +2104,8 @@ async def test_early_break_cancels_pump() -> None:
         def __init__(self) -> None:
             self.iteration_task: asyncio.Task[Any] | None = None
 
-        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover - never sent to
+        # Never sent to.
+        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover
             raise AssertionError
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
@@ -1791,7 +2117,8 @@ async def test_early_break_cancels_pump() -> None:
             except asyncio.CancelledError:
                 cancelled.set()
                 raise
-            yield AudioDelta(data=b'\x01')  # pragma: no cover - unreachable while parked
+            # Unreachable while parked.
+            yield AudioDelta(data=b'\x01')  # pragma: no cover
 
     conn = _BlockAfterFirst()
     agent: Agent[None, str] = Agent()
@@ -1817,7 +2144,8 @@ def test_asap_notification_is_ignored_after_loop_closes() -> None:
 
 async def test_concurrent_iteration_raises() -> None:
     class _IdleConnection(RealtimeConnection):
-        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover - never sent to
+        # Never sent to.
+        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover
             raise AssertionError
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
@@ -1830,11 +2158,11 @@ async def test_concurrent_iteration_raises() -> None:
         assert isinstance(await anext(first), PartStartEvent)
 
         second = session.__aiter__()
-        with pytest.raises(RuntimeError, match='already being iterated'):
+        with pytest.raises(UserError, match='already being iterated'):
             await anext(second)
 
     late = session.__aiter__()
-    with pytest.raises(RuntimeError, match='closed'):
+    with pytest.raises(UserError, match='closed'):
         await anext(late)
 
 
@@ -1842,16 +2170,16 @@ async def test_direct_session_must_be_entered_and_streams_once() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]), _noop_runner)
 
     unentered = session.__aiter__()
-    with pytest.raises(RuntimeError, match='async with'):
+    with pytest.raises(UserError, match='async with'):
         await anext(unentered)
 
     async with session:
         assert [event async for event in session] == []
         exhausted = session.__aiter__()
-        with pytest.raises(RuntimeError, match='already ended'):
+        with pytest.raises(UserError, match='already ended'):
             await anext(exhausted)
 
-    with pytest.raises(RuntimeError, match='cannot be entered more than once'):
+    with pytest.raises(UserError, match='cannot be entered more than once'):
         await session.__aenter__()
 
 
@@ -2022,11 +2350,13 @@ async def test_audio_only_user_turn_finalized_on_each_manual_commit() -> None:
 
     first_user = SpeechPart(speaker='user', audio=_wav_content(b'\xaa'))
     second_user = SpeechPart(speaker='user', audio=_wav_content(b'\xbb'))
+    # Each turn's part gets its own session-unique index, so a consumer can tell the second user turn
+    # from the first (and from the assistant response that took index 1 in between).
     assert events == [
         PartStartEvent(index=0, part=first_user),
         PartEndEvent(index=0, part=first_user),
-        PartStartEvent(index=0, part=second_user),
-        PartEndEvent(index=0, part=second_user),
+        PartStartEvent(index=2, part=second_user),
+        PartEndEvent(index=2, part=second_user),
     ]
     assert session.new_messages() == snapshot(
         [
@@ -2507,7 +2837,7 @@ async def test_grounding_streams_and_folds_native_tool_parts() -> None:
 
     assert events == [
         PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
-        PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='It is sunny in Rome')),
+        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='It is sunny in Rome')),
         *_native_part_events(grounding),
         PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='It is sunny in Rome')),
         TurnCompleteEvent(),
@@ -2708,7 +3038,7 @@ async def test_agent_realtime_session_rejects_seeding_when_unsupported() -> None
     seed = [ModelRequest(parts=[UserPromptPart(content='earlier question')])]
     with pytest.raises(UserError, match='does not support seeding a session'):
         async with agent.realtime(model, message_history=seed).session():
-            pass  # pragma: no cover — enter raises before yielding
+            pass  # pragma: no cover
 
 
 async def test_agent_realtime_session_audio_retention_forwarded() -> None:
@@ -2836,8 +3166,9 @@ async def test_agent_realtime_session_validates_and_coerces_args() -> None:
 async def test_agent_realtime_session_invalid_args_return_retry_message() -> None:
     agent: Agent[None, str] = Agent()
 
+    # Never reached; validation fails first.
     @agent.tool_plain
-    def double(x: int) -> str:  # pragma: no cover — never reached; validation fails first
+    def double(x: int) -> str:  # pragma: no cover
         return str(x * 2)
 
     conn = FakeRealtimeConnection(
@@ -3169,7 +3500,8 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
         async def send(self, content: RealtimeInput) -> None:
             if isinstance(content, TextInput):
                 raise RuntimeError('drain send failed')
-            await super().send(content)  # pragma: no cover - this test only drives the drain's `TextInput` send
+            # This test only drives the drain's `TextInput` send.
+            await super().send(content)  # pragma: no cover
 
     conn = _FailingDrain([])
     session = RealtimeSession(conn)
@@ -3299,8 +3631,9 @@ async def test_agent_realtime_session_runs_args_validator() -> None:
     def guard(ctx: RunContext[Any], city: str) -> None:
         raise ModelRetry('not allowed')
 
+    # Never reached; the validator rejects first.
     @agent.tool_plain(args_validator=guard)
-    def weather(city: str) -> str:  # pragma: no cover — never reached; the validator rejects first
+    def weather(city: str) -> str:  # pragma: no cover
         return f'sunny in {city}'
 
     conn = FakeRealtimeConnection(
@@ -3664,8 +3997,9 @@ async def test_agent_realtime_session_response_without_usage_counts_toward_reque
 async def test_agent_realtime_session_tool_call_limit_raises() -> None:
     agent: Agent[None, str] = Agent()
 
+    # Never runs: the limit trips first.
     @agent.tool_plain
-    def greet() -> str:  # pragma: no cover - never runs: the limit trips first
+    def greet() -> str:  # pragma: no cover
         return 'hi'
 
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='greet', args='{}'), TurnCompleteEvent()])
@@ -3708,24 +4042,24 @@ async def test_agent_realtime_session_native_tools_from_capability() -> None:
 
 
 async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
-    # A native tool the model doesn't support (per its `supported_native_tools` profile) fails up front
-    # with the uniform error, before connecting — even when contributed by a capability. This is the
-    # signal a caller/capability needs to fall back; the session doesn't fall back automatically.
+    # A native tool the model doesn't support (per its `supported_native_tools` profile) with no local
+    # fallback fails up front, before connecting — even when contributed by a capability. This runs the
+    # same native ↔ local-tool swap the classic agent-run path applies, so the error points at `local=`.
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection([])
     model = FakeRealtimeModel(conn, profile=_profile(supported_native_tools=frozenset()))
     with pytest.raises(
         UserError,
-        match=r"'fake-realtime' realtime model does not support the WebSearchTool native tool\(s\)\. "
-        r'Supported native tools: none\.',
+        match=r"not supported by this model.*WebSearch\(local='duckduckgo'\)",
     ):
         async with agent.realtime(model, capabilities=[NativeTool(WebSearchTool())]).session():
-            pass  # pragma: no cover - validation raises before yielding
+            pass  # pragma: no cover
 
 
 async def test_agent_realtime_session_local_capability_tool_declared() -> None:
     def fetch(url: str) -> str:
-        return f'content of {url}'  # pragma: no cover - not executed in this wiring test
+        # Not executed in this wiring test.
+        return f'content of {url}'  # pragma: no cover
 
     agent: Agent[None, str] = Agent(capabilities=[WebFetch(native=False, local=fetch)])
     conn = FakeRealtimeConnection([TurnCompleteEvent()])

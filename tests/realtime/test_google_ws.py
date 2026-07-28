@@ -69,7 +69,7 @@ async def test_audio_in_server_vad_turn(
         for start in range(0, len(pcm), 3200):  # ~100 ms chunks at 16 kHz
             await session.send_audio(pcm[start : start + 3200])
         with anyio.fail_after(45):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -99,7 +99,7 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
     async with agent.realtime(model).session(audio_retention='output_audio') as session:
         await session.send('Say a short greeting.')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -155,7 +155,7 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     async with agent.realtime(model).session() as session:
         await session.send('What is the weather in London?')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -266,7 +266,7 @@ async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], 
     async with agent.realtime(model, message_history=history).session() as session:
         await session.send('What is my name and favorite color?')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -318,6 +318,8 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_images=True,
         supports_seeding_audio=False,
         supports_thinking=True,  # the default native-audio model supports a thinking config
+        # Supported, not enabled: gates the opt-in `google_async_tool_calls` setting.
+        supports_async_tool_calls=True,
         supported_native_tools=frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
         audio_input_sample_rate=16000,
         audio_output_sample_rate=24000,

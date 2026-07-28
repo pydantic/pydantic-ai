@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import dataclasses
 import importlib.util
 import logging
 import os
@@ -44,8 +45,10 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import Builder, Custom, customize
+from .cassette_utils import check_cache_prefix_stability
 
 T = TypeVar('T')
 
@@ -76,6 +79,14 @@ logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        'markers',
+        'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
+    )
+
 
 if TYPE_CHECKING:
     from pluggy import Result
@@ -199,6 +210,21 @@ def isdatetime_handler(value: Any, builder: Builder) -> Any | None:  # pragma: n
     # Use IsDatetime() for datetime values in snapshots.
     if isinstance(value, datetime):
         return IsDatetime()
+
+
+@customize
+def usage_handler(value: Any, builder: Builder) -> Custom | None:  # pragma: no cover
+    if isinstance(value, (RequestUsage, RunUsage)):
+        # Usage objects accept arbitrary fields that inline-snapshot's default dataclass handler cannot see.
+        kwargs = value.__dict__.copy()
+        for field in dataclasses.fields(value):
+            if field.name not in kwargs:
+                continue
+            if field.default is not dataclasses.MISSING:
+                kwargs[field.name] = builder.with_default(kwargs[field.name], field.default)
+            elif field.default_factory is not dataclasses.MISSING:
+                kwargs[field.name] = builder.with_default(kwargs[field.name], field.default_factory())
+        return builder.create_call(type(value), [], kwargs)
 
 
 @customize
@@ -560,6 +586,25 @@ def fail_partially_used_vcr_cassettes(request: pytest.FixtureRequest, vcr: Casse
 
     strict_usage = bool(request.config.getoption('--strict-vcr-cassette-usage'))
     check_vcr_cassette_usage(vcr, strict_usage)
+
+
+@pytest.fixture(autouse=True)
+def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette | None) -> Iterator[None]:
+    """Check final recorded conversations during playback; recording leaves the on-disk cassette unfinished."""
+    yield
+    setup_report = getattr(request.node, 'rep_setup', None)
+    call_report = getattr(request.node, 'rep_call', None)
+    if any(
+        getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
+    ):
+        return
+    if vcr is None or vcr.record_mode != RecordMode.NONE:
+        return
+
+    cassette_path_value = getattr(vcr, '_path', None)
+    if cassette_path_value is None or not (cassette_path := Path(cassette_path_value)).is_file():
+        return
+    check_cache_prefix_stability(request.node, cassette_path)
 
 
 _HttpClientCache: TypeAlias = 'dict[tuple[int, int], httpx.AsyncClient]'

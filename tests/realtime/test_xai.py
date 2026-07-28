@@ -17,7 +17,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -44,7 +44,8 @@ from pydantic_ai.realtime.codec import (
 )
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import try_import
+from ..conftest import IsStr, try_import
+from .ws_helpers import collect_codec_events, collect_session_events
 
 with try_import() as imports_successful:
     from xai_sdk import AsyncClient
@@ -193,6 +194,7 @@ def test_profile() -> None:
         supports_session_seeding=True,
         supports_seeding_images=False,
         supports_seeding_audio=False,
+        supports_async_tool_calls=False,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supported_native_tools=frozenset(),
@@ -318,7 +320,14 @@ def test_session_config_omits_absent_model_settings() -> None:
 
 
 class FakeWebSocket:
-    """A minimal stand-in for a `websockets` client connection."""
+    """A minimal stand-in for a `websockets` client connection.
+
+    Running out of scripted frames stands in for the server closing the connection normally, which is
+    how `websockets` reports a 1000/1001 close: iteration ends rather than raising.
+    """
+
+    close_code: int | None = 1000
+    close_reason: str = ''
 
     def __init__(self, incoming: list[Any]) -> None:
         self._incoming = list(incoming)
@@ -382,7 +391,10 @@ class _RecordingConnect:
 
     def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> Any:
         self.urls.append(url)
-        ws = next(self._sockets)
+        try:
+            ws = next(self._sockets)
+        except StopIteration:
+            raise OSError('server is down')  # no more sockets scripted: the server stays down
         recorder = self
 
         class _CM:
@@ -437,7 +449,7 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
     )
     async with _connect(model, 'Be nice') as conn:
         assert isinstance(conn, XaiRealtimeConnection)
-        events = [e async for e in conn]
+        events = await collect_codec_events(conn)
 
     assert events == [Transcript(text='hi', is_final=True)]  # the `.updated` partial was dropped
     assert fake_connect.url == 'wss://api.x.ai/v1/realtime?model=grok-voice-latest'
@@ -447,6 +459,20 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
     assert update['type'] == 'session.update'
     assert update['session']['instructions'] == 'Be nice'
     assert update['session']['voice'] == 'eve'
+
+
+@pytest.mark.anyio
+async def test_connect_surfaces_handshake_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # xAI shares the OpenAI-protocol handshake, so a rejected config surfaces as a `ModelAPIError`
+    # carrying the provider's message (not a raw protocol error), same as the OpenAI provider.
+    error = json.dumps({'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'bad voice'}})
+    ws = FakeWebSocket([_created(), error])
+    monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(ws))
+    model = XaiRealtimeModel('grok-voice-latest', provider=XaiProvider(api_key='k'))
+    with pytest.raises(ModelAPIError, match='bad voice') as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover
+    assert exc_info.value.model_name == 'grok-voice-latest'
 
 
 @pytest.mark.anyio
@@ -472,15 +498,16 @@ async def test_connect_injects_trace_context_into_handshake(monkeypatch: pytest.
 
 @pytest.mark.anyio
 async def test_agent_realtime_session_rejects_native_tools() -> None:
-    # xAI Grok Voice supports no native tools, so any native tool fails up front with the uniform
-    # error, before dialing — the check lives in `Agent.realtime_session`, keyed on the model profile.
+    # xAI Grok Voice supports no native tools, so a native tool with no local fallback fails up front,
+    # before dialing — via the same native ↔ local-tool swap the classic agent-run path applies, so the
+    # error points at `local=`.
     agent: Agent[None, str] = Agent()
     with pytest.raises(
         UserError,
-        match=r'does not support the WebSearchTool native tool\(s\)\. Supported native tools: none\.',
+        match=r"not supported by this model.*WebSearch\(local='duckduckgo'\)",
     ):
         async with agent.realtime(_model(), capabilities=[NativeTool(WebSearchTool())]).session():
-            pass  # pragma: no cover - validation raises before yielding
+            pass  # pragma: no cover
 
 
 @pytest.mark.anyio
@@ -557,14 +584,16 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     connect = _RecordingConnect([dropped, good])
     monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
 
-    model = _model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0))
+    model = _model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0, max_attempts=1))
     async with _connect(model, 'x') as conn:
-        events = [e async for e in conn]
+        events = await collect_codec_events(conn)
 
     assert events == [ReconnectedEvent(state_restored=True), Transcript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]  # both the dropped and the current socket are closed
+    # The last URL is the re-dial attempted after `good` hung up, which the stand-in refuses.
     assert connect.urls == [
         'wss://api.x.ai/v1/realtime?model=grok-voice-latest',
+        'wss://api.x.ai/v1/realtime?model=grok-voice-latest&conversation_id=conversation-1',
         'wss://api.x.ai/v1/realtime?model=grok-voice-latest&conversation_id=conversation-1',
     ]
     assert json.loads(dropped.sent[0])['session']['resumption'] == {'enabled': True}
@@ -628,9 +657,10 @@ async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
     monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([dropped, resumed]))
 
     agent = Agent()
-    async with agent.realtime(_model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0))).session() as session:
+    model = _model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0, max_attempts=1))
+    async with agent.realtime(model).session() as session:
         await session.send('Hello.')
-        events = [event async for event in session]
+        events = await collect_session_events(session)
 
     assert sum(isinstance(event, ReconnectedEvent) for event in events) == 1
     messages = session.all_messages()
@@ -688,7 +718,9 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
 
-    assert any(isinstance(e, SessionErrorEvent) and not e.recoverable for e in events)
+    # The message names xAI, not the OpenAI protocol whose connection class this reuses.
+    fatal = [e for e in events if isinstance(e, SessionErrorEvent) and not e.recoverable]
+    assert [e.message for e in fatal] == [IsStr(regex=r'xAI Grok Voice connection closed; reconnect failed: .*')]
     # The dropped socket is closed as the reconnect nulls `cm` before re-dialing; the refused re-dial
     # never enters its context manager, so `cm` stays `None` and teardown closes nothing further. A
     # regression that assigned `cm` before awaiting `__aenter__` would leave `'refused'` here.
@@ -706,11 +738,11 @@ async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pyt
         async def __aenter__(self) -> Any:
             raise ConnectionError('refused')
 
-        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover — never entered
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
             return False
 
     monkeypatch.setattr(rt_xai.websockets, 'connect', _FailingConnect())
-    with pytest.raises(ConnectionError, match='refused'):
+    with pytest.raises(ModelAPIError, match='Could not reach the realtime API: refused'):
         async with _connect(_model(), 'x'):
             pass  # pragma: no cover
 
@@ -720,7 +752,7 @@ async def test_connect_rejects_conversation_created_without_id(monkeypatch: pyte
     ws = FakeWebSocket([_created(), json.dumps({'type': 'conversation.created', 'conversation': {}})])
     monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(ws))
 
-    with pytest.raises(RuntimeError, match=r'did not include `conversation\.id`'):
+    with pytest.raises(RuntimeError, match=r'did not include a `conversation\.id`'):
         async with _connect(_model(reconnect=rt_xai.ReconnectPolicy()), 'x'):
             pass  # pragma: no cover
 

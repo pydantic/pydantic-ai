@@ -740,7 +740,8 @@ class ToolManager(Generic[AgentDepsT]):
             allow_partial=allow_partial,
             wrap_validation_errors=wrap_validation_errors,
         )
-        if not validated.args_valid:  # pragma: no cover — caller (result.py) uses wrap_validation_errors=False
+        # Caller (result.py) uses wrap_validation_errors=False.
+        if not validated.args_valid:  # pragma: no cover
             assert validated.validation_error is not None
             raise validated.validation_error
         return await self.execute_output_tool_call(
@@ -891,7 +892,8 @@ class ToolManager(Generic[AgentDepsT]):
                 wrap_validation_errors=wrap_validation_errors,
             )
         except UnexpectedModelBehavior:
-            if on_validate is not None:  # pragma: no branch - max-retries callers always pass `on_validate`
+            # Max-retries callers always pass `on_validate`.
+            if on_validate is not None:  # pragma: no branch
                 await on_validate(False)
             raise
         if on_validate is not None:

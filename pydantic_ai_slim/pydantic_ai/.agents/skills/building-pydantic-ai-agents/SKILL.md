@@ -255,8 +255,9 @@ async def main(microphone_chunk: bytes):
 Key facts for building realtime agents:
 
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
-  return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()` (text/transcript
-  projection — audio isn't replayed).
+  return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
+  are what carry over; OpenAI and Azure can also replay retained transcript-less *user* audio, Gemini
+  and xAI cannot, and assistant audio is never replayed.
 - **No `output_type`**: realtime models don't do structured output. Delegate hard work to a text
   agent behind a tool, or hand off history afterwards.
 - **Check the model profile before calling profile-gated methods**: `model.profile` (a
@@ -270,7 +271,9 @@ Key facts for building realtime agents:
   `google_vad` only for finer provider-specific control; when present, they fully override the shared
   setting. Automatic detection is on by default (`True`); set `turn_detection=False` for push-to-talk
   (OpenAI/Azure/xAI only — Gemini has no manual turn controls and raises).
-- **Tools**: every tool runs concurrently, so the model keeps speaking while it runs.
+- **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
+  the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
+  `google_async_tool_calls=True` on a native-audio model).
 - **Browser WebRTC (OpenAI and Azure OpenAI)**: for browser voice agents, relay the browser's SDP
   offer server-side with `agent.realtime(model).answer_webrtc_offer(sdp_offer)` — the agent's
   resolved instructions and tools are baked in and the API key stays on the server — then attach a

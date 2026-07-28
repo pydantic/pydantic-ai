@@ -215,7 +215,12 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
         async def run_agent() -> AgentRunResult[Any]:
             # Closing the send stream on exit is what surfaces `EndOfStream` to the consumer once the run ends.
             async with send_stream:
-                return await self._run_agent(event_stream_handler)
+                result = await self._run_agent(event_stream_handler)
+                # This background task owns the run: if a step absorbed an external cancellation
+                # of this task, re-assert it here so a cancelled run never yields a normal
+                # `AgentRunResultEvent` to the consumer.
+                _utils.raise_if_cancelling()
+                return result
 
         self._task = asyncio.create_task(run_agent())
 
@@ -1636,6 +1641,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 (but not `new_messages()`). Hand off from a prior session or a standard
                 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] by passing its messages here.
         """
+        # Infer the agent name from the calling frame like `run`/`iter` do, so an unnamed agent's
+        # realtime session span is labelled with the variable name (e.g. `agent`) rather than a
+        # generic fallback — the name is what backends use to tell agent runs apart.
+        if self.name is None:
+            self._infer_name(inspect.currentframe())
         return AgentRealtime(
             _agent=self,
             _model=model,

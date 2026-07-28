@@ -55,7 +55,7 @@ async def test_text_in_audio_out_turn(
     async with agent.realtime(model).session(audio_retention='output_audio') as session:
         await session.send('Say a short greeting.')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - breaks on the recorded terminal event
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -129,7 +129,7 @@ async def test_tool_call_round(azure_ws_cassette: tuple[AzureProvider, RealtimeC
     async with agent.realtime(model).session() as session:
         await session.send('What is the weather in London?')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -232,7 +232,7 @@ async def test_message_history_seeding(azure_ws_cassette: tuple[AzureProvider, R
     async with agent.realtime(model, message_history=history).session() as session:
         await session.send('What is my name and favorite color?')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
@@ -299,8 +299,10 @@ async def test_audio_in_server_vad_transcription_requires_deployment(
         for start in range(0, len(pcm), 4800):
             await session.send_audio(pcm[start : start + 4800])
         with anyio.fail_after(45):
-            async for event in session:
+            async for event in session:  # pragma: no branch
                 events.append(event)
+                if isinstance(event, TurnCompleteEvent):
+                    break
 
     assert collapse_event_types(events) == snapshot(
         [

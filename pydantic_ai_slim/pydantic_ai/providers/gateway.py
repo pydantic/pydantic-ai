@@ -210,7 +210,9 @@ def gateway_provider(
         # land here via `normalize_gateway_provider`.
         from .google_cloud import GoogleCloudProvider
 
-        return _with_http_client(GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client))
+        provider = GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client)
+        _set_google_ws_gateway_auth(provider.client, api_key)
+        return _with_http_client(provider)
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
 
@@ -222,6 +224,26 @@ def is_gateway_provider(provider: Provider[Any]) -> bool:
     `gateway/<name>` string (resolved via `infer_provider`) or as a `gateway_provider(...)` instance.
     """
     return provider in _gateway_providers
+
+
+def _set_google_ws_gateway_auth(client: GoogleClient, api_key: str) -> None:
+    """Set the gateway bearer auth as a static header on the Google client so it reaches the Live WebSocket.
+
+    The gateway authenticates on `Authorization: Bearer <key>`, which its `httpx` request hook adds to REST
+    calls. That hook can't cover the Gemini Live handshake: `google-genai` dials the WebSocket with the
+    `websockets` library, bypassing the provider's `httpx` client. The SDK forwards
+    `client._api_client._http_options.headers` to *both* REST and the Live handshake, so setting the bearer
+    there once — permanently — is what carries it onto the WebSocket. REST then carries it too, which is
+    redundant with the httpx request hook but harmless: it's the same value, and the hook already leaves a
+    pre-existing `Authorization` header untouched.
+
+    Guarded with `getattr` chains: a custom/fake client without the SDK's private HTTP options simply skips
+    this, and a pre-existing `Authorization` header is left in place.
+    """
+    raw_headers = getattr(getattr(getattr(client, '_api_client', None), '_http_options', None), 'headers', None)
+    if not isinstance(raw_headers, dict) or 'Authorization' in raw_headers:
+        return
+    raw_headers['Authorization'] = f'Bearer {api_key}'
 
 
 class _GatewayRequestHook:

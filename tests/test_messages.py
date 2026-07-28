@@ -2196,7 +2196,7 @@ def test_speech_part_serialization_roundtrip():
                 )
             ]
         ),
-        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Hi!')]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Hi!', interrupted_at_ms=420)]),
     ]
     serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
     assert serialized == snapshot(
@@ -2213,6 +2213,7 @@ def test_speech_part_serialization_roundtrip():
                             'kind': 'binary',
                             'identifier': '0ca623',
                         },
+                        'interrupted_at_ms': None,
                         'id': 'item-1',
                         'provider_name': 'openai',
                         'provider_details': None,
@@ -2233,6 +2234,7 @@ def test_speech_part_serialization_roundtrip():
                         'speaker': 'assistant',
                         'transcript': 'Hi!',
                         'audio': None,
+                        'interrupted_at_ms': 420,
                         'id': None,
                         'provider_name': None,
                         'provider_details': None,
@@ -2341,6 +2343,36 @@ def test_prepare_messages_converts_speech_parts():
     assert message(prepared, ModelRequest, index=0).parts == [
         UserPromptPart(content=[audio], timestamp=IsNow(tz=timezone.utc))
     ]
+
+
+@pytest.mark.parametrize(
+    ('response', 'expected'),
+    [
+        pytest.param(
+            ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='The answer is', interrupted_at_ms=640)]),
+            'The answer is\n[Interrupted after 640 ms]',
+            id='known-offset',
+        ),
+        pytest.param(
+            ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='The answer is')], state='interrupted'),
+            'The answer is\n[Interrupted]',
+            id='unknown-offset',
+        ),
+        pytest.param(
+            ModelResponse(parts=[SpeechPart(speaker='assistant', interrupted_at_ms=640)]),
+            '[Interrupted after 640 ms]',
+            id='empty-transcript',
+        ),
+        pytest.param(
+            ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='The answer is')]),
+            'The answer is',
+            id='not-interrupted',
+        ),
+    ],
+)
+def test_prepare_messages_renders_speech_interruption(response: ModelResponse, expected: str) -> None:
+    prepared = TestModel().prepare_messages([response])
+    assert message(prepared, ModelResponse, index=0).parts == [TextPart(content=expected)]
 
 
 def test_prepare_messages_drops_empty_speech_parts():

@@ -1,7 +1,7 @@
 Realtime speech-to-speech models are great conversationalists, but they don't produce structured
 output. This example shows the robust pattern: let the realtime model run the live conversation,
 then hand its [message history](../message-history.md) to a normal
-[`Agent.run(..., output_type=...)`][pydantic_ai.agent.AbstractAgent.run] to extract a typed result.
+[`Agent.run()`][pydantic_ai.agent.AbstractAgent.run] with `output_type` to extract a typed result.
 
 Because a [realtime session](../realtime/index.md) records the *same*
 [`ModelMessage`][pydantic_ai.messages.ModelMessage] history a text agent produces, the handoff is
@@ -20,6 +20,10 @@ then the accumulated conversation is handed to a text agent that distills it int
 microphone — a real app would stream microphone audio with
 [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] instead (see the
 [voice assistant example](./realtime-voice.md)).
+
+The handoff only runs after every scripted caller turn receives a
+[`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent]. If the realtime connection ends
+early, the example raises an error rather than creating a ticket from a partial call.
 
 ## Running the Example
 

@@ -1,11 +1,40 @@
-"""Shared assertion helpers for the realtime WebSocket cassette tests."""
+"""Shared assertion helpers for the realtime WebSocket tests."""
 
 from __future__ import annotations as _annotations
 
 import json
 from typing import Any
 
+import pytest
+
+from pydantic_ai.realtime import RealtimeError, RealtimeEvent, RealtimeSession, SessionErrorEvent
+from pydantic_ai.realtime._base import RealtimeCodecEvent, RealtimeConnection
+
 from .ws_cassettes import CassetteMessage, RealtimeCassette
+
+
+async def collect_codec_events(connection: RealtimeConnection) -> list[RealtimeCodecEvent]:
+    """Drain a connection through the end of its scripted conversation.
+
+    Both the fakes and the recordings end with the server hanging up, which a WebSocket-backed
+    connection reports as a final non-recoverable `SessionErrorEvent` (see
+    `test_clean_close_is_reported_as_a_fatal_error`). Asserting and stripping it here keeps every
+    caller's expectations about the conversation rather than its ending.
+    """
+    events = [event async for event in connection]
+    closed = events.pop()
+    assert isinstance(closed, SessionErrorEvent), closed
+    assert not closed.recoverable and 'connection closed' in closed.message, closed
+    return events
+
+
+async def collect_session_events(session: RealtimeSession) -> list[RealtimeEvent]:
+    """Drain a session through the end of its scripted conversation, absorbing the server's hangup."""
+    events: list[RealtimeEvent] = []
+    with pytest.raises(RealtimeError, match='connection closed'):
+        async for event in session:
+            events.append(event)
+    return events
 
 
 def collapse_event_types(events: list[Any]) -> list[str]:

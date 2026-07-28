@@ -17,7 +17,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     CachePoint,
@@ -70,6 +70,7 @@ from .test_session import make_tool_manager
 with try_import() as imports_successful:
     from google.genai import Client, errors as genai_errors, types as genai_types
     from google.genai.live import AsyncSession, ConnectionClosed
+    from websockets.exceptions import WebSocketException
 
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
@@ -158,6 +159,18 @@ def test_tool_def_to_genai_with_and_without_description() -> None:
     assert without_desc.description is None
 
 
+@pytest.mark.parametrize('async_tool_calls', [False, True])
+def test_tool_def_async_behavior(async_tool_calls: bool) -> None:
+    # The expected enum is resolved in the body, not the `parametrize` decorator: decorators are
+    # evaluated at collection time, before `pytestmark` can skip the module, so naming `genai_types`
+    # there breaks collection wherever the `google` extra isn't installed.
+    tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
+        ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'}),
+        async_tool_calls=async_tool_calls,
+    )
+    assert tool.behavior == (genai_types.Behavior.NON_BLOCKING if async_tool_calls else None)
+
+
 def test_native_tool_web_search_maps_to_google_search() -> None:
     tool = rt_google._native_tool_to_genai(WebSearchTool())  # pyright: ignore[reportPrivateUsage]
     assert tool.google_search is not None
@@ -174,16 +187,16 @@ def test_native_tool_code_execution_maps_to_code_execution() -> None:
 
 
 async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
-    # A native tool outside Gemini's `supported_native_tools` fails up front with the uniform error,
-    # before the Live session connects — the rejection lives in `Agent.realtime_session`, not the mapping.
+    # A native tool outside Gemini's `supported_native_tools`, with no local fallback, fails up front
+    # before the Live session connects — via the same native ↔ local-tool swap the classic agent-run
+    # path applies, so the error points at `local=`.
     agent: Agent[None, str] = Agent()
     with pytest.raises(
         UserError,
-        match=r'does not support the ImageGenerationTool native tool\(s\)\. '
-        r'Supported native tools: CodeExecutionTool, WebFetchTool, WebSearchTool\.',
+        match=r"'ImageGenerationTool'\] not supported by this model.*ImageGeneration\(local=my_func\)",
     ):
         async with agent.realtime(GoogleRealtimeModel(), capabilities=[NativeTool(ImageGenerationTool())]).session():
-            pass  # pragma: no cover - validation raises before yielding
+            pass  # pragma: no cover
 
 
 def test_config_combines_function_and_native_tools() -> None:
@@ -302,7 +315,7 @@ class _FakeWSConnect:
     async def __aenter__(self) -> None:
         raise _StopDial()
 
-    async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover - never entered
+    async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
         return False
 
 
@@ -320,8 +333,9 @@ def _capture_ws_connect(captured: dict[str, Any]) -> Any:
 async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     # A gateway provider dials the Live WebSocket through the SDK, which forwards the client's HTTP
     # headers as the handshake's `additional_headers`. The gateway authenticates on `Authorization:
-    # Bearer <key>` — added to REST calls by its httpx hook, which can't reach this `websockets` dial —
-    # so `connect` must inject the gateway key into the handshake headers itself. Driven end-to-end
+    # Bearer <key>` — added to REST calls by its httpx hook, which can't reach this `websockets` dial.
+    # So `gateway_provider` sets the bearer as a static header on the client at build time (see
+    # `_set_google_ws_gateway_auth`), and it rides along to the handshake automatically. Driven end-to-end
     # through `connect` (patching the SDK's `ws_connect`, as the cassette engine does) so the real URL
     # derivation and header stack are exercised, not a hand-built dict.
     provider = gateway_provider('google', api_key='gw-key', base_url='https://gateway.pydantic.dev/proxy')
@@ -332,21 +346,45 @@ async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect(captured))
     with pytest.raises(_StopDial):
         async with _connect(model, 'hi'):
-            pass  # pragma: no cover - the dial short-circuits before yielding
+            pass  # pragma: no cover
 
-    # The SDK swaps https→wss and appends the Vertex BidiGenerateContent path onto the gateway base URL;
-    # the gateway's platform relay accepts exactly this URL and derives the billed model from the setup
-    # frame, so pydantic-ai does not rewrite it.
+    # The SDK swaps https→wss and appends the Vertex BidiGenerateContent path onto the gateway base URL.
+    # TEMPORARY: the gateway relay only routes the OpenAI-shaped `/v1/realtime?model=` upgrade path, not
+    # this native Bidi path, so `_ws_gateway_url_rewrite` reshapes the dialed URL until the gateway accepts
+    # the Bidi path (see that helper). Once it does, this reverts to the native `.../BidiGenerateContent`.
     assert captured['uri'] == snapshot(
-        'wss://gateway.pydantic.dev/proxy/google-vertex/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent'
+        'wss://gateway.pydantic.dev/proxy/google-vertex/v1/realtime?model=gemini-live-2.5-flash'
     )
     assert captured['headers'].get('Authorization') == 'Bearer gw-key'
     # `_single_ws_user_agent` still runs, so the handshake carries exactly one user-agent header.
     assert sum(key.lower() == 'user-agent' for key in captured['headers']) == 1
-    # The injected `Authorization` is removed after the connect so the shared client's later REST
-    # requests fall back to the gateway's httpx hook rather than carrying a stale bearer header.
+    # The bearer lives permanently on the client's static http options (that's what carries it onto the
+    # WebSocket), so REST requests carry it too. That's redundant with the gateway's httpx request hook
+    # but harmless — the same value — and the hook leaves a pre-existing `Authorization` header untouched.
     rest_headers = provider.client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
-    assert rest_headers is not None and 'Authorization' not in rest_headers
+    assert rest_headers is not None and rest_headers['Authorization'] == 'Bearer gw-key'
+
+
+async def test_gateway_url_rewrite_leaves_other_urls_alone() -> None:
+    # TEMPORARY, with `_ws_gateway_url_rewrite`: the rewrite only fires on the Vertex Bidi path it
+    # exists to reshape. Any other URI (a gateway route that already speaks the realtime path, or a
+    # non-Vertex dial) passes through untouched, so the patch can't corrupt a URL it doesn't own.
+    dialed: list[str] = []
+
+    async def _fake_ws_connect(uri: str, *args: Any, **kwargs: Any) -> None:
+        dialed.append(uri)
+
+    from google.genai import live
+
+    original = live.ws_connect
+    live.ws_connect = _fake_ws_connect
+    try:
+        with rt_google._ws_gateway_url_rewrite('gemini-live-2.5-flash'):  # pyright: ignore[reportPrivateUsage]
+            await live.ws_connect('wss://gateway.pydantic.dev/proxy/openai/v1/realtime?model=gpt-realtime')
+    finally:
+        live.ws_connect = original
+
+    assert dialed == snapshot(['wss://gateway.pydantic.dev/proxy/openai/v1/realtime?model=gpt-realtime'])
 
 
 async def test_non_gateway_handshake_has_no_bearer_auth(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -359,59 +397,9 @@ async def test_non_gateway_handshake_has_no_bearer_auth(monkeypatch: pytest.Monk
     monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect(captured))
     with pytest.raises(_StopDial):
         async with _connect(model, 'hi'):
-            pass  # pragma: no cover - the dial short-circuits before yielding
+            pass  # pragma: no cover
 
     assert 'Authorization' not in captured['headers']
-
-
-def test_ws_gateway_auth_injects_and_restores_bearer() -> None:
-    # `google-genai` forwards the client's HTTP headers as the Live handshake headers, so the gateway
-    # bearer key is injected into them for the connect only, then removed so the shared client's later
-    # REST requests fall back to the gateway's httpx hook. The header dict is the SDK's private one, so
-    # this is a direct unit test.
-    from types import SimpleNamespace
-
-    headers = {'user-agent': 'solo'}
-    client = SimpleNamespace(
-        _api_client=SimpleNamespace(api_key='gw-key', _http_options=SimpleNamespace(headers=headers))
-    )
-    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        assert headers == {'user-agent': 'solo', 'Authorization': 'Bearer gw-key'}
-    assert headers == {'user-agent': 'solo'}
-
-
-def test_ws_gateway_auth_noop_without_api_key() -> None:
-    # No key to mirror (e.g. an ADC gateway client), so the handshake headers are left untouched.
-    from types import SimpleNamespace
-
-    headers = {'user-agent': 'solo'}
-    client = SimpleNamespace(_api_client=SimpleNamespace(api_key=None, _http_options=SimpleNamespace(headers=headers)))
-    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        assert headers == {'user-agent': 'solo'}
-    assert headers == {'user-agent': 'solo'}
-
-
-def test_ws_gateway_auth_noop_with_existing_authorization() -> None:
-    # A caller-supplied `Authorization` header wins: the gateway key is not layered on top of it.
-    from types import SimpleNamespace
-
-    headers = {'Authorization': 'Bearer caller'}
-    client = SimpleNamespace(
-        _api_client=SimpleNamespace(api_key='gw-key', _http_options=SimpleNamespace(headers=headers))
-    )
-    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        assert headers == {'Authorization': 'Bearer caller'}
-    assert headers == {'Authorization': 'Bearer caller'}
-
-
-def test_ws_gateway_auth_noop_without_http_options() -> None:
-    # A custom/fake client without the SDK's private HTTP options simply skips injection.
-    from types import SimpleNamespace
-
-    client = SimpleNamespace(_api_client=None)
-    with rt_google._ws_gateway_auth(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        assert client._api_client is None
-    assert client._api_client is None
 
 
 # --- provider resolution & capabilities --------------------------------------
@@ -448,6 +436,9 @@ def test_profile() -> None:
         False,
     )
     assert profile.get('supported_native_tools') == frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
+    # The default model is native-audio, the only Gemini family that honors `NON_BLOCKING`.
+    # Supported is not the same as enabled: it gates the opt-in `google_async_tool_calls` setting.
+    assert profile.get('supports_async_tool_calls') is True
     assert profile.get('audio_input_sample_rate') == 16000
     assert profile.get('audio_output_sample_rate') == 24000
 
@@ -507,6 +498,21 @@ def test_config_thinking_on_non_thinking_model_warns() -> None:
     with pytest.warns(UserWarning, match='does not support the `thinking` setting'):
         config = model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert config.thinking_config is None
+
+
+def test_async_tool_calls_opt_in_resolution() -> None:
+    # Opt-in and capability-gated: off unless asked for, and on only where the model honors it.
+    # A Live model that doesn't (verified live: it accepts `NON_BLOCKING` and blocks anyway) warns
+    # rather than quietly promising speech that never arrives.
+    on = GoogleRealtimeModelSettings(google_async_tool_calls=True)
+    native_audio = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')
+    assert native_audio._async_tool_calls(None) is False  # pyright: ignore[reportPrivateUsage]
+    assert native_audio._async_tool_calls(GoogleRealtimeModelSettings()) is False  # pyright: ignore[reportPrivateUsage]
+    assert native_audio._async_tool_calls(on) is True  # pyright: ignore[reportPrivateUsage]
+
+    half_cascade = GoogleRealtimeModel('gemini-live-2.5-flash-preview')
+    with pytest.warns(UserWarning, match='does not run tool calls without blocking generation'):
+        assert half_cascade._async_tool_calls(on) is False  # pyright: ignore[reportPrivateUsage]
 
 
 def test_config_minimal_text_no_transcription_no_vad() -> None:
@@ -588,6 +594,29 @@ async def test_send_tool_result_echoes_name() -> None:
     assert response.response == {'output': 'Sunny'}
 
 
+@pytest.mark.parametrize('async_tool_calls', [False, True])
+async def test_send_tool_result_async_scheduling(async_tool_calls: bool) -> None:
+    # As in `test_tool_def_async_behavior`, the expected enum is resolved in the body so collection
+    # doesn't need the `google` extra.
+    session = _RecordingSession()
+    conn = GoogleRealtimeConnection(cast('AsyncSession', session), async_tool_calls=async_tool_calls)
+    conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            tool_call=genai_types.LiveServerToolCall(
+                function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+            )
+        )
+    )
+
+    await conn.send(ToolResult(tool_call_id='c1', output='Sunny'))
+
+    # `INTERRUPT`, so the result lands in the reply the model is already speaking rather than being
+    # queued until after it has answered from its own knowledge.
+    assert session.tool_responses[0].scheduling == (
+        genai_types.FunctionResponseScheduling.INTERRUPT if async_tool_calls else None
+    )
+
+
 async def test_send_tool_result_content_falls_back_to_text() -> None:
     session = _RecordingSession()
     conn = _conn(session)
@@ -643,7 +672,7 @@ async def test_parallel_id_less_calls_do_not_collide() -> None:
 
 async def test_send_unsupported_raises() -> None:
     session = _RecordingSession()
-    with pytest.raises(NotImplementedError, match='object'):
+    with pytest.raises(UserError, match='Gemini Live does not support object input'):
         await _conn(session).send(object())  # type: ignore[arg-type]
 
 
@@ -1000,6 +1029,109 @@ async def test_connect_streams_events() -> None:
         TurnCompleteEvent(interrupted=False),
     ]
     assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
+    assert events[-1].message.startswith('Gemini Live connection closed: ')
+
+
+async def test_connect_maps_rejected_config_to_model_http_error() -> None:
+    # A rejected session config (here an unsupported voice) closes the WebSocket, which the SDK raises as
+    # an `APIError` carrying the close code and reason. `connect` maps it to `ModelHTTPError` like a
+    # regular `GoogleModel` request, rather than leaking the raw SDK error, so users can handle realtime
+    # and non-realtime failures uniformly.
+    reason = 'No matching speaker voice found for name: alloy'
+
+    class _RejectingConnect:
+        async def __aenter__(self) -> Any:
+            raise genai_errors.APIError(1007, reason, None)
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
+            return False
+
+    class _Live:
+        def connect(self, *, model: str, config: Any) -> _RejectingConnect:
+            return _RejectingConnect()
+
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})()})())
+    model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover
+    assert exc_info.value.status_code == 1007
+    assert exc_info.value.model_name == 'gemini-2.5-flash-native-audio-latest'
+    assert exc_info.value.body == reason
+
+
+async def test_connect_maps_websocket_invalid_status_to_model_http_error() -> None:
+    # A rejected WebSocket upgrade (e.g. a bad key → 401) surfaces from `google-genai` as a raw
+    # `websockets.InvalidStatus`, not an `APIError`. The WebSocket is the API here, so its HTTP status
+    # maps to `ModelHTTPError` rather than escaping untyped.
+    from websockets.datastructures import Headers
+    from websockets.exceptions import InvalidStatus
+    from websockets.http11 import Response
+
+    class _RejectingConnect:
+        async def __aenter__(self) -> Any:
+            raise InvalidStatus(Response(401, 'Unauthorized', Headers(), body=b'bad key'))
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
+            return False
+
+    class _Live:
+        def connect(self, *, model: str, config: Any) -> _RejectingConnect:
+            return _RejectingConnect()
+
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})()})())
+    model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.body == 'bad key'
+
+
+async def test_connect_maps_other_websocket_errors_to_model_api_error() -> None:
+    # A handshake failure with no HTTP status (DNS, TLS, protocol) reaches us as a bare
+    # `websockets.WebSocketException`. There's no status to report, so it becomes a `ModelAPIError`
+    # rather than escaping untyped — the sibling of the `InvalidStatus` → `ModelHTTPError` mapping.
+    class _FailingConnect:
+        async def __aenter__(self) -> Any:
+            raise WebSocketException('handshake went sideways')
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
+            return False
+
+    class _Live:
+        def connect(self, *, model: str, config: Any) -> _FailingConnect:
+            return _FailingConnect()
+
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})()})())
+    model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover
+    assert exc_info.value.message == snapshot('WebSocket error during connect: handshake went sideways')
+
+
+async def test_connect_maps_unreachable_api_to_model_api_error() -> None:
+    # The connection never came up at all (DNS, refused, reset, dial timeout). The SDK doesn't wrap
+    # these, so without mapping the caller would get a bare `OSError` from what looks like an ordinary
+    # model call; there is no HTTP status, so it becomes a `ModelAPIError`.
+    class _UnreachableConnect:
+        async def __aenter__(self) -> Any:
+            raise ConnectionRefusedError('connection refused')
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
+            return False
+
+    class _Live:
+        def connect(self, *, model: str, config: Any) -> _UnreachableConnect:
+            return _UnreachableConnect()
+
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})()})())
+    model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover
+    assert exc_info.value.message == snapshot('Could not reach the realtime API: connection refused')
 
 
 async def test_connect_continues_after_empty_server_turn() -> None:

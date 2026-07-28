@@ -2,7 +2,7 @@
 
 Realtime speech-to-speech models are great conversationalists, but they don't produce structured
 output. The robust pattern is to let the realtime model run the live conversation, then hand its
-message history to a normal `Agent.run(..., output_type=...)` to extract a typed result.
+message history to a normal `Agent.run()` with `output_type` to extract a typed result.
 
 This works because a realtime session records the *same* `ModelMessage` history a text agent
 produces: handing the conversation off is just passing `session.all_messages()` along. Realtime and
@@ -11,7 +11,7 @@ non-realtime runs are peers that interoperate through message history.
 The example models a short support call: a caller describes a problem to the realtime voice agent,
 then the accumulated conversation is handed to a text agent that distills it into a typed
 `SupportTicket`. The caller's side is driven with text turns so the example runs without a
-microphone — a real app would stream microphone audio with `session.send_audio(...)` instead (see
+microphone — a real app would stream each microphone chunk with `session.send_audio(chunk)` (see
 the `realtime_voice` example). Either way, the model replies with speech, and its transcripts land
 in history for the handoff.
 
@@ -80,6 +80,7 @@ async def main() -> None:
         print(f'caller: {first_turn}')
         # Sending text into an OpenAI realtime session asks the model to respond right away.
         await session.send(first_turn)
+        call_complete = False
 
         async for event in session:
             match event:
@@ -90,11 +91,17 @@ async def main() -> None:
                 case TurnCompleteEvent():
                     next_turn = next(remaining_turns, None)
                     if next_turn is None:
+                        call_complete = True
                         break  # The caller has said everything; end the call.
                     print(f'caller: {next_turn}')
                     await session.send(next_turn)
                 case _:
                     pass
+
+        if not call_complete:
+            raise RuntimeError(
+                'The realtime session ended before the support call completed'
+            )
 
         # The realtime session recorded ordinary `ModelMessage` history; hand it off to the text
         # agent, which can do the structured extraction the realtime model can't.
