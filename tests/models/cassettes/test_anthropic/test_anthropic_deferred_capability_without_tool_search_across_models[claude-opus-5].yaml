@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1056'
+      - '1055'
       content-type:
       - application/json
       host:
@@ -21,7 +21,7 @@ interactions:
         - text: First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.
           type: text
         role: user
-      model: claude-fable-5
+      model: claude-opus-5
       stream: false
       system:
       - text: |-
@@ -59,7 +59,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '642'
+      - '710'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -67,22 +67,24 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-e568d721c14c444d1e254a1b77f2416f-b9d0de6ad1e21c34-01
+      - 00-b2b8a26dfcafff4deb7b0fd58f924101-3d509aa961a3abaa-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
+      - text: I'll load the refunds capability first.
+        type: text
       - caller:
           type: direct
-        id: toolu_01JS5tv549j5uruvSjr1NMs1
+        id: toolu_01Pjc5yo2Cj8R3rHkS5CXB94
         input:
           id: refunds
         name: load_capability
         type: tool_use
-      id: msg_011CdTfCxoppaESdZLDkLAxt
-      model: claude-fable-5
+      id: msg_011CdTfZYtF14b3A1ZP3D8XA
+      model: claude-opus-5
       role: assistant
       stop_details: null
       stop_reason: tool_use
@@ -95,8 +97,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 594
-        output_tokens: 50
+        input_tokens: 590
+        output_tokens: 63
         output_tokens_details:
           thinking_tokens: 0
         service_tier: standard
@@ -112,7 +114,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1729'
+      - '1797'
       content-type:
       - application/json
       host:
@@ -126,7 +128,9 @@ interactions:
           type: text
         role: user
       - content:
-        - id: toolu_01JS5tv549j5uruvSjr1NMs1
+        - text: I'll load the refunds capability first.
+          type: text
+        - id: toolu_01Pjc5yo2Cj8R3rHkS5CXB94
           input:
             id: refunds
           name: load_capability
@@ -137,7 +141,7 @@ interactions:
           - text: '{}'
             type: text
           is_error: false
-          tool_use_id: toolu_01JS5tv549j5uruvSjr1NMs1
+          tool_use_id: toolu_01Pjc5yo2Cj8R3rHkS5CXB94
           type: tool_result
         role: user
       - content:
@@ -156,7 +160,7 @@ interactions:
           tool_use_id: auto_load_0f10f8b659c3c105
           type: tool_result
         role: user
-      model: claude-fable-5
+      model: claude-opus-5
       stream: false
       system:
       - text: |-
@@ -194,7 +198,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '655'
+      - '654'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -202,7 +206,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-fc55d511ce410fd2d17a828203b4c1c9-ba0dce6e65c8155c-01
+      - 00-518c7b3326eabb36b090fb8b3bdc32da-4eb3a45fdb97c69f-01
       transfer-encoding:
       - chunked
       vary:
@@ -211,13 +215,13 @@ interactions:
       content:
       - caller:
           type: direct
-        id: toolu_01K4mnCo7AHQsprWqRdqs2fM
+        id: toolu_01KrWvUyLnZTsc9qqMQPhWfZ
         input:
           order_id: order-123
         name: lookup_refund_policy
         type: tool_use
-      id: msg_011CdTfDCaJtFnVweduHctW5
-      model: claude-fable-5
+      id: msg_011CdTfZkGbmVhKoJiVn89to
+      model: claude-opus-5
       role: assistant
       stop_details: null
       stop_reason: tool_use
@@ -230,7 +234,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 797
+        input_tokens: 806
         output_tokens: 57
         output_tokens_details:
           thinking_tokens: 0
@@ -247,7 +251,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2087'
+      - '2155'
       content-type:
       - application/json
       host:
@@ -261,7 +265,9 @@ interactions:
           type: text
         role: user
       - content:
-        - id: toolu_01JS5tv549j5uruvSjr1NMs1
+        - text: I'll load the refunds capability first.
+          type: text
+        - id: toolu_01Pjc5yo2Cj8R3rHkS5CXB94
           input:
             id: refunds
           name: load_capability
@@ -272,7 +278,7 @@ interactions:
           - text: '{}'
             type: text
           is_error: false
-          tool_use_id: toolu_01JS5tv549j5uruvSjr1NMs1
+          tool_use_id: toolu_01Pjc5yo2Cj8R3rHkS5CXB94
           type: tool_result
         role: user
       - content:
@@ -292,7 +298,7 @@ interactions:
           type: tool_result
         role: user
       - content:
-        - id: toolu_01K4mnCo7AHQsprWqRdqs2fM
+        - id: toolu_01KrWvUyLnZTsc9qqMQPhWfZ
           input:
             order_id: order-123
           name: lookup_refund_policy
@@ -303,10 +309,10 @@ interactions:
           - text: 'order-123: refund allowed'
             type: text
           is_error: false
-          tool_use_id: toolu_01K4mnCo7AHQsprWqRdqs2fM
+          tool_use_id: toolu_01KrWvUyLnZTsc9qqMQPhWfZ
           type: tool_result
         role: user
-      model: claude-fable-5
+      model: claude-opus-5
       stream: false
       system:
       - text: |-
@@ -344,7 +350,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '550'
+      - '549'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -352,7 +358,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-2825a6efa950421cb1ac1343ba8c03ae-aea2b390eebb5e12-01
+      - 00-5f8e8ec7a903b308db76abbf37dc2f03-fb4d0481865cb6bd-01
       transfer-encoding:
       - chunked
       vary:
@@ -361,8 +367,8 @@ interactions:
       content:
       - text: 'order-123: refund allowed'
         type: text
-      id: msg_011CdTfDSQG2VAneMbukjihu
-      model: claude-fable-5
+      id: msg_011CdTfaANw1xdZpmXiM59aq
+      model: claude-opus-5
       role: assistant
       stop_details: null
       stop_reason: end_turn
@@ -375,7 +381,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 868
+        input_tokens: 877
         output_tokens: 11
         output_tokens_details:
           thinking_tokens: 0

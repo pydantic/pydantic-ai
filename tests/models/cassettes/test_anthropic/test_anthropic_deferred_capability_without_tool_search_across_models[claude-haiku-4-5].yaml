@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1879'
+      - '1058'
       content-type:
       - application/json
       host:
@@ -53,24 +53,6 @@ interactions:
           - order_id
           type: object
         name: lookup_refund_policy
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
@@ -85,7 +67,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-5e64306ffa6e9a067c67ff3b679c9c6e-daeb184d5ecd7894-01
+      - 00-33157e812269f4ab5735c3ec24051208-c5d6293494b04432-01
       transfer-encoding:
       - chunked
       vary:
@@ -94,12 +76,12 @@ interactions:
       content:
       - caller:
           type: direct
-        id: toolu_011u5tZUGNWSzWpJEzdQP4aN
+        id: toolu_01QQd3Sjue14gb3ghacSd33V
         input:
           id: refunds
         name: load_capability
         type: tool_use
-      id: msg_011CdTagVfPNQych79fJFmUV
+      id: msg_011CdTfCmqXKnVhQbdtkVFud
       model: claude-haiku-4-5-20251001
       role: assistant
       stop_details: null
@@ -113,7 +95,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 842
+        input_tokens: 657
         output_tokens: 55
         service_tier: standard
     status:
@@ -128,7 +110,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2552'
+      - '1731'
       content-type:
       - application/json
       host:
@@ -142,7 +124,7 @@ interactions:
           type: text
         role: user
       - content:
-        - id: toolu_011u5tZUGNWSzWpJEzdQP4aN
+        - id: toolu_01QQd3Sjue14gb3ghacSd33V
           input:
             id: refunds
           name: load_capability
@@ -153,7 +135,7 @@ interactions:
           - text: '{}'
             type: text
           is_error: false
-          tool_use_id: toolu_011u5tZUGNWSzWpJEzdQP4aN
+          tool_use_id: toolu_01QQd3Sjue14gb3ghacSd33V
           type: tool_result
         role: user
       - content:
@@ -204,53 +186,40 @@ interactions:
           - order_id
           type: object
         name: lookup_refund_policy
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '625'
+      - '832'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      server-timing:
+      - x-originResponse;dur=1089
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-ef4d80af836e16525204f5e819d6bb00-f317dfb11e7b4299-01
+      - 00-6fc2e6b7f51aa5211f5296fdd644841b-ceb52459735e209b-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
+      - text: 'I apologize, but I don''t have access to a `search_tools` function. Let me try calling the lookup_refund_policy
+          function directly based on the refunds capability that was loaded:'
+        type: text
       - caller:
           type: direct
-        id: toolu_01JZkRyrrPT1pqKYYAyhczes
+        id: toolu_018cqAFwLtULyoaiLSS2bgko
         input:
           order_id: order-123
         name: lookup_refund_policy
         type: tool_use
-      id: msg_011CdTagYwaSV2yyojzrVAy3
+      id: msg_011CdTfCqJP6Esv6Hnhcf2Vp
       model: claude-haiku-4-5-20251001
       role: assistant
       stop_details: null
@@ -264,8 +233,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 1043
-        output_tokens: 60
+        input_tokens: 858
+        output_tokens: 103
         service_tier: standard
     status:
       code: 200
@@ -279,7 +248,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2910'
+      - '2296'
       content-type:
       - application/json
       host:
@@ -293,7 +262,7 @@ interactions:
           type: text
         role: user
       - content:
-        - id: toolu_011u5tZUGNWSzWpJEzdQP4aN
+        - id: toolu_01QQd3Sjue14gb3ghacSd33V
           input:
             id: refunds
           name: load_capability
@@ -304,7 +273,7 @@ interactions:
           - text: '{}'
             type: text
           is_error: false
-          tool_use_id: toolu_011u5tZUGNWSzWpJEzdQP4aN
+          tool_use_id: toolu_01QQd3Sjue14gb3ghacSd33V
           type: tool_result
         role: user
       - content:
@@ -324,7 +293,10 @@ interactions:
           type: tool_result
         role: user
       - content:
-        - id: toolu_01JZkRyrrPT1pqKYYAyhczes
+        - text: 'I apologize, but I don''t have access to a `search_tools` function. Let me try calling the lookup_refund_policy
+            function directly based on the refunds capability that was loaded:'
+          type: text
+        - id: toolu_018cqAFwLtULyoaiLSS2bgko
           input:
             order_id: order-123
           name: lookup_refund_policy
@@ -335,7 +307,7 @@ interactions:
           - text: 'order-123: refund allowed'
             type: text
           is_error: false
-          tool_use_id: toolu_01JZkRyrrPT1pqKYYAyhczes
+          tool_use_id: toolu_018cqAFwLtULyoaiLSS2bgko
           type: tool_result
         role: user
       model: claude-haiku-4-5
@@ -370,31 +342,13 @@ interactions:
           - order_id
           type: object
         name: lookup_refund_policy
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '520'
+      - '519'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -402,7 +356,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-dfd4072c865dbc349abd0f2598645885-ba5a8ef3718b7b9a-01
+      - 00-af8ea79c6ce0ff1ef8825ddd8d8ef269-2667727381b4152a-01
       transfer-encoding:
       - chunked
       vary:
@@ -411,7 +365,7 @@ interactions:
       content:
       - text: 'order-123: refund allowed'
         type: text
-      id: msg_011CdTagbimPRx7dwEu3JjDk
+      id: msg_011CdTfCv398cmijzB9qwECH
       model: claude-haiku-4-5-20251001
       role: assistant
       stop_details: null
@@ -425,7 +379,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 1122
+        input_tokens: 980
         output_tokens: 10
         service_tier: standard
     status:

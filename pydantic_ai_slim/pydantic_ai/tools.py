@@ -639,6 +639,13 @@ class ToolDefinition:
     stable flag to preserve the prompt-cache prefix while still allowing the revealed tool call.
     """
 
+    tool_search_is_default_configuration: Annotated[bool | None, Field(exclude=True)] = field(default=None, repr=False)
+    """Whether a tool-search function represents a semantically bare `ToolSearch()` capability.
+
+    This is set only on the framework-managed `search_tools` definition so model adapters
+    can distinguish auto/default search from an explicitly configured search surface.
+    """
+
     unless_native: Annotated[
         str | None,
         # Old names were `prefer_builtin` and (after the builtin → native rename in https://github.com/pydantic/pydantic-ai/issues/5338)

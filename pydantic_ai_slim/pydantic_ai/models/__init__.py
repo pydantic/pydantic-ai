@@ -1548,8 +1548,8 @@ def _resolve_tool_search_native_for_capability_owned_corpus(
     (2) the caller keeps `search_tools` in the request parameters — that callback is what
     the client-executed surface invokes. Adapters may still render that callback as a
     native client-executed tool-search item rather than as a regular function tool on the
-    provider wire. Named-native strategies (`'bm25'`/`'regex'`) have no client-executed
-    equivalent, so we raise rather than silently substitute a different algorithm.
+    provider wire. Explicit named-native strategies (`'bm25'`/`'regex'`) keep their
+    server-side search surface unchanged.
     """
     capability_owns_corpus = any(
         t.with_native == ToolSearchTool.kind and t.defer_loading_on_wire for t in function_tools
@@ -1563,17 +1563,10 @@ def _resolve_tool_search_native_for_capability_owned_corpus(
         if not isinstance(t, ToolSearchTool):
             resolved_natives.append(t)
             continue
-        if t.strategy not in (None, 'custom'):
-            raise UserError(
-                f'`ToolSearch(strategy={t.strategy!r})` is incompatible with deferred-loading '
-                "capabilities. Server-side strategies can't "
-                "honor capability gating and would reveal tools whose owning capability hasn't "
-                'been loaded yet. Use `strategy=None` (auto: client-executed local search when a '
-                "deferred capability is present), `strategy='keywords'`, or a custom callable."
-            )
-        keep_search_tools_local = True
         if t.strategy is None:
             t = replace(t, strategy='custom')
+        if t.strategy == 'custom':
+            keep_search_tools_local = True
         resolved_natives.append(t)
     return _ToolSearchNativeResolution(resolved_natives, keep_search_tools_local=keep_search_tools_local)
 

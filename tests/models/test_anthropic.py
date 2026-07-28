@@ -11173,6 +11173,31 @@ async def test_anthropic_keyword_tool_search_is_kept_for_capability_only_corpus(
     assert any(tool.get('name') == 'search_tools' for tool in request['tools'])
 
 
+async def test_anthropic_named_native_tool_search_is_kept_for_capability_only_corpus(allow_model_requests: None):
+    """An explicit named native strategy keeps its search surface for a capability-only corpus."""
+    response = completion_message(
+        [BetaTextBlock(text='Done.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        capabilities=[refunds, ToolSearch(strategy='regex')],
+    )
+    await agent.run('Hello')
+
+    [request] = get_mock_chat_completion_kwargs(mock_client)
+    assert any(tool.get('type') == 'tool_search_tool_regex_20251119' for tool in request['tools'])
+
+
 async def test_anthropic_callable_tool_search_is_kept_and_reachable_for_capability_only_corpus(
     allow_model_requests: None,
 ):
@@ -11328,10 +11353,13 @@ async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
 
 
 @pytest.mark.parametrize(
-    ('model_name', 'strips_search_surface'),
+    'model_name',
     [
-        pytest.param('claude-haiku-4-5', False, id='claude-haiku-4-5'),
-        pytest.param('claude-fable-5', True, id='claude-fable-5'),
+        'claude-haiku-4-5',
+        'claude-fable-5',
+        'claude-opus-5',
+        'claude-sonnet-4-6',
+        'claude-sonnet-5',
     ],
 )
 @pytest.mark.vcr()
@@ -11340,9 +11368,8 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
     anthropic_api_key: str,
     vcr: Any,
     model_name: str,
-    strips_search_surface: bool,
 ):
-    """Record model-specific behavior for standalone deferred capability reveals."""
+    """All Anthropic models honor standalone deferred capability reveals without a search surface."""
     model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
     refunds = Capability[None](
         id='refunds',
@@ -11366,7 +11393,7 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
             tool.get('name') in {'search_tools', 'tool_search_tool_bm25', 'tool_search_tool_regex'}
             for tool in request_body['tools']
         )
-        assert has_search_surface is not strips_search_surface
+        assert not has_search_surface
         [lookup_tool] = [tool for tool in request_body['tools'] if tool.get('name') == 'lookup_refund_policy']
         assert lookup_tool['defer_loading'] is True
     called_revealed_tool = any(

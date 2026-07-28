@@ -50,7 +50,6 @@ from ..messages import (
 )
 from ..native_tools._tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
-    TOOL_SEARCH_IS_DEFAULT_CONFIGURATION_METADATA_KEY,
     ToolSearchFunc,
     ToolSearchMatch,
     ToolSearchReturnContent,
@@ -383,7 +382,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             parameters_json_schema=schema,
             tool_kind='tool-search',
             unless_native=unless_native,
-            metadata={TOOL_SEARCH_IS_DEFAULT_CONFIGURATION_METADATA_KEY: self.is_default_configuration},
+            tool_search_is_default_configuration=self.is_default_configuration,
         )
 
         return _SearchTool(

@@ -98,9 +98,6 @@ for keyword-based discovery when native tool search isn't available, and that mo
 route to for provider-side "client-executed" custom callable modes (Anthropic tool-reference
 blocks; OpenAI `execution='client'`)."""
 
-TOOL_SEARCH_IS_DEFAULT_CONFIGURATION_METADATA_KEY = 'pydantic_ai_tool_search_is_default_configuration'
-"""Internal tool-definition metadata key recording whether `ToolSearch()` is semantically bare."""
-
 
 @dataclass(kw_only=True)
 class ToolSearchTool(AbstractNativeTool):
