@@ -63,8 +63,10 @@ try:
         ChatCompletionInputToolChoiceClass,
         ChatCompletionInputURL,
         ChatCompletionOutput,
+        ChatCompletionOutputLogprobs,
         ChatCompletionOutputMessage,
         ChatCompletionStreamOutput,
+        ChatCompletionStreamOutputLogprobs,
         TextGenerationOutputFinishReason,
     )
     from huggingface_hub.errors import HfHubHTTPError
@@ -131,7 +133,18 @@ class HuggingFaceModelSettings(ModelSettings, total=False):
     """Settings used for a Hugging Face model request."""
 
     # ALL FIELDS MUST BE `huggingface_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    # This class is a placeholder for any future huggingface-specific settings
+
+    huggingface_logprobs: bool
+    """Return log probabilities of the output tokens.
+
+    When enabled, the log probabilities are included in `ModelResponse.provider_details['logprobs']`.
+    """
+
+    huggingface_top_logprobs: int
+    """Number of most likely tokens to return the log probabilities for (0-20).
+
+    Requires `huggingface_logprobs` to be enabled.
+    """
 
 
 @dataclass(init=False)
@@ -273,8 +286,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                 presence_penalty=model_settings.get('presence_penalty', None),
                 frequency_penalty=model_settings.get('frequency_penalty', None),
                 logit_bias=model_settings.get('logit_bias', None),  # pyright: ignore[reportArgumentType]
-                logprobs=model_settings.get('logprobs', None),
-                top_logprobs=model_settings.get('top_logprobs', None),
+                logprobs=model_settings.get('huggingface_logprobs', None),
+                top_logprobs=model_settings.get('huggingface_top_logprobs', None),
                 extra_body=model_settings.get('extra_body'),  # pyright: ignore[reportArgumentType]
             )
 
@@ -298,6 +311,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
         if response.created:  # pragma: no branch
             provider_details['timestamp'] = datetime.fromtimestamp(response.created, tz=timezone.utc)
+        if choice.logprobs is not None and choice.logprobs.content:
+            provider_details['logprobs'] = _map_logprobs(choice.logprobs)
         finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
 
         return ModelResponse(
@@ -568,6 +583,12 @@ class HuggingFaceStreamedResponse(StreamedResponse):
                     self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                     self.finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
 
+                if choice.logprobs is not None and choice.logprobs.content:
+                    self.provider_details = {
+                        **(self.provider_details or {}),
+                        'logprobs': _map_logprobs(choice.logprobs),
+                    }
+
                 # Handle the text part of the response
                 content = choice.delta.content
                 if content:
@@ -619,3 +640,15 @@ def _map_usage(response: ChatCompletionOutput | ChatCompletionStreamOutput) -> u
         input_tokens=response_usage.prompt_tokens,
         output_tokens=response_usage.completion_tokens,
     )
+
+
+def _map_logprobs(logprobs: ChatCompletionOutputLogprobs | ChatCompletionStreamOutputLogprobs) -> list[dict[str, Any]]:
+    """Convert Hugging Face logprobs to a serializable dictionary format."""
+    return [
+        {
+            'token': lp.token,
+            'logprob': lp.logprob,
+            'top_logprobs': [{'token': tlp.token, 'logprob': tlp.logprob} for tlp in (lp.top_logprobs or [])],
+        }
+        for lp in (logprobs.content or [])
+    ]

@@ -68,6 +68,18 @@ def test_model_settings_discovery():
     assert _MODEL_SETTINGS_CLASSES, f'no settings classes found, unimportable modules: {_UNIMPORTABLE_MODEL_MODULES}'
 
 
+def test_huggingface_logprobs_settings():
+    # HuggingFace-specific logprobs fields must be `huggingface_`-prefixed and accepted at runtime.
+    from pydantic_ai_slim.pydantic_ai.models.huggingface import HuggingFaceModelSettings
+
+    settings: HuggingFaceModelSettings = {
+        'huggingface_logprobs': True,
+        'huggingface_top_logprobs': 3,
+    }
+    assert settings['huggingface_logprobs'] is True
+    assert settings['huggingface_top_logprobs'] == 3
+
+
 @pytest.mark.parametrize(
     'model', ['openai', 'anthropic', 'bedrock', 'mistral', 'groq', 'cohere', 'google'], indirect=True
 )
