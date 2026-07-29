@@ -54,6 +54,7 @@ def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfi
     return call_tool_operation
 
 
+# TODO(v3): remove `PrefectMCPToolset` alongside `PrefectAgent`.
 @deprecated(
     "`PrefectMCPToolset` is deprecated alongside `PrefectAgent`. Use the `PrefectDurability` capability, which wraps the agent's toolsets in Prefect tasks automatically.",
     category=PydanticAIDeprecationWarning,

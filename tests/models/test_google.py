@@ -77,6 +77,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings, ServiceTier
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
@@ -3791,6 +3792,212 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
         'output_mime_type': 'image/jpeg',
         'output_compression_quality': 90,
     }
+
+
+def test_google_vertex_skips_include_server_side_tool_invocations(
+    mocker: MockerFixture, google_provider: GoogleProvider
+) -> None:
+    """Vertex rejects `include_server_side_tool_invocations`, so it must not be set on Gemini 3+ via Vertex.
+
+    Not a VCR test: the field is dropped before the request is sent, and our cassette matchers don't
+    inspect the request body, so a recording would stay green if it were reintroduced.
+    """
+    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    # A function tool is included so `tool_config` is non-empty on both paths; the only field that
+    # should differ is `include_server_side_tool_invocations`.
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='search')], native_tools=[WebSearchTool()])
+    _tools, tool_config, _image_config = model._get_tool_config(params, GoogleModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert tool_config is not None
+    assert 'include_server_side_tool_invocations' not in tool_config
+
+
+def test_google_gemini_api_sets_include_server_side_tool_invocations(
+    google_provider: GoogleProvider,
+) -> None:
+    """The Gemini Developer API keeps `include_server_side_tool_invocations` on Gemini 3+ (regression guard).
+
+    Not a VCR test: our cassette matchers don't inspect the request body, so a recording would stay
+    green if the field were silently dropped; asserting `tool_config` directly is what catches that.
+    """
+    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='search')], native_tools=[WebSearchTool()])
+    _tools, tool_config, _image_config = model._get_tool_config(params, GoogleModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert tool_config is not None
+    assert tool_config.get('include_server_side_tool_invocations') is True
+
+
+@pytest.mark.vcr()
+async def test_google_vertex_tool_combination_omits_include_server_side_tool_invocations(
+    allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette
+):  # pragma: lax no cover
+    """Live proof that Vertex serves the reported repro -- a Gemini 3+ native tool combined with a function
+    tool -- once `include_server_side_tool_invocations` is dropped.
+
+    The SDK's Vertex `ToolConfig` converter raises `ValueError` when the field is present, so pre-fix this
+    request never reached the wire and was unrecordable. The field is documented as required when a built-in
+    tool is combined with function calling, but that holds for the Gemini Developer API only: Vertex serves
+    the combination without it, returning grounding metadata (not explicit `tool_call`/`tool_response` parts)
+    which we reconstruct into `NativeToolCallPart`/`NativeToolReturnPart` -- the same path as the
+    pre-Gemini-3 Gemini API.
+    """
+    model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
+    agent = Agent(model, instructions='You are a helpful chatbot.', capabilities=[NativeTool(WebSearchTool())])
+
+    @agent.tool_plain
+    async def get_user_city() -> str:
+        """The city the user lives in."""
+        return 'San Francisco'
+
+    result = await agent.run('Look up the city I live in, then search the web for its weather today.')
+
+    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    request_bodies = [json.loads(request.body) for request in generate_requests]  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportUnknownVariableType]
+    # On the Gemini Developer API these requests carry `toolConfig.includeServerSideToolInvocations`;
+    # on Vertex the field is skipped, so it is absent from every request Vertex actually accepted.
+    assert [body.get('toolConfig', {}) for body in request_bodies] == snapshot(
+        [{'functionCallingConfig': {'mode': 'AUTO'}}, {'functionCallingConfig': {'mode': 'AUTO'}}]
+    )
+    assert request_bodies[0]['tools'] == snapshot(
+        [
+            {'googleSearch': {}},
+            {
+                'functionDeclarations': [
+                    {
+                        'description': 'The city the user lives in.',
+                        'name': 'get_user_city',
+                        'parametersJsonSchema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                    }
+                ]
+            },
+        ]
+    )
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Look up the city I live in, then search the web for its weather today.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful chatbot.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_city',
+                        args={},
+                        tool_call_id='vcyiitct',
+                        provider_name='google-cloud',
+                        provider_details={'thought_signature': IsStr()},
+                    )
+                ],
+                usage=RequestUsage(
+                    details={'thoughts_tokens': 59, 'text_prompt_tokens': 43, 'text_candidates_tokens': 12},
+                    input_tokens=43,
+                    output_tokens=71,
+                ),
+                model_name='gemini-3-flash-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-cloud',
+                provider_url='https://aiplatform.googleapis.com/',
+                provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
+                provider_response_id='5QlpatShBNyV3tMPkcCE2Ak',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_city',
+                        content='San Francisco',
+                        tool_call_id='vcyiitct',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful chatbot.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='web_search',
+                        args={'queries': ['weather San Francisco July 28 2026']},
+                        tool_call_id=IsStr(),
+                        provider_name='google-cloud',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        content=[
+                            {
+                                'domain': None,
+                                'title': 'google.com',
+                                'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'wunderground.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGEVtYUrUNBWs0IdSROOa1zgAWq04FAfoFOcqNAg8w4rElxnmJNMe3PhGvzdhuayE0q8eXhZb43nRsU1cKt82HTTdAVtdROr7w6VTsyALRsSRLYzJaJWvUw0i16yc-MRSWHnxTDM8E9SblsgMdSyaCfk2ABtdiCn_wcM8hYA-062TTZi5eJJGy4XfIBlDJ8Ao3-DnIKDCGQHNtskthvmqFaqfwwfYIrg9M31ImX',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'weather25.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHLVYhJuD2agpsZDuENX1T3c7eFl9szJTqJ3PoATv15VVFVE6OtFHFnZEf2OhIhyjwpg5bs9AMZx3LK9QovLCpp1Dfz8ZevsizZ2x6jsztw0G4ne7HIObaEPZoS_n--7RI-0y6zn-2BXP-u3sVCG88FbYW9ItQqp0We1egzMV6aNlOZUxi2MaJnEdhS9NBfVn3c22lFqg==',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'youtube.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFm5mxg-EPVj0qx6-e8Bms4iqTrVx43gNzLitYty7Tt2QOsCjZcBu-8HB9LNZfzOQNCVDVRPz0BsEZoTeNk-FwmwEdPayjB7rakUK9o9ga6lvarayaj0scu-XNSpR-iIJ1XTfEUDN8=',
+                            },
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-cloud',
+                    ),
+                    TextPart(
+                        content="""\
+Based on your location in **San Francisco**, here is the weather forecast for today, **Tuesday, July 28, 2026**:
+
+*   **Condition:** Sunny and clear throughout the day and night.
+*   **Temperature:** \n\
+    *   **Current:** Approximately **66°F (19°C)**.
+    *   **High:** Expected to reach around **67°F to 71°F (19°C - 22°C)**.
+    *   **Low:** Around **57°F (14°C)** tonight.
+*   **Humidity:** About **73% - 78%**.
+*   **Precipitation:** 0% chance of rain.
+*   **Wind:** A gentle breeze from the southwest at about **10 mph (16 km/h)**.
+
+**Note:** While it is currently comfortable in the city due to the marine layer (fog), meteorologists are tracking a heatwave expected to arrive later this week, which could bring much higher temperatures to the Bay Area by the weekend. For today, however, you can expect typical mild San Francisco summer weather.\
+""",
+                        provider_name='google-cloud',
+                        provider_details={'thought_signature': IsStr()},
+                    ),
+                ],
+                usage=RequestUsage(
+                    details={'thoughts_tokens': 456, 'text_prompt_tokens': 125, 'text_candidates_tokens': 250},
+                    input_tokens=125,
+                    output_tokens=706,
+                ),
+                model_name='gemini-3-flash-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-cloud',
+                provider_url='https://aiplatform.googleapis.com/',
+                provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
+                provider_response_id='6wlpatX_FviAjNsP4MPYsQw',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_google_vertexai_image_generation(

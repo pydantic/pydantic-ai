@@ -293,10 +293,12 @@ def _kill_leaked_temporal_server(port: int) -> None:
             check=False,
             timeout=2,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):  # pragma: lax no cover - no `ss` or unresponsive
+    except (FileNotFoundError, subprocess.TimeoutExpired):  # pragma: lax no cover
+        # No `ss` on this platform, or it was unresponsive.
         return
 
-    for line in result.stdout.splitlines():  # pragma: lax no cover - body fires only on a real leak
+    # The body fires only on a real leak, so it's covered on some runs and not on others.
+    for line in result.stdout.splitlines():  # pragma: lax no cover
         if 'temporal-sdk-py' not in line:
             continue
         match = re.search(r'pid=(\d+)', line)
@@ -3891,6 +3893,9 @@ def test_temporal_run_context_serializes_usage():
             input_tokens=123,
             output_tokens=456,
             details={'foo': 1},
+            future_tokens=7,
+            label='original',
+            zero_tokens=0,
         ),
         run_id='run-123',
     )
@@ -5463,9 +5468,10 @@ async def test_text_content_serialization_in_workflow(client: Client):
 
 def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Simple model function for durability tests that echoes the last user prompt."""
-    for msg in reversed(messages):  # pragma: no branch - first message always carries the prompt
-        for part in msg.parts:  # pragma: no branch - first part is always the UserPromptPart
-            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
+    # The first message always carries the prompt and its first part is always the `UserPromptPart`, so none branch.
+    for msg in reversed(messages):  # pragma: no branch
+        for part in msg.parts:  # pragma: no branch
+            if isinstance(part, UserPromptPart):  # pragma: no branch
                 return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
     return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
 
@@ -6278,8 +6284,9 @@ _missing_cap_agent = Agent(_durability_fn_model, name='no_cap_in_attr')
 class _MissingCapWorkflow:
     __pydantic_ai_agents__ = [_missing_cap_agent]
 
+    # `configure_worker` rejects before this can execute.
     @workflow.run
-    async def run(self, prompt: str) -> str:  # pragma: no cover - configure_worker rejects before exec
+    async def run(self, prompt: str) -> str:  # pragma: no cover
         result = await _missing_cap_agent.run(prompt)
         return result.output
 
@@ -6292,7 +6299,8 @@ async def test_pydantic_ai_plugin_rejects_bare_agent_without_durability(client: 
             task_queue=TASK_QUEUE,
             workflows=[_MissingCapWorkflow],
         ):
-            pass  # pragma: no cover - error raised before reaching here
+            # The error is raised before reaching here.
+            pass  # pragma: no cover
 
 
 # --- Toolset without ID raises UserError ---
@@ -6550,7 +6558,8 @@ def test_durability_tool_metadata_disables_activity():
     """Tool metadata={'temporal': False} disables activity wrapping for that tool."""
 
     async def slow_tool() -> str:
-        return 'slow'  # pragma: no cover - registered with toolset; test only verifies wrapping
+        # Registered with the toolset; the test only verifies wrapping.
+        return 'slow'  # pragma: no cover
 
     toolset = FunctionToolset[object](id='meta_toolset')
     toolset.add_function(slow_tool, metadata={'temporal': False})
@@ -6579,7 +6588,8 @@ def test_resolve_tool_activity_config_reads_metadata():
     fn_toolset = FunctionToolset[None](id='resolve_meta_toolset')
 
     async def fn_tool() -> str:
-        return 'ok'  # pragma: no cover - registered with toolset; test only resolves metadata
+        # Registered with the toolset; the test only resolves metadata.
+        return 'ok'  # pragma: no cover
 
     fn_toolset.add_function(fn_tool, metadata={'temporal': metadata_config})
     tool_def = ToolDefinition(name='fn_tool', metadata={'temporal': metadata_config})
@@ -7667,15 +7677,17 @@ _durability_mcp_dynamic_toolset_agent = Agent(
 
 @_durability_mcp_dynamic_toolset_agent.toolset(id='durability_mcp_toolset')
 def _durability_my_mcp_dynamic_toolset(ctx: RunContext[object]) -> MCPToolset[object]:
-    return MCPToolset('https://mcp.deepwiki.com/mcp')  # pragma: no cover - exercised only by the skipped test below
+    # Exercised only by the skipped test below.
+    return MCPToolset('https://mcp.deepwiki.com/mcp')  # pragma: no cover
 
 
 @workflow.defn
 class DurabilityMCPDynamicToolsetAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await _durability_mcp_dynamic_toolset_agent.run(prompt)  # pragma: no cover - skipped test
-        return result.output  # pragma: no cover - skipped test
+        # This body runs only under the skipped test below.
+        result = await _durability_mcp_dynamic_toolset_agent.run(prompt)  # pragma: no cover
+        return result.output  # pragma: no cover
 
 
 @pytest.mark.skip(
@@ -7720,8 +7732,9 @@ _durability_mcptoolset_agent = Agent(
 class DurabilityMCPToolsetAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await _durability_mcptoolset_agent.run(prompt)  # pragma: no cover - skipped test
-        return result.output  # pragma: no cover - skipped test
+        # This body runs only under the skipped test below.
+        result = await _durability_mcptoolset_agent.run(prompt)  # pragma: no cover
+        return result.output  # pragma: no cover
 
 
 @pytest.mark.skip(
@@ -8124,7 +8137,8 @@ async def _opted_out_runtime_tool() -> str:
     return 'tool-result'
 
 
-async def _not_opted_out_runtime_tool() -> str:  # pragma: no cover — rejected before any tool runs
+# Rejected before any tool runs.
+async def _not_opted_out_runtime_tool() -> str:  # pragma: no cover
     return 'other-result'
 
 

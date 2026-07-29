@@ -741,7 +741,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         """Whether the stream has been cancelled via `cancel()`."""
         if self._stream_response is not None:
             return self._stream_response.cancelled
-        return False  # pragma: no cover -- only reachable via wrap_run short-circuit (no stream)
+        # Only reachable via a `wrap_run` short-circuit, where there is no stream.
+        return False  # pragma: no cover
 
 
 class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
@@ -989,6 +990,7 @@ def _get_usage_checking_stream_response(
         async def _usage_checking_iterator():
             async for item in stream_response:
                 limits.check_tokens(get_usage())
+                limits.check_per_request_input_tokens(stream_response.usage.input_tokens)
                 yield item
 
         return _usage_checking_iterator()

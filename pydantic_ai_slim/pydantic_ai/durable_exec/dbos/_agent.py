@@ -53,6 +53,7 @@ DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """
 
 
+# TODO(v3): remove `DBOSAgent` in favor of the `DBOSDurability` capability, along with `DBOSDurability(register_legacy_workflows=...)` which exists solely to migrate off it
 @deprecated(
     """`DBOSAgent` is deprecated in favor of the `DBOSDurability` capability. Migrate each constructor argument as follows:
 - With the capability, call `agent.run()` inside a `@DBOS.workflow`; the wrapper did this automatically.

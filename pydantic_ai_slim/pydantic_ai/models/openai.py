@@ -701,6 +701,29 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     for more details.
     """
 
+    openai_reasoning_context: Literal['auto', 'current_turn', 'all_turns']
+    """The reasoning context to use, for models that support it.
+
+    Controls which prior-turn reasoning items the model can use when sampling: `auto` defers to the
+    model's own default (OpenAI treats it exactly like not sending the field), `current_turn` makes
+    only the active turn's reasoning available, and `all_turns` renders compatible reasoning items
+    from earlier turns into the next sample (requires access to earlier response items via
+    `previous_response_id`, a conversation, or replayed history).
+
+    When this setting is omitted, Pydantic AI sends `all_turns` on models that support it, so that
+    earlier-turn reasoning stays available by default. Set `auto` explicitly to defer to OpenAI's
+    own per-model default instead.
+
+    `auto` and `current_turn` are sent to any model that supports reasoning. `all_turns` is sent
+    only to models whose profile sets
+    [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context]
+    (currently the GPT-5.4, GPT-5.5, and GPT-5.6 families). A value the resolved profile doesn't
+    support is ignored.
+
+    See [OpenAI's reasoning context documentation](https://developers.openai.com/api/docs/guides/reasoning#preserve-reasoning-across-calls)
+    for more details.
+    """
+
     openai_reasoning_summary: Literal['detailed', 'concise', 'auto']
     """A summary of the reasoning performed by the model.
 
@@ -2689,6 +2712,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> Reasoning | Omit:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
         reasoning_mode = model_settings.get('openai_reasoning_mode', None)
+        reasoning_context = model_settings.get('openai_reasoning_context', None)
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)
 
         # Fall back to unified thinking when openai_reasoning_effort is not set
@@ -2700,6 +2724,24 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             reasoning['effort'] = reasoning_effort  # type: ignore[typeddict-item]
         if reasoning_mode and self.profile.get('openai_responses_supports_reasoning_mode', False):
             reasoning['mode'] = reasoning_mode
+        if reasoning_context is None:
+            # Default to `all_turns` on models that support it, so earlier-turn reasoning stays
+            # available without opting in — consistent with sending prior thinking (including
+            # "foreign" thinking parts from another model) back to every other model. Models
+            # without `all_turns` support get no `context` at all, never `auto`.
+            if self.profile.get('openai_responses_supports_reasoning_context', False):
+                reasoning['context'] = 'all_turns'
+        else:
+            # Support is per-value, not per-field: every reasoning model accepts `auto` and
+            # `current_turn`, while `all_turns` is limited to the families that persist reasoning
+            # across turns. Gating the whole field on the narrower fact would silently discard a
+            # value the user explicitly set.
+            if reasoning_context == 'all_turns':
+                supports_reasoning_context = self.profile.get('openai_responses_supports_reasoning_context', False)
+            else:
+                supports_reasoning_context = self.profile.get('openai_supports_reasoning', False)
+            if supports_reasoning_context:
+                reasoning['context'] = reasoning_context
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT
@@ -3828,7 +3870,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             _annotations_by_item: dict[str, list[Any]] = {}
             # Track `phase` (commentary | final_answer) on assistant message items, captured
             # from the `output_item.added` event and merged into the corresponding
-            # `TextPart.provider_details` on `output_text.done`.
+            # `TextPart.provider_details` on the first `output_text.delta` (so consumers can
+            # filter commentary from final-answer text as it streams, rather than having to
+            # buffer the whole part), or on `output_text.done` if no delta was received.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
             mcp_list_tools_return_ids: set[str] = set()
 
@@ -4223,11 +4267,17 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                     # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
                     if chunk.delta is not None:  # pyright: ignore[reportUnnecessaryComparison]
+                        # Pop so the phase rides along with the `PartStartEvent` for the new text part
+                        # and isn't repeated on every subsequent delta.
+                        delta_provider_details: dict[str, Any] | None = None
+                        if (phase := _phase_by_item.pop(chunk.item_id, None)) is not None:
+                            delta_provider_details = {'phase': phase}
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=chunk.item_id,
                             content=chunk.delta,
                             id=chunk.item_id,
                             provider_name=self.provider_name,
+                            provider_details=delta_provider_details,
                         ):
                             yield event
 

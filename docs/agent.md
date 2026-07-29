@@ -855,6 +855,29 @@ except UsageLimitExceeded as e:
 
 Tools and [capabilities](capabilities/overview.md) can read the run's limits from [`ctx.usage_limits`][pydantic_ai.tools.RunContext.usage_limits] (alongside [`ctx.usage`][pydantic_ai.tools.RunContext.usage] for usage so far), so a budget-aware tool or capability can disclose or adapt to the remaining budget without being configured with a duplicate copy of the limits. It reflects what the run is already enforcing and is read-only by convention.
 
+##### Limiting per-request input size
+
+The token limits above are cumulative across the whole run. To instead cap the size of any single request's input (the context window actually sent to the model), use `per_request_input_tokens_limit`. This is useful when prompt caching makes cumulative input a poor proxy for cost: re-sent cached prefixes are cheap, while a single oversized context is what degrades model performance and drives cache-miss cost.
+
+```py
+from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
+
+agent = Agent('anthropic:claude-sonnet-4-6')
+
+try:
+    agent.run_sync(
+        'What is the capital of Italy? Answer with just the city.',
+        usage_limits=UsageLimits(per_request_input_tokens_limit=10),
+    )
+except UsageLimitExceeded as e:
+    print(e)
+    """
+    Exceeded the per_request_input_tokens_limit of 10 (request_input_tokens=62). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    """
+```
+
+By default the limit is checked against the provider-reported input tokens after the response, so the oversized request is still sent and billed (matching `input_tokens_limit`). Set `count_tokens_before_request=True` to run a token-counting pass and enforce the limit before the request is sent.
+
 #### Model (Run) Settings
 
 Pydantic AI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSettings] structure to help you fine tune your requests.
