@@ -375,8 +375,8 @@ class InputTranscript:
     what it already transcribed instead of only extending it. Setting this lets the session adopt
     each snapshot as authoritative rather than guessing from prefixes whether the text appends;
     it surfaces the difference to callers as a
-    [`SpeechPartDelta.replaces_transcript`][pydantic_ai.messages.SpeechPartDelta.replaces_transcript]
-    update. Leave `False` for incremental deltas.
+    [`SpeechPartDelta.transcript`][pydantic_ai.messages.SpeechPartDelta.transcript] carrying the
+    corrected whole. Leave `False` for incremental deltas.
     """
 
 

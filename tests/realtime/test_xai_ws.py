@@ -167,8 +167,8 @@ async def test_audio_in_server_vad_turn(
         ]
     )
 
-    # Replaying the deltas in order reproduces the final transcript, so a UI rendering nothing but the
-    # deltas stays correct through the revision — provided it honours `replaces_transcript`.
+    # Every delta carries the turn's transcript so far, so rendering that one field is correct through
+    # the revision with no accumulating and no provider-specific branch.
     user_deltas = [
         event.delta
         for event in events
@@ -176,13 +176,10 @@ async def test_audio_in_server_vad_turn(
         and isinstance(event.delta, SpeechPartDelta)
         and event.delta.speaker == 'user'
     ]
-    assert [(delta.transcript_delta, delta.replaces_transcript) for delta in user_deltas] == snapshot(
-        [('Hello?', False), ('Hello, my name is', True), (' Marcelo.', False)]
+    assert [(delta.transcript_delta, delta.transcript) for delta in user_deltas] == snapshot(
+        [('Hello?', 'Hello?'), ('', 'Hello, my name is'), (' Marcelo.', 'Hello, my name is Marcelo.')]
     )
-    rendered = ''
-    for delta in user_deltas:
-        text = delta.transcript_delta or ''
-        rendered = text if delta.replaces_transcript else rendered + text
+    rendered = user_deltas[-1].transcript or ''
 
     messages = session.all_messages()
     user_speech = [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
