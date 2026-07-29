@@ -582,6 +582,8 @@ The `args_validator` parameter lets you define custom validation that runs after
 
 The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the arguments and try again, or raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a terminal failure the model should adapt to instead of retrying.
 
+A validator can also raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] to [defer the call](deferred-tools.md), just like the tool function itself can. The validator is the better place to make that decision: bad arguments are rejected before a human is asked to approve them.
+
 ```python {title="args_validator_approval.py"}
 from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
 
@@ -612,6 +614,54 @@ print(result.output.approvals[0].args)
 _(This example is complete, it can be run "as is")_
 
 When schema validation fails, or an `args_validator` raises `ModelRetry`, the error message is sent back to the LLM as a retry prompt (with instructions to try again) and respects the tool's `retries` setting. When an `args_validator` raises `ToolFailed`, the model instead receives a failed tool result it should adapt to rather than retry, and the retry budget is left untouched. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred.
+
+A validator that raises `ApprovalRequired` or `CallDeferred` doesn't consume the retry budget either — the arguments were valid, so the deferral is treated as a deliberate decision rather than a failure. The tool function is not executed, and the call joins the run's other [deferred tool calls](deferred-tools.md): it's resolved inline by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler if you have one, or surfaced in the run's `DeferredToolRequests` output. Once the call is approved, the validator runs again with [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] set to `True` and the tool executes:
+
+```python {title="args_validator_conditional_approval.py"}
+from pydantic_ai import (
+    Agent,
+    ApprovalRequired,
+    DeferredToolRequests,
+    ModelMessage,
+    ModelResponse,
+    ModelRetry,
+    RunContext,
+    TextPart,
+    ToolCallPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+agent = Agent(deps_type=int, output_type=[str, DeferredToolRequests])
+
+
+def validate_transfer(ctx: RunContext[int], amount: int) -> None:
+    if amount > ctx.deps:
+        raise ModelRetry(f'Amount must not exceed {ctx.deps}')  # (1)!
+    if amount > 100 and not ctx.tool_call_approved:
+        raise ApprovalRequired()  # (2)!
+
+
+@agent.tool(args_validator=validate_transfer)
+def transfer_funds(ctx: RunContext[int], amount: int) -> str:
+    return f'Transferred {amount}'
+
+
+def call_transfer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('transfer_funds', {'amount': 500})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+result = agent.run_sync('transfer 500', deps=1000, model=FunctionModel(call_transfer))
+assert isinstance(result.output, DeferredToolRequests)
+print(result.output.approvals[0].args)
+#> {'amount': 500}
+```
+
+1. The model can fix an impossible amount itself, without a human ever seeing the call.
+2. Only calls that made it past validation are put in front of a human.
+
+_(This example is complete, it can be run "as is")_
 
 The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions.
 
