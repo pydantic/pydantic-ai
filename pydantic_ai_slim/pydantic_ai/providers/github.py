@@ -54,6 +54,7 @@ class GitHubProvider(Provider[AsyncOpenAI]):
             'mistral-ai': mistral_model_profile,
             'cohere': cohere_model_profile,
             'deepseek': deepseek_model_profile,
+            'openai': openai_model_profile,
         }
 
         profile = None

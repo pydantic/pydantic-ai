@@ -106,7 +106,16 @@ def test_github_provider_model_profile(mocker: MockerFixture):
     assert unknown_profile is not None
     assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
+    # An unknown publisher prefix must NOT route to openai_model_profile.
+    openai_model_profile_mock.reset_mock()
     unknown_profile_with_prefix = provider.model_profile('unknown-publisher/some-unknown-model')
-    openai_model_profile_mock.assert_called_with('some-unknown-model')
+    openai_model_profile_mock.assert_not_called()
     assert unknown_profile_with_prefix is not None
     assert unknown_profile_with_prefix.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+    # The `openai/` prefix must route to openai_model_profile, preserving capability flags.
+    openai_profile_with_prefix = provider.model_profile('openai/o3')
+    openai_model_profile_mock.assert_called_with('o3')
+    assert openai_profile_with_prefix is not None
+    assert openai_profile_with_prefix.get('supports_thinking') is True
+    assert openai_profile_with_prefix.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
