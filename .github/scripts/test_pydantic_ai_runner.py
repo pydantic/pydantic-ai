@@ -682,7 +682,7 @@ def test_grep_falls_back_when_ripgrep_is_unavailable(tmp_path: Path, monkeypatch
 
     class _FakeShell:
         async def run_command(self, command: str, *, timeout_seconds: float) -> str:
-            assert command.startswith('grep -R -n -I -E ')
+            assert command.startswith('grep -r -n -I -E --exclude-dir=.git ')
             return '[stdout]\n./a.txt:2:NEEDLE here\n'
 
     class _FakeFs:
@@ -692,6 +692,25 @@ def test_grep_falls_back_when_ripgrep_is_unavailable(tmp_path: Path, monkeypatch
     monkeypatch.setattr(grep_mod, 'shell', lambda: _FakeShell())
     monkeypatch.setattr(grep_mod, 'filesystem', lambda: _FakeFs())
     assert 'a.txt:2:NEEDLE here' in asyncio.run(grep_mod.grep('NEEDLE', '.'))
+
+
+def test_grep_fallback_does_not_follow_workspace_symlinks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import importlib
+
+    grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'secret.txt').write_text('TOPSECRET\n', encoding='utf-8')
+    (workspace / 'outside-link').symlink_to(outside, target_is_directory=True)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
+
+    def no_ripgrep(command: str) -> None:
+        return None
+
+    monkeypatch.setattr(grep_mod.shutil, 'which', no_ripgrep)
+    assert asyncio.run(grep_mod.grep('TOPSECRET', '.')) == 'No matches found.'
 
 
 def test_glob_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

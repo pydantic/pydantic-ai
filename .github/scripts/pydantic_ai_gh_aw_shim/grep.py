@@ -61,7 +61,7 @@ async def grep(pattern: str, path: str = '.') -> str:
     if shutil.which('rg'):
         command = f'rg --line-number --no-heading --color never -e {shlex.quote(pattern)} -- {shlex.quote(path)}'
     else:
-        command = f'grep -R -n -I -E -e {shlex.quote(pattern)} -- {shlex.quote(path)}'
+        command = f'grep -r -n -I -E --exclude-dir=.git -e {shlex.quote(pattern)} -- {shlex.quote(path)}'
     # Preflight `path` through the filesystem containment check (an escape or a
     # missing path comes back as `ModelRetry`) before handing it to the shell.
     try:
