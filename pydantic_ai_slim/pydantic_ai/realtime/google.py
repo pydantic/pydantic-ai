@@ -154,7 +154,9 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Whether to transcribe input audio. Defaults to `True`.
 
     When `False`, user turns are recorded as retained audio when available, or as content-less
-    placeholders otherwise.
+    placeholders otherwise. Takes precedence over the shared
+    [`input_transcription_model`][pydantic_ai.realtime.RealtimeModelSettings.input_transcription_model],
+    whose `None` also turns transcription off here.
     """
     google_output_transcription: bool
     """Whether to transcribe output audio. Defaults to `True`.
@@ -717,6 +719,22 @@ class GoogleRealtimeModel(RealtimeModel):
             return False
         return True
 
+    def _input_transcription(self, settings: GoogleRealtimeModelSettings) -> bool:
+        """Whether to transcribe the user's audio.
+
+        Gemini has no separate transcription model to point at, so a *pinned* `input_transcription_model`
+        can't be honored — but `None` ("don't transcribe") can be, and must be: it's the setting someone
+        reaches for to keep the user's words out of history, and silently transcribing anyway would defeat
+        the one thing it exists to do. The provider-specific `google_input_transcription` still wins where
+        both are given.
+        """
+        if (enabled := settings.get('google_input_transcription')) is not None:
+            return enabled
+        # Absent and `None` are different here: only an explicit `None` asks for transcription off.
+        if 'input_transcription_model' in settings and settings['input_transcription_model'] is None:
+            return False
+        return True
+
     def _realtime_input_config(
         self, model_settings: GoogleRealtimeModelSettings
     ) -> genai_types.RealtimeInputConfig | None:
@@ -809,7 +827,7 @@ class GoogleRealtimeModel(RealtimeModel):
             config.system_instruction = instructions
         config.speech_config = self._speech_config(settings)
         transcription_language_codes = settings.get('google_transcription_language_codes')
-        if settings.get('google_input_transcription', True):
+        if self._input_transcription(settings):
             config.input_audio_transcription = genai_types.AudioTranscriptionConfig(
                 language_codes=transcription_language_codes
             )
@@ -937,7 +955,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 provider_name=self._provider.name,
                 dial=dial if reconnectable else None,
                 reconnect=self.reconnect if reconnectable else None,
-                input_transcription_enabled=settings.get('google_input_transcription', True),
+                input_transcription_enabled=self._input_transcription(settings),
                 async_tool_calls=self._async_tool_calls(settings),
             )
         finally:

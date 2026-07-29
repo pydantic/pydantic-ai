@@ -1050,6 +1050,11 @@ aren't universal. Each model reports its support through
 The profile also exposes `audio_input_sample_rate` and `audio_output_sample_rate`, in Hz. OpenAI,
 Azure OpenAI, and xAI use 24 kHz in both directions; Gemini uses 16 kHz input and 24 kHz output.
 
+A live session reports the same profile as
+[`RealtimeSession.profile`][pydantic_ai.realtime.RealtimeSession.profile], so code handed a model
+*name* rather than a model — `agent.realtime('google:gemini-3.1-flash-live-preview')` — can still read
+the rate to resample the microphone to, and the flags to branch on, from the session it holds.
+
 | [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] flag | Gates | OpenAI | Azure OpenAI | Gemini | xAI |
 | --- | --- | :---: | :---: | :---: | :---: |
 | [`supports_image_input`][pydantic_ai.realtime.RealtimeModelProfile.supports_image_input] | [`send`](#images) | ✅ | ✅ | ✅ | ❌ |

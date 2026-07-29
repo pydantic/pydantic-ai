@@ -712,6 +712,20 @@ class RealtimeSession:
         """Whether the session has been closed."""
         return self._closed
 
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        """What the connected model supports, as [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile].
+
+        Available here because the session is what a call actually holds: `agent.realtime()` accepts a
+        model *name* and builds the model itself, leaving nothing else to read the profile from. The field
+        most code needs is
+        [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeModelProfile.audio_input_sample_rate] —
+        the rate to resample the microphone to before
+        [`send_audio`][pydantic_ai.realtime.RealtimeSession.send_audio], since sending audio at the wrong
+        rate is heard as a chipmunk rather than reported as an error.
+        """
+        return self._profile
+
     async def stream_audio(self) -> AsyncIterator[bytes]:
         """Stream model audio chunks ready for playback.
 
@@ -914,7 +928,12 @@ class RealtimeSession:
                     return
 
     async def send_audio(self, data: bytes) -> None:
-        """Stream a chunk of audio to the model."""
+        """Stream a chunk of mono PCM16 audio to the model.
+
+        Resample it to [`profile`][pydantic_ai.realtime.RealtimeSession.profile]'s
+        `audio_input_sample_rate` first (24 kHz on the OpenAI-protocol providers, 16 kHz on Gemini):
+        raw bytes carry no rate, so the wrong one is heard as a chipmunk rather than reported.
+        """
         user_turn_was_active = self._user_turn_active
         if not user_turn_was_active:
             # Audio starting is the earliest sign of a user turn, and the only one on a provider that

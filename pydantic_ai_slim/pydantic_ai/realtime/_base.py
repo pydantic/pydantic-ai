@@ -154,8 +154,11 @@ class RealtimeModelSettings(TypedDict, total=False):
 
     `'auto'` (the default) uses the provider's recommended realtime transcription model; pass a
     specific id (e.g. `'gpt-4o-transcribe'`) to pin one, or `None` to disable transcription (see
-    `audio_retention` to retain the raw audio instead). Gemini transcribes natively and ignores
-    this; use `google_input_transcription`.
+    `audio_retention` to retain the raw audio instead).
+
+    `None` turns transcription off on every provider. A *pinned* id applies only to the providers that
+    transcribe with a separate model — Gemini transcribes natively, with no model to point at, and
+    ignores it (`google_input_transcription` configures Gemini's own transcription).
     """
 
     output_modality: Literal['audio', 'text']
@@ -203,7 +206,9 @@ class AudioInput:
     """A chunk of audio data to stream to the model."""
 
     data: bytes
-    """Raw PCM audio bytes. The expected sample rate is provider-specific."""
+    """Raw mono PCM16 audio bytes, at the model's
+    [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeModelProfile.audio_input_sample_rate]
+    (read it from [`RealtimeSession.profile`][pydantic_ai.realtime.RealtimeSession.profile])."""
 
 
 @dataclass

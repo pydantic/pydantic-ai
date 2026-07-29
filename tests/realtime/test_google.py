@@ -532,6 +532,28 @@ def test_config_minimal_text_no_transcription_no_vad() -> None:
     assert config.max_output_tokens is None
 
 
+def test_shared_input_transcription_none_turns_gemini_transcription_off() -> None:
+    """`input_transcription_model=None` means "don't transcribe" on Gemini too.
+
+    Gemini has no separate transcription model, so a pinned id can't be honored and is ignored — but the
+    `None` that asks for transcription *off* is the whole point of the setting for anyone keeping the
+    user's words out of history, so Gemini must honor it rather than transcribe anyway. Kept a unit test
+    because it's the request payload that has to change, which a cassette match isn't sensitive to.
+    """
+    off = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(input_transcription_model=None))
+    assert off._config('', None, None).input_audio_transcription is None  # pyright: ignore[reportPrivateUsage]
+
+    # A pinned id can't be pointed at anything, so transcription stays on, as documented.
+    pinned = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(input_transcription_model='gpt-4o-transcribe'))
+    assert pinned._config('', None, None).input_audio_transcription is not None  # pyright: ignore[reportPrivateUsage]
+
+    # The provider-specific setting wins where both are given, in either direction.
+    both_on = GoogleRealtimeModel(
+        settings=GoogleRealtimeModelSettings(input_transcription_model=None, google_input_transcription=True)
+    )
+    assert both_on._config('', None, None).input_audio_transcription is not None  # pyright: ignore[reportPrivateUsage]
+
+
 def test_config_forwards_only_present_model_settings() -> None:
     # `model_settings` is non-empty but carries none of the forwarded fields → all stay unset
     # (`presence_penalty` has no Gemini Live equivalent and is ignored).
