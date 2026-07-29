@@ -65,6 +65,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     CachePoint,
+    FinishReason,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
@@ -1402,7 +1403,9 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
 
 
 @pytest.mark.parametrize('finish_reason, expected', [('length', 'length'), ('tool_call', 'tool_call')])
-async def test_xai_stream_text_finish_reason_non_stop(allow_model_requests: None, finish_reason: str, expected: str):
+async def test_xai_stream_text_finish_reason_non_stop(
+    allow_model_requests: None, finish_reason: str, expected: FinishReason
+):
     # Regression test for https://github.com/pydantic/pydantic-ai/issues/6840:
     # streamed non-`stop` finish reasons were always reported as `stop` because
     # `_FINISH_REASON_MAP` was keyed on lowercase strings that never matched the
