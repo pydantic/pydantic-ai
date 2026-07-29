@@ -185,6 +185,32 @@ def test_instrumentation_default_settings() -> None:
     assert isinstance(instr.settings, InstrumentationSettings)
 
 
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumentation_removes_binary_content_from_nested_lists(
+    allow_model_requests: None, capfire: CaptureLogfire
+):
+    def image_list() -> list[BinaryImage]:
+        return [BinaryImage(data=b'secret', media_type='image/png')]
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='image_list', args={})])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        tools=[image_list],
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=False))],
+    )
+    await agent.run('Generate images')
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    tool_span = next(span for span in spans if span['name'] == 'execute_tool image_list')
+    assert tool_span['attributes']['gen_ai.tool.call.result'] == snapshot(
+        [{'media_type': 'image/png', 'vendor_metadata': None, 'kind': 'binary', 'identifier': IsStr()}]
+    )
+
+
 def test_agent_from_spec_basic():
     """Test Agent.from_spec with basic capabilities."""
     agent = Agent.from_spec(
@@ -7723,6 +7749,7 @@ class TestImageGenerationCapability:
                 output_compression=80,
                 output_format='jpeg',
                 quality='low',
+                size='1024x1024',
                 dimensions=(1024, 1024),
             )
         agent = Agent(
@@ -7741,6 +7768,14 @@ class TestImageGenerationCapability:
         assert len(tool_returns) == 1
         assert isinstance(tool_returns[0].content, BinaryImage)
         assert tool_returns[0].content.media_type == 'image/png'
+
+        aspect_ratio_model = TestImageGenerationModel()
+        aspect_ratio_agent = Agent(
+            outer_model,
+            capabilities=[ImageGeneration(native=False, local=aspect_ratio_model, aspect_ratio='1:1')],
+        )
+        await aspect_ratio_agent.run('Generate an image')
+        assert aspect_ratio_model.last_settings == {'aspect_ratio': '1:1'}
 
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
     async def test_image_generation_direct_fallback_instrumentation_omits_binary_tool_result(

@@ -592,6 +592,10 @@ class TestValidateAndResolveUrl:
 class TestSafeDownload:
     """Tests for safe_download function."""
 
+    async def test_negative_max_bytes_rejected(self) -> None:
+        with pytest.raises(ValueError, match='max_bytes must be non-negative'):
+            await safe_download('https://example.com/file.txt', max_bytes=-1)
+
     async def test_successful_download(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         mock_response = AsyncMock()
         mock_response.is_redirect = False

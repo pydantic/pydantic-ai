@@ -1168,6 +1168,11 @@ def mock_infer_image_generation_model(model: ImageGenerationModel | str) -> Imag
     return TestImageGenerationModel(actual_model.model_name, provider_name=actual_model.system)
 
 
+def test_mock_infer_image_generation_model_preserves_instance():
+    model = TestImageGenerationModel()
+    assert mock_infer_image_generation_model(model) is model
+
+
 def mock_infer_model(model: Model | KnownModelName) -> Model:
     if model == 'test':
         return TestModel()

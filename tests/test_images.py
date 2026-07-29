@@ -452,6 +452,9 @@ def test_openai_geometry_conflicts_and_invalid_compatibility_sizes():
         openai_geometry.resolve_openai_dimensions('gpt-image-1', (2048, 2048))
     assert openai_geometry.resolve_openai_dimensions('gpt-image-1', (1024, 1024)) == '1024x1024'
 
+    assert openai_geometry.resolve_openai_compatibility_size('gpt-image-1', 'auto') == 'auto'
+    assert openai_geometry.resolve_openai_compatibility_size('gpt-image-1', '1280x720') is None
+    assert openai_geometry.resolve_openai_compatibility_size('gpt-image-2', '1280x720') == '1280x720'
     assert openai_geometry.resolve_openai_compatibility_size('gpt-image-2', 'invalid') is None
     assert not openai_geometry.size_matches_aspect_ratio('invalid', '1:1')
     assert openai_geometry.parse_dimensions('invalidx10') is None
@@ -2793,6 +2796,25 @@ async def test_instrumentation(capfire: CaptureLogfire):
         'gen_ai.token.type': 'input',
     }
     assert data_points[0]['sum'] == 2
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumentation_omits_empty_recorded_settings(capfire: CaptureLogfire):
+    generator = ImageGenerator(
+        TestImageGenerationModel(),
+        instrument=InstrumentationSettings(include_model_request_parameters=True),
+    )
+    await generator.generate(
+        'tiny robot',
+        settings={
+            'extra_headers': {'authorization': 'Bearer test'},
+            'extra_body': {'application_data': 'test'},
+        },
+    )
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    span = next(span for span in spans if 'image_generation' in span['name'])
+    assert 'image_generation_settings' not in span['attributes']
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
