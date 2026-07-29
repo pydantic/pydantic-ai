@@ -65,6 +65,9 @@ class _RequestParams:
     model_request_parameters: ModelRequestParameters
     serialized_run_context: Any
     model_id: str | None = None
+    # Defaults to `False` so activities scheduled by an older worker (whose payloads have no such
+    # field) still decode, and keep rebuilding their `model_id` via `infer_model` as they did then.
+    from_unregistered_instance: bool = False
 
 
 @dataclass
@@ -72,6 +75,7 @@ class _CancelParams:
     response: ModelResponse
     model_id: str | None = None
     serialized_run_context: Any = None
+    from_unregistered_instance: bool = False
 
 
 @dataclass
@@ -200,10 +204,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 / `agent.override(model=...)`, or swapped in by an outer capability)
                 is sent as its `model_id` string and rebuilt on the worker by
                 registry lookup, then the agent's `resolve_model_id` capability
-                chain / `infer_model`. Register an instance here (and reference it
-                by key or pass the registered instance) whenever its `model_id`
-                alone wouldn't rebuild it faithfully — e.g. a custom provider,
-                client, or settings. Model-name strings never need registering;
+                chain / `infer_model`. An instance neither the registry nor the
+                chain identifies raises a `UserError` instead of being rebuilt
+                from its `model_id` alone, which would drop the provider, client,
+                and settings it was built with: register it here and reference it
+                by key (or pass the registered instance). Model-name strings never need registering;
                 to customize how they're built (e.g. a custom provider), use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional event stream handler. Model events are handled
@@ -312,7 +317,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
-            model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
+            model_for_request = await self._resolve_model_for_request(
+                params.model_id, run_context, from_unregistered_instance=params.from_unregistered_instance
+            )
             async with _heartbeating():
                 with set_current_run_context(run_context):
                     return await model_for_request.request(
@@ -328,7 +335,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
-            model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
+            model_for_request = await self._resolve_model_for_request(
+                params.model_id, run_context, from_unregistered_instance=params.from_unregistered_instance
+            )
             async with _heartbeating():
                 with set_current_run_context(run_context):
                     async with model_for_request.request_stream(
@@ -374,7 +383,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 run_context = deserialize_run_context(
                     run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
                 )
-                model = await self._resolve_model_for_request(params.model_id, run_context)
+                model = await self._resolve_model_for_request(
+                    params.model_id, run_context, from_unregistered_instance=params.from_unregistered_instance
+                )
             # The cancel activity shares `_model_activity_config`, whose default `heartbeat_timeout`
             # would otherwise fail a slow provider-teardown call for missed heartbeats.
             async with _heartbeating():
@@ -495,7 +506,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         # a model swapped in by an outer capability falls back to `_find_model_id` on
         # `request_context.model` (which an outer instrumentation capability may have
         # already unwrapped — instances are unwrap-matched by identity).
-        model_id = self._model_id_for_request(ctx, request_context)
+        model_selection = self._model_id_for_request(ctx, request_context)
+        model_id = model_selection.model_id
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         model_name = model_id or request_context.model.model_id
         deps = ctx.deps
@@ -507,6 +519,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 request.model_request_parameters,
                 serialized_run_context,
                 model_id,
+                model_selection.from_unregistered_instance,
             )
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
@@ -544,6 +557,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                         response=response,
                         model_id=model_id,
                         serialized_run_context=serialized_run_context,
+                        from_unregistered_instance=model_selection.from_unregistered_instance,
                     ),
                     deps,
                 ],

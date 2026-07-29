@@ -4,6 +4,7 @@ import copy
 from abc import abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from typing_extensions import Self
@@ -30,6 +31,25 @@ from ._utils import unwrap_model
 _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
 
+@dataclass(frozen=True)
+class ModelIdSelection:
+    """The identifier a request's model crosses the durable boundary as, and where it came from."""
+
+    model_id: str | None
+    """`None` for the agent's default model, otherwise a `models=` registry key, a model-name string
+    the caller wrote (or that a resolver resolved from), or an unregistered `Model` instance's own
+    [`model_id`][pydantic_ai.models.Model.model_id]."""
+
+    from_unregistered_instance: bool = False
+    """Whether `model_id` is an unregistered `Model` instance's own identity rather than a string a
+    caller wrote or a registry key.
+
+    Rebuilding a model from such a string can't reproduce the instance's provider, client, or
+    settings, so `_resolve_model_for_request` refuses to `infer_model` it — sending the request to
+    a different endpoint with different credentials — once the `resolve_model_id` chain has declined.
+    """
+
+
 class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     """Shared base for the durable-execution capabilities (Temporal, DBOS, Prefect).
 
@@ -38,7 +58,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     carries a `model_id` string (`None` for the agent's default, a `models=` registry
     key, or a model-name string) and the model is rebuilt on the other side — deps-aware,
     via the agent's full [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id]
-    capability chain, with the registry as backstop. Subclasses call
+    capability chain, with the registry as backstop. An unregistered `Model` instance's own
+    `model_id` doesn't faithfully identify it, so a request carrying one fails on the worker
+    (rather than quietly reaching a different endpoint) unless the chain claims that string.
+    Subclasses call
     [`_bind_models`][pydantic_ai.durable_exec._base.BaseDurabilityCapability._bind_models] on the
     bound copy in `for_agent`, [`_find_model_id`][pydantic_ai.durable_exec._base.BaseDurabilityCapability._find_model_id]
     on the workflow/flow side, and
@@ -354,25 +377,28 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """
         return self._models_by_id.get(model_id)
 
-    def _model_id_for_request(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> str | None:
+    def _model_id_for_request(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelIdSelection:
         """The cross-boundary identifier for this request's model.
 
         Prefer the original model-id string the run's model was resolved from
         ([`ModelRequestContext.model_id`][pydantic_ai.models.ModelRequestContext.model_id]) when the
         request still targets the run's model: it survives aliases that the resolved model's own
-        `model_id` doesn't (the worker-side chain re-resolves the same string the caller wrote). A
-        model swapped in by an outer capability's `before_model_request` invalidates the provenance,
-        so it falls back to `_find_model_id`.
+        `model_id` doesn't (the worker-side chain re-resolves the same string the caller wrote), and
+        it faithfully identifies the model because the worker resolves exactly what the caller
+        wrote. A model swapped in by an outer capability's `before_model_request` invalidates the
+        provenance, so it falls back to `_find_model_id`.
         """
         provenance = request_context.model_id
         if provenance is not None and unwrap_model(request_context.model) is unwrap_model(ctx.model):
-            return provenance
+            return ModelIdSelection(provenance)
         return self._find_model_id(request_context.model)
 
-    def _find_model_id(self, model: Model) -> str | None:
+    def _find_model_id(self, model: Model) -> ModelIdSelection:
         """Find the cross-boundary identifier for a `Model` instance.
 
-        Returns `None` for the agent's default model (no extra info needed),
+        The `model_id` is `None` for the agent's default model (no extra info needed),
         a registry key when an instance from `models=` is being used, or the
         model's own `model_id` string otherwise. The activity/step/task uses the
         result to rebuild the same `Model` on the other side via
@@ -389,22 +415,29 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         string (via `resolve_model_id`) and models an outer capability swaps in
         via `before_model_request`: the worker rebuilds them by looking the
         `model_id` up in the registry, then falling back to the `resolve_model_id`
-        capability chain / `infer_model`. This round-trip only reproduces a model
-        that the chain or `infer_model` (or the registry under that `model_id`)
-        can rebuild — a pre-built instance with a custom provider, client, or
-        settings that isn't registered in `models=` will not survive it faithfully.
+        capability chain. Because that string is the instance's own identity rather than
+        something a caller wrote, the result is flagged
+        [`from_unregistered_instance`][pydantic_ai.durable_exec._base.ModelIdSelection.from_unregistered_instance]:
+        rebuilding it with `infer_model` could quietly reach a different endpoint with different
+        credentials, so `_resolve_model_for_request` raises instead.
         """
         candidate: Model | None = model
         while candidate is not None:
             for model_id, registered in self._models_by_id.items():
                 if registered is candidate:
-                    return None if model_id == 'default' else model_id
+                    return ModelIdSelection(None if model_id == 'default' else model_id)
             candidate = candidate.wrapped if isinstance(candidate, WrapperModel) else None
-        # Runtime-built or swapped-in Model: round-trip via its model_id string. The worker
-        # rebuilds it the same way (registry lookup → resolve_model_id chain → infer_model).
-        return model.model_id
+        # Runtime-built or swapped-in Model: round-trip via its model_id string, which the worker
+        # can only turn back into this exact instance through the `resolve_model_id` chain.
+        return ModelIdSelection(model.model_id, from_unregistered_instance=True)
 
-    async def _resolve_model_for_request(self, model_id: str | None, run_context: RunContext[AgentDepsT]) -> Model:
+    async def _resolve_model_for_request(
+        self,
+        model_id: str | None,
+        run_context: RunContext[AgentDepsT],
+        *,
+        from_unregistered_instance: bool = False,
+    ) -> Model:
         """Rebuild the `Model` for a request inside the activity/step/task, deps-aware.
 
         Mirrors the workflow-side resolution in `Agent._resolve_model_selection`: run the agent's
@@ -412,6 +445,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         `ResolveModelId` get first crack, and this capability's registry resolution
         acts as the durable backstop — so a model whose provider depends on the run's
         deps is rebuilt with the *actual* deps on the worker rather than deps-blind.
+
+        Once the chain has declined, `infer_model` is only a faithful rebuild for a string a caller
+        wrote; for the `model_id` of an unregistered `Model` instance
+        (`from_unregistered_instance`) it would build a *different* model — the same model name on
+        the default provider, so a different endpoint and different credentials — so that raises
+        instead. `from_unregistered_instance` defaults to `False` so payloads recorded by an older
+        worker keep their original behavior.
         """
         if model_id is None:
             return self._models_by_id['default']
@@ -425,18 +465,31 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             resolved = await root_capability.resolve_model_id(resolution_ctx, model_id=model_id)
             if resolved is not None:
                 return resolved
+        if from_unregistered_instance:
+            raise UserError(
+                f'The `Model` instance used for this request cannot be rebuilt on the {self.engine_name} '
+                'worker. A `Model` instance cannot be serialized across the durable boundary, so it is '
+                f'sent as its `model_id` string {model_id!r}, and rebuilding it from that string would '
+                'silently drop the provider, client, and settings it was built with (e.g. a custom '
+                f'`base_url` or API key). {self._model_rebuild_escape_hatches()}'
+            )
         try:
             return infer_model(model_id)
         except (UserError, ValueError) as e:
-            # The usual culprit: an unregistered `Model` instance was passed at run time,
-            # crossed the boundary as its `model_id` string, and that string can't be fed
-            # back through `infer_model` (e.g. `'function:...'`, `'test:test'`). Point at
-            # the registration escape hatches instead of surfacing a bare 'Unknown model'.
+            # The string a caller wrote (or a resolver resolved from) is not one `infer_model` can
+            # build, and no capability in the chain claimed it — e.g. an alias that only a
+            # `ResolveModelId` on the workflow side knows. Point at the escape hatches instead of
+            # surfacing a bare 'Unknown model'.
             raise UserError(
-                f'The model {model_id!r} could not be rebuilt on the {self.engine_name} worker. '
-                'A `Model` instance cannot be serialized across the durable boundary, so it is '
-                'sent as its `model_id` string and rebuilt on the other side. Register the '
-                f'instance in `models=` on `{type(self).__name__}` and reference it by key '
-                '(or pass the registered instance), or resolve the string with a '
-                '`ResolveModelId` capability.'
+                f'The model {model_id!r} could not be rebuilt on the {self.engine_name} worker: it is not '
+                'a model name `infer_model` can build, and no `resolve_model_id` capability claimed it. '
+                f'{self._model_rebuild_escape_hatches()}'
             ) from e
+
+    def _model_rebuild_escape_hatches(self) -> str:
+        """The ways to get a model the worker can't rebuild from a string across the boundary."""
+        return (
+            f'Register the instance in `models=` on `{type(self).__name__}` and reference it by key '
+            '(or pass the registered instance), pass a model-name string instead of a pre-built '
+            'instance, or resolve the string with a `ResolveModelId` capability.'
+        )

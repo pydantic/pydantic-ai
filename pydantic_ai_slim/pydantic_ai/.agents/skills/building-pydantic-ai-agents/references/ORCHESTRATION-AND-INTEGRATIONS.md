@@ -85,6 +85,8 @@ Temporal entry points:
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
+A run-time `model=` inside a workflow must be a model-name string, an instance registered in the durability capability's `models=`, or a string a `ResolveModelId` capability claims: an unregistered `Model` instance raises a `UserError`, because it crosses the boundary as its `model_id` string and rebuilding it from that alone would drop its provider, client, and settings.
+
 ## Handle MCP Tool Errors
 
 Set `MCPToolset(tool_error_behavior=...)` according to the server error semantics:
