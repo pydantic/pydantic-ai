@@ -467,7 +467,7 @@ async def drain_node_event_stream(
             async for _event in model_stream:
                 pass
     elif isinstance(node, CallToolsNode):
-        if node._events_iterator is not None:  # pyright: ignore[reportPrivateUsage]
+        if node._wrapped_events_iterator is not None:  # pyright: ignore[reportPrivateUsage]
             return
         async with node.stream(ctx) as tool_stream:
             async for _event in tool_stream:
@@ -1718,6 +1718,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     """
 
     _events_iterator: AsyncIterator[_messages.HandleResponseEvent] | None = field(default=None, init=False, repr=False)
+    _wrapped_events_iterator: AsyncIterator[_messages.AgentStreamEvent] | None = field(
+        default=None, init=False, repr=False
+    )
     _next_node: ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]] | None = field(
         default=None, init=False, repr=False
     )
@@ -1742,13 +1745,29 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> AsyncGenerator[AsyncIterator[_messages.AgentStreamEvent]]:
         """Process the model response and yield events for the start and end of each function tool call."""
-        inner = _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
-        stream = aiter(ctx.deps.root_capability.wrap_run_event_stream(build_run_context(ctx), stream=inner))
+        stream = self._wrapped_stream(ctx)
         yield stream
 
         # Run the stream to completion if it was not finished:
         async for _event in stream:
             pass
+
+    def _wrapped_stream(
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
+    ) -> AsyncIterator[_messages.AgentStreamEvent]:
+        """This node's events, wrapped in the capability chain exactly once.
+
+        `run()` enters `stream()` itself, so a caller that already streamed this node under
+        `agent.iter()` makes that the second entry. The wrapper has to be built once and reused:
+        rebuilding it would run every capability's `wrap_run_event_stream` again over an exhausted
+        stream, duplicating whatever setup or teardown it does outside its own iteration.
+        """
+        if self._wrapped_events_iterator is None:
+            inner = _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
+            self._wrapped_events_iterator = aiter(
+                ctx.deps.root_capability.wrap_run_event_stream(build_run_context(ctx), stream=inner)
+            )
+        return self._wrapped_events_iterator
 
     async def _run_stream(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]

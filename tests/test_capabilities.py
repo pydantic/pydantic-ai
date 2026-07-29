@@ -6639,6 +6639,54 @@ class TestProcessEventStream:
             ]
         )
 
+    @pytest.mark.parametrize('drive', ['run', 'bare_async_for', 'next', 'manual_stream'])
+    async def test_handler_invoked_once_per_streamed_node(self, drive: str):
+        """The handler is invoked once per streamed node, not once per `stream()` entry.
+
+        `CallToolsNode.run()` enters `stream()` itself, so the node's stream is entered a second
+        time after it has been consumed. Rebuilding the capability chain there would re-run every
+        handler over an exhausted stream, duplicating any setup it does outside its own iteration —
+        invisible in the event list (the second pass yields nothing) but not in its side effects.
+        """
+        invocations: list[int] = []
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            count = 0
+            async for _event in stream:
+                count += 1
+            invocations.append(count)
+
+        agent = Agent(
+            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
+            capabilities=[ProcessEventStream(handler=handler)],
+        )
+
+        @agent.tool_plain
+        def get_thing() -> str:
+            return 'thing'
+
+        if drive == 'run':
+            await agent.run('hello')
+        else:
+            async with agent.iter('hello') as agent_run:
+                if drive == 'bare_async_for':
+                    async for _node in agent_run:
+                        pass
+                else:
+                    node = agent_run.next_node
+                    while not isinstance(node, End):
+                        if drive == 'manual_stream' and (
+                            Agent.is_model_request_node(node) or Agent.is_call_tools_node(node)
+                        ):
+                            async with node.stream(agent_run.ctx) as stream:
+                                async for _event in stream:
+                                    pass
+                        node = await agent_run.next(node)
+
+        # One entry per streamed node: two model requests and the two response-handling nodes
+        # between and after them. No trailing zero-event entries from a re-entered stream.
+        assert invocations == snapshot([2, 2, 3, 0])
+
     async def test_processor_transforms_events_seen_by_manual_stream(self):
         """A processor's transformations reach a caller streaming a node by hand under `iter()`.
 
@@ -12965,6 +13013,49 @@ class TestNodeStreamingWithHooks:
 
         assert output == 'streamed response'
         assert model_call_count == 1, f'Model was called {model_call_count} times, expected 1'
+
+    async def test_run_stream_skips_wrap_and_after_for_the_final_model_request(self):
+        """`run_stream()` hands back the result mid-stream, so the final `ModelRequestNode` only gets `before_node_run`.
+
+        Pinning the documented exception to "node hooks fire however the run is driven": that node's
+        `wrap_node_run`/`after_node_run` are deliberately skipped, while the `SetFinalResult` node
+        that ends the run gets the full lifecycle.
+        """
+        log: list[str] = []
+
+        @dataclass
+        class NodeHookCap(AbstractCapability[Any]):
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                log.append(f'before:{type(node).__name__}')
+                return node
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                log.append(f'wrap:{type(node).__name__}')
+                return await handler(node)
+
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                log.append(f'after:{type(node).__name__}')
+                return result
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[NodeHookCap()],
+        )
+
+        async with agent.run_stream('hello') as streamed:
+            await streamed.get_output()
+
+        assert log == snapshot(
+            [
+                'before:UserPromptNode',
+                'wrap:UserPromptNode',
+                'after:UserPromptNode',
+                'before:ModelRequestNode',
+                'before:SetFinalResult',
+                'wrap:SetFinalResult',
+                'after:SetFinalResult',
+            ]
+        )
 
     async def test_on_node_run_error_fires_in_run_stream(self):
         """on_node_run_error in run_stream() fires when wrap_node_run raises during graph advancement."""
