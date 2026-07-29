@@ -134,6 +134,17 @@ async def test_bedrock_embedding_model_blocks_requests_when_disabled():
             await model.embed('hello', input_type='query')
 
 
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='bedrock not installed')
+@pytest.mark.parametrize('max_concurrency', [0, -1])
+async def test_bedrock_embedding_concurrent_rejects_invalid_max_concurrency(max_concurrency: int):
+    """bedrock_max_concurrency < 1 must raise UserError before any boto3/network call (it would otherwise deadlock at 0 or raise anyio's internal ValueError at <0)."""
+    model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=BedrockProvider(bedrock_client=MagicMock()))
+    embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_max_concurrency=max_concurrency))
+
+    with pytest.raises(UserError, match='bedrock_max_concurrency must be >= 1'):
+        await embedder.embed_documents(['hello', 'world'])
+
+
 @pytest.mark.skipif(not voyageai_imports_successful(), reason='voyageai not installed')
 async def test_voyageai_embedding_model_blocks_requests_when_disabled():
     model = VoyageAIEmbeddingModel('voyage-4', provider=VoyageAIProvider(api_key='test-key'))

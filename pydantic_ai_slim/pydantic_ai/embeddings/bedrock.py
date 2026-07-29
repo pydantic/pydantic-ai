@@ -613,6 +613,8 @@ class BedrockEmbeddingModel(EmbeddingModel):
     ) -> EmbeddingResult:
         """Embed inputs concurrently with controlled parallelism and combine results."""
         max_concurrency = settings.get('bedrock_max_concurrency', 5)
+        if max_concurrency < 1:
+            raise UserError(f'bedrock_max_concurrency must be >= 1, got {max_concurrency}.')
         semaphore = anyio.Semaphore(max_concurrency)
 
         results: list[tuple[Sequence[float], int]] = [None] * len(inputs)  # type: ignore[list-item]
