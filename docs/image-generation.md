@@ -88,9 +88,9 @@ async def main():
 
 Settings are applied on a best-effort basis. A provider adapter warns when it cannot apply an explicit setting.
 
-OpenAI transparent backgrounds require `openai_output_format='png'` or `'webp'`. GPT Image 2 does not support
-transparent backgrounds in any format. The OpenAI adapter raises [`UserError`][pydantic_ai.exceptions.UserError] for
-both cases before sending a paid request; see the [OpenAI image-generation notes](models/openai.md#image-generation).
+OpenAI transparent backgrounds require `openai_output_format='png'` or `'webp'`, and model support varies.
+Provider-specific settings are forwarded so the provider remains the authority on current model support; see the
+[OpenAI image-generation notes](models/openai.md#image-generation).
 
 ### Output Geometry
 

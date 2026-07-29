@@ -8125,8 +8125,9 @@ class TestImageGenerationCapability:
             UserError,
             match=re.escape(
                 f'{model_name!r} is a dedicated image generation model that cannot be used as '
-                f'`fallback_model` directly. Use a conversational model with image generation '
-                f'support instead, e.g. {suggestion!r}.'
+                f'`fallback_model` directly. Pass an `ImageGenerator` with a direct image model '
+                f'to `local` instead, or use a conversational model with image generation support, '
+                f'e.g. {suggestion!r}.'
             ),
         ):
             ImageGeneration(fallback_model=f'{provider}:{model_name}')

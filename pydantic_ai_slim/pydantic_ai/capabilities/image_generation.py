@@ -11,7 +11,6 @@ from pydantic_ai.images import (
     ImageGenerationAspectRatio,
     ImageGenerationModel,
     ImageGenerationSettings,
-    ImageGenerationSize,
     ImageGenerator,
 )
 from pydantic_ai.messages import BinaryImage
@@ -161,7 +160,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     Supported by: OpenAI Responses.
     """
 
-    size: ImageGenerationSize | None
+    size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None
     """Size of the generated image for the native tool.
 
     Direct image APIs use provider-prefixed size or resolution settings.
@@ -209,7 +208,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
-        size: ImageGenerationSize | None = None,
+        size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None,
         dimensions: ImageDimensions | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,
         id: str | None = None,
@@ -257,7 +256,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
-        size: ImageGenerationSize | None = None,
+        size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None,
         dimensions: ImageDimensions | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,
         id: str | None = None,

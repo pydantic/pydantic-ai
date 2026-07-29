@@ -406,13 +406,6 @@ def test_google_geometry_profiles_conflicts_and_unknown_models():
     assert google_geometry.resolve_google_aspect_ratio('future-image-model', '1:2') == ('1:2', None)
     assert google_geometry.resolve_google_aspect_ratio('gemini-3-pro-image', '1:2') is None
     assert google_geometry.resolve_google_dimensions('gemini-3-pro-image', (1024, 1024)) == ('1:1', '1K')
-    assert google_geometry.google_supports_image_size('gemini-3.1-flash-lite-image', '1K')
-    assert not google_geometry.google_supports_image_size('gemini-3.1-flash-lite-image', '4K')
-    assert google_geometry.google_supports_image_size('gemini-3.1-flash-image', '512')
-    assert google_geometry.google_supports_image_size('gemini-3-pro-image', '4K')
-    assert not google_geometry.google_supports_image_size('gemini-3-pro-image', '512')
-    assert not google_geometry.google_supports_image_size('gemini-2.5-flash-image', '1K')
-    assert google_geometry.google_supports_image_size('future-image-model', '4K')
     future_geometry = google_geometry.resolve_google_geometry(
         'future-image-model',
         {},
@@ -602,15 +595,14 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
         ):
             await model.generate('conflicting settings', settings=conflicting_settings)
 
-        with pytest.raises(UserError, match=r"does not support `google_image_config.image_size='4K'`"):
-            await model.generate(
-                'invalid provider size',
-                settings=GoogleImageGenerationSettings(google_image_config={'image_size': '4K'}),
-            )
+        await model.generate(
+            'provider-specific size',
+            settings=GoogleImageGenerationSettings(google_image_config={'image_size': '4K'}),
+        )
     finally:
         await http_client.aclose()
 
-    assert len(requests) == 2
+    assert len(requests) == 3
     request = requests[0]
     assert request.method == 'POST'
     assert request.url.path == '/v1beta/models/gemini-2.5-flash-image:generateContent'
@@ -2139,24 +2131,27 @@ async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio():
         ),
     ],
 )
-async def test_openai_gpt_image_2_rejects_transparent_background(
+async def test_openai_gpt_image_2_forwards_transparent_background(
     model_name: str, settings: OpenAIImageGenerationSettings
 ):
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
+    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())],
+        output_format='png',
+    )
     model = OpenAIImageGenerationModel(
         model_name,
         provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
     )
 
-    with pytest.raises(UserError, match='does not support `background="transparent"`'):
-        await model.generate('transparent image', settings=settings)
+    await model.generate('transparent image', settings=settings)
 
-    mock_client.images.generate.assert_not_awaited()
+    assert mock_client.images.generate.await_args.kwargs['background'] == 'transparent'
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_gpt_image_2_ignores_input_fidelity_on_edit():
+async def test_openai_gpt_image_2_forwards_input_fidelity_on_edit():
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
     mock_client.images.edit.return_value = ImagesResponse.model_construct(
@@ -2167,34 +2162,37 @@ async def test_openai_gpt_image_2_ignores_input_fidelity_on_edit():
         provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
     )
 
-    with pytest.warns(UserWarning, match=r'ignored unsupported settings: `input_fidelity`'):
-        await model.generate(
-            'edit this image',
-            images=[BinaryImage(data=TINY_PNG, media_type='image/png')],
-            settings=OpenAIImageGenerationSettings(openai_input_fidelity='high'),
-        )
+    await model.generate(
+        'edit this image',
+        images=[BinaryImage(data=TINY_PNG, media_type='image/png')],
+        settings=OpenAIImageGenerationSettings(openai_input_fidelity='high'),
+    )
 
     mock_client.images.edit.assert_awaited_once()
-    assert mock_client.images.edit.await_args.kwargs['input_fidelity'] is openai_images.OMIT
+    assert mock_client.images.edit.await_args.kwargs['input_fidelity'] == 'high'
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_rejects_transparent_background_with_jpeg_edit():
+async def test_openai_forwards_transparent_background_with_jpeg_edit():
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
+    mock_client.images.edit.return_value = ImagesResponse.model_construct(
+        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())],
+        output_format='png',
+    )
     model = OpenAIImageGenerationModel(
         'gpt-image-1.5',
         provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
     )
 
-    with pytest.raises(UserError, match='require `output_format="png"` or `"webp"`'):
-        await model.generate(
-            'transparent edit',
-            images=[BinaryImage(data=TINY_PNG, media_type='image/png')],
-            settings=OpenAIImageGenerationSettings(openai_background='transparent', openai_output_format='jpeg'),
-        )
+    await model.generate(
+        'transparent edit',
+        images=[BinaryImage(data=TINY_PNG, media_type='image/png')],
+        settings=OpenAIImageGenerationSettings(openai_background='transparent', openai_output_format='jpeg'),
+    )
 
-    mock_client.images.edit.assert_not_awaited()
+    assert mock_client.images.edit.await_args.kwargs['background'] == 'transparent'
+    assert mock_client.images.edit.await_args.kwargs['output_format'] == 'jpeg'
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')

@@ -52,13 +52,6 @@ or fourteen; Grok Imagine supports thirteen. See the
 for the ratio-to-dimensions matrix.
 """
 
-ImageGenerationSize: TypeAlias = str
-"""Image size used by native image-generation tools.
-
-Direct image APIs use provider-prefixed size or resolution settings because their
-concepts and accepted values are not portable.
-"""
-
 
 class ImageGenerationSettings(TypedDict, total=False):
     """Normalized settings for configuring image generation models.

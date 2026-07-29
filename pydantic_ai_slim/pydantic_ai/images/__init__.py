@@ -18,7 +18,6 @@ from .settings import (
     ImageDimensions,
     ImageGenerationAspectRatio,
     ImageGenerationSettings,
-    ImageGenerationSize,
     merge_image_generation_settings,
 )
 from .test import TestImageGenerationModel
@@ -32,7 +31,6 @@ __all__ = [
     'ImageGenerationModel',
     'ImageGenerationResult',
     'ImageGenerationSettings',
-    'ImageGenerationSize',
     'ImageGenerator',
     'InstrumentedImageGenerationModel',
     'KnownImageGenerationModelName',

@@ -14,7 +14,7 @@ from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
 from ._media_type import image_media_type_from_bytes
-from ._openai_geometry import is_gpt_image_2, resolve_openai_geometry
+from ._openai_geometry import resolve_openai_geometry
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
 from .settings import ImageGenerationSettings, ImageOutputFormat, validate_image_count, warn_image_generation_settings
@@ -61,16 +61,10 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
     """GPT Image quality setting."""
 
     openai_background: Literal['transparent', 'opaque', 'auto']
-    """OpenAI image background setting.
-
-    Transparent backgrounds require PNG or WebP output and are not supported by GPT Image 2.
-    """
+    """OpenAI image background setting."""
 
     openai_input_fidelity: Literal['high', 'low']
-    """OpenAI input fidelity setting for image editing.
-
-    GPT Image 2 always processes inputs at high fidelity and ignores this setting.
-    """
+    """OpenAI input fidelity setting for image editing."""
 
     openai_moderation: Literal['low', 'auto']
     """OpenAI moderation strictness for image generation."""
@@ -310,13 +304,8 @@ def _resolve_openai_settings(
     if is_edit:
         if moderation is not None:
             ignored.append('moderation')
-        if is_gpt_image_2(model_name) and input_fidelity is not None:
-            ignored.append('input_fidelity')
-            input_fidelity = None
     elif input_fidelity is not None:
         ignored.append('input_fidelity')
-
-    _validate_openai_background(model_name, background, settings.get('openai_output_format'))
 
     geometry = resolve_openai_geometry(model_name, settings, provider_size=settings.get('openai_size'))
 
@@ -330,24 +319,6 @@ def _resolve_openai_settings(
         ignored=ignored + geometry.ignored,
         conflicts=conflicts + geometry.conflicts,
     )
-
-
-def _validate_openai_background(
-    model_name: str,
-    background: Literal['transparent', 'opaque', 'auto'] | None,
-    output_format: Literal['png', 'jpeg', 'webp'] | None,
-) -> None:
-    if background != 'transparent':
-        return
-    if is_gpt_image_2(model_name):
-        raise UserError(
-            f'OpenAI model {model_name!r} does not support `background="transparent"`; '
-            'use `"opaque"` or `"auto"` instead'
-        )
-    if output_format not in (None, 'png', 'webp'):
-        raise UserError(
-            f'OpenAI transparent backgrounds require `output_format="png"` or `"webp"`, got {output_format!r}'
-        )
 
 
 def _response_provider_details(response: ImagesResponse) -> dict[str, object]:
