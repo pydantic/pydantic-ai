@@ -620,11 +620,10 @@ for this. Each [`TranscriptUpdate`][pydantic_ai.realtime.TranscriptUpdate] carri
 `transcript`, so keying a bubble on `index` and setting its text — as the caption example above does —
 is correct whatever the provider does.
 
-Only if you append [`TranscriptUpdate.delta`][pydantic_ai.realtime.TranscriptUpdate.delta], or consume
-[`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta]s off the raw event stream, does the
-distinction matter: check
-[`replaces_transcript`][pydantic_ai.messages.SpeechPartDelta.replaces_transcript] and replace instead
-of appending when it is set.
+The distinction only surfaces if you consume
+[`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta]s off the raw event stream, where
+[`replaces_transcript`][pydantic_ai.messages.SpeechPartDelta.replaces_transcript] says to replace what
+you rendered rather than add to it.
 
 ### Images
 

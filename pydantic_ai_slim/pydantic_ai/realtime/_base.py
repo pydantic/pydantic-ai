@@ -453,23 +453,19 @@ class TranscriptUpdate:
     """Who is speaking."""
 
     delta: str
-    """The new text, to append to what you already rendered for this `index` — or to replace it with,
-    if `replaces_transcript` is set."""
+    """The text this update added, when it added any.
 
-    transcript: str
-    """The full transcript of this turn so far, including `delta`.
-
-    Provided so a renderer can replace rather than append, which avoids having to accumulate
-    correctly (and to recover if an update was dropped because the consumer fell behind). Rendering
-    from this field alone is always correct, whatever the provider does.
+    Empty when the provider *revised* the turn instead of extending it — speech recognition is
+    revisable, and a correction can't be expressed as an addition. Render `transcript` and this never
+    matters.
     """
 
-    replaces_transcript: bool = False
-    """Whether this update *revises* the turn's text rather than extending it.
+    transcript: str
+    """The full transcript of this turn so far.
 
-    Speech recognition is revisable: later audio can change how earlier audio is read, so a provider
-    may correct words it already transcribed. Appending `delta` would then duplicate the corrected
-    text. Renderers that use `transcript` never need this; only those appending `delta` do.
+    Render this, keyed on `index`, and captions are correct whatever the provider does: no
+    accumulating, no special case for a revision, and a dropped update (if a consumer fell behind)
+    self-corrects on the next one.
     """
 
 

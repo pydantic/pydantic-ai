@@ -10,6 +10,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import replace
 from threading import Lock as ThreadLock
+from time import time_ns
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
 
@@ -432,8 +433,10 @@ class RealtimeSession:
         self._native_tool_parts: list[ModelResponsePart] = []
         # The `chat {model}` span for the response currently being assembled (see `_ensure_chat_span`).
         self._chat_span: Span | None = None
-        # The `listen` span covering the user's current speech segment (see `_start_listen_span`).
-        self._listen_span: Span | None = None
+        # When the provider's VAD reported the user's current speech segment starting, in OTel's
+        # nanosecond clock, so the `user speech` span can be backdated to it (see
+        # `_record_user_speech_span`). `None` while nobody is speaking.
+        self._user_speech_started_at: int | None = None
         self._pending_response_usage = RequestUsage()
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
@@ -595,36 +598,27 @@ class RealtimeSession:
 
         return self
 
-    def _start_listen_span(self) -> None:
-        """Open a `listen` span covering the user's current speech segment.
+    def _record_user_speech_span(self) -> None:
+        """Record the segment the user just spoke, as a `user speech` span with a real duration.
 
-        The counterpart to the model's own speech: a voice trace reads as listen → respond → speak.
-        Opened when the provider's VAD reports speech onset and closed when it reports the end, so the
-        span's duration is how long the user was actually talking — which a zero-duration "speech
-        started" marker could not show.
+        Emitted on the *end* of speech, backdated to the onset, so the span only exists when the
+        provider reported both boundaries. Gemini Live reports onset but never the end, so it records
+        no span rather than one whose length was inferred from something else — a duration nobody
+        measured is worse than no duration at all.
         """
         settings = self._instrumentation
-        if settings is None or self._listen_span is not None:
+        started_at, self._user_speech_started_at = self._user_speech_started_at, None
+        if settings is None or started_at is None:
             return
         context = self._session_span_context
         assert context is not None
-        self._listen_span = settings.tracer.start_span(
-            'listen',
+        settings.tracer.start_span(
+            'user speech',
             context=context,
-            attributes={'pydantic_ai.realtime': True, 'logfire.msg': 'listen'},
+            start_time=started_at,
+            attributes={'pydantic_ai.realtime': True, 'logfire.msg': 'user speech'},
             kind=SpanKind.INTERNAL,
-        )
-
-    def _end_listen_span(self) -> None:
-        """Close the `listen` span when the user stops speaking.
-
-        Also called when the model starts responding, because Gemini Live reports speech onset but
-        never its end: without that fallback its `listen` span would run to the end of the session.
-        Closing on the model's first content is an approximation there, and exact everywhere else.
-        """
-        if (span := self._listen_span) is not None:
-            self._listen_span = None
-            span.end()
+        ).end()
 
     def _record_lifecycle_event(self, name: str, **attributes: Any) -> None:
         """Record a realtime lifecycle moment (barge-in, turn boundary) as a zero-duration child span.
@@ -678,9 +672,9 @@ class RealtimeSession:
                 self._record_span_error(self._chat_span, error)
             self._chat_span.end()
             self._chat_span = None
-        # Closing while the user is mid-sentence is normal (they stopped the session), so the `listen`
-        # span is closed rather than left dangling.
-        self._end_listen_span()
+        # A session closed mid-sentence never learns how long that sentence was, so the pending onset
+        # is dropped rather than turned into a span ending at teardown.
+        self._user_speech_started_at = None
 
         settings = self._instrumentation
         span = self._session_span
@@ -1261,9 +1255,6 @@ class RealtimeSession:
         and this span covers exactly one `ModelResponse`, which is *not* the same as a conversational
         turn (a turn that calls tools produces several). The turn boundary is the `turn complete` span.
         """
-        # The model answering means the user's turn is over, which is the only end-of-speech signal
-        # Gemini Live gives us (see `_end_listen_span`); a no-op once VAD has already reported it.
-        self._end_listen_span()
         settings = self._instrumentation
         if settings is None or self._chat_span is not None:
             return
@@ -1687,7 +1678,7 @@ class RealtimeSession:
         if isinstance(event, SessionReconnectEvent):
             return self._handle_reconnected(event)
         self._user_turn_active = True
-        self._start_listen_span()
+        self._user_speech_started_at = time_ns()
         return [event]
 
     def _handle_conversation_item(self, event: ConversationItemCreated) -> None:
@@ -1728,7 +1719,7 @@ class RealtimeSession:
             # transcript still attaches its own audio; with transcription off there's no lagging transcript,
             # so `_finalize_untranscribed_user` consumes the rolling buffer synchronously here instead.
             self._segment_input_audio(event.item_id)
-            self._end_listen_span()
+            self._record_user_speech_span()
             return [*self._finalize_untranscribed_user(), event]
         if isinstance(event, TurnCompleteEvent):
             return self._handle_turn_complete(event)
@@ -2136,15 +2127,17 @@ class RealtimeSession:
                 # `transcript` ends up the turn's full text, which is what a caption UI renders — so a
                 # revision reaches it instead of being dropped as an unrecognized shape.
                 text = delta.transcript_delta
-                transcript = text if delta.replaces_transcript else self._transcript_so_far.get(event.index, '') + text
+                revised = delta.replaces_transcript
+                transcript = text if revised else self._transcript_so_far.get(event.index, '') + text
                 self._transcript_so_far[event.index] = transcript
                 if self._transcript_delta_taps:
+                    # A revision added nothing, so `delta` is empty and `transcript` carries the
+                    # correction: an appending renderer goes stale rather than doubling up the words.
                     update = TranscriptUpdate(
                         index=event.index,
                         speaker=delta.speaker,
-                        delta=text,
+                        delta='' if revised else text,
                         transcript=transcript,
-                        replaces_transcript=delta.replaces_transcript,
                     )
                     for queue in self._transcript_delta_taps:
                         _put_tap(queue, update)

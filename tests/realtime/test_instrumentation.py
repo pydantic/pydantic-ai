@@ -422,19 +422,21 @@ async def test_session_span_records_lifecycle_spans() -> None:
     spans = {s.name: s for s in exporter.get_finished_spans()}
     session_span = spans['invoke_agent agent']
     assert dict(spans['turn complete'].attributes or {}) == {'interrupted': True}
-    assert dict(spans['listen'].attributes or {}) == {'pydantic_ai.realtime': True, 'logfire.msg': 'listen'}
+    # No `user speech` span here: this stream never reports the end of speech, and its length is not
+    # something to guess at.
+    assert 'user speech' not in spans
     # They nest under the session span, not the `chat` span.
     assert session_span.context is not None
-    for name in ('listen', 'turn complete'):
+    for name in ('turn complete',):
         parent = spans[name].parent
         assert parent is not None and parent.span_id == session_span.context.span_id
 
 
-async def test_listen_span_closes_on_speech_end() -> None:
-    """The span measures how long the user talked, so it ends when VAD says they stopped.
+async def test_user_speech_span_covers_the_spoken_segment() -> None:
+    """The span measures how long the user talked: onset to end, backdated so the duration is real.
 
-    It must close before the model's own turn, not run alongside it — otherwise a trace can't show
-    the listen → respond hand-off that a voice conversation is made of.
+    It has to close before the model's own turn rather than run alongside it, or a trace can't show
+    the hand-off a voice conversation is made of.
     """
     settings, exporter = _settings()
     conn = _Connection(
@@ -449,35 +451,35 @@ async def test_listen_span_closes_on_speech_end() -> None:
     _ = await collect_events(session)
 
     spans = {s.name: s for s in exporter.get_finished_spans()}
-    listen, chat = spans['listen'], spans['chat gpt-realtime']
-    assert listen.end_time is not None and chat.start_time is not None
-    assert listen.end_time <= chat.start_time
+    speech, chat = spans['user speech'], spans['chat gpt-realtime']
+    assert speech.start_time is not None and speech.end_time is not None
+    assert speech.end_time > speech.start_time, 'backdated to the onset, so it has a real duration'
+    assert chat.start_time is not None and speech.end_time <= chat.start_time
 
 
-async def test_listen_span_closes_without_a_speech_end_event() -> None:
-    """Gemini Live reports speech onset but never its end, so the model answering closes the span.
+async def test_no_user_speech_span_without_a_speech_end_event() -> None:
+    """Gemini Live reports speech onset but never its end, so no span is recorded at all.
 
-    Without the fallback the span would stay open for the rest of the session, reporting a user who
-    talked for minutes.
+    Inferring the end from the model's reply would report a duration nobody measured; leaving the
+    span open would report a user who talked until the session closed. Both are worse than silence.
     """
     settings, exporter = _settings()
     conn = _Connection([InputSpeechStartEvent(), OutputTranscript(text='hi', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
 
-    spans = {s.name: s for s in exporter.get_finished_spans()}
-    assert 'listen' in spans and spans['listen'].end_time is not None
+    assert [s.name for s in exporter.get_finished_spans() if s.name == 'user speech'] == []
 
 
-async def test_listen_span_closes_when_the_session_closes_mid_sentence() -> None:
-    """A session torn down while the user is still talking must not leave the span dangling."""
+async def test_no_user_speech_span_when_the_session_closes_mid_sentence() -> None:
+    """A session torn down mid-sentence never learns how long the sentence was, so it records none."""
     settings, exporter = _settings()
     session = RealtimeSession(
         _Connection([InputSpeechStartEvent()]), _ok_runner, instrumentation=settings, model_name='gpt-realtime'
     )
     _ = await collect_events(session)
 
-    assert [s.name for s in exporter.get_finished_spans() if s.name == 'listen'] == ['listen']
+    assert [s.name for s in exporter.get_finished_spans() if s.name == 'user speech'] == []
 
 
 async def test_session_span_turn_complete_omits_interrupted_when_false() -> None:

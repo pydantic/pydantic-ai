@@ -397,13 +397,8 @@ async def test_cumulative_transcripts_revise_the_turn_instead_of_doubling_up() -
     # The revision reaches the caption view, and `transcript` is the turn's real text throughout.
     assert deltas == [
         TranscriptUpdate(index=0, speaker='user', delta='Hello?', transcript='Hello?'),
-        TranscriptUpdate(
-            index=0,
-            speaker='user',
-            delta='Hello, my name is',
-            transcript='Hello, my name is',
-            replaces_transcript=True,
-        ),
+        # A revision adds nothing, so `delta` is empty and `transcript` carries the correction.
+        TranscriptUpdate(index=0, speaker='user', delta='', transcript='Hello, my name is'),
         TranscriptUpdate(index=0, speaker='user', delta=' Marcelo.', transcript='Hello, my name is Marcelo.'),
     ]
     assert transcripts == [SpeechPart(speaker='user', transcript='Hello, my name is Marcelo.')]
