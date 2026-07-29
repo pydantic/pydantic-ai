@@ -4279,20 +4279,15 @@ def test_args_validator_defers_call():
         deferred_tool_results=DeferredToolResults(calls={tool_call_id: 'done externally'}),
     )
     assert executed == []
-    assert result.all_messages()[-2] == snapshot(
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='my_tool',
-                    content='done externally',
-                    tool_call_id='pyd_ai_tool_call_id__my_tool',
-                    timestamp=IsDatetime(),
-                )
-            ],
-            timestamp=IsDatetime(),
-            run_id=IsStr(),
-            conversation_id=IsStr(),
-        )
+    assert result.all_messages()[-2].parts == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='my_tool',
+                content='done externally',
+                tool_call_id='pyd_ai_tool_call_id__my_tool',
+                timestamp=IsDatetime(),
+            )
+        ]
     )
 
 
