@@ -1631,7 +1631,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if len(user_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
                 if mid_conversation_system_prompts:
-                    _append_user_anchor_if_needed(anthropic_messages)
                     system_message_indexes.append(len(anthropic_messages))
                     anthropic_messages.append(
                         BetaMessageParam(
@@ -1931,6 +1930,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 assert_never(m)
 
         _place_system_messages_before_generation(anthropic_messages, system_message_indexes)
+        _anchor_system_messages(anthropic_messages)
 
         if pending_container_uploads:
             upload_blocks = [
@@ -3102,13 +3102,31 @@ show the model reads as a preference it may overrule.
 """
 
 
-def _append_user_anchor_if_needed(anthropic_messages: list[BetaMessageParam]) -> None:
-    """Give the next `system` entry a user turn to follow, if it doesn't already have one."""
-    if anthropic_messages and anthropic_messages[-1]['role'] == 'user':
-        return
-    anthropic_messages.append(
-        BetaMessageParam(role='user', content=[BetaTextBlockParam(text=_USER_ANCHOR_TEXT, type='text')])
-    )
+def _anchor_system_messages(anthropic_messages: list[BetaMessageParam]) -> None:
+    """Give each `system` section a user turn to follow, if it doesn't already have one.
+
+    This runs *after* `_place_system_messages_before_generation`, on final positions, because an
+    entry's predecessor isn't known until the slide has finished with it. Anchoring while mapping
+    instead put the anchor between an assistant `tool_use` and the `tool_result` that answers it,
+    whenever the two were separated by a system-only request: the slide then moved the entry past the
+    result and left the anchor stranded, and the API rejects that with `tool_use ids were found
+    without tool_result blocks immediately after`. Deciding here, the same history needs no anchor at
+    all — the entry lands behind the tool result, which is a user turn.
+
+    Walking in reverse keeps the untouched indexes valid. A `system` entry behind another only has to
+    satisfy the rule as a section, so it defers to the entry ahead of it. An assistant turn ending in
+    a server tool result is a legal predecessor too, but it gets an anchor anyway rather than a live
+    verification we can't cheaply record: the cost is one wasted turn in a shape that needs a response
+    truncated right after a server tool call, and the alternative is an unproven exception.
+    """
+    for index in range(len(anthropic_messages) - 1, -1, -1):
+        if anthropic_messages[index]['role'] != 'system':
+            continue
+        if index > 0 and anthropic_messages[index - 1]['role'] in ('user', 'system'):
+            continue
+        anthropic_messages.insert(
+            index, BetaMessageParam(role='user', content=[BetaTextBlockParam(text=_USER_ANCHOR_TEXT, type='text')])
+        )
 
 
 def _place_system_messages_before_generation(anthropic_messages: list[BetaMessageParam], indexes: list[int]) -> None:
