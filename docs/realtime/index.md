@@ -250,20 +250,23 @@ The remaining realtime control-plane events:
 ### Tool calls span turns
 
 A turn that calls a tool does not produce one tidy turn boundary at the end. Every provider splits it
-into several [`ModelResponse`][pydantic_ai.messages.ModelResponse]s — one per step — and xAI Grok
-Voice goes further: it *speaks first and calls the tool after*, so its first `TurnCompleteEvent`
-arrives before [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], with a
-second one after the spoken answer. Measured on the same prompt and tool:
+into several [`ModelResponse`][pydantic_ai.messages.ModelResponse]s — one per step — and some models
+go further: they *speak first and call the tool after*, so a `TurnCompleteEvent` arrives before
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], with another after the
+spoken answer. Measured on the same prompt and tool:
 
-| Provider | Events around the tool call |
+| Model | Events around the tool call |
 | --- | --- |
-| OpenAI, Azure OpenAI, Gemini Live | `FunctionToolCallEvent` → `FunctionToolResultEvent` → speech → `TurnCompleteEvent` |
-| xAI Grok Voice | speech → `FunctionToolCallEvent` → **`TurnCompleteEvent`** → `FunctionToolResultEvent` → speech → `TurnCompleteEvent` |
+| `gpt-realtime`, `gpt-realtime-2.1-mini`, Azure `gpt-realtime`, Gemini Live | `FunctionToolCallEvent` → `FunctionToolResultEvent` → speech → `TurnCompleteEvent` |
+| `gpt-realtime-2.1`, xAI Grok Voice | speech → `FunctionToolCallEvent` → **`TurnCompleteEvent`** → `FunctionToolResultEvent` → speech → `TurnCompleteEvent` |
 
-So don't stop consuming on the first `TurnCompleteEvent` if a tool might run: keep iterating (as the
-example above does) and treat the event as "this turn ended", not "the exchange is over". The history
-lands the same everywhere — `ModelRequest`, `ModelResponse`, `ModelRequest`, `ModelResponse` — so code
-that reads [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] is unaffected.
+Note which side of that line each model falls on: it isn't a property of the provider, and it isn't
+stable across generations — `gpt-realtime-2.1` speaks first where `gpt-realtime` and
+`gpt-realtime-2.1-mini` don't. So don't stop consuming on the first `TurnCompleteEvent` if a tool might
+run: keep iterating (as the example above does) and treat the event as "this turn ended", not "the
+exchange is over". The history lands the same everywhere — `ModelRequest`, `ModelResponse`,
+`ModelRequest`, `ModelResponse` — so code that reads
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] is unaffected.
 
 ## Core tasks
 
@@ -600,20 +603,25 @@ xAI transcribe the user's audio with a dedicated model, set via `input_transcrip
 | --- | --- |
 | `'auto'` (default) | The provider's recommended transcription model, so user turns are captured under the default `audio_retention='transcript_only'`. Pin a specific id when the transcription model must remain fixed. |
 | An explicit id (e.g. `'gpt-4o-transcribe'`) | Used verbatim. Known ids autocomplete via [`KnownRealtimeTranscriptionModelName`][pydantic_ai.realtime.KnownRealtimeTranscriptionModelName], but any string works. |
-| `None` | Transcription disabled — no transcription model is sent. Each user turn is still represented in history: as an audio-only [`SpeechPart`][pydantic_ai.messages.SpeechPart] when [`audio_retention`](#retaining-audio) is `'input_audio'`/`'all'`, or as a content-less `SpeechPart` otherwise. A content-less turn carries no words, so it cannot provide user text to a text handoff. |
+| `None` | Transcription disabled on every provider — no transcription model is sent, and Gemini's native transcription is turned off too. Each user turn is still represented in history: as an audio-only [`SpeechPart`][pydantic_ai.messages.SpeechPart] when [`audio_retention`](#retaining-audio) is `'input_audio'`/`'all'`, or as a content-less `SpeechPart` otherwise. A content-less turn carries no words, so it cannot provide user text to a text handoff. |
 
-Gemini transcribes with `google_input_transcription` (on by default) rather than a model id: the
-Live model transcribes natively, so there is no separate transcription model to choose. With
+Gemini transcribes natively, so there is no separate transcription model to *choose* and a pinned id
+doesn't apply; `google_input_transcription` (on by default) configures its own transcription. With
 `google_input_transcription=False`, history contains audio-only user turns when input audio is retained
 and content-less user turns otherwise. If `google_output_transcription=False`, retain output audio to
 keep assistant audio turns in history at all. Transcript-less assistant audio cannot be handed off to
 a text agent or seeded into another realtime session.
 
-Partial user transcripts stream as they are recognized. Speech recognition is revisable — later audio
-changes how earlier audio is read — so a partial can *correct* words it already reported rather than
-only adding to them, and a caption that blindly appends would duplicate the corrected text. That is a
-property of transcription, not of any one provider: xAI Grok Voice does it today (turning `'Hello?'`
-into `'Hello, my name is'`), and any provider may.
+Partial user transcripts stream as they are recognized — though *how much* they stream is up to the
+model, and a caption is at its mercy: measured on the same six-second utterance, OpenAI and Azure
+report seven or eight partials, Gemini's native-audio models five, xAI three, and
+`gemini-3.1-flash-live-preview` just one (the finished sentence, with nothing to show while the user is
+still talking).
+
+Speech recognition is also revisable — later audio changes how earlier audio is read — so a partial can
+*correct* words it already reported rather than only adding to them, and a caption that blindly appends
+would duplicate the corrected text. That is a property of transcription, not of any one provider: xAI
+Grok Voice does it today (turning `'Hello?'` into `'Hello, my name is'`), and any provider may.
 
 Rendering captions with [`stream_transcripts(delta=True)`](#consuming-a-session) needs nothing extra
 for this. Each [`TranscriptUpdate`][pydantic_ai.realtime.TranscriptUpdate] carries the turn's full
