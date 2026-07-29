@@ -490,6 +490,50 @@ async def test_anyio_scope_cancel_of_activity_await_does_not_wedge(client: Clien
     assert not [event for event in history.events if 'WORKFLOW_TASK_FAILED' in str(event.event_type)]
 
 
+@workflow.defn
+class WaitForNonStreamingAgentTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            result = await asyncio.wait_for(_wait_for_nonstreaming_agent.run('say hi'), timeout=0.5)
+        except asyncio.TimeoutError:
+            return 'clean-timeout'
+        return f'unexpected-success:{result.output}'
+
+
+async def _slow_nonstreaming_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    await asyncio.sleep(10)
+    return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+
+_wait_for_nonstreaming_agent = Agent(
+    FunctionModel(_slow_nonstreaming_model, model_name='slow-model'),
+    name='wait_for_nonstreaming_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability()],
+)
+
+
+async def test_wait_for_nonstreaming_agent_timeout_does_not_livelock(client: Client) -> None:
+    """The exact MRE shape from #6883 (trigger A): a non-streaming model request as an activity,
+    the workflow body bounding `agent.run()` with `asyncio.wait_for`. Must end in a clean
+    `TimeoutError`, not a deadlock-detector livelock."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WaitForNonStreamingAgentTimeoutWorkflow],
+        plugins=[AgentPlugin(_wait_for_nonstreaming_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        result = await client.execute_workflow(
+            WaitForNonStreamingAgentTimeoutWorkflow.run,
+            id=f'{WaitForNonStreamingAgentTimeoutWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result == 'clean-timeout'
+
+
 async def _wait_for_timeout_stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
     while True:
         activity.heartbeat()
