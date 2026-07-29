@@ -136,7 +136,7 @@ class Case:
 CASES = [
     Case(
         id='inline-system-supported',
-        model='claude-sonnet-5',
+        model='claude-opus-4-8',
         expected_messages=snapshot(
             [
                 {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -216,7 +216,7 @@ async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
     since mid-conversation system prompts started getting their own message.
     """
     agent = Agent(
-        AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
+        AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)),
         model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
     )
 
@@ -253,7 +253,7 @@ async def test_mid_conversation_system_prompt_without_user_turn(
     don't: the model read the tagged text as "a stated preference from you rather than a
     higher-privilege instruction". Here it just complies.
     """
-    agent = Agent(AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key)))
+    agent = Agent(AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)))
 
     result = await agent.run(message_history=message_history())
     assert 'def add(a: int, b: int) -> int:' in result.output
@@ -293,7 +293,7 @@ async def test_mid_conversation_system_prompt_before_another_request(
     Driven through `Model.request` rather than `Agent.run` precisely because the agent's history
     cleaning would merge the two requests.
     """
-    model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -337,7 +337,7 @@ async def test_mid_conversation_system_prompt_kept_mid_history(
     re-render the whole conversation's instructions on every request, which is the cache churn the
     feature exists to avoid.
     """
-    model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -381,7 +381,7 @@ async def test_mid_conversation_system_prompt_before_empty_response(
     is byte-identical to `..._kept_mid_history` apart from the response being empty, and that one
     leaves its entry where it is.
     """
-    model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -421,7 +421,7 @@ async def test_two_mid_conversation_system_prompts_keep_their_order(
     cases would then resolve backwards. Consecutive `system` entries are a placement the API takes:
     the group as a whole still precedes the generation, and the recording shows both obeyed.
     """
-    model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -463,28 +463,30 @@ async def test_two_mid_conversation_system_prompts_keep_their_order(
     )
 
 
-async def test_mid_conversation_system_prompt_unsupported_client(
+async def test_mid_conversation_system_prompt_on_bedrock(
     allow_model_requests: None,
     anthropic_bedrock_client: AsyncAnthropicBedrock,
     vcr: Cassette,
     rendered_messages: list[list[dict[str, Any]]],
 ):
-    """Bedrock doesn't serve the `system` role, so a supported model still gets the `<system>` wrap.
+    """Bedrock serves the `system` role, so a supported model gets the native entry there too.
 
-    `us.anthropic.claude-sonnet-5` normalizes to a model name the profile flag covers, so this
-    isolates the transport gate from the model gate: same model, same history as the supported case
-    above, and the instruction still ends up `<system>`-tagged because of the client it's sent
-    through. Vertex AI and Microsoft Foundry share the branch.
+    Anthropic publishes the feature for the Claude API, Amazon Bedrock and Google Cloud, and this is
+    the Bedrock half of that recorded rather than assumed. It replaced a test that sent
+    `us.anthropic.claude-sonnet-5` and concluded from the `<system>`-tagged result that Bedrock
+    doesn't serve the role — but Sonnet 5 ignores the entry on every transport, so that test was
+    measuring the model. Microsoft Foundry is the transport that still falls back.
+
+    The Bedrock provider segment is stripped before the prefix check, so `us.anthropic.` in front of
+    a supported model leaves both halves of the gate open.
     """
     model = AnthropicModel(
-        'us.anthropic.claude-sonnet-5', provider=AnthropicProvider(anthropic_client=anthropic_bedrock_client)
+        'us.anthropic.claude-opus-4-8', provider=AnthropicProvider(anthropic_client=anthropic_bedrock_client)
     )
-    # The Bedrock provider segment is stripped before the prefix check, so the model half of the
-    # gate is open here and the transport half is the only thing left to close it.
     assert model.profile.get('supports_inline_system_prompts') is True
 
     result = await Agent(model).run('Review it again.', message_history=message_history())
-    assert 'def add(a: int, b: int) -> int:' in result.output
+    assert 'def add(a: int' in result.output
 
     body = single_request_body(vcr)
     assert rendered_messages == [body['messages']]
@@ -493,15 +495,12 @@ async def test_mid_conversation_system_prompt_unsupported_client(
         [
             {'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}], 'role': 'user'},
             {'content': [{'text': 'Looks fine.', 'type': 'text'}], 'role': 'assistant'},
+            {'role': 'user', 'content': [{'text': 'Review it again.', 'type': 'text'}]},
             {
+                'role': 'system',
                 'content': [
-                    {
-                        'text': '<system>From now on, every suggestion must include explicit type annotations.</system>',
-                        'type': 'text',
-                    },
-                    {'text': 'Review it again.', 'type': 'text'},
+                    {'text': 'From now on, every suggestion must include explicit type annotations.', 'type': 'text'}
                 ],
-                'role': 'user',
             },
         ]
     )

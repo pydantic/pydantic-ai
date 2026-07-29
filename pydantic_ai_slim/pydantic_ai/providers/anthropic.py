@@ -40,14 +40,18 @@ _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-mythos-5',
     'claude-opus-4-8',
     'claude-opus-5',
-    'claude-sonnet-5',
 )
-"""Models that accept a `{'role': 'system'}` entry inside the Messages API's `messages` array.
+"""Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
 
-Older models reject it with `role 'system' is not supported on this model`. Verified per model against
-the API — it doesn't follow from release order, so don't extend this list by inference.
-`claude-mythos-5` is the exception: it isn't reachable with our credentials, so it's grouped with its
-`claude-fable-5` sibling on the assumption they share the capability.
+This is the list Anthropic publishes for the feature, and accepting the entry is not the same as
+honoring it. Older models reject it outright (`role 'system' is not supported on this model`), but
+`claude-sonnet-5` returns 200 and then ignores it — the docs say the feature "is not available on
+Claude Sonnet 5; use the top-level `system` field instead", and measuring agrees: asked to lift a
+restriction the top-level prompt set, it refuses every time where Opus 5 complies every time, and on
+a plain formatting instruction the `<system>`-tagged fallback actually lands more often than the
+entry does. So Sonnet 5 is deliberately absent, and a 200 is not evidence for adding a model here.
+
+`claude-mythos-5` is published as supported but isn't reachable with our credentials.
 """
 
 

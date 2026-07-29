@@ -99,7 +99,8 @@ def test_anthropic_provider_model_profile_older_model_still_resolves():
         ('claude-mythos-5', True),
         ('claude-opus-4-8', True),
         ('claude-opus-5', True),
-        ('claude-sonnet-5', True),
+        # Sonnet 5 accepts the entry with a 200 and then ignores it, so it is deliberately out.
+        ('claude-sonnet-5', False),
         ('claude-opus-4-7', False),
         ('claude-sonnet-4-6', False),
         ('claude-haiku-4-5', False),
@@ -109,11 +110,16 @@ def test_anthropic_provider_model_profile_older_model_still_resolves():
     ],
 )
 def test_anthropic_provider_model_profile_inline_system_prompts(model_name: str, supported: bool):
-    """Only the newest models accept a `{'role': 'system'}` entry inside `messages`.
+    """Only the models Anthropic publishes for the feature honor a `{'role': 'system'}` entry.
 
     The flag is set by `AnthropicProvider.model_profile()` rather than `anthropic_model_profile()`
     because it describes the Messages API: Bedrock Converse and the OpenAI-compatible gateways route
     the same models but hoist a non-leading system prompt into their own top-level system field.
+
+    `claude-sonnet-5` is the case worth pinning. It doesn't reject the entry — the request succeeds —
+    it just doesn't act on it, which makes a green request a trap rather than evidence. Anthropic
+    documents the feature as unavailable there, and measurement agrees, so the flag stays off and a
+    future contributor who tries the request and sees a 200 has this to read.
     """
     profile = AnthropicProvider.model_profile(model_name)
     assert isinstance(profile, dict)
