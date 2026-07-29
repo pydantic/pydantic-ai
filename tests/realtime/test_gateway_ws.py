@@ -5,13 +5,12 @@ connects to the gateway's realtime WebSocket, which relays the provider protocol
 streamed part events and history come back as a direct connection. Recorded once against the live
 gateway with `--record-mode=rewrite`, then replayed offline.
 
-The gateway's OpenAI realtime relay is live, so `gateway/openai` is exercised end-to-end here. A full
-`gateway/google` session can't be recorded yet: the gateway relay only matches the OpenAI-shaped
-`/proxy/<route>/realtime` upgrade path, while the `google-genai` SDK dials the native Vertex Bidi path
-(`/proxy/<route>/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent`), so the upgrade
-never reaches the relay (and the Live model ids are unpriced in genai-prices, a second gate). That test
-skips until the gateway accepts the Vertex Bidi upgrade path. The gateway handshake's URL derivation and
-bearer-auth injection are pinned separately in `test_google.py` (`test_gateway_handshake_carries_bearer_auth`).
+Both routes are exercised end-to-end, and they are not the same protocol: `gateway/openai` upgrades on
+the OpenAI-shaped `/proxy/<route>/realtime` path, while the `google-genai` SDK behind `gateway/google`
+dials the native Vertex Bidi path
+(`/proxy/<route>/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent`). The gateway
+handshake's URL derivation and bearer-auth injection are pinned separately in `test_google.py`
+(`test_gateway_handshake_carries_bearer_auth`).
 """
 
 from __future__ import annotations as _annotations
@@ -20,6 +19,7 @@ from typing import Any
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, SpeechPart
@@ -69,18 +69,18 @@ async def test_gateway_openai_text_in_audio_out(
     assert any(isinstance(part, SpeechPart) for part in response.parts)
 
 
-# Runs only while recording (route gated).
-async def test_gateway_gemini_text_in_audio_out(  # pragma: no cover
+async def test_gateway_gemini_text_in_audio_out(
     gateway_gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
     """A `gateway/google` session streams audio+transcript back through the gateway's Vertex relay.
 
-    Skipped until the gateway's Vertex Live route is recordable (see the fixture docstring); wired so it
-    records and runs the moment that route is available, without any further plumbing. The whole body is
-    coverage-excluded because it never runs offline — the routing/URL/auth it would exercise are pinned
-    offline by `test_inference.test_infer_realtime_model_gateway_google` and `test_google`'s handshake test.
+    The other gateway test covers the OpenAI-shaped relay; this one covers the second protocol the
+    gateway has to speak, where the `google-genai` SDK dials the native Vertex Bidi path rather than the
+    OpenAI-shaped `/realtime` upgrade. Recorded against the live gateway, so the cassette proves the
+    upgrade is routed, the bearer auth is accepted, and a full turn comes back unchanged.
     """
     provider, _cassette = gateway_gemini_ws_cassette
+    # The gateway's Vertex route, not Google's own endpoint: a genuine gateway round-trip.
     assert provider.base_url.endswith('/proxy/google-vertex')
 
     model = GoogleRealtimeModel('gemini-live-2.5-flash', provider=provider)
@@ -90,9 +90,17 @@ async def test_gateway_gemini_text_in_audio_out(  # pragma: no cover
     async with agent.realtime(model).session(audio_retention='output_audio') as session:
         await session.send('Say a short greeting.')
         with anyio.fail_after(30):
-            async for event in session:
+            async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, TurnCompleteEvent):
                     break
 
+    # The turn streams audio+transcript parts and ends cleanly, exactly as a direct Gemini session does.
+    assert 'PartStartEvent' in collapse_event_types(events)
     assert any(isinstance(event, TurnCompleteEvent) for event in events)
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    speech = response.parts[-1]
+    assert isinstance(speech, SpeechPart)
+    assert speech.transcript == snapshot('Hello there.')
+    assert speech.audio is not None and len(speech.audio.data) > 0
