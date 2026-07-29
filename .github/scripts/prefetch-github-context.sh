@@ -2,9 +2,9 @@
 # Prefetch the open issue and PR indexes before the AWF firewall starts.
 #
 # Issue-list requests made through gh-proxy have repeatedly stalled until the
-# agent's wall-clock limit. The pre-agent checkout already has an authenticated
-# Git remote, so use that credential without printing it and give the agent a
-# local, complete-enough deduplication corpus instead.
+# agent's wall-clock limit. Use the token scoped to this pre-agent step (with an
+# authenticated HTTPS remote as a local fallback) without printing it, and give
+# the agent a local, complete-enough deduplication corpus instead.
 set -uo pipefail
 
 agent_dir="${GH_AW_AGENT_DIR:-/tmp/gh-aw/agent}"
@@ -50,21 +50,25 @@ if ! run_gh issue list \
   --state open \
   --limit 1000 \
   --json number,title,url,labels,updatedAt \
-  > "${issues_tmp}"; then
+  > "${issues_tmp}" \
+  || ! jq -e 'type == "array"' "${issues_tmp}" >/dev/null; then
   echo "::warning::Could not prefetch open issues"
+  rm -f "${issues_tmp}"
   exit 0
 fi
+mv "${issues_tmp}" "${issues_file}"
+echo "Prefetched $(jq 'length' "${issues_file}") open issues"
 
 if ! run_gh pr list \
   --repo "${repo}" \
   --state open \
   --limit 1000 \
   --json number,title,url,labels,updatedAt \
-  > "${prs_tmp}"; then
+  > "${prs_tmp}" \
+  || ! jq -e 'type == "array"' "${prs_tmp}" >/dev/null; then
   echo "::warning::Could not prefetch open pull requests"
-  exit 0
+  rm -f "${prs_tmp}"
+else
+  mv "${prs_tmp}" "${prs_file}"
+  echo "Prefetched $(jq 'length' "${prs_file}") open pull requests"
 fi
-
-mv "${issues_tmp}" "${issues_file}"
-mv "${prs_tmp}" "${prs_file}"
-echo "Prefetched $(jq 'length' "${issues_file}") open issues and $(jq 'length' "${prs_file}") open pull requests"

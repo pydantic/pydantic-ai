@@ -25,7 +25,8 @@ tools:
 safe-outputs:
   footer: false
   activation-comments: false
-  report-failure-as-issue: true
+  # Keep the agent job read-only; engine failures remain visible in the run.
+  report-failure-as-issue: false
   noop:
     report-as-issue: false
   missing-tool: false
@@ -45,6 +46,9 @@ safe-outputs:
         actions: read
         contents: read
         issues: write
+        # Labels and assignees use the Issues REST endpoints for both issues and
+        # PRs, but GitHub authorizes PR targets with this separate permission.
+        pull-requests: write
       inputs:
         item_number:
           description: "Candidate issue or pull request number"
@@ -130,10 +134,28 @@ Age, validity, importance, or an unanswered conversation alone are not enough. R
 when the evidence clearly shows that a maintainer must make the next decision. The host validates every
 item against the immutable snapshot, then applies fixed labels and assignment without model-generated text.
 
-If there are candidates, use `run_workflow` once with the complete candidate list. In one Python script,
-import `asyncio` and `json`, then call `attention_classifier(task=json.dumps(candidates))` and
-`false_positive_skeptic(task=json.dumps(candidates))` concurrently with `asyncio.gather`. Compare their
-evidence for every decision. The host bounds the two calls.
+If there are candidates, first use the outer `Read` tool to load `attention-candidates.json` for your own
+decisions, then use `run_workflow` once. Each specialist has a fixed zero-argument
+`read_attention_candidates` host tool for loading the same snapshot. Monty intentionally has no configured
+filesystem or environment access: inside `run_workflow`, never use `open`, `pathlib`, `os`, environment
+variables, stdin, or file writes, and never interpolate candidate contents into Python code. Use exactly
+this fixed shape:
+
+```python
+import asyncio
+
+classifier_result, skeptic_result = await asyncio.gather(
+    attention_classifier(
+        task="Call read_attention_candidates, then classify every candidate in the returned snapshot."
+    ),
+    false_positive_skeptic(
+        task="Call read_attention_candidates, then challenge maintainer attention for every candidate."
+    ),
+)
+{"classifier": classifier_result, "skeptic": skeptic_result}
+```
+
+Compare both specialists' evidence for every decision. The host bounds the two calls.
 
 This specialist review is advisory deliberation. Security does not depend on the model calling it or
 following it. The host-side allowlist, enum validation, and current-state checks are the write boundary.

@@ -74,9 +74,10 @@ jq '.[] | {number, title, labels: [.labels[].name], url}' \
   /tmp/gh-aw/agent/github-context/open-issues.json
 ```
 
-Scan the titles for the sweep prefixes (`[bug-hunter]`,
+Scan titles for the generated prefixes (`[bug-hunter]`,
 `[provider-mapping-sweep]`, `[streaming-resilience-sweep]`, `[roundtrip-sweep]`)
-and for keywords related to whatever subsystem you're investigating.
+and scan both titles and `labels[].name` for keywords related to whatever
+subsystem you're investigating.
 If a matching issue already covers the same root cause, call
 `mcp__safeoutputs__noop` immediately — do NOT file a duplicate, even to
 "independently confirm" the bug. Confirming is not value-add.

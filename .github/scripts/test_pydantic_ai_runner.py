@@ -85,40 +85,57 @@ def test_launcher_rejects_unsupported_continuation_without_output():
     assert result.stderr == ''
 
 
-def test_prefetch_github_context_uses_authenticated_remote(tmp_path: Path):
+def _run_context_prefetch(
+    tmp_path: Path,
+    *,
+    git_remote: str = 'https://github.com/pydantic/pydantic-ai.git',
+    gh_script: str | None = None,
+    env_vars: dict[str, str] | None = None,
+) -> tuple[subprocess.CompletedProcess[str], Path]:
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     fake_git = bin_dir / 'git'
     fake_git.write_text(
-        '#!/bin/sh\nprintf "%s\\n" "https://x-access-token:test-token@github.com/pydantic/pydantic-ai.git"\n',
-        encoding='utf-8',
-    )
-    fake_gh = bin_dir / 'gh'
-    fake_gh.write_text(
-        """#!/bin/sh
-[ "$GH_TOKEN" = "test-token" ] || exit 9
-case "$1:$2" in
-  issue:list) printf '%s\\n' '[{"number":1,"title":"Issue"}]' ;;
-  pr:list) printf '%s\\n' '[{"number":2,"title":"PR"}]' ;;
-  *) exit 8 ;;
-esac
-""",
+        f'#!/bin/sh\nprintf "%s\\n" "{git_remote}"\n',
         encoding='utf-8',
     )
     fake_git.chmod(0o755)
-    fake_gh.chmod(0o755)
+    if gh_script is not None:
+        fake_gh = bin_dir / 'gh'
+        fake_gh.write_text(f'#!/bin/sh\n{gh_script}', encoding='utf-8')
+        fake_gh.chmod(0o755)
 
     agent_dir = tmp_path / 'agent'
     env = os.environ.copy()
     env.pop('GH_TOKEN', None)
     env.pop('GITHUB_TOKEN', None)
+    env.pop('GITHUB_REPOSITORY', None)
     env.update(
         PATH=f'{bin_dir}:{env["PATH"]}',
-        GITHUB_REPOSITORY='pydantic/pydantic-ai',
         GH_AW_AGENT_DIR=str(agent_dir),
     )
+    env.update(env_vars or {})
     script = Path(__file__).with_name('prefetch-github-context.sh')
     result = subprocess.run(['bash', script], text=True, capture_output=True, check=False, env=env)
+    return result, agent_dir
+
+
+_SUCCESSFUL_GH_PREFETCH = """\
+case "$1:$2" in
+  issue:list) printf '%s\\n' '[{"number":1,"title":"Issue"}]' ;;
+  pr:list) printf '%s\\n' '[{"number":2,"title":"PR"}]' ;;
+  *) exit 8 ;;
+esac
+"""
+
+
+def test_prefetch_github_context_uses_authenticated_remote(tmp_path: Path):
+    result, agent_dir = _run_context_prefetch(
+        tmp_path,
+        git_remote='https://x-access-token:test-token@github.com/pydantic/pydantic-ai.git',
+        gh_script='[ "$GH_TOKEN" = "test-token" ] || exit 9\n' + _SUCCESSFUL_GH_PREFETCH,
+        env_vars={'GITHUB_REPOSITORY': 'pydantic/pydantic-ai'},
+    )
 
     assert result.returncode == 0
     assert 'test-token' not in result.stdout + result.stderr
@@ -126,6 +143,143 @@ esac
     assert json.loads((agent_dir / 'github-context/open-pull-requests.json').read_text()) == [
         {'number': 2, 'title': 'PR'}
     ]
+
+
+def test_prefetch_github_context_prefers_gh_token(tmp_path: Path):
+    result, _ = _run_context_prefetch(
+        tmp_path,
+        gh_script='[ "$GH_TOKEN" = "preferred-token" ] || exit 9\n' + _SUCCESSFUL_GH_PREFETCH,
+        env_vars={
+            'GH_TOKEN': 'preferred-token',
+            'GITHUB_TOKEN': 'fallback-token',
+            'GITHUB_REPOSITORY': 'pydantic/pydantic-ai',
+        },
+    )
+
+    assert result.returncode == 0
+    assert 'Could not prefetch' not in result.stdout
+
+
+def test_prefetch_github_context_falls_back_to_github_token(tmp_path: Path):
+    result, _ = _run_context_prefetch(
+        tmp_path,
+        gh_script='[ "$GH_TOKEN" = "fallback-token" ] || exit 9\n' + _SUCCESSFUL_GH_PREFETCH,
+        env_vars={
+            'GITHUB_TOKEN': 'fallback-token',
+            'GITHUB_REPOSITORY': 'pydantic/pydantic-ai',
+        },
+    )
+
+    assert result.returncode == 0
+    assert 'Could not prefetch' not in result.stdout
+
+
+def test_prefetch_github_context_without_credential_is_non_fatal(tmp_path: Path):
+    result, agent_dir = _run_context_prefetch(tmp_path)
+
+    assert result.returncode == 0
+    assert 'No GitHub credential' in result.stdout
+    assert not (agent_dir / 'github-context/open-issues.json').exists()
+    assert not (agent_dir / 'github-context/open-pull-requests.json').exists()
+
+
+def test_prefetch_github_context_without_repository_is_non_fatal(tmp_path: Path):
+    result, agent_dir = _run_context_prefetch(tmp_path, env_vars={'GH_TOKEN': 'test-token'})
+
+    assert result.returncode == 0
+    assert 'GITHUB_REPOSITORY is unavailable' in result.stdout
+    assert not (agent_dir / 'github-context/open-issues.json').exists()
+    assert not (agent_dir / 'github-context/open-pull-requests.json').exists()
+
+
+@pytest.mark.parametrize(
+    ('failed_command', 'preserved_files', 'missing_files', 'warning'),
+    [
+        (
+            'issue:list',
+            (),
+            ('open-issues.json', 'open-pull-requests.json'),
+            'Could not prefetch open issues',
+        ),
+        (
+            'pr:list',
+            ('open-issues.json',),
+            ('open-pull-requests.json',),
+            'Could not prefetch open pull requests',
+        ),
+    ],
+)
+def test_prefetch_github_context_preserves_independent_corpus(
+    tmp_path: Path,
+    failed_command: str,
+    preserved_files: tuple[str, ...],
+    missing_files: tuple[str, ...],
+    warning: str,
+):
+    result, agent_dir = _run_context_prefetch(
+        tmp_path,
+        gh_script=f"""\
+[ "$1:$2" = "{failed_command}" ] && exit 7
+{_SUCCESSFUL_GH_PREFETCH}
+""",
+        env_vars={'GH_TOKEN': 'test-token', 'GITHUB_REPOSITORY': 'pydantic/pydantic-ai'},
+    )
+
+    context_dir = agent_dir / 'github-context'
+    assert result.returncode == 0
+    assert warning in result.stdout
+    assert all((context_dir / filename).exists() for filename in preserved_files)
+    assert all(not (context_dir / filename).exists() for filename in missing_files)
+
+
+@pytest.mark.parametrize('malformed_command', ['issue:list', 'pr:list'])
+def test_prefetch_github_context_rejects_malformed_corpus(tmp_path: Path, malformed_command: str):
+    result, agent_dir = _run_context_prefetch(
+        tmp_path,
+        gh_script=f"""\
+if [ "$1:$2" = "{malformed_command}" ]; then
+  printf '%s\\n' '{{"message":"unexpected response"}}'
+  exit 0
+fi
+{_SUCCESSFUL_GH_PREFETCH}
+""",
+        env_vars={'GH_TOKEN': 'test-token', 'GITHUB_REPOSITORY': 'pydantic/pydantic-ai'},
+    )
+
+    corpus = 'open-issues.json' if malformed_command == 'issue:list' else 'open-pull-requests.json'
+    assert result.returncode == 0
+    assert 'Could not prefetch' in result.stdout
+    assert not (agent_dir / 'github-context' / corpus).exists()
+
+
+def test_shared_pre_agent_step_scopes_token_to_context_prefetch():
+    shared_steps = Path(__file__).parent.parent / 'workflows' / 'shared' / 'pre-agent-steps.md'
+    text = shared_steps.read_text(encoding='utf-8')
+
+    assert 'run: bash .github/scripts/prewarm-pydantic-ai-runner.sh' in text
+    assert '      GH_TOKEN: ${{ github.token }}' in text
+
+
+@pytest.mark.parametrize(
+    'prompt_name',
+    [
+        'pydantic-ai-bug-hunter.md',
+        'pydantic-ai-docs-drift.md',
+        'pydantic-ai-provider-mapping-sweep.md',
+        'pydantic-ai-provider-parity-explore.md',
+        'pydantic-ai-regression-detector.md',
+        'pydantic-ai-roundtrip-sweep.md',
+        'pydantic-ai-streaming-resilience-sweep.md',
+    ],
+)
+def test_issue_filing_prompts_use_prefetched_context(prompt_name: str):
+    prompt = Path(__file__).parent.parent / 'workflows' / 'shared' / 'prompts' / prompt_name
+    text = prompt.read_text(encoding='utf-8')
+
+    assert '/tmp/gh-aw/agent/github-context/open-issues.json' in text
+    assert 'gh issue list' not in text
+    assert 'gh pr list' not in text
+    assert 'gh api --paginate' not in text
 
 
 def test_unknown_future_claude_flags_are_tolerated():
@@ -729,7 +883,7 @@ def test_attention_dynamic_workflow_is_bounded_to_specialists():
 
     workflow = shim.attention_dynamic_workflow(TestModel())
     assert workflow.max_agent_calls == 2
-    assert workflow.max_retries == 1
+    assert workflow.max_retries == 3
     # Wall-clock while awaiting the specialists' asyncio.gather: generous
     # enough for two real model calls, still bounded well under the job timeout.
     assert workflow.resource_limits == {'max_duration_secs': 300}
@@ -738,6 +892,17 @@ def test_attention_dynamic_workflow_is_bounded_to_specialists():
     assert workflow.sub_agent_usage_limits is not None
     assert workflow.sub_agent_usage_limits.request_limit == 2
     assert {agent.name for agent in workflow.agents} == {'attention_classifier', 'false_positive_skeptic'}
+
+
+def test_attention_candidate_reader_uses_fixed_json_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'attention-candidates.json').write_text('[{"number": 1, "title": "hostile \\" text"}]')
+
+    assert json.loads(shim.read_attention_candidates()) == [{'number': 1, 'title': 'hostile " text'}]
+
+    (tmp_path / 'attention-candidates.json').write_text('{"number": 1}')
+    with pytest.raises(ValueError, match='must contain a JSON array'):
+        shim.read_attention_candidates()
 
 
 def test_attention_dynamic_workflow_runs_bounded_fanout():
@@ -749,11 +914,9 @@ def test_attention_dynamic_workflow_runs_bounded_fanout():
 
     script = """
 import asyncio
-import json
-candidate = {"number": 1}
 results = await asyncio.gather(
-    attention_classifier(task=json.dumps(candidate)),
-    false_positive_skeptic(task=json.dumps(candidate)),
+    attention_classifier(task="Call read_attention_candidates, then classify every candidate."),
+    false_positive_skeptic(task="Call read_attention_candidates, then challenge every candidate."),
 )
 results
 """
@@ -762,6 +925,7 @@ results
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal specialist_calls
         if 'run_workflow' not in {tool.name for tool in info.function_tools}:
+            assert 'read_attention_candidates' in {tool.name for tool in info.function_tools}
             specialist_calls += 1
             return ModelResponse(parts=[TextPart('specialist evidence')])
         if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
@@ -774,6 +938,67 @@ results
 
     assert result.output == 'done'
     assert specialist_calls == 2
+
+
+def test_attention_dynamic_workflow_recovers_from_monty_file_access():
+    """Two unsupported file reads remain bounded retries instead of crashing the run."""
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+    from pydantic_ai.usage import UsageLimits
+
+    invalid_scripts = [
+        'import json\nwith open("attention-candidates.json") as f:\n    json.load(f)',
+        'from pathlib import Path\nPath("attention-candidates.json").read_text()',
+    ]
+    valid_script = """
+import asyncio
+results = await asyncio.gather(
+    attention_classifier(task="Call read_attention_candidates, then classify every candidate."),
+    false_positive_skeptic(task="Call read_attention_candidates, then challenge every candidate."),
+)
+results
+"""
+    workflow_calls = specialist_calls = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal workflow_calls, specialist_calls
+        if 'run_workflow' not in {tool.name for tool in info.function_tools}:
+            assert 'read_attention_candidates' in {tool.name for tool in info.function_tools}
+            specialist_calls += 1
+            return ModelResponse(parts=[TextPart('specialist evidence')])
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        retry_count = sum(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+        workflow_calls += 1
+        code = invalid_scripts[retry_count] if retry_count < len(invalid_scripts) else valid_script
+        return ModelResponse(parts=[ToolCallPart('run_workflow', {'code': code})])
+
+    model = FunctionModel(respond)
+    agent = Agent(model, capabilities=[shim.attention_dynamic_workflow(model)])
+    result = asyncio.run(agent.run('go', usage_limits=UsageLimits(request_limit=7)))
+
+    assert result.output == 'done'
+    assert workflow_calls == 3
+    assert specialist_calls == 2
+
+
+def test_attention_workflow_documents_monty_safe_data_flow():
+    workflow = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.md'
+    text = workflow.read_text(encoding='utf-8')
+
+    assert 'first use the outer `Read` tool' in text
+    assert 'Monty intentionally has no configured' in text
+    assert 'filesystem or environment access' in text
+    assert 'never use `open`, `pathlib`, `os`' in text
+    assert 'never interpolate candidate contents into Python code' in text
+    assert 'task="Call read_attention_candidates' in text
+    assert '        pull-requests: write' in text
+    assert 'report-failure-as-issue: false' in text
+
+    lock = workflow.with_suffix('.lock.yml').read_text(encoding='utf-8')
+    assert '      pull-requests: write' in lock
+    assert 'GH_AW_FAILURE_REPORT_AS_ISSUE: "false"' in lock
 
 
 def test_dynamic_workflow_gate_env_toggles_run_workflow_tool(monkeypatch: pytest.MonkeyPatch):

@@ -29,8 +29,9 @@ fi
 
 context_script="${GITHUB_WORKSPACE}/.github/scripts/prefetch-github-context.sh"
 if [ -f "${context_script}" ]; then
-  bash "${context_script}" \
-    || echo "::warning::GitHub context prefetch failed; agent must noop rather than enumerate through gh-proxy"
+  # The prefetch script owns its expected failure handling so it can preserve
+  # whichever corpus succeeded and report a specific warning for the other.
+  bash "${context_script}"
 else
   echo "::warning::${context_script} not found; GitHub context will be unavailable"
 fi
