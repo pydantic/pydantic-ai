@@ -33,6 +33,7 @@ uv add "pydantic-ai-harness[logfire]"           # ManagedPrompt (Logfire-managed
 uv add "pydantic-ai-harness[exa]"               # ExaSearch + ExaAgent (web research via the Exa API)
 uv add "pydantic-ai-harness[skills]"            # Skills (loads SKILL.md frontmatter)
 uv add "pydantic-ai-harness[acp]"               # ACP (serve an agent to editors over the Agent Client Protocol)
+uv add "pydantic-ai-harness[mongodb]"           # MongoDB backends for step persistence + media externalization (adds pymongo)
 ```
 
 The `code-mode` extra is also supported as an alias.
@@ -137,7 +138,7 @@ It composes with the rest of the harness:
 
 `DynamicWorkflow`'s API is subject to change while planned extensions (structured sub-agent inputs, durable workflows) settle the call contract. Breaking changes ship deprecation warnings where practical.
 
-[Full tutorial →](pydantic_ai_harness/dynamic_workflow/)
+[Full tutorial ->](pydantic_ai_harness/dynamic_workflow/)
 
 ## Capability matrix
 
@@ -171,7 +172,7 @@ We studied leading coding agents, agent frameworks, and Claw-style assistants to
 | **Memory &&nbsp;persistence** | **Memory** | Persistent, namespaced notebook with bounded prompt injection, on-demand search, and concurrency-safe stores | :white_check_mark: [Docs](pydantic_ai_harness/memory/) | [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
 | | **Session persistence** | Save and restore full conversation state | :white_check_mark: [Docs](pydantic_ai_harness/step_persistence/) | |
 | | **Checkpointing** | Snapshot, resume (`continue_run`), and fork (`fork_run`) a run | :white_check_mark: [Docs](pydantic_ai_harness/step_persistence/) | [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
-| | **Media externalization** | Offload large `BinaryContent` to content-addressed stores (building blocks) | :white_check_mark: [Docs](pydantic_ai_harness/media/) | |
+| | **Media externalization** | Offload large `BinaryContent` and large text parts to content-addressed stores -- disk, SQLite, S3, MongoDB (building blocks) | :white_check_mark: [Docs](pydantic_ai_harness/media/) | |
 | | **Conversation search** | BM25-search the history `StepPersistence` stores -- turns compaction dropped and past runs -- with a dependency-free `search_conversation_history` tool | :white_check_mark: [Docs](pydantic_ai_harness/conversation_search/) | [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
 | **Agent orchestration** | **Sub-agents** | Delegate subtasks to specialized child agents | :white_check_mark: [Docs](pydantic_ai_harness/subagents/) | [subagents-pydantic-ai](https://github.com/vstorm-co/subagents-pydantic-ai) (vstorm&#8209;co) |
 | | **Dynamic workflow** | Orchestrate sub-agents from a model-written Python script -- fan-out, chaining, voting in one tool call | :white_check_mark: [Docs](pydantic_ai_harness/dynamic_workflow/) | |

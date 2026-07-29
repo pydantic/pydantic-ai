@@ -15,6 +15,7 @@ replay. See `_rewrite_request` / `_rewrite_response` below.
 # pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportMissingTypeStubs=false
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 from typing import TYPE_CHECKING, Any
@@ -23,6 +24,12 @@ import pytest
 
 if TYPE_CHECKING:
     from vcr.request import Request as VcrRequest  # pyright: ignore[reportMissingTypeStubs]
+
+# `pymongo` is gated on the `mongodb` extra, so an install without it can't import
+# the Mongo store tests. Ignore them at collection then. A conditional expression
+# rather than an `if` statement: branch coverage traces statement arcs, and no
+# single environment can take both arms of an install-dependent branch.
+collect_ignore = ['test_mongo.py'] if importlib.util.find_spec('pymongo') is None else []
 
 # Public placeholders baked into the committed cassettes. Tests pass
 # these *exact* values when constructing `S3MediaStore`, so the replay

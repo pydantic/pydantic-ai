@@ -447,11 +447,13 @@ class FileStepStore:
     to prevent path traversal. Blocking I/O is dispatched to a worker thread
     via `anyio.to_thread`, so capability hooks do not stall the event loop.
 
-    `BinaryContent` payloads ≥ `media_threshold_bytes` (default 64 KiB) are
-    externalized through the configured `MediaStore` to keep snapshot JSON
-    small. The default backs onto `<root>/media/<sha256>.bin`. Pass
-    `media_store=None` to keep bytes inline, or pass a custom `MediaStore`
-    to redirect (e.g. `S3MediaStore(...)`).
+    `BinaryContent` payloads and text parts at or above
+    `media_threshold_bytes` (default 64 KiB) are externalized through the
+    configured `MediaStore` to keep snapshot JSON small. The default backs
+    onto `<root>/media/<sha256>.bin`. Pass `media_store=None` to keep
+    payloads inline, or pass a custom `MediaStore` to redirect (e.g.
+    `S3MediaStore(...)`). Snapshots written before text externalization
+    existed still restore: `restore_media` recognizes the older marker shape.
 
     `max_snapshots_per_run` (default `None`, unbounded) bounds per-run
     snapshot growth: after each write, `{seq}.json` files outside the retain
@@ -864,6 +866,13 @@ class SqliteStepStore:
     `connection=` (caller-owned `sqlite3.Connection`). When `database=` is
     used, the default `media_store` is a `SqliteMediaStore` against the same
     file (sibling `media` table), so a single-file deployment is the default.
+
+    `BinaryContent` payloads and text parts at or above
+    `media_threshold_bytes` (default 64 KiB) are externalized through that
+    store, leaving a URI reference in the `snapshots.messages` JSON. Pass
+    `media_store=None` to keep payloads inline. Snapshots written before text
+    externalization existed still restore: `restore_media` recognizes the
+    older marker shape.
 
     A caller-owned `connection=` **must** be created with
     `check_same_thread=False`. Store methods dispatch SQL onto worker threads

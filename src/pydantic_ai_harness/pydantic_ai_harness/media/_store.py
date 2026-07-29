@@ -48,9 +48,10 @@ class MediaContext:
       key strategies that want a recognisable extension, and for resolvers
       that need to set `Content-Disposition` on presigned URLs.
     - `metadata` -- free-form `dict[str, str]` of user-supplied tags.
-      Persisted by all three concrete stores (`SqliteMediaStore` → JSON
-      column, `S3MediaStore` → signed `x-amz-meta-*` headers,
-      `DiskMediaStore` → sidecar JSON file). Read back via
+      Persisted by all four concrete stores (`SqliteMediaStore` as a JSON
+      column, `S3MediaStore` as signed `x-amz-meta-*` headers,
+      `DiskMediaStore` as a sidecar JSON file, `MongoMediaStore` as a JSON
+      string on the manifest document). Read back via
       `MediaStore.get_metadata(uri)`.
     """
 

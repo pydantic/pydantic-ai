@@ -76,10 +76,10 @@ class SnapshotStore(Protocol):
     """The narrow read surface `SnapshotHistorySource` needs from a snapshot store.
 
     A structural subset of the step-persistence stores: `InMemoryStepStore`,
-    `FileStepStore`, and `SqliteStepStore` all satisfy it. `list_snapshots` is not
-    part of the `StepStore` protocol yet -- the shipped stores implement it as a
-    plain method; promoting it into the protocol is proposed alongside the
-    session-tree evolution (pydantic-ai-harness#321).
+    `FileStepStore`, `SqliteStepStore`, and `MongoStepStore` all satisfy it.
+    `list_snapshots` is not part of the `StepStore` protocol yet -- the shipped
+    stores implement it as a plain method; promoting it into the protocol is
+    proposed alongside the session-tree evolution (pydantic-ai-harness#321).
     """
 
     async def list_runs(
@@ -137,14 +137,15 @@ class SnapshotHistorySource:
 
     def __init__(self, store: SnapshotStore) -> None:
         # Fail at construction, not mid-search, when a store lacks the read seam.
-        # Not every first-party store implements `list_snapshots` yet (e.g.
-        # `MongoStepStore`, pydantic-ai-harness#446); without this a missing seam
-        # surfaces as an obscure `AttributeError` deep inside a tool call.
+        # `list_snapshots` is not part of the `StepStore` protocol, so a
+        # third-party store can satisfy `StepStore` without it; without this
+        # check the missing seam surfaces as an obscure `AttributeError` deep
+        # inside a tool call.
         if not isinstance(store, SnapshotStore):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise TypeError(
                 f'{type(store).__name__} is not a supported search substrate: SnapshotHistorySource '
                 'needs a store providing both `list_runs` and `list_snapshots`. The shipped '
-                'InMemoryStepStore, FileStepStore, and SqliteStepStore satisfy this.'
+                'InMemoryStepStore, FileStepStore, SqliteStepStore, and MongoStepStore satisfy this.'
             )
         self._store = store
 

@@ -35,10 +35,12 @@ Some capabilities need an extra to pull in their optional dependencies:
 ```bash
 uv add "pydantic-ai-harness[codemode]"          # Code Mode (adds the Monty sandbox)
 uv add "pydantic-ai-harness[dynamic-workflow]"  # Dynamic Workflow (adds the Monty sandbox)
+uv add "pydantic-ai-harness[modal]"             # Modal Sandbox (adds the Modal SDK)
 uv add "pydantic-ai-harness[logfire]"           # Managed Prompt (Logfire-managed prompts)
 uv add "pydantic-ai-harness[exa]"               # Exa Search (web research via the Exa API)
 uv add "pydantic-ai-harness[skills]"            # Skills (loads SKILL.md frontmatter)
 uv add "pydantic-ai-harness[acp]"               # ACP (Agent Client Protocol SDK)
+uv add "pydantic-ai-harness[mongodb]"           # MongoDB backends for Step Persistence and Media (adds pymongo)
 ```
 
 The `code-mode` extra is also supported as an alias for `codemode`.
@@ -123,9 +125,9 @@ Each capability is a self-contained battery you drop into an agent's `capabiliti
 | [Compaction](compaction.md) | Keeps a run within token limits: sliding-window trimming, LLM-powered summarization of older messages, and warnings before the context or iteration ceiling is hit. | -- |
 | [Tool Output Limits](tool-output-limits.md) | Reduces an oversized tool return when it is produced -- truncate, spill to a queryable file, or summarize -- so a large payload does not persist in history and get re-sent every request. | -- |
 | [Warn On Cache Busts](warn-on-cache-busts.md) | Warns when a run's prompt-cache hit collapses between model requests -- a moved cacheable prefix or an expired provider cache -- reading the provider's own `cache_read_tokens` verdict. | -- |
-| [Step Persistence](step-persistence.md) | Saves and restores full conversation state; snapshot, resume (`continue_run`), and fork (`fork_run`) a run. | -- |
+| [Step Persistence](step-persistence.md) | Saves and restores full conversation state; snapshot, resume (`continue_run`), and fork (`fork_run`) a run. In-memory, file, SQLite, and MongoDB backends. | `mongodb` (Mongo backend only) |
 | [Conversation Search](conversation-search.md) | A dependency-free BM25 `search_conversation_history` tool over the history `StepPersistence` stores: recall turns that compaction dropped from the live context, and past runs in the same store. | -- |
-| [Media](media.md) | Offloads large `BinaryContent` to content-addressed stores (local or S3) so big media does not bloat message history. | -- |
+| [Media](media.md) | Offloads large `BinaryContent` and large text parts to content-addressed stores (disk, SQLite, S3, MongoDB) so big payloads do not bloat message history. | `mongodb` (Mongo store only) |
 | [Subagents](subagents.md) | Delegates subtasks to specialized child agents through a delegate tool. | -- |
 | [Dynamic Workflow](dynamic-workflow.md) | Orchestrates sub-agents from a model-written Python script -- fan-out, chaining, and voting in a single tool call. | `dynamic-workflow` |
 | [Planning](planning.md) | Breaks a complex task into a structured plan before execution and tracks progress against it. | -- |
