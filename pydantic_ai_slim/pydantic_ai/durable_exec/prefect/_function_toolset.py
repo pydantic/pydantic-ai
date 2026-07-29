@@ -50,6 +50,7 @@ def _call_tool_operation(wrapped: FunctionToolset[AgentDepsT], base_config: Task
     return call_tool_operation
 
 
+# TODO(v3): remove `PrefectFunctionToolset` alongside `PrefectAgent`.
 @deprecated(
     "`PrefectFunctionToolset` is deprecated alongside `PrefectAgent`. Use the `PrefectDurability` capability, which wraps the agent's toolsets in Prefect tasks automatically.",
     category=PydanticAIDeprecationWarning,

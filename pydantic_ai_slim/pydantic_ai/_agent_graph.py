@@ -1485,6 +1485,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
             usage.incr(counted_usage)
 
+            ctx.deps.usage_limits.check_per_request_input_tokens(counted_usage.input_tokens)
+
         ctx.deps.usage_limits.check_before_request(usage)
 
         return model, model_settings or None, model_request_parameters, messages, run_context
@@ -1650,6 +1652,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+            # For a continuation chain (Anthropic `pause_turn`, OpenAI background mode) the merged
+            # response sums usage across segments (see `_check_continuation_usage`), so this caps the
+            # chain's combined input rather than any single segment's — conservative, not lenient.
+            ctx.deps.usage_limits.check_per_request_input_tokens(response.usage.input_tokens)
         ctx.state.message_history.append(response)
 
     async def _build_retry_node(

@@ -134,9 +134,10 @@ _DEFAULT_PARAMETER_DESCRIPTION = (
 )
 
 
+# Schema source only, never invoked.
 def _search_tools_signature(
     queries: Annotated[list[str], Field(description=_DEFAULT_PARAMETER_DESCRIPTION)],
-) -> ToolSearchReturnContent:  # pragma: no cover - schema source only, never invoked
+) -> ToolSearchReturnContent:  # pragma: no cover
     """Source-of-truth signature for the `search_tools` function tool.
 
     Used by [`Tool`][pydantic_ai.tools.Tool] to derive the JSON schema and validator

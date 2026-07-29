@@ -49,11 +49,12 @@ from typing import Any, TypeAlias, cast
 import httpx
 import logfire
 from anthropic import AsyncAnthropic
+from mcp.shared.exceptions import McpError
 from pydantic import ValidationError
 from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import NativeTool, ProcessEventStream, ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -114,6 +115,47 @@ def _anthropic_native_capabilities() -> list[NativeTool]:
     if not base_url or 'api.anthropic.com' in base_url:
         return [NativeTool(WebFetchTool())]
     return []
+
+
+def _mcp_protocol_error_message(error: Exception) -> str | None:
+    """The message of a bare `McpError` that `MCPToolset` left uncaught, else `None`.
+
+    `MCPToolset.direct_call_tool` converts a `ToolError`, a result-level error, and an
+    `ExceptionGroup` of tool/protocol errors into a model-visible `ModelRetry`, but a *bare*
+    `McpError` — what gh-aw's MCP gateway raises for a validation rejection such as an
+    empty-bodied `submit_pull_request_review` — matches none of those. The tool-execute hook
+    sees it before the task group upstream re-wraps it into the fatal `ExceptionGroup`, so
+    recognising the bare error here is enough to hand it back to the model.
+    """
+    if isinstance(error, McpError):
+        return str(error)
+    return None
+
+
+@dataclass
+class _RecoverMCPToolErrors(AbstractCapability[object]):
+    """Hand escaped MCP protocol errors back to the model as recoverable `error:` results.
+
+    Without this, a bare `McpError` from an MCP server crashes the whole run (an unhandled
+    `ExceptionGroup`), which gh-aw can only recover from by re-invoking the agent wholesale.
+    Returning the same `error:` string the shim's function tools use lets the model correct
+    the call in-run — e.g. resubmit the review with a non-empty body.
+    """
+
+    async def on_tool_execute_error(
+        self,
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: object,
+        error: Exception,
+    ) -> str:
+        message = _mcp_protocol_error_message(error)
+        if message is None:
+            raise error
+        logger.warning('MCP tool %r failed — returned to model as a recoverable error: %s', call.tool_name, message)
+        return f'error: {message}'
 
 
 # pydantic-ai's built-in request_limit default of 50 is too low for the
@@ -911,6 +953,7 @@ async def run(
         instructions=[INSTRUCTIONS, prompt],
         toolsets=[claude_code_toolset, *mcp_servers],
         capabilities=[
+            _RecoverMCPToolErrors(),
             *_anthropic_native_capabilities(),
             ProcessHistory(_compact_history),
             ProcessEventStream(_stream_events),

@@ -3393,12 +3393,13 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
         ),
     )
 
+    # Both tool bodies below are exercised via the agent call, not directly.
     @agent.tool_plain
-    def catalog_lookup() -> str:  # pragma: no cover - exercised via agent call
+    def catalog_lookup() -> str:  # pragma: no cover
         return 'catalog-ok'
 
     @agent.tool_plain
-    def diagnostics() -> str:  # pragma: no cover - exercised via agent call
+    def diagnostics() -> str:  # pragma: no cover
         return 'diagnostics-ok'
 
     long_context = 'Newer response with something except single number\n' * 10

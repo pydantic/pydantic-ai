@@ -677,6 +677,44 @@ class TestMCPToolsetIntegration:
             with pytest.raises(BaseExceptionGroup):
                 await error_toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
 
+    @pytest.mark.parametrize('behavior', ['retry', 'failed'])
+    async def test_call_tool_converts_bare_mcp_error_to_model_retry(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext, behavior: Literal['retry', 'failed']
+    ):
+        """A bare, un-grouped `McpError` — a JSON-RPC error the server/gateway returns for a call it
+        refuses, rather than a `ToolError` or a result-level error — is a protocol error, so like the
+        grouped protocol-error case it stays a recoverable `ModelRetry` even under
+        `tool_error_behavior='failed'`, instead of escaping the toolset and crashing the run.
+
+        A unit test because it injects at the real escape seam (`self.client.call_tool`): no in-process
+        FastMCP tool surfaces a bare protocol `McpError` instead of a `ToolError`.
+        """
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior=behavior)
+
+        async def call_tool_raising_bare_mcp_error(*args: Any, **kwargs: Any) -> Any:
+            raise McpError(mcp_types.ErrorData(code=400, message='bare protocol error'))
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = call_tool_raising_bare_mcp_error
+            with pytest.raises(ModelRetry, match='bare protocol error'):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+    async def test_call_tool_propagates_bare_mcp_error_when_configured(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """With `tool_error_behavior='error'`, a bare `McpError` propagates unchanged to the caller."""
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='error')
+
+        async def call_tool_raising_bare_mcp_error(*args: Any, **kwargs: Any) -> Any:
+            raise McpError(mcp_types.ErrorData(code=400, message='bare protocol error'))
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = call_tool_raising_bare_mcp_error
+            with pytest.raises(McpError, match='bare protocol error'):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
     async def test_process_tool_call_hook_runs(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         seen: list[tuple[str, dict[str, Any]]] = []
 
