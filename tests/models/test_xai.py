@@ -1401,6 +1401,41 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
             )
 
 
+@pytest.mark.parametrize('finish_reason, expected', [('length', 'length'), ('tool_call', 'tool_call')])
+async def test_xai_stream_text_finish_reason_non_stop(allow_model_requests: None, finish_reason: str, expected: str):
+    # Regression test for https://github.com/pydantic/pydantic-ai/issues/6840:
+    # streamed non-`stop` finish reasons were always reported as `stop` because
+    # `_FINISH_REASON_MAP` was keyed on lowercase strings that never matched the
+    # proto enum names the xAI SDK returns.
+    stream = [
+        get_grok_text_chunk('hello ', ''),
+        get_grok_text_chunk('world', ''),
+        get_grok_text_chunk('.', finish_reason),
+    ]
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.']
+        )
+        assert result.is_complete
+        async for response in result.stream_response(debounce_by=None):
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[TextPart(content='hello world.')],
+                    usage=RequestUsage(input_tokens=2, output_tokens=1),
+                    model_name=XAI_NON_REASONING_MODEL,
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                    provider_url='https://api.x.ai/v1',
+                    provider_response_id='grok-123',
+                    finish_reason=expected,
+                )
+            )
+
+
 class MyTypedDict(TypedDict, total=False):
     first: str
     second: str

@@ -141,12 +141,12 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
 
 
 _FINISH_REASON_MAP: dict[str, FinishReason] = {
-    'stop': 'stop',
-    'length': 'length',
-    'content_filter': 'content_filter',
-    'max_output_tokens': 'length',
-    'cancelled': 'error',
-    'failed': 'error',
+    'REASON_STOP': 'stop',
+    'REASON_MAX_LEN': 'length',
+    'REASON_MAX_CONTEXT': 'length',
+    'REASON_TOOL_CALLS': 'tool_call',
+    'REASON_TIME_LIMIT': 'error',
+    'REASON_INVALID': 'error',
 }
 
 # `GetChatCompletionResponse.outputs[*].finish_reason` uses the proto enum (ints), not the string values returned by
@@ -154,7 +154,9 @@ _FINISH_REASON_MAP: dict[str, FinishReason] = {
 _FINISH_REASON_PROTO_MAP: dict[int, FinishReason] = {
     sample_pb2.FinishReason.REASON_STOP: 'stop',
     sample_pb2.FinishReason.REASON_MAX_LEN: 'length',
+    sample_pb2.FinishReason.REASON_MAX_CONTEXT: 'length',
     sample_pb2.FinishReason.REASON_TOOL_CALLS: 'tool_call',
+    sample_pb2.FinishReason.REASON_TIME_LIMIT: 'error',
 }
 
 
