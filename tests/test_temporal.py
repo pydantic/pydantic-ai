@@ -26,6 +26,7 @@ from pydantic_ai import (
     AgentStreamEvent,
     BinaryContent,
     BinaryImage,
+    CancellationToken,
     CodeExecutionTool,
     DocumentUrl,
     ExternalToolset,
@@ -510,6 +511,15 @@ _capability_migration_agent = Agent(
         )
     ],
 )
+
+
+async def test_temporal_agent_rejects_cancellation_token() -> None:
+    """The wrapper agent rejects `cancellation_token` up front: a token is same-process state
+    that cannot cross the durable execution boundary."""
+    with pytest.raises(UserError, match='cannot cross the durable execution boundary'):
+        await _legacy_migration_agent.run('hello', cancellation_token=CancellationToken())
+
+
 _migration_agent: AbstractAgent[None, str] = _legacy_migration_agent
 
 

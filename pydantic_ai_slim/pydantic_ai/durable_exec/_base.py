@@ -279,9 +279,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         there; Temporal reconstructs its context across the activity boundary and installs the
         same guard in `deserialize_run_context`.
         """
-        return guard_run_context(
-            ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun
-        )
+        return guard_run_context(ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun)
 
     @contextmanager
     def _durable_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT]]:

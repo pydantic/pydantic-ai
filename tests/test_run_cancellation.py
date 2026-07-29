@@ -157,7 +157,7 @@ async def test_cancellation_token_from_sibling_task():
     async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         started.set()
         await asyncio.Event().wait()
-        raise AssertionError
+        raise AssertionError  # pragma: no cover
 
     token = CancellationToken()
     task = asyncio.create_task(Agent(FunctionModel(model_function)).run('hello', cancellation_token=token))
@@ -173,7 +173,7 @@ async def test_cancellation_token_from_sibling_task():
 async def test_pre_cancelled_token_does_not_start_run():
     called = False
 
-    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
         nonlocal called
         called = True
         raise AssertionError
@@ -197,7 +197,7 @@ async def test_one_token_cancels_two_runs():
         if started == 2:
             both_started.set()
         await asyncio.Event().wait()
-        raise AssertionError
+        raise AssertionError  # pragma: no cover
 
     token = CancellationToken()
     agent = Agent(FunctionModel(model_function))
@@ -263,7 +263,7 @@ async def test_run_sync_token_cancel_from_another_thread():
     async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         started.set()
         await asyncio.Event().wait()
-        raise AssertionError
+        raise AssertionError  # pragma: no cover
 
     token = CancellationToken()
     run_thread = asyncio.create_task(
@@ -679,6 +679,25 @@ async def test_run_cancellation_tracks_issuances_per_task():
 
 
 @requires_task_cancelling
+async def test_threadsafe_cancel_delivery_after_finish_is_noop():
+    """A `cancel()` marshalled from another thread whose queued delivery lands after `finish()`
+    must not cancel the (former) owner task."""
+    task = asyncio.current_task()
+    assert task is not None
+    baseline = _task_cancelling(task)
+
+    controller = RunCancellation()
+    controller.bind()
+    thread = threading.Thread(target=controller.cancel)
+    thread.start()
+    thread.join()
+    controller.finish()  # the run ends before the queued `_deliver` callback runs
+    await asyncio.sleep(0)  # drain the `call_soon_threadsafe` delivery
+
+    assert _task_cancelling(task) == baseline
+    assert controller.cancel_requested  # the request itself was recorded, just never delivered
+
+
 async def test_release_issued_on_finished_task_is_noop():
     """Releasing issued cancellations for a task that already finished, and releasing an already-empty
     controller, are no-ops — a controller unit test because the public API can't trigger it deterministically."""
