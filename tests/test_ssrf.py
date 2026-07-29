@@ -748,6 +748,65 @@ class TestSafeDownload:
         with pytest.raises(ValueError, match='Access to private/internal IP address'):
             await safe_download('https://example.com/file.txt')
 
+    @pytest.mark.parametrize(
+        'start_url,location,expect_kept',
+        [
+            # Same origin: the headers stay, otherwise following a redirect within one site
+            # would silently drop the caller's credentials.
+            pytest.param('https://example.com/file.txt', '/other.txt', True, id='same-origin-path'),
+            # HTTPS upgrade only makes the channel safer, so it is exempt (as in httpx).
+            pytest.param('http://example.com/file.txt', 'https://example.com/file.txt', True, id='https-upgrade'),
+            # Same host, but `https` -> `http` would put the credentials on the wire in plaintext.
+            pytest.param('https://example.com/file.txt', 'http://example.com/file.txt', False, id='https-downgrade'),
+            # Same host and scheme, different port: a different service.
+            pytest.param('https://example.com/file.txt', 'https://example.com:8443/x', False, id='different-port'),
+            # Different host, the case that was already covered.
+            pytest.param('https://example.com/file.txt', 'https://evil.com/x', False, id='different-host'),
+        ],
+    )
+    async def test_sensitive_headers_stripped_by_origin_not_hostname(
+        self,
+        mock_dns: AsyncMock,
+        mock_ssrf_client: MagicMock,
+        start_url: str,
+        location: str,
+        expect_kept: bool,
+    ) -> None:
+        """Sensitive headers survive a redirect only within the same origin.
+
+        Comparing hostnames alone kept `Authorization` across an `https` -> `http` redirect to the
+        same host, sending the credential in plaintext, and across a port change, handing it to a
+        different service. `_SENSITIVE_HEADERS` had no coverage at all, so neither leak was caught.
+        """
+        redirect_response = AsyncMock()
+        redirect_response.is_redirect = True
+        redirect_response.headers = {'location': location}
+
+        final_response = AsyncMock()
+        final_response.is_redirect = False
+        final_response.raise_for_status = lambda: None
+
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = [redirect_response, final_response]
+        mock_ssrf_client.return_value = mock_client
+
+        await safe_download(
+            start_url,
+            headers={'Authorization': 'Bearer secret', 'Cookie': 'session=abc', 'Accept': 'text/html'},
+        )
+
+        second_call_headers = mock_client.get.call_args_list[1][1]['headers']
+        if expect_kept:
+            assert second_call_headers['Authorization'] == 'Bearer secret'
+            assert second_call_headers['Cookie'] == 'session=abc'
+        else:
+            assert 'Authorization' not in second_call_headers
+            assert 'Cookie' not in second_call_headers
+        # Non-sensitive headers are never dropped.
+        assert second_call_headers['Accept'] == 'text/html'
+
     async def test_http_no_sni_extension(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         mock_response = AsyncMock()
         mock_response.is_redirect = False

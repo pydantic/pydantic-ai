@@ -117,6 +117,7 @@ _CLOUD_METADATA_IPV6: frozenset[ipaddress.IPv6Address] = frozenset(
 _MAX_REDIRECTS = 10
 _DEFAULT_TIMEOUT = 30  # seconds
 _SENSITIVE_HEADERS = frozenset(('authorization', 'cookie', 'proxy-authorization'))
+_DEFAULT_PORTS = {'http': 80, 'https': 443}
 
 
 @dataclass
@@ -419,6 +420,32 @@ def resolve_redirect_url(current_url: str, location: str) -> str:
         return urlunparse((parsed_current.scheme, parsed_current.netloc, f'{base_path}/{location}', '', '', ''))
 
 
+def _origin(url: str) -> tuple[str, str | None, int | None]:
+    """Return the (scheme, host, port) origin of a URL, with the default port made explicit.
+
+    Comparing origins rather than bare hostnames matters for the sensitive-header check: a
+    same-host redirect can still change scheme or port, e.g. an `https://` page redirecting
+    to `http://` puts an `Authorization` header on the wire in plaintext.
+    """
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    port = parsed.port if parsed.port is not None else _DEFAULT_PORTS.get(scheme)
+    return scheme, parsed.hostname, port
+
+
+def _is_https_upgrade(from_url: str, to_url: str) -> bool:
+    """Whether `to_url` is the plain HTTPS upgrade of `from_url`, i.e. only the scheme got safer.
+
+    Matches httpx's own carve-out: redirecting `http://host` to `https://host` moves the
+    request onto a more secure channel, so keeping the sensitive headers is not a downgrade.
+    """
+    from_scheme, from_host, from_port = _origin(from_url)
+    to_scheme, to_host, to_port = _origin(to_url)
+    return (
+        from_host == to_host and from_scheme == 'http' and from_port == 80 and to_scheme == 'https' and to_port == 443
+    )
+
+
 def _check_domain(hostname: str, *, allowed_domains: list[str] | None, blocked_domains: list[str] | None) -> None:
     """Validate a hostname against allowed/blocked domain lists.
 
@@ -475,7 +502,6 @@ async def safe_download(
     """
     current_url = url
     redirects_followed = 0
-    original_hostname = urlparse(url).hostname
     effective_headers: dict[str, str] = dict(headers) if headers else {}
 
     async with create_async_http_client(timeout=timeout) as client:
@@ -517,11 +543,16 @@ async def safe_download(
                 if not location:
                     raise ValueError('Redirect response missing Location header')
 
+                previous_url = current_url
                 current_url = resolve_redirect_url(current_url, location)
 
-                # Strip sensitive headers on cross-origin redirects (RFC 7235)
-                redirect_hostname = urlparse(current_url).hostname
-                if redirect_hostname != original_hostname:
+                # Strip sensitive headers on cross-origin redirects (RFC 7235). The comparison is
+                # by origin, not just hostname: a same-host redirect can still downgrade `https` to
+                # `http`, putting an `Authorization` header on the wire in plaintext, or change the
+                # port and hand it to a different service. An HTTPS upgrade is exempt, as in httpx,
+                # because it only makes the channel safer. Compared against the previous hop, which
+                # is the origin the headers were last entrusted to.
+                if _origin(current_url) != _origin(previous_url) and not _is_https_upgrade(previous_url, current_url):
                     effective_headers = {
                         k: v for k, v in effective_headers.items() if k.lower() not in _SENSITIVE_HEADERS
                     }
