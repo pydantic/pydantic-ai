@@ -6601,6 +6601,7 @@ async def test_resume_cancelled_denies_tool_regardless_of_payload() -> None:
         pytest.param({'approved': True, 'editedArgs': 'not-a-dict'}, id='approved-with-malformed-edited-args'),
         pytest.param({'approved': True, 'reason': 123}, id='approved-with-non-string-reason'),
         pytest.param({'approved': False, 'reason': ''}, id='empty-reason-keeps-default-message'),
+        pytest.param({'reason': 'not via the schema'}, id='reason-without-approved-loses-message'),
     ],
 )
 async def test_resume_deny_by_default_for_ambiguous_payload(payload: Any) -> None:
@@ -6612,6 +6613,11 @@ async def test_resume_deny_by_default_for_ambiguous_payload(payload: Any) -> Non
     malformed `editedArgs` denies the whole payload rather than approving with the
     original arguments the user visibly tried to change, and an empty-string `reason`
     keeps `ToolDenied`'s default message.
+
+    One consequence of validating the payload as a whole is pinned here too: a `reason` sent
+    without `approved` denies with the default message rather than its own, because the
+    payload never validates far enough for `reason` to be read — `approved` is `required`
+    in the advertised schema, so a conforming client always sends it.
     """
     agent = Agent(model=TestModel())
     run_input = RunAgentInput(
@@ -6627,6 +6633,38 @@ async def test_resume_deny_by_default_for_ambiguous_payload(payload: Any) -> Non
     adapter = AGUIAdapter(agent=agent, run_input=run_input)
 
     assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'tc-001': ToolDenied()}))
+
+
+@pytestmark_interrupts
+async def test_resume_only_honors_the_advertised_edited_args_wire_key() -> None:
+    """Only the advertised `editedArgs` key overrides the args, not its snake_case spelling.
+
+    The payload model carries snake_case attributes with camelCase aliases and validates by
+    alias only, so `edited_args` is an unknown key: it is ignored like any other, and the
+    approval goes through with the originally proposed arguments. This pins that the accepted
+    shape stays exactly the one advertised on `Interrupt.response_schema`, which is the drift
+    the single-model design exists to prevent.
+    """
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[
+            ResumeEntry(
+                interrupt_id='int-tc-001',
+                status='resolved',
+                payload={'approved': True, 'edited_args': {'city': 'Mexico City'}},
+            )
+        ],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'tc-001': ToolApproved()}))
 
 
 @pytestmark_interrupts

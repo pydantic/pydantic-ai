@@ -13,13 +13,15 @@ on `Interrupt.response_schema` and it validates `ResumeEntry.payload` inbound.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, StrictBool, ValidationError
+from pydantic import BaseModel, ConfigDict, StrictBool, ValidationError
+from pydantic.alias_generators import to_camel
 
 from ...exceptions import UserError
 from ...messages import ToolCallPart
-from ...tools import DeferredToolApprovalResult, ToolApproved, ToolDenied
+from ...tools import DeferredToolApprovalResult, GenerateToolJsonSchema, ToolApproved, ToolDenied
 from ._utils import INTERRUPT_ID_PREFIX
 
 if TYPE_CHECKING:
@@ -82,35 +84,31 @@ class _ResumePayload(BaseModel):
     `{'approved': 1}` or `{'approved': 'true'}` into approvals, while the deny-by-default
     stance requires such ambiguous payloads to fail validation and deny. It is also
     required (no default) so the generated schema keeps `required: ['approved']`, matching
-    the AG-UI recommended approve-with-edits pattern; a payload without `approved` fails
-    validation and denies all the same.
+    the AG-UI recommended approve-with-edits pattern. A payload without `approved` still
+    denies, but via `ValidationError` rather than the `approved is False` branch, so its
+    `reason` never reaches the denial message — spec-conforming clients always send
+    `approved`, and `test_resume_deny_by_default_for_ambiguous_payload` pins the outcome.
 
-    Field names mirror the AG-UI wire keys 1:1, hence the camelCase `editedArgs`. Unknown
-    payload keys are ignored (Pydantic's default), matching the previous hand-rolled
-    parsing and the `extra='allow'` posture of the AG-UI SDK's own models.
+    The wire keys are camelCase, so `to_camel` supplies them as aliases. Validation is
+    deliberately by alias only — no `populate_by_name` — so the accepted shape stays
+    exactly the advertised one and cannot drift from the schema clients are handed.
+    Unknown payload keys are ignored (Pydantic's default), matching the `extra='allow'`
+    posture of the AG-UI SDK's own models.
     """
 
+    model_config = ConfigDict(alias_generator=to_camel)
+
     approved: StrictBool
-    editedArgs: dict[str, Any] | None = None
+    edited_args: dict[str, Any] | None = None
     reason: str | None = None
 
 
-def _build_resume_response_schema() -> dict[str, Any]:
-    """Derive `Interrupt.response_schema` from `_ResumePayload`, stripping cosmetic keys.
-
-    The `title` keys would leak the private class name and auto-generated field labels
-    into client-rendered approval forms, and the top-level `description` would leak the
-    class docstring, which is written for maintainers rather than end users.
-    """
-    schema = _ResumePayload.model_json_schema()
-    schema.pop('title', None)
-    schema.pop('description', None)
-    for prop in schema.get('properties', {}).values():
-        prop.pop('title', None)
-    return schema
-
-
-_RESUME_RESPONSE_SCHEMA = _build_resume_response_schema()
+# `GenerateToolJsonSchema` drops the per-property `title`s the same way it does for tool
+# parameter schemas; the top-level `title`/`description` would leak the private class name
+# and the maintainer-facing docstring into client-rendered approval forms.
+_RESUME_RESPONSE_SCHEMA = _ResumePayload.model_json_schema(schema_generator=GenerateToolJsonSchema)
+_RESUME_RESPONSE_SCHEMA.pop('title', None)
+_RESUME_RESPONSE_SCHEMA.pop('description', None)
 
 
 def approval_to_interrupt(call: ToolCallPart, metadata: dict[str, dict[str, Any]]) -> Interrupt:
@@ -126,7 +124,10 @@ def approval_to_interrupt(call: ToolCallPart, metadata: dict[str, dict[str, Any]
         reason='tool_call',
         tool_call_id=call.tool_call_id,
         message=f'Approve {call.tool_name}({call.args_as_json_str()})?',
-        response_schema=_RESUME_RESPONSE_SCHEMA,
+        # Copied per interrupt: pydantic only rebuilds the outer dict for a `dict[str, Any]`
+        # field, so sharing the constant would let a consumer mutating one interrupt's schema
+        # alter every other interrupt's in the same process.
+        response_schema=deepcopy(_RESUME_RESPONSE_SCHEMA),
         metadata=metadata.get(call.tool_call_id),
     )
 
@@ -155,6 +156,9 @@ def resume_entry_to_approval(entry: ResumeEntry) -> DeferredToolApprovalResult:
     `editedArgs` denies the whole payload rather than approving with the original
     arguments the user visibly tried to change.
 
+    A denial `reason` only survives when the rest of the payload validates; a payload that
+    fails validation denies with `ToolDenied`'s default message even if it carried one.
+
     `payload.editedArgs` (when `approved=True`) feeds into `ToolApproved.override_args`,
     fully replacing the originally proposed call arguments before the agent re-executes the tool.
     """
@@ -167,8 +171,8 @@ def resume_entry_to_approval(entry: ResumeEntry) -> DeferredToolApprovalResult:
         return ToolDenied()
 
     if payload.approved:
-        if payload.editedArgs is not None:
-            return ToolApproved(override_args=payload.editedArgs)
+        if payload.edited_args is not None:
+            return ToolApproved(override_args=payload.edited_args)
         return ToolApproved()
 
     # An empty-string reason is treated as absent, keeping ToolDenied's default message.
