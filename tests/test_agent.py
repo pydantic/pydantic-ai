@@ -200,12 +200,17 @@ def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.Abstract
     This uses `TestModel` rather than VCR because the failure occurs while scheduling the
     coroutine, before any model request is made.
     """
-    result = Agent(TestModel(custom_output_text='success')).run_sync('Hello')
+    agent = Agent(TestModel(custom_output_text='success'))
+    result = agent.run_sync('Hello')
     replacement_loop = asyncio.get_event_loop()
 
     assert result.output == 'success'
     assert replacement_loop is not closed_event_loop
     assert not replacement_loop.is_closed()
+
+    agent.run_sync('Hello again')
+    assert asyncio.get_event_loop() is replacement_loop
+    assert not asyncio.all_tasks(replacement_loop)
 
 
 def test_result_tuple():

@@ -424,8 +424,11 @@ def closed_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
     try:
         yield closed_loop
     finally:
-        current_loop = asyncio.get_event_loop()
-        if current_loop is not closed_loop:
+        try:
+            current_loop = asyncio.get_event_loop()
+        except RuntimeError:
+            current_loop = None
+        if current_loop is not None and current_loop is not closed_loop and current_loop is not original_loop:
             current_loop.close()
         asyncio.set_event_loop(original_loop)
 
