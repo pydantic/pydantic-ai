@@ -96,6 +96,7 @@ try:
         ImageConfigDict,
         MediaResolution,
         Modality,
+        ModelArmorConfigDict,
         Part,
         PartDict,
         SafetySettingDict,
@@ -140,12 +141,16 @@ LatestGoogleModelNames = Literal[
     'gemini-2.5-flash-lite',
     'gemini-2.5-pro',
     'gemini-3-flash-preview',
+    'gemini-3-pro-image',
     'gemini-3-pro-image-preview',
     'gemini-3-pro-preview',
+    'gemini-3.1-flash-image',
     'gemini-3.1-flash-image-preview',
     'gemini-3.1-flash-lite',
     'gemini-3.1-pro-preview',
     'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.6-flash',
 ]
 """Latest Gemini models."""
 
@@ -157,22 +162,26 @@ allow any name in the type hints.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
 
-_FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
-    GoogleFinishReason.FINISH_REASON_UNSPECIFIED: None,
-    GoogleFinishReason.STOP: 'stop',
-    GoogleFinishReason.MAX_TOKENS: 'length',
-    GoogleFinishReason.SAFETY: 'content_filter',
-    GoogleFinishReason.RECITATION: 'content_filter',
-    GoogleFinishReason.LANGUAGE: 'error',
-    GoogleFinishReason.OTHER: None,
-    GoogleFinishReason.BLOCKLIST: 'content_filter',
-    GoogleFinishReason.PROHIBITED_CONTENT: 'content_filter',
-    GoogleFinishReason.SPII: 'content_filter',
-    GoogleFinishReason.MALFORMED_FUNCTION_CALL: 'error',
-    GoogleFinishReason.IMAGE_SAFETY: 'content_filter',
-    GoogleFinishReason.UNEXPECTED_TOOL_CALL: 'error',
-    GoogleFinishReason.IMAGE_PROHIBITED_CONTENT: 'content_filter',
-    GoogleFinishReason.NO_IMAGE: 'error',
+# Keyed by enum value rather than member: `google.genai`'s `FinishReason` grows members dynamically
+# at parse time for values its installed version doesn't know statically (e.g. `MODEL_ARMOR`),
+# so member-keyed lookups silently miss them.
+_FINISH_REASON_MAP: dict[str, FinishReason | None] = {
+    GoogleFinishReason.FINISH_REASON_UNSPECIFIED.value: None,
+    GoogleFinishReason.STOP.value: 'stop',
+    GoogleFinishReason.MAX_TOKENS.value: 'length',
+    GoogleFinishReason.SAFETY.value: 'content_filter',
+    GoogleFinishReason.RECITATION.value: 'content_filter',
+    GoogleFinishReason.LANGUAGE.value: 'error',
+    GoogleFinishReason.OTHER.value: None,
+    GoogleFinishReason.BLOCKLIST.value: 'content_filter',
+    GoogleFinishReason.PROHIBITED_CONTENT.value: 'content_filter',
+    GoogleFinishReason.SPII.value: 'content_filter',
+    GoogleFinishReason.MALFORMED_FUNCTION_CALL.value: 'error',
+    GoogleFinishReason.IMAGE_SAFETY.value: 'content_filter',
+    GoogleFinishReason.UNEXPECTED_TOOL_CALL.value: 'error',
+    GoogleFinishReason.IMAGE_PROHIBITED_CONTENT.value: 'content_filter',
+    GoogleFinishReason.NO_IMAGE.value: 'error',
+    'MODEL_ARMOR': 'content_filter',
 }
 
 _GOOGLE_IMAGE_SIZE = Literal['512', '1K', '2K', '4K']
@@ -290,6 +299,18 @@ class GoogleModelSettings(ModelSettings, total=False):
     headers sent, and links to Google docs.
     """
 
+    google_model_armor_config: ModelArmorConfigDict
+    """Model Armor configuration for screening prompts and responses. Only supported by the Vertex AI API.
+
+    Specifies the Model Armor templates to use for sanitizing user prompts and model responses.
+    Both fields are optional — omit either to skip screening for that direction.
+
+    Mutually exclusive with `google_safety_settings`: Vertex AI rejects a request that sets both,
+    since Model Armor replaces the built-in safety filters for that request.
+
+    See the [Model Armor docs](https://cloud.google.com/security-command-center/docs/model-armor-overview) for use cases and limitations.
+    """
+
 
 def _warn_on_cached_content_strips(
     cached_content: str | None,
@@ -359,6 +380,19 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
     if top_level := model_settings.get('service_tier'):
         return _TOP_LEVEL_TO_GOOGLE_CLOUD_SERVICE_TIER[top_level]
     return 'pt_then_on_demand'
+
+
+def _map_api_error(e: errors.APIError, model_name: str) -> ModelAPIError:
+    """Map a `google.genai` API error to the pydantic-ai exception to raise in its place."""
+    if (status_code := e.code) >= 400:
+        headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        return ModelHTTPError(
+            status_code=status_code,
+            model_name=model_name,
+            body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+            headers=headers,
+        )
+    return ModelAPIError(model_name=model_name, message=str(e))
 
 
 def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:
@@ -576,7 +610,7 @@ class GoogleModel(Model[Client]):
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         try:
-            yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
+            yield await self._process_streamed_response(response, model_request_parameters)  # pyright: ignore[reportArgumentType]
         finally:
             aclose = getattr(response, 'aclose', None)
             if aclose is not None:  # pragma: no branch
@@ -713,11 +747,18 @@ class GoogleModel(Model[Client]):
         # `include_server_side_tool_invocations` is required on Gemini 3+ when any built-in (server-side)
         # tool is combined with function calling; pre-Gemini-3 models reject the field ('Tool call context
         # circulation is not enabled'). ImageGenerationTool runs through `image_config` and is excluded.
+        # The field is a Gemini Developer API (ML Dev) only parameter: the google-genai SDK's Vertex
+        # converter (`_ToolConfig_to_vertex`) raises `ValueError` when it is present, so skip it for
+        # Google Cloud (Vertex) even on Gemini 3+ models.
         emits_tool_call_invocations = any(
             isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool, CodeExecutionTool))
             for t in model_request_parameters.native_tools
         )
-        if emits_tool_call_invocations and self.profile.get('google_supports_server_side_tool_invocations', False):
+        if (
+            emits_tool_call_invocations
+            and self.profile.get('google_supports_server_side_tool_invocations', False)
+            and self.system not in _GOOGLE_CLOUD_PROVIDER_NAMES
+        ):
             tool_config['include_server_side_tool_invocations'] = True
 
         tools: list[ToolDict] = [
@@ -763,15 +804,9 @@ class GoogleModel(Model[Client]):
         )
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
-            return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
+            return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
         except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
-                ) from e
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise _map_api_error(e, self._model_name) from e
 
     def _translate_thinking(
         self,
@@ -895,6 +930,7 @@ class GoogleModel(Model[Client]):
             response_json_schema=response_schema,
             response_modalities=modalities,
             image_config=image_config,
+            model_armor_config=model_settings.get('google_model_armor_config'),
         )
 
         if gla_service_tier is not None:
@@ -923,7 +959,7 @@ class GoogleModel(Model[Client]):
             # Add safety ratings to provider details
             if candidate.safety_ratings:
                 provider_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
-            finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+            finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason.value)
         elif candidate is None and response.prompt_feedback and response.prompt_feedback.block_reason:
             block_reason = response.prompt_feedback.block_reason
             provider_details['block_reason'] = block_reason.value
@@ -982,7 +1018,13 @@ class GoogleModel(Model[Client]):
         peekable_response: _utils.PeekableAsyncStream[
             GenerateContentResponse, AsyncIterator[GenerateContentResponse]
         ] = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
+        # `generate_content_stream` doesn't issue the HTTP request until the response
+        # iterator is first advanced, so API errors surface here rather than in
+        # `_generate_content`'s try/except and need the same mapping.
+        try:
+            first_chunk = await peekable_response.peek()
+        except errors.APIError as e:
+            raise _map_api_error(e, self._model_name) from e
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
@@ -1098,9 +1140,18 @@ class GoogleModel(Model[Client]):
                 file_part = await self._map_file_to_part(file)
                 fallback_parts.append(file_part)
 
-        response = part.model_response_object()
-        if fallback_refs:
-            response = {'output': [response, *fallback_refs]}
+        if part.outcome == 'failed':
+            # Google's function-response schema prescribes an `error` key (mirroring the `output` key
+            # used for success) for reporting a failed tool call, so this is Gemini's native error
+            # channel, not the generic `{"error": ...}` wrapper other providers fall back to — hence
+            # `wrap_if_error=False` and the hand-built dict. Gemini surfaces the value as the failure
+            # message, so it stays a plain string: file references are sent as the file parts below
+            # rather than folded into the error text (the success branch nests them under `output`).
+            response = {'error': part.model_response_str(wrap_if_error=False)}
+        else:
+            response = part.model_response_object(wrap_if_error=False)
+            if fallback_refs:
+                response = {'output': [response, *fallback_refs]}
 
         function_response_dict: FunctionResponseDict = {
             'name': part.tool_name,
@@ -1322,7 +1373,7 @@ class GeminiStreamedResponse(StreamedResponse):
                             r.model_dump(by_alias=True) for r in candidate.safety_ratings
                         ]
 
-                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason.value)
 
                 # Google streams the grounding metadata (including the web search queries and results)
                 # _after_ the text that was generated using it, so it would show up out of order in the stream,
@@ -1483,13 +1534,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
             self._pending_file_search_returns = []
         except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
-                ) from e
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise _map_api_error(e, self._model_name) from e
 
     def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None

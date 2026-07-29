@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import ConfigDict, with_config
+from pydantic.errors import PydanticUserError
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 from typing_extensions import Self
 
@@ -18,6 +21,7 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -71,12 +75,12 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         return self  # pragma: no cover
 
     async def __aenter__(self) -> Self:
-        if not workflow.in_workflow():  # pragma: no cover
+        if not workflow.in_workflow():
             await self.wrapped.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        if not workflow.in_workflow():  # pragma: no cover
+        if not workflow.in_workflow():
             return await self.wrapped.__aexit__(*args)
         return None
 
@@ -86,30 +90,14 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
     def _unwrap_call_tool_result(self, result: CallToolResult) -> Any:
         return unwrap_tool_call_result(result)
 
-    async def _call_tool_in_activity(
-        self,
-        name: str,
-        tool_args: dict[str, Any],
-        ctx: RunContext[AgentDepsT],
-        tool: ToolsetTool[AgentDepsT],
-        *,
-        toolset: AbstractToolset[AgentDepsT] | None = None,
-    ) -> CallToolResult:
-        """Call a tool inside an activity, re-validating args that were deserialized.
 
-        The tool args will already have been validated into their proper types in the `ToolManager`,
-        but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
-
-        Args:
-            name: The name of the tool to call.
-            tool_args: The raw tool arguments to re-validate and pass.
-            ctx: The run context.
-            tool: The tool definition.
-            toolset: The toolset to call the tool on. Defaults to `self.wrapped`.
-        """
-        toolset = toolset or self.wrapped
-        args_dict = tool.args_validator.validate_python(tool_args)
-        return await self._wrap_call_tool_result(toolset.call_tool(name, args_dict, ctx, tool))
+def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
+    """Return a copy of `retry_policy` with the framework's non-retryable errors ensured."""
+    retry_policy = copy.copy(retry_policy) if retry_policy else RetryPolicy()
+    existing = retry_policy.non_retryable_error_types or []
+    additional = [UserError.__name__, PydanticUserError.__name__, UnexpectedModelBehavior.__name__]
+    retry_policy.non_retryable_error_types = [*existing, *(name for name in additional if name not in existing)]
+    return retry_policy
 
 
 def resolve_tool_activity_config(
@@ -123,7 +111,7 @@ def resolve_tool_activity_config(
     `tool_activity_config` dict keyed by tool name. Returns an `ActivityConfig` dict
     (possibly empty), or `False` to skip activity wrapping.
     """
-    return cast(
+    config = cast(
         'ActivityConfig | Literal[False]',
         resolve_tool_durable_config(
             tool,
@@ -133,6 +121,12 @@ def resolve_tool_activity_config(
             config_type_label='ActivityConfig',
         ),
     )
+    if config is False:
+        return False
+    config = copy.copy(config)
+    if 'retry_policy' in config:
+        config['retry_policy'] = with_non_retryable_errors(config.get('retry_policy'))
+    return config
 
 
 def toolset_temporal_activities(toolset: AbstractToolset[Any]) -> list[Callable[..., Any]]:
@@ -189,9 +183,9 @@ def temporalize_toolset(
         )
 
     if isinstance(toolset, DynamicToolset):
-        from ._dynamic_toolset import TemporalDynamicToolset
+        from ._dynamic_toolset import temporalize_dynamic_toolset
 
-        return TemporalDynamicToolset(
+        return temporalize_dynamic_toolset(
             toolset,
             activity_name_prefix=activity_name_prefix,
             activity_config=activity_config,

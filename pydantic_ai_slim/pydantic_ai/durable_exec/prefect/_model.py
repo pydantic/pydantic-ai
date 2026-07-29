@@ -154,5 +154,5 @@ class PrefectModel(WrapperModel):
         yield CompletedStreamedResponse(
             response,
             model_request_parameters=model_request_parameters,
-            events=self._get_event_stream_handler() is None,
+            replay_events=self._get_event_stream_handler() is None,
         )

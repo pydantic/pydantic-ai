@@ -135,7 +135,7 @@ class DurableModel(WrapperModel):
         yield CompletedStreamedResponse(
             result.response,
             model_request_parameters=model_request_parameters,
-            events=result.events,
+            replay_events=result.events,
         )
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:

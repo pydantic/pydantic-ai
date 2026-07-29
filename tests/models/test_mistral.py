@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, cast
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -409,6 +410,27 @@ async def test_usage_with_cached_tokens(allow_model_requests: None):
     result = await agent.run('hello')
 
     assert result.usage == snapshot(RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1))
+
+
+@pytest.mark.vcr()
+async def test_mistral_history_uses_prompt_cache(allow_model_requests: None, mistral_api_key: str, vcr: Cassette):
+    instructions = ' '.join(['Retain this instruction prefix for the entire conversation.'] * 24)
+    settings = MistralModelSettings(mistral_prompt_cache_key='pydantic-ai-test-mistral-history-cache')
+    agent = Agent(
+        MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key)),
+        instructions=instructions,
+    )
+
+    first = await agent.run('Reply with exactly: cache probe one.', model_settings=settings)
+    second = await agent.run(
+        'Reply with exactly: cache probe two.',
+        message_history=first.all_messages(),
+        model_settings=settings,
+    )
+
+    second_request = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert second_request['messages'][2]['content'] == [{'text': first.output, 'type': 'text'}]
+    assert second.usage.cache_read_tokens >= 64
 
 
 #####################
@@ -2826,15 +2848,64 @@ async def test_txt_url_input(allow_model_requests: None):
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(
-        NotImplementedError, match='DocumentUrl other than PDF is not supported in Mistral user prompts'
-    ):
-        await agent.run(
-            [
-                'hello',
-                DocumentUrl(url='https://examplefiles.org/files/documents/plaintext-example-file-download.txt'),
-            ]
-        )
+    document_url = DocumentUrl(
+        url='https://examplefiles.org/files/documents/plaintext-example-file-download.txt',
+        media_type='text/plain',
+    )
+
+    with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {'data': 'Dummy TXT file', 'data_type': 'text/plain'}
+        result = await agent.run(['hello', document_url])
+
+    mock_download.assert_called_once()
+    assert mock_download.call_args[1]['data_format'] == 'text'
+    assert result.output == 'world'
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert messages[0].content == snapshot(
+        [
+            MistralTextChunk(text='hello'),
+            MistralTextChunk(
+                text="""\
+-----BEGIN FILE id="bff1f1" type="text/plain"-----
+Dummy TXT file
+-----END FILE id="bff1f1"-----\
+"""
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_text_document_as_binary_content_input(
+    allow_model_requests: None, text_document_content: BinaryContent, mistral_api_key: str
+):
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What is the main content on this document?', text_document_content])
+    assert result.output == snapshot("""\
+The document you provided is a **dummy text file** with no meaningful content. It simply contains the text:
+
+**"Dummy TXT file"**
+
+This appears to be a placeholder or test file with no substantive information. If this was part of a larger dataset or system, it might be used for testing file handling, encoding, or transmission.\
+""")
+
+
+@pytest.mark.vcr()
+async def test_text_document_url_input(
+    allow_model_requests: None, mistral_api_key: str, disable_ssrf_protection_for_vcr: None
+):
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key))
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/TR/2003/REC-PNG-20031110/iso_8859-1.txt')
+
+    result = await agent.run(['What is the main content on this document, in one sentence?', document_url])
+    assert result.output == snapshot(
+        'This document lists the graphical (non-control) characters defined by the **ISO 8859-1 (1987) character encoding standard**, including their hexadecimal codes and descriptions.'
+    )
 
 
 async def test_audio_as_binary_content_input(allow_model_requests: None):
@@ -2846,7 +2917,8 @@ async def test_audio_as_binary_content_input(allow_model_requests: None):
     base64_content = b'//uQZ'
 
     with pytest.raises(
-        NotImplementedError, match='BinaryContent other than image or PDF is not supported in Mistral user prompts'
+        NotImplementedError,
+        match='BinaryContent other than text-like, image, or PDF is not supported in Mistral user prompts',
     ):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type='audio/wav')])
 
@@ -2872,13 +2944,18 @@ async def test_uploaded_file_input(allow_model_requests: None):
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
-    response = httpx.Response(500, content=b'test error')
+    response = httpx.Response(500, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, content=b'test error')
     mock_client = MockMistralAI.create_mock(SDKError('test error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
-    assert str(exc_info.value) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')
+    exc = exc_info.value
+    assert str(exc) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')
+    # SDKError.headers is httpx.Headers; _map_api_errors converts it with dict() — verify it lands correctly.
+    assert exc.headers is not None
+    assert exc.headers.get('retry-after') == '30'
+    assert exc.headers.get('x-request-id') == 'rid-1'
 
 
 def test_model_non_http_error(allow_model_requests: None) -> None:
@@ -3111,8 +3188,6 @@ By following these steps, you can ensure a safe crossing.\
 
 async def test_image_url_force_download() -> None:
     """Test that force_download=True calls download_item for ImageUrl in MistralModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
@@ -3147,8 +3222,6 @@ async def test_image_url_force_download() -> None:
 
 async def test_image_url_no_force_download() -> None:
     """Test that force_download=False does not call download_item for ImageUrl in MistralModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
@@ -3174,10 +3247,45 @@ async def test_image_url_no_force_download() -> None:
         mock_download.assert_not_called()
 
 
+async def test_text_document_binary_content_mapping(text_document_content: BinaryContent) -> None:
+    """Test that text-like BinaryContent is inlined as MistralTextChunk.
+
+    Unit test, not VCR: the cassette matcher keys only on method/path, so this pins the internal
+    `_map_messages` chunk shape; wire validity is proven by `test_text_document_as_binary_content_input`.
+    """
+    m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'What is in this document?',
+                        text_document_content,
+                    ]
+                )
+            ]
+        )
+    ]
+
+    mapped = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    user_msg = mapped[0]
+    assert isinstance(user_msg, UserMessage)
+    assert user_msg.content is not None
+    assert isinstance(user_msg.content, list)
+    assert len(user_msg.content) == 2
+    text_chunks = [chunk for chunk in user_msg.content if isinstance(chunk, MistralTextChunk)]
+    assert len(text_chunks) == 2
+    inlined = text_chunks[1].text
+    assert '-----BEGIN FILE' in inlined
+    assert 'Dummy TXT file' in inlined
+    assert '-----END FILE' in inlined
+    assert text_document_content.media_type in inlined
+    assert text_document_content.identifier in inlined
+
+
 async def test_document_url_force_download() -> None:
     """Test that force_download=True calls download_item for DocumentUrl PDF in MistralModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
@@ -3212,8 +3320,6 @@ async def test_document_url_force_download() -> None:
 
 async def test_document_url_no_force_download() -> None:
     """Test that force_download=False does not call download_item for DocumentUrl PDF in MistralModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
@@ -3468,3 +3574,109 @@ async def test_reasoning_effort_stream_with_tools(allow_model_requests: None) ->
     assert text == 'done'
     assert len(mock_client.chat_completion_kwargs) == 2
     assert all(kwargs['reasoning_effort'] == 'none' for kwargs in mock_client.chat_completion_kwargs)
+
+
+#####################
+## Prompt cache key / parallel tool calls
+#####################
+
+
+async def test_prompt_cache_key_sent(allow_model_requests: None) -> None:
+    """`mistral_prompt_cache_key` reaches the SDK call when set.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
+    c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(mistral_prompt_cache_key='conv-123'))
+    assert result.output == 'hello'
+    assert mock_client.chat_completion_kwargs[-1]['prompt_cache_key'] == 'conv-123'
+
+
+async def test_prompt_cache_key_unset_without_config(allow_model_requests: None) -> None:
+    """Without `mistral_prompt_cache_key`, `prompt_cache_key` stays `UNSET`.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
+    c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'hello'
+    assert isinstance(mock_client.chat_completion_kwargs[-1]['prompt_cache_key'], MistralUnset)
+
+
+async def test_prompt_cache_key_stream(allow_model_requests: None) -> None:
+    """`mistral_prompt_cache_key` reaches the SDK call in streaming mode too, and stays `UNSET` by default.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
+    stream = [text_chunk('hello', finish_reason='stop')]
+    mock_client = MockMistralAI(stream=stream)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        await result.get_output()
+    assert isinstance(mock_client.chat_completion_kwargs[-1]['prompt_cache_key'], MistralUnset)
+
+    async with agent.run_stream(
+        'hello', model_settings=MistralModelSettings(mistral_prompt_cache_key='conv-123')
+    ) as result:
+        text = await result.get_output()
+    assert text == 'hello'
+    assert mock_client.chat_completion_kwargs[-1]['prompt_cache_key'] == 'conv-123'
+
+
+async def test_parallel_tool_calls_sent(allow_model_requests: None) -> None:
+    """`parallel_tool_calls` reaches the SDK call when set, and is `None` (omitted by the SDK) by default.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
+    c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'hello'
+    assert mock_client.chat_completion_kwargs[-1]['parallel_tool_calls'] is None
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(parallel_tool_calls=False))
+    assert result.output == 'hello'
+    assert mock_client.chat_completion_kwargs[-1]['parallel_tool_calls'] is False
+
+
+async def test_parallel_tool_calls_stream(allow_model_requests: None) -> None:
+    """`parallel_tool_calls` reaches the SDK call in streaming mode too, and is `None` by default.
+
+    Asserts on `MockMistralAI.chat_completion_kwargs` (pre-serialization SDK kwargs) rather than
+    a VCR cassette, since the cassette only captures the serialized HTTP body and can't
+    distinguish an omitted kwarg from one explicitly set to its default.
+    """
+    stream = [text_chunk('hello', finish_reason='stop')]
+    mock_client = MockMistralAI(stream=stream)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        await result.get_output()
+    assert mock_client.chat_completion_kwargs[-1]['parallel_tool_calls'] is None
+
+    async with agent.run_stream('hello', model_settings=MistralModelSettings(parallel_tool_calls=True)) as result:
+        text = await result.get_output()
+    assert text == 'hello'
+    assert mock_client.chat_completion_kwargs[-1]['parallel_tool_calls'] is True

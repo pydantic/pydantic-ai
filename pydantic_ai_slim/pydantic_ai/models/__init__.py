@@ -482,12 +482,13 @@ class Model(ABC, Generic[InterfaceClient]):
     def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
         """Pre-process the message history before it's handed to the adapter's message-prep step.
 
-        Currently translates any typed `NativeToolSearch*Part` instances carried over from a
-        prior native turn (e.g. Anthropic / OpenAI Responses) into the local-shape
-        `ToolSearch*Part` instances when the active model's profile doesn't support
-        `ToolSearchTool` — splitting the single `ModelResponse(call+return)` carrying the
-        inline server-side result into `ModelResponse(call) + ModelRequest(return)` so the
-        adapter sees a normal function-call exchange against `search_tools`.
+        Translates typed `NativeToolSearch*Part` instances carried over from a
+        different provider (e.g. Anthropic to OpenAI Responses), or any native
+        provider when the active model doesn't support `ToolSearchTool`, into the
+        local-shape `ToolSearch*Part` instances. This splits the single
+        `ModelResponse(call+return)` carrying the inline server-side result into
+        `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
+        provider-agnostic exchange.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`.
@@ -496,10 +497,14 @@ class Model(ABC, Generic[InterfaceClient]):
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
         """
-        if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
-            from .._tool_search import synthesize_local_tool_search_messages
+        from .._tool_search import synthesize_local_tool_search_messages
 
-            messages = synthesize_local_tool_search_messages(messages)
+        target_provider_name = (
+            self.system
+            if ToolSearchTool in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+            else None
+        )
+        messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
 
         if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages)
@@ -1033,7 +1038,7 @@ class CompletedStreamedResponse(StreamedResponse):
     the real stream inside an activity/step/task and only surfaces the final
     [`ModelResponse`][pydantic_ai.messages.ModelResponse] to the workflow.
 
-    What the stream yields is controlled by `events`:
+    What the stream yields is controlled by `replay_events`:
 
     - `False` (default): yield no events — the response is complete and no streaming
       consumer needs to observe it.
@@ -1051,20 +1056,62 @@ class CompletedStreamedResponse(StreamedResponse):
         response: ModelResponse,
         *,
         model_request_parameters: ModelRequestParameters,
-        events: bool | list[ModelResponseStreamEvent] = False,
+        replay_events: bool | list[ModelResponseStreamEvent] = False,
     ) -> None: ...
 
     @overload
     @deprecated('Pass the response first and `model_request_parameters` as a keyword argument.')
-    def __init__(self, model_request_parameters: ModelRequestParameters, response: ModelResponse, /) -> None: ...
+    def __init__(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        response: ModelResponse,
+        /,
+        *,
+        replay_events: bool | list[ModelResponseStreamEvent] = False,
+    ) -> None: ...
+
+    @overload
+    @deprecated('Use `replay_events` instead of `events`.')
+    def __init__(
+        self,
+        response: ModelResponse,
+        *,
+        model_request_parameters: ModelRequestParameters,
+        events: bool | list[ModelResponseStreamEvent] = False,
+    ) -> None: ...
+
+    @overload
+    @deprecated('Use `replay_events` instead of `events`.')
+    def __init__(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        response: ModelResponse,
+        /,
+        *,
+        events: bool | list[ModelResponseStreamEvent] = False,
+    ) -> None: ...
 
     def __init__(
         self,
         response: ModelResponse | ModelRequestParameters,
         model_request_parameters: ModelRequestParameters | ModelResponse | None = None,
         *,
-        events: bool | list[ModelResponseStreamEvent] = False,
+        replay_events: bool | list[ModelResponseStreamEvent] | _utils.Unset = _utils.UNSET,
+        events: bool | list[ModelResponseStreamEvent] | None = None,
     ):
+        # TODO(v3): remove the `events` alias and its deprecated `__init__` overloads
+        if events is not None:
+            warnings.warn(
+                '`events` is deprecated; use `replay_events` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            # The deprecated alias only fills the gap: an explicit `replay_events` wins.
+            if isinstance(replay_events, _utils.Unset):
+                replay_events = events
+        if isinstance(replay_events, _utils.Unset):
+            replay_events = False
+        # TODO(v3): remove the positional `(model_request_parameters, response)` order and its deprecated overloads
         if isinstance(response, ModelRequestParameters):
             # The positional `(model_request_parameters, response)` order predates the move
             # from `pydantic_ai.models.wrapper` to `pydantic_ai.models`.
@@ -1080,16 +1127,16 @@ class CompletedStreamedResponse(StreamedResponse):
         super().__init__(model_request_parameters)
         self.response = response
         self.state = response.state
-        self._events = events
+        self._replay_events = replay_events
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        if not isinstance(self._events, list):
+        if not isinstance(self._replay_events, list):
             return super().__aiter__()
         # Buffered events were already produced by the live stream's `__aiter__`,
         # which means they include `PartEndEvent`s. Yield them directly so the
         # parent `__aiter__` doesn't re-inject PartEnds.
         if self._event_iterator is None:
-            self._event_iterator = self._iter_buffered(self._events)
+            self._event_iterator = self._iter_buffered(self._replay_events)
         return self._event_iterator
 
     async def _iter_buffered(self, events: list[ModelResponseStreamEvent]) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -1099,9 +1146,9 @@ class CompletedStreamedResponse(StreamedResponse):
         self._finished = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        # Only reached when `events` is a bool — `__aiter__` short-circuits the
+        # Only reached when `replay_events` is a bool — `__aiter__` short-circuits the
         # buffered-list path above.
-        if self._events is False:
+        if self._replay_events is False:
             return
         for part in self.response.parts:
             # Register the complete part with the parts manager, which yields a single
@@ -1120,7 +1167,7 @@ class CompletedStreamedResponse(StreamedResponse):
         pass
 
     def get(self) -> ModelResponse:
-        if isinstance(self._events, list):
+        if isinstance(self._replay_events, list):
             return replace(
                 self.response,
                 parts=self._parts_manager.get_parts(),
@@ -1155,16 +1202,30 @@ ALLOW_MODEL_REQUESTS = True
 This global setting allows you to disable request to most models, e.g. to make sure you don't accidentally
 make costly requests to a model during tests.
 
-The testing models [`TestModel`][pydantic_ai.models.test.TestModel] and
-[`FunctionModel`][pydantic_ai.models.function.FunctionModel] are no affected by this setting.
+The testing models [`TestModel`][pydantic_ai.models.test.TestModel],
+[`FunctionModel`][pydantic_ai.models.function.FunctionModel] and
+[`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] are not affected by this setting, nor is
+[`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel],
+which runs inference locally and so has no per-call provider cost.
 """
 
 
 def check_allow_model_requests() -> None:
     """Check if model requests are allowed.
 
-    If you're defining your own models that have costs or latency associated with their use, you should call this in
-    [`Model.request`][pydantic_ai.models.Model.request] and [`Model.request_stream`][pydantic_ai.models.Model.request_stream].
+    If you're defining your own models that have costs or latency associated with their use, you should call this at the
+    top of each method that sends a request to the provider: [`Model.request`][pydantic_ai.models.Model.request],
+    [`Model.request_stream`][pydantic_ai.models.Model.request_stream],
+    [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens],
+    [`Model.compact_messages`][pydantic_ai.models.Model.compact_messages],
+    [`EmbeddingModel.embed`][pydantic_ai.embeddings.EmbeddingModel.embed] and
+    [`EmbeddingModel.count_tokens`][pydantic_ai.embeddings.EmbeddingModel.count_tokens].
+
+    Methods that produce their result locally don't need it — for example
+    [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel]'s `count_tokens`, which tokenizes with
+    `tiktoken` and never calls the provider. Neither does
+    [`Model.cancel_suspended_response`][pydantic_ai.models.Model.cancel_suspended_response], which deliberately omits it
+    so an already-started job can still be cancelled after the flag is flipped.
 
     Raises:
         RuntimeError: If model requests are not allowed.
@@ -1269,6 +1330,18 @@ def infer_model(  # noqa: C901
         from ..providers.gateway import normalize_gateway_provider
 
         model_kind = normalize_gateway_provider(model_kind)
+
+    if provider_name == 'bedrock-mantle':
+        from ..providers.bedrock_mantle import BedrockMantleProvider, bedrock_mantle_model_profile
+        from .bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
+
+        if not isinstance(provider, BedrockMantleProvider):
+            raise UserError('Bedrock Mantle models require a `BedrockMantleProvider`.')
+        # The profile carries the endpoint family (and raises for non-OpenAI models), so routing reads
+        # it rather than re-deriving the interface here.
+        if bedrock_mantle_model_profile(model_name).get('bedrock_mantle_interface') == 'chat':
+            return BedrockMantleChatModel(model_name, provider=provider)
+        return BedrockMantleResponsesModel(model_name, provider=provider)
 
     # OpenRouter, Cerebras, Ollama and Z.AI need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import inspect
 import re
 import threading
 import warnings
@@ -35,6 +36,7 @@ from pydantic_ai.capabilities import (
     MCP,
     Capability,
     CapabilityOrdering,
+    DynamicCapability,
     HandleDeferredToolCalls,
     ImageGeneration,
     IncludeToolReturnSchemas,
@@ -50,14 +52,15 @@ from pydantic_ai.capabilities import (
     SelectModel,
     SetToolMetadata,
     Thinking,
-    ThreadExecutor,
     ToolSearch,
     Toolset,
+    UseThreadExecutor,
     WebFetch,
     WebSearch,
     WrapperCapability,
     XSearch,
 )
+from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
@@ -69,6 +72,7 @@ from pydantic_ai.exceptions import (
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    ToolFailed,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UserError,
@@ -583,6 +587,48 @@ def test_model_json_schema_with_capabilities():
     assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
+                'AdvisorTool': {
+                    'properties': {
+                        'kind': {'default': 'advisor', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'model': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'claude-fable-5',
+                                        'claude-mythos-5',
+                                        'claude-opus-5',
+                                        'claude-opus-4-8',
+                                        'claude-opus-4-7',
+                                        'claude-opus-4-6',
+                                        'claude-sonnet-4-6',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
+                            'title': 'Model',
+                        },
+                        'max_uses': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Uses',
+                        },
+                        'max_tokens': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Tokens',
+                        },
+                        'caching': {
+                            'anyOf': [{'enum': ['5m', '1h'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Caching',
+                        },
+                    },
+                    'required': ['model'],
+                    'title': 'AdvisorTool',
+                    'type': 'object',
+                },
                 'AgentRetries': {
                     'additionalProperties': False,
                     'properties': {
@@ -716,10 +762,22 @@ def test_model_json_schema_with_capabilities():
                         'anthropic:claude-opus-4-6',
                         'anthropic:claude-opus-4-7',
                         'anthropic:claude-opus-4-8',
+                        'anthropic:claude-opus-5',
                         'anthropic:claude-sonnet-4-5',
                         'anthropic:claude-sonnet-4-5-20250929',
                         'anthropic:claude-sonnet-4-6',
                         'anthropic:claude-sonnet-5',
+                        'bedrock-mantle:openai.gpt-5.4',
+                        'bedrock-mantle:openai.gpt-5.4-2026-03-05',
+                        'bedrock-mantle:openai.gpt-5.5',
+                        'bedrock-mantle:openai.gpt-5.5-2026-04-23',
+                        'bedrock-mantle:openai.gpt-5.6-luna',
+                        'bedrock-mantle:openai.gpt-5.6-sol',
+                        'bedrock-mantle:openai.gpt-5.6-terra',
+                        'bedrock-mantle:openai.gpt-oss-120b',
+                        'bedrock-mantle:openai.gpt-oss-20b',
+                        'bedrock-mantle:openai.gpt-oss-safeguard-120b',
+                        'bedrock-mantle:openai.gpt-oss-safeguard-20b',
                         'bedrock:amazon.titan-text-express-v1',
                         'bedrock:amazon.titan-text-lite-v1',
                         'bedrock:amazon.titan-tg1-large',
@@ -754,6 +812,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:global.anthropic.claude-opus-4-6-v1',
                         'bedrock:global.anthropic.claude-opus-4-7',
                         'bedrock:global.anthropic.claude-opus-4-8',
+                        'bedrock:global.anthropic.claude-opus-5',
                         'bedrock:global.anthropic.claude-sonnet-5',
                         'bedrock:google.gemma-3-12b-it',
                         'bedrock:google.gemma-3-27b-it',
@@ -809,6 +868,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.anthropic.claude-opus-4-6-v1',
                         'bedrock:us.anthropic.claude-opus-4-7',
                         'bedrock:us.anthropic.claude-opus-4-8',
+                        'bedrock:us.anthropic.claude-opus-5',
                         'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
                         'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'bedrock:us.anthropic.claude-sonnet-4-6',
@@ -852,6 +912,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-opus-4-6',
                         'gateway/anthropic:claude-opus-4-7',
                         'gateway/anthropic:claude-opus-4-8',
+                        'gateway/anthropic:claude-opus-5',
                         'gateway/anthropic:claude-sonnet-4-5',
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
                         'gateway/anthropic:claude-sonnet-4-6',
@@ -869,6 +930,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:global.anthropic.claude-opus-4-6-v1',
                         'gateway/bedrock:global.anthropic.claude-opus-4-7',
                         'gateway/bedrock:global.anthropic.claude-opus-4-8',
+                        'gateway/bedrock:global.anthropic.claude-opus-5',
                         'gateway/bedrock:global.anthropic.claude-sonnet-5',
                         'gateway/bedrock:google.gemma-3-12b-it',
                         'gateway/bedrock:google.gemma-3-27b-it',
@@ -902,6 +964,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:us.anthropic.claude-opus-4-6-v1',
                         'gateway/bedrock:us.anthropic.claude-opus-4-7',
                         'gateway/bedrock:us.anthropic.claude-opus-4-8',
+                        'gateway/bedrock:us.anthropic.claude-opus-5',
                         'gateway/bedrock:us.anthropic.claude-sonnet-5',
                         'gateway/bedrock:us.meta.llama4-maverick-17b-instruct-v1:0',
                         'gateway/bedrock:us.meta.llama4-scout-17b-instruct-v1:0',
@@ -916,28 +979,26 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-2.5-flash-lite',
                         'gateway/google-cloud:gemini-2.5-pro',
                         'gateway/google-cloud:gemini-3-flash-preview',
-                        'gateway/google-cloud:gemini-3-pro-image-preview',
-                        'gateway/google-cloud:gemini-3.1-flash-image-preview',
                         'gateway/google-cloud:gemini-3.1-flash-lite',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/google-cloud:gemini-3.5-flash',
+                        'gateway/google-cloud:gemini-3.5-flash-lite',
+                        'gateway/google-cloud:gemini-3.6-flash',
                         'gateway/google:gemini-2.5-flash',
                         'gateway/google:gemini-2.5-flash-image',
                         'gateway/google:gemini-2.5-flash-lite',
                         'gateway/google:gemini-2.5-pro',
                         'gateway/google:gemini-3-flash-preview',
-                        'gateway/google:gemini-3-pro-image-preview',
-                        'gateway/google:gemini-3.1-flash-image-preview',
                         'gateway/google:gemini-3.1-flash-lite',
                         'gateway/google:gemini-3.1-pro-preview',
                         'gateway/google:gemini-3.5-flash',
+                        'gateway/google:gemini-3.5-flash-lite',
+                        'gateway/google:gemini-3.6-flash',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
                         'gateway/groq:openai/gpt-oss-120b',
                         'gateway/groq:openai/gpt-oss-20b',
                         'gateway/groq:openai/gpt-oss-safeguard-20b',
-                        'gateway/openai:computer-use-preview',
-                        'gateway/openai:computer-use-preview-2025-03-11',
                         'gateway/openai:gpt-3.5-turbo',
                         'gateway/openai:gpt-3.5-turbo-0125',
                         'gateway/openai:gpt-3.5-turbo-1106',
@@ -959,8 +1020,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-4o-mini-2024-07-18',
                         'gateway/openai:gpt-5',
                         'gateway/openai:gpt-5-2025-08-07',
-                        'gateway/openai:gpt-5-chat-latest',
-                        'gateway/openai:gpt-5-codex',
                         'gateway/openai:gpt-5-mini',
                         'gateway/openai:gpt-5-mini-2025-08-07',
                         'gateway/openai:gpt-5-nano',
@@ -969,9 +1028,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-5-pro-2025-10-06',
                         'gateway/openai:gpt-5.1',
                         'gateway/openai:gpt-5.1-2025-11-13',
-                        'gateway/openai:gpt-5.1-chat-latest',
-                        'gateway/openai:gpt-5.1-codex',
-                        'gateway/openai:gpt-5.1-codex-max',
                         'gateway/openai:gpt-5.2',
                         'gateway/openai:gpt-5.2-2025-12-11',
                         'gateway/openai:gpt-5.2-chat-latest',
@@ -1006,12 +1062,16 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-2.5-flash-preview-09-2025',
                         'google-cloud:gemini-2.5-pro',
                         'google-cloud:gemini-3-flash-preview',
+                        'google-cloud:gemini-3-pro-image',
                         'google-cloud:gemini-3-pro-image-preview',
                         'google-cloud:gemini-3-pro-preview',
+                        'google-cloud:gemini-3.1-flash-image',
                         'google-cloud:gemini-3.1-flash-image-preview',
                         'google-cloud:gemini-3.1-flash-lite',
                         'google-cloud:gemini-3.1-pro-preview',
                         'google-cloud:gemini-3.5-flash',
+                        'google-cloud:gemini-3.5-flash-lite',
+                        'google-cloud:gemini-3.6-flash',
                         'google-cloud:gemini-flash-latest',
                         'google-cloud:gemini-flash-lite-latest',
                         'google:gemini-2.0-flash',
@@ -1022,12 +1082,16 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-2.5-flash-preview-09-2025',
                         'google:gemini-2.5-pro',
                         'google:gemini-3-flash-preview',
+                        'google:gemini-3-pro-image',
                         'google:gemini-3-pro-image-preview',
                         'google:gemini-3-pro-preview',
+                        'google:gemini-3.1-flash-image',
                         'google:gemini-3.1-flash-image-preview',
                         'google:gemini-3.1-flash-lite',
                         'google:gemini-3.1-pro-preview',
                         'google:gemini-3.5-flash',
+                        'google:gemini-3.5-flash-lite',
+                        'google:gemini-3.6-flash',
                         'google:gemini-flash-latest',
                         'google:gemini-flash-lite-latest',
                         'groq:llama-3.1-8b-instant',
@@ -1513,6 +1577,11 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                             'title': 'Max Uses',
                         },
+                        'external_web_access': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'External Web Access',
+                        },
                     },
                     'title': 'WebSearchTool',
                     'type': 'object',
@@ -1586,6 +1655,7 @@ def test_model_json_schema_with_capabilities():
                                         {'$ref': '#/$defs/MemoryTool'},
                                         {'$ref': '#/$defs/MCPServerTool'},
                                         {'$ref': '#/$defs/FileSearchTool'},
+                                        {'$ref': '#/$defs/AdvisorTool'},
                                         {'$ref': '#/$defs/ToolSearchTool'},
                                     ]
                                 },
@@ -2025,6 +2095,10 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Allowed Domains',
                         },
                         'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
+                        'external_web_access': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'External Web Access',
+                        },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
@@ -5375,6 +5449,72 @@ class TestModelRequestHooks:
         await agent.run('hello')
         assert 'before_model_request' in cap.log
 
+    @pytest.mark.parametrize(
+        ('mode', 'streaming'),
+        [('run', False), ('run_stream', True), ('event_stream_handler', True)],
+    )
+    async def test_before_model_request_sees_selection_context(self, mode: str, streaming: bool):
+        """`before_model_request` sees the selected model ID and effective streaming mode."""
+        contexts: list[ModelRequestContext] = []
+
+        @dataclass
+        class CaptureContext(AbstractCapability[None]):
+            async def before_model_request(
+                self,
+                ctx: RunContext[None],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                contexts.append(request_context)
+                return request_context
+
+        agent = Agent('test', deps_type=type(None), capabilities=[CaptureContext()], defer_model_check=True)
+        if mode == 'run_stream':
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+        elif mode == 'event_stream_handler':
+
+            async def handle_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+                async for _ in stream:
+                    pass
+
+            await agent.run('hello', event_stream_handler=handle_events)
+        else:
+            await agent.run('hello')
+
+        assert [(context.model_id, context.streaming) for context in contexts] == [('test', streaming)]
+
+    async def test_withdrawn_bootstrap_model_id_does_not_leak_to_default(self):
+        """A bootstrap model contribution withdrawn by `for_run` must not leak its selection string as provenance."""
+        model_ids: list[str | None] = []
+
+        @dataclass
+        class BootstrapModel(AbstractCapability[None]):
+            def get_model(self) -> str:
+                return 'bootstrap-alias'
+
+            async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+                return AbstractCapability()
+
+            async def resolve_model_id(
+                self, ctx: ModelResolutionContext[None], *, model_id: KnownModelName | str
+            ) -> Model | None:
+                return TestModel() if model_id == 'bootstrap-alias' else None
+
+        @dataclass
+        class CaptureModelId(AbstractCapability[None]):
+            async def before_model_request(
+                self,
+                ctx: RunContext[None],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                model_ids.append(request_context.model_id)
+                return request_context
+
+        agent = Agent(TestModel(), deps_type=NoneType, capabilities=[BootstrapModel(), CaptureModelId()])
+        await agent.run('hello')
+
+        assert model_ids == [None]
+
     async def test_after_model_request(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
@@ -6921,7 +7061,8 @@ class TestWrapNodeRunHook:
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                return await handler(node)  # pragma: no cover — bare async for doesn't call this
+                # A bare `async for` doesn't call this.
+                return await handler(node)  # pragma: no cover
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[NodeObserverCap()])
 
@@ -6997,7 +7138,7 @@ class TestWebSearchCapability:
 
     def test_websearch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
         """WebSearch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch()])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -7038,7 +7179,7 @@ class TestWebSearchCapability:
 
     def test_websearch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -7058,7 +7199,7 @@ class TestWebSearchCapability:
 
     def test_websearch_requires_native_with_constraints(self, allow_model_requests: None):
         """WebSearch(allowed_domains=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch(allowed_domains=['example.com'], local='duckduckgo')])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -7332,7 +7473,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
         """WebFetch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch()])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -7384,7 +7525,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebFetch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -7403,7 +7544,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_max_uses_requires_native(self, allow_model_requests: None):
         """WebFetch(max_uses=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch(max_uses=5, local=True)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -7967,11 +8108,28 @@ class TestImageGenerationCapability:
             ]
         )
 
-    @pytest.mark.parametrize('model_name', ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'])
-    def test_image_generation_rejects_image_only_model(self, model_name: str):
-        """Using a dedicated image model like gpt-image-2 raises a clear error at construction."""
-        with pytest.raises(UserError, match=f'{model_name!r} is a dedicated image generation model'):
-            ImageGeneration(fallback_model=f'openai-responses:{model_name}')
+    @pytest.mark.parametrize(
+        'provider, model_name, suggestion',
+        [
+            ('openai-responses', 'gpt-image-2', 'openai-responses:gpt-5.5'),
+            ('openai-responses', 'gpt-image-1.5', 'openai-responses:gpt-5.5'),
+            ('openai-responses', 'gpt-image-1', 'openai-responses:gpt-5.4'),
+            ('openai-responses', 'gpt-image-1-mini', 'openai-responses:gpt-5.4'),
+            ('google', 'imagen-3.0-generate-002', 'google:gemini-3-pro-image'),
+            ('google', 'imagen-3.0-fast-generate-001', 'google:gemini-3-pro-image'),
+        ],
+    )
+    def test_image_generation_rejects_image_only_model(self, provider: str, model_name: str, suggestion: str):
+        """Using a dedicated image model raises a clear error with a conversational alternative."""
+        with pytest.raises(
+            UserError,
+            match=re.escape(
+                f'{model_name!r} is a dedicated image generation model that cannot be used as '
+                f'`fallback_model` directly. Use a conversational model with image generation '
+                f'support instead, e.g. {suggestion!r}.'
+            ),
+        ):
+            ImageGeneration(fallback_model=f'{provider}:{model_name}')
 
     @pytest.mark.vcr()
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
@@ -8068,7 +8226,7 @@ class TestImageGenerationCapability:
             tool = info.function_tools[0]
             return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
 
-        inner_model = GoogleModel('gemini-3-pro-image-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        inner_model = GoogleModel('gemini-3-pro-image', provider=GoogleProvider(api_key=gemini_api_key))
         outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
         result = await agent.run('Generate an image of a cute baby sea otter')
@@ -8949,18 +9107,26 @@ from-spec\
         with pytest.warns(UserWarning, match='end_strategy'):
             await agent.run('hello', spec={'end_strategy': 'exhaustive'})
 
-    async def test_spec_tool_retry_override_warns(self):
-        """Run-time specs can only override the output retry budget."""
+    async def test_spec_tool_retry_override(self):
+        """A run-time spec's tool-retry budget replaces the agent default (3 here, not the agent's 1)."""
+        call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response('ok')
+            return ModelResponse(parts=[ToolCallPart('flaky', {})])
 
-        agent = Agent(FunctionModel(model_fn))
+        agent = Agent(FunctionModel(model_fn), retries={'tools': 1})
 
-        with pytest.warns(UserWarning, match=r"retry field 'tools'.*ignored"):
-            result = await agent.run('hello', spec={'retries': {'tools': 5}})
+        @agent.tool_plain
+        def flaky() -> str:
+            nonlocal call_count
+            call_count += 1
+            raise ModelRetry('again')
 
-        assert result.output == 'ok'
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'flaky' exceeded max retries count of 3"):
+            await agent.run('hello', spec={'retries': {'tools': 3}})
+
+        # initial call + 3 retries, following the spec budget (3), not the agent default (1)
+        assert call_count == 4
 
 
 @dataclass
@@ -10230,6 +10396,7 @@ def test_web_search_with_constraints():
         blocked_domains=['bad.com'],
         allowed_domains=['good.com'],
         max_uses=3,
+        external_web_access=False,
     )
     builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
@@ -10240,7 +10407,22 @@ def test_web_search_with_constraints():
     assert tool.blocked_domains == ['bad.com']
     assert tool.allowed_domains == ['good.com']
     assert tool.max_uses == 3
+    assert tool.external_web_access is False
     assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
+
+
+def test_web_search_external_access_constraint():
+    """Disabling live access suppresses local fallback; allowing it does not."""
+    without_access = WebSearch(local=_noop_greet, external_web_access=False)
+    assert without_access._requires_native() is True  # pyright: ignore[reportPrivateUsage]
+    assert without_access.get_toolset() is None
+
+    with_access = WebSearch(local=_noop_greet, external_web_access=True)
+    assert with_access._requires_native() is False  # pyright: ignore[reportPrivateUsage]
+    assert with_access.get_toolset() is not None
+
+    with pytest.raises(UserError, match='constraint fields require the native tool'):
+        WebSearch(native=False, local=_noop_greet, external_web_access=False)
 
 
 def test_web_search_duckduckgo_raises_without_extra(monkeypatch: pytest.MonkeyPatch):
@@ -10852,7 +11034,8 @@ class TestRunErrorHooks:
                     self.log.append('wrap_run:caught')
                     return AgentRunResult(output='wrap_recovered')
 
-            async def on_run_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_run_error(  # pragma: no cover
                 self, ctx: RunContext[Any], *, error: BaseException
             ) -> AgentRunResult[Any]:
                 self.log.append('on_run_error')
@@ -13003,7 +13186,229 @@ class TestNodeStreamingWithHooks:
         assert error_log == ['CallToolsNode']
 
 
-# --- ModelRetry from hooks tests ---
+# --- ToolFailed and ModelRetry from hooks tests ---
+
+
+class _BeforeToolFailedCap(AbstractCapability[Any]):
+    async def before_tool_execute(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        raise ToolFailed('failed before execution')
+
+
+class _WrapToolFailedCap(AbstractCapability[Any]):
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: Any,
+    ) -> Any:
+        try:
+            return await handler(args)
+        except RuntimeError as e:
+            raise ToolFailed('failed during wrapper') from e
+
+
+class _AfterToolFailedCap(AbstractCapability[Any]):
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        result: Any,
+    ) -> Any:
+        raise ToolFailed('failed after execution')
+
+
+class _OnToolExecuteErrorFailedCap(AbstractCapability[Any]):
+    async def on_tool_execute_error(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        error: Exception,
+    ) -> Any:
+        raise ToolFailed('failed while handling error')
+
+
+class _BeforeToolValidateFailedCap(AbstractCapability[Any]):
+    async def before_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+    ) -> str | dict[str, Any]:
+        raise ToolFailed('failed before validation')
+
+
+class _OnToolValidateErrorFailedCap(AbstractCapability[Any]):
+    async def on_tool_validate_error(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: str | dict[str, Any],
+        error: ValidationError | ModelRetry,
+    ) -> dict[str, Any]:
+        raise ToolFailed('failed while handling validation error')
+
+
+class _WrapToolValidateFailedCap(AbstractCapability[Any]):
+    async def wrap_tool_validate(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: str | dict[str, Any],
+        handler: Any,
+    ) -> dict[str, Any]:
+        raise ToolFailed('failed during validate wrapper')
+
+
+def _tool_failed_roundtrip_model(tool_args: str) -> Callable[[list[ModelMessage], AgentInfo], ModelResponse]:
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for msg in messages:
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    return make_text_response(f'got: {part.outcome}:{part.content}')
+        if info.function_tools:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=info.function_tools[0].name, args=tool_args, tool_call_id='call-1')]
+            )
+        return make_text_response('no tools')  # pragma: no cover
+
+    return model_fn
+
+
+def _assert_failed_tool_result(result: AgentRunResult[Any], expected_message: str) -> None:
+    assert result.output == f'got: failed:{expected_message}'
+
+    parts = [part for msg in result.all_messages() for part in msg.parts]
+    tool_return = next(part for part in parts if isinstance(part, ToolReturnPart))
+    assert tool_return.outcome == 'failed'
+    assert tool_return.content == expected_message
+    assert not any(isinstance(part, RetryPromptPart) for part in parts)
+
+
+class TestToolFailedFromHooks:
+    """Tests for raising ToolFailed from capability tool hooks."""
+
+    @pytest.mark.parametrize('hook_name', ['before', 'wrap', 'after', 'on_error'])
+    async def test_tool_execute_hook_tool_failed(self, hook_name: str):
+        tool_call_count = 0
+        cap_type, expected_message, tool_should_run = {
+            'before': (_BeforeToolFailedCap, 'failed before execution', False),
+            'wrap': (_WrapToolFailedCap, 'failed during wrapper', True),
+            'after': (_AfterToolFailedCap, 'failed after execution', True),
+            'on_error': (_OnToolExecuteErrorFailedCap, 'failed while handling error', True),
+        }[hook_name]
+
+        agent = Agent(FunctionModel(_tool_failed_roundtrip_model('{}')), capabilities=[cap_type()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1
+            if hook_name in {'wrap', 'on_error'}:
+                raise RuntimeError('tool failed')
+            return 'tool result'
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, expected_message)
+        assert tool_call_count == int(tool_should_run)
+
+    async def test_deferred_tool_validate_hook_tool_failed(self):
+        """Deferred tool validation can return a failed tool result instead of a deferred request."""
+        tool_call_count = 0
+
+        agent = Agent(
+            FunctionModel(_tool_failed_roundtrip_model('{}')),
+            capabilities=[_BeforeToolValidateFailedCap()],
+            output_type=[str, DeferredToolRequests],
+            retries={'tools': 0, 'output': 2},
+        )
+
+        @agent.tool_plain(requires_approval=True)
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1  # pragma: no cover
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, 'failed before validation')
+        assert tool_call_count == 0
+
+    @pytest.mark.parametrize(
+        ('capability', 'tool_args', 'expected_message'),
+        [
+            pytest.param(
+                _BeforeToolValidateFailedCap(), '{"x":1}', 'failed before validation', id='before_tool_validate'
+            ),
+            pytest.param(
+                _OnToolValidateErrorFailedCap(),
+                '{"x":"bad"}',
+                'failed while handling validation error',
+                id='on_tool_validate_error',
+            ),
+            pytest.param(
+                _WrapToolValidateFailedCap(), '{"x":1}', 'failed during validate wrapper', id='wrap_tool_validate'
+            ),
+        ],
+    )
+    async def test_tool_validate_hook_tool_failed(
+        self, capability: AbstractCapability[Any], tool_args: str, expected_message: str
+    ):
+        """Non-deferred tool validation hooks can report a failed tool result instead of retrying."""
+        tool_call_count = 0
+
+        agent = Agent(
+            FunctionModel(_tool_failed_roundtrip_model(tool_args)),
+            capabilities=[capability],
+            retries={'tools': 0, 'output': 2},
+        )
+
+        @agent.tool_plain
+        def my_tool(x: int) -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1  # pragma: no cover
+            return f'tool result: {x}'  # pragma: no cover
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, expected_message)
+        assert tool_call_count == 0
+
+    async def test_args_validator_tool_failed(self):
+        """An `args_validator` raising `ToolFailed` reports a failed tool result instead of retrying."""
+        tool_call_count = 0
+        expected_message = 'failed in args validator'
+
+        def validate_args(ctx: RunContext[Any]) -> None:
+            raise ToolFailed(expected_message)
+
+        agent = Agent(
+            FunctionModel(_tool_failed_roundtrip_model('{}')),
+            retries={'tools': 0, 'output': 2},
+        )
+
+        @agent.tool_plain(args_validator=validate_args)
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1  # pragma: no cover
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, expected_message)
+        assert tool_call_count == 0
 
 
 class TestModelRetryFromHooks:
@@ -13414,7 +13819,8 @@ class TestModelRetryFromHooks:
             ) -> ModelResponse:
                 raise ModelRetry('retry please')
 
-            async def on_model_request_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_model_request_error(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -13941,7 +14347,8 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Wrap says retry tool')
 
-            async def on_tool_execute_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_tool_execute_error(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -14466,7 +14873,20 @@ class TestCompaction:
 
 
 def test_thread_executor_not_serializable() -> None:
-    assert ThreadExecutor.get_serialization_name() is None
+    assert UseThreadExecutor.get_serialization_name() is None
+
+
+def test_thread_executor_deprecated_alias() -> None:
+    from pydantic_ai.exceptions import PydanticAIDeprecationWarning
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `UseThreadExecutor`'):
+        from pydantic_ai.capabilities import ThreadExecutor
+    assert ThreadExecutor is UseThreadExecutor
+
+    # The defining module resolves the old name too, so unpickling keeps working.
+    with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `UseThreadExecutor`'):
+        from pydantic_ai.capabilities.thread_executor import ThreadExecutor as submodule_thread_executor
+    assert submodule_thread_executor is UseThreadExecutor
 
 
 async def test_thread_executor_capability() -> None:
@@ -14479,7 +14899,7 @@ async def test_thread_executor_capability() -> None:
 
     executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='cap-pool')
     try:
-        agent = Agent(FunctionModel(model_function), capabilities=[ThreadExecutor(executor)])
+        agent = Agent(FunctionModel(model_function), capabilities=[UseThreadExecutor(executor)])
 
         @agent.tool_plain
         def check_thread() -> str:
@@ -14910,6 +15330,30 @@ def test_ordering_mixed_type_and_instance_refs():
 
     combined = CombinedCapability([PlainCapA(), target_instance, MixedRefs()])
     assert combined.capabilities[0].__class__ is MixedRefs
+
+
+async def test_ordering_survives_dynamic_capability_resolution():
+    """A factory-returned capability's ordering constraints survive the per-run wrapper.
+
+    `CombinedCapability.for_run` re-sorts the replaced capabilities, so the
+    `ResolvedDynamicCapability` wrapper must delegate `get_ordering` to the resolved
+    capability for its `outermost`/`innermost`/`wraps` declarations to be honored.
+    """
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return OutermostCap()
+
+    combined = CombinedCapability([PlainCapA(), DynamicCapability(factory)])
+    # At construction, the unresolved wrapper has no ordering of its own.
+    assert _cap_names(combined) == ['PlainCapA', 'DynamicCapability']
+
+    ctx = _build_run_context()
+    ctx.agent = Agent(TestModel())
+    run_capability = await combined.for_run(ctx)
+    assert isinstance(run_capability, CombinedCapability)
+    assert _cap_names(run_capability) == ['ResolvedDynamicCapability', 'PlainCapA']
+    assert isinstance(run_capability.capabilities[0], ResolvedDynamicCapability)
+    assert isinstance(run_capability.capabilities[0].wrapped, OutermostCap)
 
 
 async def test_runtime_capability_with_mixed_position_root():
@@ -16976,7 +17420,8 @@ class TestBeforeOutputValidate:
                 output_context: OutputContext,
                 output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
-                log.append('validate')  # pragma: no cover — should NOT fire for plain text
+                # The uncovered body is the assertion: this hook must not fire for plain text.
+                log.append('validate')  # pragma: no cover
                 return output  # pragma: no cover
 
             async def before_output_process(
@@ -17446,7 +17891,8 @@ class TestModelRetryFromOutputHooks:
                     raise ModelRetry('Bad output, please try again')
                 return result
 
-            async def on_output_process_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_output_process_error(  # pragma: no cover
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, error: Exception
             ) -> Any:
                 nonlocal error_hook_called
@@ -18208,7 +18654,8 @@ class TestToolOutputWithOutputHooks:
 
         @dataclass
         class BothHooksCap(AbstractCapability[Any]):
-            async def before_tool_validate(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def before_tool_validate(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -18219,7 +18666,8 @@ class TestToolOutputWithOutputHooks:
                 log.append(f'tool_validate:{call.tool_name}')
                 return args
 
-            async def before_tool_execute(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def before_tool_execute(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -19831,8 +20279,8 @@ class TestOutputHookEdgeCases:
 
         ctx = RunContext(
             deps=None,
-            model=None,  # type: ignore
-            usage=None,  # type: ignore
+            model=None,  # pyright: ignore[reportArgumentType]
+            usage=None,  # pyright: ignore[reportArgumentType]
             prompt='test',
             run_step=0,
             retry=0,
@@ -19852,8 +20300,8 @@ class TestOutputHookEdgeCases:
 
         ctx = RunContext(
             deps=None,
-            model=None,  # type: ignore
-            usage=None,  # type: ignore
+            model=None,  # pyright: ignore[reportArgumentType]
+            usage=None,  # pyright: ignore[reportArgumentType]
             prompt='test',
             run_step=0,
             retry=0,
@@ -19881,8 +20329,8 @@ class TestOutputHookEdgeCases:
         async def run():
             ctx = RunContext(
                 deps=None,
-                model=None,  # type: ignore
-                usage=None,  # type: ignore
+                model=None,  # pyright: ignore[reportArgumentType]
+                usage=None,  # pyright: ignore[reportArgumentType]
                 prompt='test',
                 run_step=0,
                 retry=0,
@@ -20604,7 +21052,8 @@ class TestImageOutputWithHooks:
             async def before_output_validate(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
-                log.append('validate')  # pragma: no cover — should NOT fire for images
+                # The uncovered body is the assertion: this hook must not fire for images.
+                log.append('validate')  # pragma: no cover
                 return output  # pragma: no cover
 
             async def before_output_process(
@@ -21835,6 +22284,55 @@ async def test_deferred_tool_handler_via_handle_call_external_tool_return():
     assert captured_result.metadata == {'k': 'v'}
 
 
+async def test_deferred_tool_handler_via_handle_call_tool_failed():
+    """Per-call path: handler-supplied `ToolFailed` raises `ToolFailedError`, matching a tool that raises `ToolFailed` in-process."""
+    from pydantic_ai.exceptions import CallDeferred, ToolFailed, ToolFailedError
+    from pydantic_ai.toolsets import FunctionToolset
+
+    inner_toolset = FunctionToolset()
+
+    @inner_toolset.tool_plain
+    def inner_tool() -> str:
+        raise CallDeferred
+
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(
+            calls={call.tool_call_id: ToolFailed('backend unavailable') for call in requests.calls}
+        )
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('caller_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('final')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        toolsets=[inner_toolset],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    captured_error: Any = None
+
+    @agent.tool
+    async def caller_tool(ctx: RunContext[object]) -> str:
+        nonlocal captured_error
+        assert ctx.tool_manager is not None
+        try:
+            await ctx.tool_manager.handle_call(
+                ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+            )
+        except ToolFailedError as e:
+            captured_error = e
+        return 'done'
+
+    await agent.run('go')
+    assert captured_error is not None
+    assert captured_error.tool_failed.tool_name == 'inner_tool'
+    assert captured_error.tool_failed.tool_call_id == 'inner_1'
+    assert captured_error.tool_failed.content == 'backend unavailable'
+    assert captured_error.tool_failed.outcome == 'failed'
+
+
 def test_deferred_tool_handler_serialization_name():
     """HandleDeferredToolCalls is not spec-constructible."""
     assert HandleDeferredToolCalls.get_serialization_name() is None
@@ -22877,7 +23375,7 @@ class _RecordingCapability(AbstractCapability[Any]):
 
 
 async def test_dynamic_capability_factory_called_with_run_context() -> None:
-    """The factory receives the run's RunContext (with deps) once per run."""
+    """The factory receives the run's `RunContext` (with deps) once per run."""
     seen: list[Any] = []
 
     def factory(ctx: RunContext[str]) -> AbstractCapability[Any] | None:
@@ -22943,6 +23441,29 @@ async def test_dynamic_capability_returning_none_contributes_nothing() -> None:
     request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
     assert request.instructions is None
 
+    dynamic = DynamicCapability(factory)
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    assert await dynamic.for_run(ctx) is dynamic
+
+    # Direct toolset-factory call (unit-style): the standalone fallback — a context without the
+    # run's capability registry, as inside a durable unit — re-resolves the factory, and an async
+    # factory returning `None` still contributes nothing.
+    async def async_none_factory(ctx: RunContext[Any]) -> AbstractCapability[Any] | None:
+        return None
+
+    async_dynamic = DynamicCapability(async_none_factory)
+    resolved = async_dynamic.get_toolset().toolset_func(ctx)
+    assert inspect.isawaitable(resolved)
+    assert await resolved is None
+
+
+def test_dynamic_capability_toolset_is_cached_and_inherits_id() -> None:
+    dynamic = DynamicCapability(lambda ctx: None, id='x')
+    toolset = dynamic.get_toolset()
+
+    assert toolset.id == 'x'
+    assert dynamic.get_toolset() is toolset
+
 
 async def test_dynamic_capability_contributes_instructions_per_run() -> None:
     """Resolved capability's instructions flow through to the model request."""
@@ -22964,7 +23485,8 @@ async def test_dynamic_capability_contributes_instructions_per_run() -> None:
 
 
 async def test_dynamic_capability_contributes_toolset() -> None:
-    """Resolved capability's toolset is exposed to the model and its tools execute."""
+    """The resolved toolset is exposed once while instructions and settings still apply."""
+    calls = 0
     toolset = FunctionToolset()
 
     @toolset.tool_plain
@@ -22973,16 +23495,26 @@ async def test_dynamic_capability_contributes_toolset() -> None:
 
     @dataclass
     class ToolCap(AbstractCapability):
-        def get_toolset(self):
+        def get_instructions(self) -> str:
+            return 'Use the special tool.'
+
+        def get_model_settings(self) -> _ModelSettings:
+            return _ModelSettings(temperature=0.25)
+
+        def get_toolset(self) -> AbstractToolset[Any]:
             return toolset
 
     def factory(ctx: RunContext[bool]) -> AbstractCapability[Any] | None:
+        nonlocal calls
+        calls += 1
         return ToolCap() if ctx.deps else None
 
     seen_tools: list[str] = []
+    seen_temperatures: list[float | None] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen_tools.append(','.join(sorted(t.name for t in info.function_tools)))
+        seen_temperatures.append(info.model_settings.get('temperature') if info.model_settings else None)
         # On the first request call the tool if it's available; on the follow-up
         # request after the tool return, finish.
         already_called = any(
@@ -23003,9 +23535,142 @@ async def test_dynamic_capability_contributes_toolset() -> None:
         if isinstance(p, ToolReturnPart)
     ]
     assert tool_returns == ['used']
+    first_request = next(m for m in with_tool.all_messages() if isinstance(m, ModelRequest))
+    assert first_request.instructions == 'Use the special tool.'
 
     await agent.run('hi', deps=False)
     assert seen_tools == ['special', 'special', '']
+    assert seen_temperatures == [0.25, 0.25, None]
+    assert calls == 2
+
+
+async def test_dynamic_capability_contributes_toolset_function() -> None:
+    """A resolved capability may contribute a toolset *function*; it's evaluated with the run context."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def func_tool() -> str:
+        # The tool listing is what's asserted.
+        return 'from func'  # pragma: no cover
+
+    @dataclass
+    class AsyncToolFuncCap(AbstractCapability):
+        def get_toolset(self):
+            async def toolset_func(ctx: RunContext[Any]) -> AbstractToolset[Any] | None:
+                return toolset if ctx.deps else None
+
+            return toolset_func
+
+    @dataclass
+    class SyncToolFuncCap(AbstractCapability):
+        def get_toolset(self):
+            def toolset_func(ctx: RunContext[Any]) -> AbstractToolset[Any] | None:
+                return toolset
+
+            return toolset_func
+
+    seen_tools: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tools.append(','.join(sorted(t.name for t in info.function_tools)))
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        deps_type=bool,
+        capabilities=[DynamicCapability(lambda ctx: AsyncToolFuncCap())],
+    )
+    await agent.run('hi', deps=True)
+    await agent.run('hi', deps=False)
+
+    sync_agent = Agent(
+        FunctionModel(respond),
+        deps_type=bool,
+        capabilities=[DynamicCapability(lambda ctx: SyncToolFuncCap())],
+    )
+    await sync_agent.run('hi', deps=True)
+    assert seen_tools == ['func_tool', '', 'func_tool']
+
+
+async def test_dynamic_capability_instructions_and_tools_share_resolved_state() -> None:
+    """Instructions and tools observe the *same* resolved capability instance per run.
+
+    The factory allocates fresh state on every call, so if the contributed toolset were
+    resolved through a second factory invocation, the tool would see different state than
+    the instructions.
+    """
+    resolution_count = 0
+
+    @dataclass
+    class StatefulCap(AbstractCapability):
+        token: str = ''
+
+        def get_instructions(self) -> str:
+            return f'Token is {self.token}.'
+
+        def get_toolset(self):
+            toolset = FunctionToolset()
+
+            @toolset.tool_plain
+            def read_token() -> str:
+                return self.token
+
+            return toolset
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        nonlocal resolution_count
+        resolution_count += 1
+        return StatefulCap(token=f'run-{resolution_count}')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not tool_returns:
+            return ModelResponse(parts=[ToolCallPart(tool_name='read_token', args={}, tool_call_id='read')])
+        return make_text_response(str(tool_returns[0].content))
+
+    agent = Agent(FunctionModel(respond), capabilities=[factory])
+    result = await agent.run('hi')
+    first_request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert first_request.instructions == 'Token is run-1.'
+    assert result.output == 'run-1'
+    assert resolution_count == 1
+
+
+async def test_dynamic_capability_returning_deferred_capability() -> None:
+    """A factory-returned deferred capability keeps its tools hidden until `load_capability`."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def hidden_tool() -> str:
+        return 'now visible'
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return Capability(
+            id='skills',
+            description='Deferred skills.',
+            toolsets=[toolset],
+            defer_loading=True,
+        )
+
+    seen_defer_flags: list[bool] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        hidden_def = next(t for t in info.function_tools if t.name == 'hidden_tool')
+        # `defer_loading=True` is what keeps the tool off the provider wire until loaded.
+        seen_defer_flags.append(hidden_def.defer_loading)
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'skills'}, tool_call_id='load')]
+            )
+        if not any(part.tool_name == 'hidden_tool' for part in tool_returns):
+            return ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='use')])
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(respond), capabilities=[factory])
+    result = await agent.run('hi')
+    assert result.output == 'done'
+    assert seen_defer_flags == [True, False, False]
 
 
 async def test_dynamic_capability_hooks_fire() -> None:
@@ -23222,13 +23887,12 @@ async def test_dynamic_capability_wraps_func_in_constructor() -> None:
 
 def test_dynamic_capability_rejects_wrapper_fields() -> None:
     """`defer_loading` on the wrapper would otherwise be silently ignored — reject at construction."""
-    from pydantic_ai.capabilities import DynamicCapability
 
     def factory(ctx: RunContext) -> AbstractCapability[Any]:
         return _RecordingCapability(label='x')  # pragma: no cover
 
     with pytest.raises(UserError, match='not supported on `DynamicCapability`'):
-        DynamicCapability(capability_func=factory, defer_loading=True)
+        DynamicCapability(factory, defer_loading=True)
 
 
 # endregion
