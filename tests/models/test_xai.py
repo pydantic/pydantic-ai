@@ -65,6 +65,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     CachePoint,
+    FinishReason,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
@@ -99,10 +100,11 @@ from .mock_xai import (
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     from xai_sdk.chat import required_tool
-    from xai_sdk.proto import chat_pb2, usage_pb2
+    from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
 
     from pydantic_ai.models import xai as xai_module
     from pydantic_ai.models.xai import (
+        _FINISH_REASON_PROTO_MAP,  # pyright: ignore[reportPrivateUsage]
         XaiModel,
         XaiModelSettings,
         XaiStreamedResponse,
@@ -1399,6 +1401,89 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
                     finish_reason='stop',
                 )
             )
+
+
+@pytest.mark.parametrize(
+    ('proto_reason', 'expected'),
+    [
+        (sample_pb2.FinishReason.REASON_STOP, 'stop'),
+        (sample_pb2.FinishReason.REASON_MAX_LEN, 'length'),
+        (sample_pb2.FinishReason.REASON_MAX_CONTEXT, 'length'),
+        (sample_pb2.FinishReason.REASON_TOOL_CALLS, 'tool_call'),
+        (sample_pb2.FinishReason.REASON_TIME_LIMIT, 'error'),
+        # The proto default for "not set yet", which every chunk before the last one carries.
+        (sample_pb2.FinishReason.REASON_INVALID, None),
+    ],
+)
+async def test_xai_stream_finish_reason_covers_every_proto_reason(
+    allow_model_requests: None, proto_reason: int, expected: FinishReason | None
+):
+    """The streamed finish reason must come from the proto enum, not `Response.finish_reason`.
+
+    `Response.finish_reason` is `sample_pb2.FinishReason.Name(...)`, i.e. `'REASON_STOP'` /
+    `'REASON_MAX_LEN'` / … — never the lowercase `'stop'` / `'length'` spellings. Reading it through a
+    string map keyed on the lowercase names missed *every* reason and silently fell back to `'stop'`, so
+    a truncated or tool-calling stream reported a clean finish.
+    """
+    stream = [_text_chunk_with_proto_finish_reason('hello', proto_reason)]
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    async with m.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='')])], None, ModelRequestParameters()
+    ) as stream_response:
+        async for _ in stream_response:
+            pass
+        assert stream_response.finish_reason == expected
+
+
+def _text_chunk_with_proto_finish_reason(text: str, proto_reason: int) -> tuple[chat_types.Response, chat_types.Chunk]:
+    """Like `get_grok_text_chunk`, but sets the raw proto finish reason rather than a pydantic-ai one.
+
+    The helpers in `mock_xai` take a pydantic-ai `FinishReason` and translate it, which can't express
+    `REASON_INVALID` or `REASON_MAX_CONTEXT` and would hide the round trip under test.
+    """
+    chunk_proto = chat_pb2.GetChatCompletionChunk(id='grok-123')
+    chunk_proto.outputs.append(
+        chat_pb2.CompletionOutputChunk(
+            index=0,
+            finish_reason=proto_reason,
+            delta=chat_pb2.Delta(content=text, role=chat_pb2.MessageRole.ROLE_ASSISTANT),
+        )
+    )
+    chunk_proto.created.GetCurrentTime()
+
+    response_proto = chat_pb2.GetChatCompletionResponse(
+        id='grok-123',
+        outputs=[
+            chat_pb2.CompletionOutput(
+                index=0,
+                finish_reason=proto_reason,
+                message=chat_pb2.CompletionMessage(content=text, role=chat_pb2.MessageRole.ROLE_ASSISTANT),
+            )
+        ],
+        usage=usage_pb2.SamplingUsage(prompt_tokens=2, completion_tokens=1),
+    )
+    response_proto.created.GetCurrentTime()
+
+    return chat_types.Response(response_proto, index=None), chat_types.Chunk(chunk_proto, index=None)
+
+
+def test_xai_sdk_reports_finish_reasons_as_proto_enum_names():
+    """Pin the SDK behaviour the fix depends on, so an SDK change to lowercase strings is caught here.
+
+    If xAI ever switches `Response.finish_reason` to OpenAI-style lowercase values, this fails and points
+    at the mapping rather than leaving it to be rediscovered through a wrong `finish_reason` in the wild.
+    """
+    response, _ = _text_chunk_with_proto_finish_reason('hi', sample_pb2.FinishReason.REASON_MAX_LEN)
+    assert response.finish_reason == 'REASON_MAX_LEN'
+    # The int on the proto is what the mapping keys off.
+    assert response.proto.outputs[-1].finish_reason == sample_pb2.FinishReason.REASON_MAX_LEN
+
+
+def test_xai_finish_reason_map_covers_the_whole_proto_enum():
+    """Every value the enum can hold must be mapped, so a new xAI reason can't silently become `'stop'`."""
+    assert set(_FINISH_REASON_PROTO_MAP) == set(sample_pb2.FinishReason.values())
 
 
 class MyTypedDict(TypedDict, total=False):
