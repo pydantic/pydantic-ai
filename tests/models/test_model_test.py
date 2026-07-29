@@ -25,11 +25,12 @@ from pydantic_ai import (
     RunContext,
     TextPart,
     ToolCallPart,
+    ToolOutput,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -521,3 +522,58 @@ def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | Binar
     result = agent.run_sync(['x', content], model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
     assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))
+
+
+class _Foo(BaseModel):
+    x: int
+
+
+class _Bar(BaseModel):
+    y: int
+
+
+def _multi_output_agent() -> Agent[None, Any]:
+    return Agent(output_type=[ToolOutput(_Foo, name='foo_tool'), ToolOutput(_Bar, name='bar_tool')])
+
+
+def test_output_tool_name_selects_named_output_tool():
+    """`output_tool_name` calls the requested output tool instead of the seed-based one."""
+    agent = _multi_output_agent()
+    result = agent.run_sync('x', model=TestModel(output_tool_name='bar_tool'))
+    assert isinstance(result.output, _Bar)
+    response = result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, ToolCallPart)
+    assert part.tool_name == 'bar_tool'
+
+
+def test_output_tool_name_defaults_to_seed_selection():
+    """Unset `output_tool_name` preserves the existing `seed % len(output_tools)` behavior."""
+    agent = _multi_output_agent()
+    result = agent.run_sync('x', model=TestModel(seed=0))
+    assert isinstance(result.output, _Foo)
+    response = result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, ToolCallPart)
+    assert part.tool_name == 'foo_tool'
+
+
+def test_output_tool_name_with_custom_output_args():
+    """`output_tool_name` and `custom_output_args` compose: named tool, given args."""
+    agent = _multi_output_agent()
+    result = agent.run_sync('x', model=TestModel(output_tool_name='bar_tool', custom_output_args={'y': 7}))
+    assert result.output == _Bar(y=7)
+    response = result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, ToolCallPart)
+    assert part.tool_name == 'bar_tool'
+
+
+def test_output_tool_name_unknown_raises_user_error():
+    """An unknown `output_tool_name` raises a clear `UserError`."""
+    agent = _multi_output_agent()
+    with pytest.raises(UserError, match=re.escape("Output tool 'nope' not found.")):
+        agent.run_sync('x', model=TestModel(output_tool_name='nope'))
