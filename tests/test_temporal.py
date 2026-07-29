@@ -3977,8 +3977,8 @@ async def test_tool_metadata_crosses_activity_boundary_as_json():
 
     Not a workflow test: both halves are properties of the activity payloads themselves, and
     running them through the converter `PydanticAIPlugin` installs pins them directly. Observing
-    the inbound half through the public API would need an MCP tool call, the only place a
-    round-tripped `tool_def` is handed back to a toolset.
+    the inbound half through the public API would take a tool call whose activity consumes the
+    round-tripped `tool_def` rather than re-resolving its own.
     """
     # One value per Python type whose JSON shape differs from the original.
     metadata: dict[str, Any] = {
