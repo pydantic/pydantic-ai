@@ -15,7 +15,7 @@ from ..exceptions import UserError
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider, _openai_compatible_v1_base_url  # pyright: ignore[reportPrivateUsage]
 from ..tools import ToolDefinition
-from ._base import RealtimeClientSecret, RealtimeCodecEvent, RealtimeModelSettings, Transcript, WebRTCAnswer
+from ._base import OutputTranscript, RealtimeClientSecret, RealtimeCodecEvent, RealtimeModelSettings, WebRTCAnswer
 from ._openai_protocol import (
     SemanticVAD,
     ServerVAD,
@@ -81,10 +81,10 @@ def _map_voice_live_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     event_type = data.get('type')
     if event_type == 'response.text.delta':
         delta = data.get('delta')
-        return Transcript(text=delta if isinstance(delta, str) else '', is_final=False, output_text=True)
+        return OutputTranscript(text=delta if isinstance(delta, str) else '', is_final=False, output_text=True)
     if event_type == 'response.text.done':
         text = data.get('text')
-        return Transcript(text=text if isinstance(text, str) else '', is_final=True, output_text=True)
+        return OutputTranscript(text=text if isinstance(text, str) else '', is_final=True, output_text=True)
     return _map_openai_event(data)
 
 

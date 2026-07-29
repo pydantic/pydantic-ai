@@ -13,7 +13,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime import TurnDetection
-    from pydantic_ai.realtime._base import Transcript
+    from pydantic_ai.realtime._base import OutputTranscript
     from pydantic_ai.realtime.azure import (
         AzureRealtimeModel,
         AzureRealtimeModelSettings,
@@ -163,17 +163,17 @@ def test_realtime_url_ignores_endpoint_path_and_query(monkeypatch: pytest.Monkey
 
 def test_voice_live_event_mapping() -> None:
     """Voice Live's beta text events map to output-text transcripts; other events delegate to the OpenAI mapper."""
-    assert _map_voice_live_event({'type': 'response.text.delta', 'delta': 'hi'}) == Transcript(
+    assert _map_voice_live_event({'type': 'response.text.delta', 'delta': 'hi'}) == OutputTranscript(
         text='hi', is_final=False, output_text=True
     )
-    assert _map_voice_live_event({'type': 'response.text.done', 'text': 'done'}) == Transcript(
+    assert _map_voice_live_event({'type': 'response.text.done', 'text': 'done'}) == OutputTranscript(
         text='done', is_final=True, output_text=True
     )
     # Missing / non-string payloads degrade to an empty transcript rather than raising.
-    assert _map_voice_live_event({'type': 'response.text.delta'}) == Transcript(
+    assert _map_voice_live_event({'type': 'response.text.delta'}) == OutputTranscript(
         text='', is_final=False, output_text=True
     )
-    assert _map_voice_live_event({'type': 'response.text.done', 'text': 123}) == Transcript(
+    assert _map_voice_live_event({'type': 'response.text.done', 'text': 123}) == OutputTranscript(
         text='', is_final=True, output_text=True
     )
     # A non-text event is delegated to the shared OpenAI mapper (an unknown type maps to `None`).
