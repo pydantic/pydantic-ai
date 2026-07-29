@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -300,6 +301,79 @@ def test_chat_app_options_endpoint():
     with TestClient(app) as client:
         response = client.options('/api/chat')
         assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    'content_type',
+    [
+        # Media types that can carry a JSON body without declaring it as JSON.
+        pytest.param('text/plain', id='text-plain'),
+        pytest.param('multipart/form-data; boundary=x', id='multipart-form-data'),
+        pytest.param('application/x-www-form-urlencoded', id='form-urlencoded'),
+        # A request can also omit the content type entirely.
+        pytest.param(None, id='no-content-type'),
+    ],
+)
+def test_chat_rejects_non_json_content_type(content_type: str | None):
+    """The chat endpoint turns away request bodies that aren't declared as JSON.
+
+    Asserting the status alone would be too weak — what this pins is that the rejection happens
+    before the agent is dispatched, so the tool never runs.
+
+    This is a unit test rather than a VCR one because the check runs before any model request, so
+    there is no HTTP traffic to record.
+    """
+    agent = Agent(TestModel())
+    tool_calls: list[str] = []
+
+    @agent.tool_plain
+    def side_effecting_tool() -> str:
+        tool_calls.append('called')  # pragma: no cover
+        return 'done'  # pragma: no cover
+
+    app = create_web_app(agent)
+    body = json.dumps(
+        {
+            'trigger': 'submit-message',
+            'id': 'test-id',
+            'messages': [{'id': 'msg-1', 'role': 'user', 'parts': [{'type': 'text', 'text': 'Hello'}]}],
+        }
+    )
+    headers = {'content-type': content_type} if content_type is not None else {}
+
+    with TestClient(app) as client:
+        response = client.post('/api/chat', content=body, headers=headers)
+
+    assert response.status_code == 415
+    assert 'application/json' in response.json()['error']
+    assert tool_calls == []
+
+
+@pytest.mark.parametrize(
+    'content_type',
+    [
+        # What the bundled UI and the Vercel AI SDK's `DefaultChatTransport` send.
+        pytest.param('application/json', id='bare'),
+        pytest.param('application/json; charset=utf-8', id='with-charset'),
+        pytest.param('APPLICATION/JSON', id='uppercase'),
+    ],
+)
+def test_chat_accepts_json_content_type(content_type: str):
+    """The content-type check doesn't turn away the bundled UI or other JSON clients."""
+    agent = Agent(TestModel())
+    app = create_web_app(agent)
+    body = json.dumps(
+        {
+            'trigger': 'submit-message',
+            'id': 'test-id',
+            'messages': [{'id': 'msg-1', 'role': 'user', 'parts': [{'type': 'text', 'text': 'Hello'}]}],
+        }
+    )
+
+    with TestClient(app) as client:
+        response = client.post('/api/chat', content=body, headers={'content-type': content_type})
+
+    assert response.status_code == 200
 
 
 def test_mcp_server_tool_label():

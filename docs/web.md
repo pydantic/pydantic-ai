@@ -99,7 +99,7 @@ app = agent.to_web(instructions='Always respond in a friendly tone.')
 The web UI app uses the following routes which should not be overwritten:
 
 - `/` and `/{id}` - Serves the chat UI
-- `/api/chat` - Chat endpoint (POST, OPTIONS)
+- `/api/chat` - Chat endpoint (POST, OPTIONS). Requires `Content-Type: application/json`; other content types are rejected with `415`.
 - `/api/configure` - Frontend configuration (GET)
 - `/api/health` - Health check (GET)
 
