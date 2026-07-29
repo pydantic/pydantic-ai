@@ -606,10 +606,10 @@ def test_bash_subprocess_startup_failure_is_an_error_not_a_crash(monkeypatch: py
 
 
 def test_grep_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    # grep runs ripgrep through the harness shell capability; the adapter keys off
-    # ripgrep's exit code (parsed from `run_command`'s trailing `[exit code: N]`)
-    # to unwrap the `[stdout]` framing into `file:line:text` matches, and maps
-    # exit-1 ("nothing matched") to the harness's own `No matches found.` sentinel.
+    # grep runs an available search binary through the harness shell capability;
+    # the adapter keys off its exit code (parsed from `run_command`'s trailing
+    # `[exit code: N]`) to unwrap the `[stdout]` framing into `file:line:text`
+    # matches, and maps exit-1 ("nothing matched") to the harness sentinel.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     (tmp_path / 'a.txt').write_text('alpha\nNEEDLE here\n', encoding='utf-8')
     assert 'a.txt:2:NEEDLE here' in asyncio.run(pkg.grep('NEEDLE', '.'))
@@ -620,9 +620,9 @@ def test_grep_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_grep_bad_pattern_is_an_error_not_a_match(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    # ripgrep exits 2 on a malformed regex. Even though it writes to the framed
-    # output, the adapter keys off the exit code, so it surfaces as an error
-    # rather than being mistaken for a match (the `[stdout]`-prefix sniff bug).
+    # Both grep implementations exit 2 on a malformed regex. Even though they
+    # write to the framed output, the adapter keys off the exit code, so it
+    # surfaces as an error rather than being mistaken for a match.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     (tmp_path / 'a.txt').write_text('alpha\n', encoding='utf-8')
     out = asyncio.run(pkg.grep('(', '.'))
@@ -667,6 +667,31 @@ def test_grep_large_match_set_is_not_misreported_as_error(tmp_path: Path, monkey
     assert not out.startswith('error:')
     assert 'src/a.py:1:hit' in out and 'src/b.py:2:hit' in out
     assert grep_mod._TRUNCATION_PREFIX not in out
+
+
+def test_grep_falls_back_when_ripgrep_is_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import importlib
+
+    grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+
+    def no_search_command(command: str) -> None:
+        return None
+
+    monkeypatch.setattr(grep_mod.shutil, 'which', no_search_command)
+
+    class _FakeShell:
+        async def run_command(self, command: str, *, timeout_seconds: float) -> str:
+            assert command.startswith('grep -R -n -I -E ')
+            return '[stdout]\n./a.txt:2:NEEDLE here\n'
+
+    class _FakeFs:
+        async def file_info(self, path: str) -> str:
+            return 'ok'
+
+    monkeypatch.setattr(grep_mod, 'shell', lambda: _FakeShell())
+    monkeypatch.setattr(grep_mod, 'filesystem', lambda: _FakeFs())
+    assert 'a.txt:2:NEEDLE here' in asyncio.run(grep_mod.grep('NEEDLE', '.'))
 
 
 def test_glob_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

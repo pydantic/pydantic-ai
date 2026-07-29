@@ -1,12 +1,12 @@
 r"""Claude's `Grep` tool -- recursively regex-search workspace files.
 
-Runs ripgrep through pydantic-ai-harness's `ShellToolset` -- the same shell
-capability that backs `Bash` -- instead of a hand-rolled subprocess: the harness
-owns process execution, the sandbox PATH, output truncation, and the timeout,
-while ripgrep keeps its speed and `.gitignore` filtering (a poor fit for the
-harness's own `FileSystemToolset.search_files`, which walks every non-dotfile
-including vendored/ignored trees and matches with Python `re`). The
-directory-scoped AGENTS.md / CLAUDE.md context blocks are still prepended.
+Runs ripgrep, or recursive grep when ripgrep is unavailable, through
+pydantic-ai-harness's `ShellToolset` -- the same shell capability that backs
+`Bash` -- instead of a hand-rolled subprocess. The harness owns process
+execution, the sandbox PATH, output truncation, and the timeout. Ripgrep keeps
+its speed and `.gitignore` filtering; the portable fallback avoids turning a
+missing optional binary into a failed tool call. The directory-scoped AGENTS.md
+/ CLAUDE.md context blocks are still prepended.
 
 Two adapters bridge a shell command back into a grep tool:
 
@@ -24,6 +24,7 @@ Two adapters bridge a shell command back into a grep tool:
 
 import re
 import shlex
+import shutil
 
 from pydantic_ai.exceptions import ModelRetry
 
@@ -53,11 +54,14 @@ def _split_exit_code(out: str) -> tuple[str, int]:
 
 
 async def grep(pattern: str, path: str = '.') -> str:
-    """Recursively regex-search workspace files via ripgrep, returning `file:line:text` matches."""
-    # `file_info` accepts '' as the workspace root, but `rg -- ''` errors on the
-    # empty path argument, so normalize to the default search root up front.
+    """Recursively regex-search workspace files, returning `file:line:text` matches."""
+    # `file_info` accepts '' as the workspace root, but the search commands
+    # reject an empty path argument, so normalize to the default root up front.
     path = path or '.'
-    command = f'rg --line-number --no-heading --color never -e {shlex.quote(pattern)} -- {shlex.quote(path)}'
+    if shutil.which('rg'):
+        command = f'rg --line-number --no-heading --color never -e {shlex.quote(pattern)} -- {shlex.quote(path)}'
+    else:
+        command = f'grep -R -n -I -E -e {shlex.quote(pattern)} -- {shlex.quote(path)}'
     # Preflight `path` through the filesystem containment check (an escape or a
     # missing path comes back as `ModelRetry`) before handing it to the shell.
     try:
@@ -71,9 +75,9 @@ async def grep(pattern: str, path: str = '.') -> str:
     if out.startswith('[Command timed out'):
         return f'error: {out}'
     body, exit_code = _split_exit_code(out)
-    if exit_code >= 2:  # bad pattern, unreadable path, ripgrep absent (127), ...
+    if exit_code >= 2:  # bad pattern, unreadable path, search command absent, ...
         return f'error: {out}'
-    if exit_code == 1:  # ripgrep's "nothing matched"
+    if exit_code == 1:  # both grep implementations use 1 for "nothing matched"
         return clip(attach_context(path) + _NO_MATCHES)
     # exit 0: matches. Strip the truncation marker first (it precedes and elides
     # the `[stdout]` header), then the header itself.
