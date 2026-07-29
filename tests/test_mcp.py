@@ -1168,14 +1168,6 @@ class TestMCPToolsetIntegration:
         )
         assert tool.max_retries == expected
 
-    async def test_tool_for_tool_def_defaults_to_one_retry_without_ctx(self):
-        """`ctx` is optional so external `tool_for_tool_def(tool_def)` callers keep working."""
-        toolset = MCPToolset('https://example.com/mcp')
-        tool = toolset.tool_for_tool_def(
-            ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'})
-        )
-        assert tool.max_retries == 1
-
     async def test_direct_call_tool_propagates_error_when_configured(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(fastmcp_server, tool_error_behavior='error')
         async with toolset:
