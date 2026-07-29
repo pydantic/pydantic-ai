@@ -52,16 +52,19 @@ the API — it doesn't follow from release order, so don't extend this list by i
 
 _TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
     'claude-fable-5',
+    'claude-mythos-5',
     'claude-opus-4-8',
     'claude-opus-5',
 )
 """Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
 
-Deliberately not the same list as `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`: the two are independent
-capabilities. `claude-sonnet-5` serves the `system` role but rejects tool deltas with
-`tool_addition/tool_removal is not supported on this model`, while every model that predates the
-`mid-conversation-tool-changes-2026-07-01` beta rejects them with `requires a model that supports ...`.
-Verified live per model; `claude-mythos-5` is untested and so stays out.
+The list Anthropic publishes for the `mid-conversation-tool-changes-2026-07-01` beta, and it happens
+to match `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` — the two remain separate settings because they're
+separate features, one GA and one beta, that could diverge again. Models predating the beta reject
+the blocks with `requires a model that supports ...`, and `claude-sonnet-5` rejects them outright
+(`tool_addition/tool_removal is not supported on this model`) rather than accepting and ignoring them
+the way it does a plain system entry. Verified live per model except `claude-mythos-5`, which isn't
+reachable with our credentials and is included on the strength of the published list.
 """
 
 
