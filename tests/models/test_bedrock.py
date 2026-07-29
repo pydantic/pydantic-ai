@@ -3302,6 +3302,57 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
     )
 
 
+@pytest.mark.parametrize(
+    'model_id,expect_whitespace_part',
+    [
+        # `qwen_model_profile` and `moonshotai_model_profile` both set
+        # `ignore_streamed_leading_whitespace`, and Bedrock serves both families
+        # (`bedrock:qwen.qwen3-coder-next`, `bedrock:moonshot.kimi-k2-thinking`).
+        ('qwen.qwen3-coder-next', False),
+        ('moonshot.kimi-k2-thinking', False),
+        # Nova doesn't set the flag, so a whitespace-only delta is still a legitimate text part.
+        ('us.amazon.nova-micro-v1:0', True),
+    ],
+)
+async def test_bedrock_stream_whitespace_only_leading_delta(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    model_id: str,
+    expect_whitespace_part: bool,
+):
+    """A whitespace-only first delta must not become a `TextPart` when the profile opts out.
+
+    `test_bedrock_model_stream_empty_text_delta` covers `text=''`, which the `if text :=` truthiness
+    check already drops. `'\\n\\n'` is truthy, so it reaches `handle_text_delta` and — without
+    `ignore_leading_whitespace` — creates a whitespace-only `TextPart` that `run_stream` with a `str`
+    output type resolves as the final result, ahead of the real content.
+    """
+    model = BedrockConverseModel(model_id, provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        # Qwen3/Kimi emit a leading newline run before the substantive content.
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': '\n\n'}}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'Paris'}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'end_turn'}}
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {'stream': _stream(), 'ResponseMetadata': {'RequestId': 'stub'}}
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        output = await result.get_output()
+
+    text_parts = [p for p in result.response.parts if isinstance(p, TextPart)]
+    assert len(text_parts) == 1
+    if expect_whitespace_part:
+        assert output == '\n\nParis'
+    else:
+        assert output == 'Paris'
+
+
 @pytest.mark.vcr()
 async def test_bedrock_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that errors convert to ModelHTTPError."""
