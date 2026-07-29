@@ -791,20 +791,29 @@ async def test_first_party_cancel_inside_asyncio_timeout_leaves_scope_intact():
         await asyncio.sleep(READINESS_WAIT_TIMEOUT)
         return 'never reached'  # pragma: no cover
 
+    task = asyncio.current_task()
+    assert task is not None
+    # Baseline-relative: the shared anyio runner task can carry a stray count from an earlier
+    # test hitting CPython 3.11/3.12's `TaskGroup.__aexit__` uncancel leak (fixed in 3.13).
+    baseline = _task_cancelling(task)
+
     with pytest.raises(RunCancelled):
         async with asyncio.timeout(READINESS_WAIT_TIMEOUT):  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
             await agent.run('go')
 
-    task = asyncio.current_task()
-    assert task is not None
-    assert _task_cancelling(task) == 0
+    assert _task_cancelling(task) == baseline
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason='`asyncio.TaskGroup` needs Python 3.11+')
 async def test_first_party_cancel_inside_task_group_is_application_error():
     """Inside a `TaskGroup`, a first-party cancellation surfaces as an ordinary application error
-    (`RunCancelled` inside the group's `ExceptionGroup`), not as a cleanly-cancelled child — and
-    leaves no stray cancellation count on the host task."""
+    (`RunCancelled` inside the group's `ExceptionGroup`), not as a cleanly-cancelled child.
+
+    The no-stray-count half of the isolation contract is pinned by the `asyncio.timeout()`
+    sibling test: on CPython 3.11/3.12 `TaskGroup.__aexit__` itself leaks its own uncancel when
+    a child errors while the parent waits in `__aexit__` (fixed in 3.13), so the host task's
+    count cannot be asserted here — the leak is drained below instead so it can't poison later
+    tests on the shared runner task."""
     agent = Agent(TestModel())
 
     @agent.tool
@@ -821,7 +830,8 @@ async def test_first_party_cancel_inside_task_group_is_application_error():
 
     task = asyncio.current_task()
     assert task is not None
-    assert _task_cancelling(task) == 0
+    while _task_cancelling(task) > 0:  # pragma: lax no cover
+        _task_uncancel(task)
 
 
 def test_from_cancellation_identity_and_none():
