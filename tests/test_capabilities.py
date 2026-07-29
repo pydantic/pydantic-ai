@@ -6981,7 +6981,8 @@ class TestWrapNodeRunHook:
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                return await handler(node)  # pragma: no cover — bare async for doesn't call this
+                # A bare `async for` doesn't call this.
+                return await handler(node)  # pragma: no cover
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[NodeObserverCap()])
 
@@ -10718,7 +10719,8 @@ class TestRunErrorHooks:
                     self.log.append('wrap_run:caught')
                     return AgentRunResult(output='wrap_recovered')
 
-            async def on_run_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_run_error(  # pragma: no cover
                 self, ctx: RunContext[Any], *, error: BaseException
             ) -> AgentRunResult[Any]:
                 self.log.append('on_run_error')
@@ -13502,7 +13504,8 @@ class TestModelRetryFromHooks:
             ) -> ModelResponse:
                 raise ModelRetry('retry please')
 
-            async def on_model_request_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_model_request_error(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -14029,7 +14032,8 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Wrap says retry tool')
 
-            async def on_tool_execute_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_tool_execute_error(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -17101,7 +17105,8 @@ class TestBeforeOutputValidate:
                 output_context: OutputContext,
                 output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
-                log.append('validate')  # pragma: no cover — should NOT fire for plain text
+                # The uncovered body is the assertion: this hook must not fire for plain text.
+                log.append('validate')  # pragma: no cover
                 return output  # pragma: no cover
 
             async def before_output_process(
@@ -17571,7 +17576,8 @@ class TestModelRetryFromOutputHooks:
                     raise ModelRetry('Bad output, please try again')
                 return result
 
-            async def on_output_process_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_output_process_error(  # pragma: no cover
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, error: Exception
             ) -> Any:
                 nonlocal error_hook_called
@@ -18333,7 +18339,8 @@ class TestToolOutputWithOutputHooks:
 
         @dataclass
         class BothHooksCap(AbstractCapability[Any]):
-            async def before_tool_validate(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def before_tool_validate(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -18344,7 +18351,8 @@ class TestToolOutputWithOutputHooks:
                 log.append(f'tool_validate:{call.tool_name}')
                 return args
 
-            async def before_tool_execute(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def before_tool_execute(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -20729,7 +20737,8 @@ class TestImageOutputWithHooks:
             async def before_output_validate(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
-                log.append('validate')  # pragma: no cover — should NOT fire for images
+                # The uncovered body is the assertion: this hook must not fire for images.
+                log.append('validate')  # pragma: no cover
                 return output  # pragma: no cover
 
             async def before_output_process(
@@ -23226,7 +23235,8 @@ async def test_dynamic_capability_contributes_toolset_function() -> None:
 
     @toolset.tool_plain
     def func_tool() -> str:
-        return 'from func'  # pragma: no cover — the tool listing is what's asserted
+        # The tool listing is what's asserted.
+        return 'from func'  # pragma: no cover
 
     @dataclass
     class AsyncToolFuncCap(AbstractCapability):

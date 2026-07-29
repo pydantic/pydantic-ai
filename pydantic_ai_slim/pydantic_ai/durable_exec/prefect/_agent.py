@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 from ._types import TaskConfig, default_task_config
 
 
+# TODO(v3): remove `PrefectAgent` in favor of the `PrefectDurability` capability.
 @deprecated(
     """`PrefectAgent` is deprecated in favor of the `PrefectDurability` capability. Migrate each constructor argument as follows:
 - With the capability, call `agent.run()` inside a `@flow`; the wrapper did this automatically.
