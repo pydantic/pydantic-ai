@@ -5994,3 +5994,41 @@ async def test_groq_web_search_tool_domain_filters(allow_model_requests: None, g
     assert request_body['search_settings'] == snapshot(
         {'include_domains': ['python.org'], 'exclude_domains': ['w3schools.com']}
     )
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'compound-beta',
+        'compound-beta-mini',
+        'groq/compound',
+        'groq/compound-mini',
+    ],
+)
+async def test_groq_get_native_tools_accepts_web_search_on_compound_models(model_name: str):
+    """`_get_native_tools` accepts `WebSearchTool` on every compound model ID.
+
+    The compound profile flag (`groq_always_has_web_search_builtin_tool`) must be True for the
+    renamed `groq/compound` IDs, not just the legacy `compound-` ones, or this raises `UserError`.
+    """
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.native_tools import WebSearchTool as _WebSearchTool
+
+    m = GroqModel(model_name, provider=GroqProvider(api_key='foobar'))
+    mrp = ModelRequestParameters(native_tools=[_WebSearchTool()])
+    # Should NOT raise UserError; returns (tools, search_settings) with no tool definition.
+    tools, search_settings = m._get_native_tools(mrp)  # pyright: ignore[reportPrivateUsage]
+    assert tools == []
+    assert search_settings is None or search_settings is not None  # shape only, no network
+
+
+async def test_groq_get_native_tools_rejects_web_search_on_non_compound_model():
+    """`_get_native_tools` raises `UserError` for `WebSearchTool` on a non-compound model."""
+    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.native_tools import WebSearchTool as _WebSearchTool
+
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='foobar'))
+    mrp = ModelRequestParameters(native_tools=[_WebSearchTool()])
+    with pytest.raises(UserError, match='`WebSearchTool` is not supported by Groq'):
+        m._get_native_tools(mrp)  # pyright: ignore[reportPrivateUsage]
