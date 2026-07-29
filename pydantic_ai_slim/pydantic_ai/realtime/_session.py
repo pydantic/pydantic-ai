@@ -432,6 +432,8 @@ class RealtimeSession:
         self._native_tool_parts: list[ModelResponsePart] = []
         # The `chat {model}` span for the response currently being assembled (see `_ensure_chat_span`).
         self._chat_span: Span | None = None
+        # The `listen` span covering the user's current speech segment (see `_start_listen_span`).
+        self._listen_span: Span | None = None
         self._pending_response_usage = RequestUsage()
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
@@ -593,6 +595,37 @@ class RealtimeSession:
 
         return self
 
+    def _start_listen_span(self) -> None:
+        """Open a `listen` span covering the user's current speech segment.
+
+        The counterpart to the model's own speech: a voice trace reads as listen → respond → speak.
+        Opened when the provider's VAD reports speech onset and closed when it reports the end, so the
+        span's duration is how long the user was actually talking — which a zero-duration "speech
+        started" marker could not show.
+        """
+        settings = self._instrumentation
+        if settings is None or self._listen_span is not None:
+            return
+        context = self._session_span_context
+        assert context is not None
+        self._listen_span = settings.tracer.start_span(
+            'listen',
+            context=context,
+            attributes={'pydantic_ai.realtime': True, 'logfire.msg': 'listen'},
+            kind=SpanKind.INTERNAL,
+        )
+
+    def _end_listen_span(self) -> None:
+        """Close the `listen` span when the user stops speaking.
+
+        Also called when the model starts responding, because Gemini Live reports speech onset but
+        never its end: without that fallback its `listen` span would run to the end of the session.
+        Closing on the model's first content is an approximation there, and exact everywhere else.
+        """
+        if (span := self._listen_span) is not None:
+            self._listen_span = None
+            span.end()
+
     def _record_lifecycle_event(self, name: str, **attributes: Any) -> None:
         """Record a realtime lifecycle moment (barge-in, turn boundary) as a zero-duration child span.
 
@@ -645,6 +678,9 @@ class RealtimeSession:
                 self._record_span_error(self._chat_span, error)
             self._chat_span.end()
             self._chat_span = None
+        # Closing while the user is mid-sentence is normal (they stopped the session), so the `listen`
+        # span is closed rather than left dangling.
+        self._end_listen_span()
 
         settings = self._instrumentation
         span = self._session_span
@@ -1225,6 +1261,9 @@ class RealtimeSession:
         and this span covers exactly one `ModelResponse`, which is *not* the same as a conversational
         turn (a turn that calls tools produces several). The turn boundary is the `turn complete` span.
         """
+        # The model answering means the user's turn is over, which is the only end-of-speech signal
+        # Gemini Live gives us (see `_end_listen_span`); a no-op once VAD has already reported it.
+        self._end_listen_span()
         settings = self._instrumentation
         if settings is None or self._chat_span is not None:
             return
@@ -1648,7 +1687,7 @@ class RealtimeSession:
         if isinstance(event, SessionReconnectEvent):
             return self._handle_reconnected(event)
         self._user_turn_active = True
-        self._record_lifecycle_event('user speech started')
+        self._start_listen_span()
         return [event]
 
     def _handle_conversation_item(self, event: ConversationItemCreated) -> None:
@@ -1689,6 +1728,7 @@ class RealtimeSession:
             # transcript still attaches its own audio; with transcription off there's no lagging transcript,
             # so `_finalize_untranscribed_user` consumes the rolling buffer synchronously here instead.
             self._segment_input_audio(event.item_id)
+            self._end_listen_span()
             return [*self._finalize_untranscribed_user(), event]
         if isinstance(event, TurnCompleteEvent):
             return self._handle_turn_complete(event)

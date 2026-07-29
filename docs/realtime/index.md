@@ -711,8 +711,11 @@ Nested under it, each assistant response gets a `chat {model}` span (rendered as
 with `gen_ai.output.type` set to the same value, and each tool call gets an
 `execute_tool` span (including any delegated text-agent run). One conversational turn can produce
 several response spans, since a turn that calls tools is split into a response per step; the
-zero-duration `turn complete` span marks the end of the turn itself, alongside `user speech started`
-and `interrupt`. A response cut off by a barge-in carries `pydantic_ai.response.state='interrupted'`.
+zero-duration `turn complete` and `interrupt` spans mark those moments. The user's speech is not a
+moment but a stretch of time, so it gets a `listen` span running from the provider's speech-onset
+detection to its speech-end detection — Gemini Live reports only the onset, so there the span closes
+when the model starts answering instead. A response cut off by a barge-in carries
+`pydantic_ai.response.state='interrupted'`.
 
 The span *names* follow the OpenTelemetry GenAI conventions (`invoke_agent`, `chat`,
 `execute_tool`), so any OTel backend sees what it expects. The friendlier names in the parentheses
