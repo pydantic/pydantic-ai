@@ -76,8 +76,8 @@ class VLLMProvider(Provider[AsyncOpenAI]):
         # - Some chat templates served by vLLM reject more than one leading system message.
         #   See https://github.com/pydantic/pydantic-ai/issues/5812.
         # `openai_supports_tool_choice_required` and `openai_supports_strict_tool_definition` default to
-        # `True` and are deliberately not set here, so family profiles that disable them (gpt-oss,
-        # Qwen3-Coder) survive the merge: vLLM ignores `tool_choice='required'` for gpt-oss, for example.
+        # `True` and are deliberately not set here, so family opt-outs (gpt-oss for the former, Qwen3-Coder
+        # for both) survive the merge: vLLM ignores `tool_choice='required'` for gpt-oss, for example.
         # See https://github.com/vllm-project/vllm/issues/44216.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
