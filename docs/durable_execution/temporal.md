@@ -231,6 +231,12 @@ As the streaming model request activity, workflow, and workflow execution call a
 
 Because the model stream is consumed inside the activity, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary. To stop an in-flight model request, cancel the Temporal workflow: the cancellation is delivered to the activity (via its heartbeats), which cancels any server-side job before the activity completes.
 
+Whole-run cancellation (see [Cancelling a Run](../agent.md#cancelling-a-run)) follows the same split, with Temporal-specific consequences:
+
+- Calling [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] from workflow code raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] as an ordinary application outcome: a workflow that catches it completes normally rather than ending as *Cancelled*, and the run remains replay-deterministic. An uncaught `RunCancelled` fails the workflow as a typed application error, and the run state does not cross the failure boundary -- catch it inside the workflow if you need [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages].
+- [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run] requires being in the same process as the run, so calling it from a tool running inside an activity raises a clear [`UserError`][pydantic_ai.exceptions.UserError] instead of hanging.
+- Cancelling the Temporal workflow itself remains an external cancellation: `CancelledError` keeps propagating and the workflow still ends as *Cancelled*.
+
 [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for workflow code: it requires no running event loop and wraps `run_stream()`. Under [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a workflow, an agent with `TemporalDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `TemporalAgent` forbids `run_stream` inside workflows — use `run` + event stream handler there.)
 
 ### Suspended Turns and Background Mode

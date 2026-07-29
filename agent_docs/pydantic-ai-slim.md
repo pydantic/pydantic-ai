@@ -43,6 +43,18 @@ Node streams own draining the buffer into `wrap_run_event_stream` / `event_strea
 
 Feature code emits typed `AgentStreamEvent`s into the buffer once the public event semantics are true. Pending messages follow this pattern: `PendingMessageDrainCapability` emits one `EnqueuedMessagesEvent` per drained `enqueue` call (a single call can carry multiple messages) when it delivers that call's messages into history, describing the messages as delivered (indices are deliberately not carried, since `_clean_message_history` can merge adjacent requests across runs and stale them).
 
+## Cancellation Internals
+
+`_cancel.RunCancellation` is the run-scoped first-party cancellation controller, held on `GraphAgentDeps.cancellation` and shared by reference into every `RunContext` as the private `_cancellation` field (same never-`replace` invariant as `_event_stream_buffer` — see the comment in `build_run_context`). First-party cancellation works by cancelling the asyncio task driving the run, so it reuses the entire external-cancellation teardown; the `CancelledError` is classified exactly once, at the outer edge of `Agent.iter()`'s exit stack (`_translate_cancellation`), after all history-producing teardown has committed.
+
+Three pieces of bookkeeping are load-bearing and easy to break from `_agent_graph.py` / `run.py`:
+
+- **Issuance counting** (`_issued` + `Task.uncancel()` in `resolve()`): the controller consumes exactly the cancellations it issued; if `Task.cancelling()` is still positive afterwards, an external cancellation raced in and wins (never translated). The arbitration is deliberately baseline-free — conservative in the "external wins" direction.
+- **Re-issue on `bind()`**: `bind()` runs at run start and every step boundary; it clamps the issued count to the task's live `cancelling()` (a caller that uncancelled took over the bookkeeping) and re-delivers a still-requested cancellation — this is what makes first-party cancellation sticky against hooks or callers that swallow/uncancel it, without per-site `cancel_requested` checks.
+- **`release_issued()` in a `finally`** at the translation edge: any exit path (including a non-cancellation error overtaking a requested cancel) must release unresolved issuances, or the leaked `Task.cancelling()` count spuriously cancels unrelated later work on the same task.
+
+`_utils.raise_if_cancelling()` (the level-triggered external backstop) and `RunCancellation.cancel_requested` (the first-party terminality flag) are deliberately separate checks — see the comment at `_finalize_result` in `agent/__init__.py`; collapsing them reintroduces the swallowed-cancellation bug each one exists to catch.
+
 ## Test Shape
 
 - Use public agent/model/toolset behavior for most tests. Prefer snapshots for message history, event streams, provider request payloads, and protocol shapes.

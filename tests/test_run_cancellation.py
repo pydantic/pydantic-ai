@@ -23,10 +23,12 @@ import asyncio
 import pickle
 import sys
 from collections.abc import AsyncIterable
+from datetime import timezone
 from typing import Any
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunCancelled, UserError, capture_run_messages
 from pydantic_ai._cancel import RunCancellation
@@ -47,7 +49,9 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRun, AgentRunResult
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
+
+from .conftest import IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -277,15 +281,41 @@ async def test_tool_cancels_run_and_history_is_resumable():
     assert error.metadata == {'customer': '123'}
     assert error.run_id is not None
     assert error.conversation_id is not None
-    assert [(type(m).__name__, m.state) for m in messages] == [
-        ('ModelRequest', 'complete'),
-        ('ModelResponse', 'complete'),
-        ('ModelRequest', 'interrupted'),
-    ]
-    (fast_return,) = messages[-1].parts
-    assert isinstance(fast_return, ToolReturnPart)
-    assert fast_return.tool_name == 'fast_tool'
-    assert fast_return.content == 'fast result'
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='fast_tool', args={}, tool_call_id='call_fast'),
+                    ToolCallPart(tool_name='cancelling_tool', args={}, tool_call_id='call_slow'),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='function:model_func:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='fast_tool',
+                        content='fast result',
+                        tool_call_id='call_fast',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
 
     restored = ModelMessagesTypeAdapter.validate_json(error.all_messages_json())
     assert restored == messages
@@ -293,10 +323,28 @@ async def test_tool_cancels_run_and_history_is_resumable():
     result = await agent.run('never mind, wrap up', message_history=restored)
     assert result.output == 'done'
     resumed_request = seen_by_model[-1][-1]
-    returns = [p for p in resumed_request.parts if isinstance(p, ToolReturnPart)]
-    assert [(r.tool_name, r.outcome) for r in returns] == [('fast_tool', 'success'), ('cancelling_tool', 'interrupted')]
-    synthesized = returns[-1]
-    assert synthesized.metadata == {'pydantic_ai_synthesized_tool_return': True}
+    assert resumed_request == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='fast_tool',
+                    content='fast result',
+                    tool_call_id='call_fast',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturnPart(
+                    tool_name='cancelling_tool',
+                    content='The tool call was interrupted before a result was produced.',
+                    tool_call_id='call_slow',
+                    metadata={'pydantic_ai_synthesized_tool_return': True},
+                    timestamp=IsNow(tz=timezone.utc),
+                    outcome='interrupted',
+                ),
+                UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            timestamp=IsNow(tz=timezone.utc),
+        )
+    )
 
 
 async def test_agent_run_cancel_from_another_task():
@@ -503,6 +551,11 @@ async def test_run_cancellation_tracks_issuances_per_task():
     await task_a
     assert a_state == [(True, 0), (False, 1)]
 
+
+@requires_task_cancelling
+async def test_release_issued_on_finished_task_is_noop():
+    """Releasing issued cancellations for a task that already finished, and releasing an already-empty
+    controller, are no-ops — a controller unit test because the public API can't trigger it deterministically."""
     done_cancellation = RunCancellation()
     done_bound = asyncio.Event()
 
@@ -523,6 +576,11 @@ async def test_run_cancellation_tracks_issuances_per_task():
     done_cancellation.release_issued()
     done_cancellation.release_issued()  # clearing an already-empty controller is a no-op
 
+
+@requires_task_cancelling
+async def test_cancel_before_bind_delivers_on_bind():
+    """A cancellation requested before any task is bound is delivered as soon as one binds — a controller
+    unit test because the public API can't trigger it deterministically."""
     unbound_cancellation = RunCancellation()
     unbound_cancellation.cancel()
     rebound_cancelled = asyncio.Event()
@@ -541,6 +599,11 @@ async def test_run_cancellation_tracks_issuances_per_task():
     await rebound_cancelled.wait()
     await rebound_task
 
+
+@requires_task_cancelling
+async def test_swallowed_and_uncancelled_request_redelivers_on_rebind():
+    """A request whose cancellation was swallowed and `uncancel()`ed is redelivered when the task rebinds — a
+    controller unit test because the public API can't trigger it deterministically."""
     uncancelled_cancellation = RunCancellation()
     uncancelled_bound = asyncio.Event()
     keep_uncancelled_task_live = asyncio.Event()
@@ -632,11 +695,25 @@ async def test_task_cancel_of_run_carries_run_cancelled():
 
     cancelled = RunCancelled.from_cancellation(exc_info.value)
     assert cancelled is not None
-    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
-    response = cancelled.all_messages()[1]
-    assert isinstance(response, ModelResponse)
-    assert len(response.parts) == 1
-    assert isinstance(response.parts[0], ToolCallPart)
+    assert cancelled.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='pyd_ai_tool_call_id__slow_tool')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
     assert cancelled.usage.requests == 1
     assert cancelled.run_id is not None
     assert task.cancelled()
@@ -874,7 +951,8 @@ async def test_cancel_run_under_run_stream_events():
             async for event in stream:
                 events.append(type(event).__name__)
 
-    assert events  # events streamed before the cancellation are delivered
+    # events streamed before the cancellation are delivered
+    assert events == snapshot(['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent'])
 
 
 @requires_task_cancelling

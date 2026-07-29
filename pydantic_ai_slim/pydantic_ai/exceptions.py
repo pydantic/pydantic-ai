@@ -276,8 +276,8 @@ class RunCancelled(AgentRunError):
     tool calls that never produced a result are automatically closed out with synthesized
     `outcome='interrupted'` returns before the history is sent to a model.
 
-    Cancellation is terminal: `wrap_run` and `on_run_error` capability hooks may observe it and
-    clean up, but cannot recover a cancelled run into a successful result.
+    Cancellation is terminal: capability hooks (`wrap_run`, `wrap_node_run`, `on_run_error`) may
+    observe it and clean up, but cannot recover a cancelled run into a successful result.
     """
 
     def __init__(
