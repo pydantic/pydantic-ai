@@ -1133,7 +1133,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             # or __aexit__ may have closed the session while we waited)
             if self._initialized:
                 return
-            if not self.is_running:
+            if not self.is_running:  # pragma: no cover
                 return
             # Perform the deferred initialization — assign state atomically after all
             # operations succeed so a partial failure doesn't leave stale _server_info.
