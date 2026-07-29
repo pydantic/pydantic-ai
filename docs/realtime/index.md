@@ -117,8 +117,8 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.realtime import (
     InputSpeechStartEvent,
-    SessionReconnectEvent,
     SessionErrorEvent,
+    SessionReconnectEvent,
     TurnCompleteEvent,
 )
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
