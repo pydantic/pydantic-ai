@@ -1717,7 +1717,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     The user prompt will be appended after all tool return parts in the next model request.
     """
 
-    _events_iterator: AsyncIterator[_messages.HandleResponseEvent] | None = field(default=None, init=False, repr=False)
     _wrapped_events_iterator: AsyncIterator[_messages.AgentStreamEvent] | None = field(
         default=None, init=False, repr=False
     )
@@ -1772,165 +1771,161 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     async def _run_stream(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
-        if self._events_iterator is None:
-            # Ensure that the stream is only run once
+        # `_wrapped_stream` builds this generator once per node, so there is no caching to do here.
+        output_schema = ctx.deps.output_schema
 
-            output_schema = ctx.deps.output_schema
-
-            async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
-                if self.model_response.state == 'suspended':
-                    # A suspended turn is not a completed response to handle: its partial parts could
-                    # match an output schema and end the run on mid-turn output while the provider's
-                    # server-side job keeps running. This is reachable when a consumer detaches a
-                    # streamed background run under `agent.iter` and then keeps driving the graph, handing
-                    # this node the suspended response. Symmetric with `UserPromptNode`'s suspended guard.
-                    raise exceptions.UserError(
-                        'Cannot handle a suspended model response as a completed turn. '
-                        'Resume it by running the agent with this message history and no new prompt.'
-                    )
-
-                is_empty = not self.model_response.parts
-                is_thinking_only = not is_empty and all(
-                    isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
+        async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
+            if self.model_response.state == 'suspended':
+                # A suspended turn is not a completed response to handle: its partial parts could
+                # match an output schema and end the run on mid-turn output while the provider's
+                # server-side job keeps running. This is reachable when a consumer detaches a
+                # streamed background run under `agent.iter` and then keeps driving the graph, handing
+                # this node the suspended response. Symmetric with `UserPromptNode`'s suspended guard.
+                raise exceptions.UserError(
+                    'Cannot handle a suspended model response as a completed turn. '
+                    'Resume it by running the agent with this message history and no new prompt.'
                 )
 
-                if is_empty or is_thinking_only:
-                    # No actionable output was returned by the model.
+            is_empty = not self.model_response.parts
+            is_thinking_only = not is_empty and all(
+                isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
+            )
 
-                    # Don't retry if the token limit was exceeded, possibly during thinking.
-                    if self.model_response.finish_reason == 'length':
-                        raise exceptions.UnexpectedModelBehavior(
-                            f'Model token limit ({ctx.state.last_max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
-                        )
+            if is_empty or is_thinking_only:
+                # No actionable output was returned by the model.
 
-                    # Check for content filter on empty response
-                    if is_empty and self.model_response.finish_reason == 'content_filter':
-                        details = self.model_response.provider_details or {}
-                        body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
-
-                        if reason := details.get('finish_reason'):
-                            message = f"Content filter triggered. Finish reason: '{reason}'"
-                        elif reason := details.get('block_reason'):
-                            message = f"Content filter triggered. Block reason: '{reason}'"
-                        elif refusal := details.get('refusal'):
-                            message = f'Content filter triggered. Refusal: {refusal!r}'
-                        else:  # pragma: no cover
-                            message = 'Content filter triggered.'
-
-                        raise exceptions.ContentFilterError(message, body=body)
-
-                    # If the output type allows `None`, an empty or thinking-only response is a valid result:
-                    # both signal that the model has no text output to give. Some models emit only thinking
-                    # after completing the task via a tool call, and forcing a retry just makes them produce
-                    # unnecessary follow-up text.
-                    if output_schema.allows_none:
-                        run_context = _build_output_run_context(ctx)
-                        try:
-                            result_data = await _output.run_none_process_hooks(
-                                capability=ctx.deps.root_capability,
-                                run_context=run_context,
-                                schema=output_schema,
-                                output_validators=ctx.deps.output_validators,
-                            )
-                            self._next_node = self._handle_final_result(
-                                ctx, result.FinalResult(cast(NodeRunEndT, result_data)), []
-                            )
-                        except ToolRetryError as e:
-                            ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e)
-                            self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
-                                _messages.ModelRequest(parts=[e.tool_retry])
-                            )
-                        return
-
-                    # For empty or thinking-only responses, fall through to the normal retry prompt
-                    # below. That prompt is built from the output schema and available tools, so it
-                    # tells the model which kinds of output are actually valid (text, tool call,
-                    # and/or image) rather than assuming text is always an option.
-
-                text = ''
-                compaction_text = ''
-                tool_calls: list[_messages.ToolCallPart] = []
-                files: list[_messages.BinaryContent] = []
-
-                for part in self.model_response.parts:
-                    if isinstance(part, _messages.TextPart):
-                        text += part.content
-                    elif isinstance(part, _messages.ToolCallPart):
-                        tool_calls.append(part)
-                    elif isinstance(part, _messages.FilePart):
-                        files.append(part.content)
-                    elif isinstance(part, _messages.NativeToolCallPart):
-                        # Text parts before a native tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text.
-                        # The part itself was already surfaced through `PartStartEvent` / `PartDeltaEvent`.
-                        text = ''
-                    elif isinstance(part, _messages.NativeToolReturnPart):
-                        # Already surfaced through `PartStartEvent` / `PartDeltaEvent`.
-                        pass
-                    elif isinstance(part, _messages.ThinkingPart):
-                        pass
-                    elif isinstance(part, _messages.CompactionPart):
-                        if part.content:
-                            compaction_text += part.content
-                    else:
-                        assert_never(part)
-
-                # Use compaction content as text fallback when the response has no other
-                # actionable text (e.g. Anthropic pause_after_compaction=True)
-                if not text and compaction_text:
-                    text = compaction_text
-
-                try:
-                    # We generally prioritize at least executing tool calls if they are present.
-                    # This accounts for cases like Anthropic returns that might contain a text response
-                    # and a tool call response, where the text response just indicates the tool call will happen.
-                    # The exception is `end_strategy='early'`: if the response also carries a valid non-tool
-                    # output (schema-validated text, or an image) alongside plain function tool calls, that
-                    # output is already the final result, so `_handle_tool_calls` skips those tools and ends the
-                    # run — matching the way `'early'` skips function tools once an output tool call succeeds.
-                    # (Output tool calls and deferred tool calls are left to normal processing, so a co-emitted
-                    # one still wins/surfaces rather than being preempted by the text.)
-                    alternatives: list[str] = []
-                    if tool_calls:
-                        response_output = (text, files) if ctx.deps.end_strategy == 'early' else None
-                        async for event in self._handle_tool_calls(ctx, tool_calls, response_output=response_output):
-                            yield event
-                        return
-                    elif output_schema.toolset:
-                        alternatives.append('include your response in a tool call')
-                    elif ctx.deps.tool_manager.tools is None or ctx.deps.tool_manager.tools:
-                        # tools is None when the tool manager is unprepared (e.g. UserPromptNode
-                        # skips to CallToolsNode, bypassing for_run_step); in that case we
-                        # default to suggesting tools to be safe
-                        alternatives.append('call a tool')
-
-                    if output_schema.allows_image:
-                        if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
-                            self._next_node = await self._handle_image_response(ctx, image)
-                            return
-                        alternatives.append('return an image')
-
-                    if text_processor := output_schema.text_processor:
-                        if text:
-                            self._next_node = await self._handle_text_response(ctx, text, text_processor)
-                            return
-                        alternatives.insert(0, 'return text')
-
-                    # handle responses with only parts that don't constitute output.
-                    # This can happen with models that support thinking mode when they don't provide
-                    # actionable output alongside their thinking content. so we tell the model to try again.
-                    m = _messages.RetryPromptPart(
-                        content=f'Please {" or ".join(alternatives)}.',
+                # Don't retry if the token limit was exceeded, possibly during thinking.
+                if self.model_response.finish_reason == 'length':
+                    raise exceptions.UnexpectedModelBehavior(
+                        f'Model token limit ({ctx.state.last_max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
-                    raise ToolRetryError(m)
-                except ToolRetryError as e:
-                    ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e)
-                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
-            self._events_iterator = _run_stream()
+                # Check for content filter on empty response
+                if is_empty and self.model_response.finish_reason == 'content_filter':
+                    details = self.model_response.provider_details or {}
+                    body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
+
+                    if reason := details.get('finish_reason'):
+                        message = f"Content filter triggered. Finish reason: '{reason}'"
+                    elif reason := details.get('block_reason'):
+                        message = f"Content filter triggered. Block reason: '{reason}'"
+                    elif refusal := details.get('refusal'):
+                        message = f'Content filter triggered. Refusal: {refusal!r}'
+                    else:  # pragma: no cover
+                        message = 'Content filter triggered.'
+
+                    raise exceptions.ContentFilterError(message, body=body)
+
+                # If the output type allows `None`, an empty or thinking-only response is a valid result:
+                # both signal that the model has no text output to give. Some models emit only thinking
+                # after completing the task via a tool call, and forcing a retry just makes them produce
+                # unnecessary follow-up text.
+                if output_schema.allows_none:
+                    run_context = _build_output_run_context(ctx)
+                    try:
+                        result_data = await _output.run_none_process_hooks(
+                            capability=ctx.deps.root_capability,
+                            run_context=run_context,
+                            schema=output_schema,
+                            output_validators=ctx.deps.output_validators,
+                        )
+                        self._next_node = self._handle_final_result(
+                            ctx, result.FinalResult(cast(NodeRunEndT, result_data)), []
+                        )
+                    except ToolRetryError as e:
+                        ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e)
+                        self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                            _messages.ModelRequest(parts=[e.tool_retry])
+                        )
+                    return
+
+                # For empty or thinking-only responses, fall through to the normal retry prompt
+                # below. That prompt is built from the output schema and available tools, so it
+                # tells the model which kinds of output are actually valid (text, tool call,
+                # and/or image) rather than assuming text is always an option.
+
+            text = ''
+            compaction_text = ''
+            tool_calls: list[_messages.ToolCallPart] = []
+            files: list[_messages.BinaryContent] = []
+
+            for part in self.model_response.parts:
+                if isinstance(part, _messages.TextPart):
+                    text += part.content
+                elif isinstance(part, _messages.ToolCallPart):
+                    tool_calls.append(part)
+                elif isinstance(part, _messages.FilePart):
+                    files.append(part.content)
+                elif isinstance(part, _messages.NativeToolCallPart):
+                    # Text parts before a native tool call are essentially thoughts,
+                    # not part of the final result output, so we reset the accumulated text.
+                    # The part itself was already surfaced through `PartStartEvent` / `PartDeltaEvent`.
+                    text = ''
+                elif isinstance(part, _messages.NativeToolReturnPart):
+                    # Already surfaced through `PartStartEvent` / `PartDeltaEvent`.
+                    pass
+                elif isinstance(part, _messages.ThinkingPart):
+                    pass
+                elif isinstance(part, _messages.CompactionPart):
+                    if part.content:
+                        compaction_text += part.content
+                else:
+                    assert_never(part)
+
+            # Use compaction content as text fallback when the response has no other
+            # actionable text (e.g. Anthropic pause_after_compaction=True)
+            if not text and compaction_text:
+                text = compaction_text
+
+            try:
+                # We generally prioritize at least executing tool calls if they are present.
+                # This accounts for cases like Anthropic returns that might contain a text response
+                # and a tool call response, where the text response just indicates the tool call will happen.
+                # The exception is `end_strategy='early'`: if the response also carries a valid non-tool
+                # output (schema-validated text, or an image) alongside plain function tool calls, that
+                # output is already the final result, so `_handle_tool_calls` skips those tools and ends the
+                # run — matching the way `'early'` skips function tools once an output tool call succeeds.
+                # (Output tool calls and deferred tool calls are left to normal processing, so a co-emitted
+                # one still wins/surfaces rather than being preempted by the text.)
+                alternatives: list[str] = []
+                if tool_calls:
+                    response_output = (text, files) if ctx.deps.end_strategy == 'early' else None
+                    async for event in self._handle_tool_calls(ctx, tool_calls, response_output=response_output):
+                        yield event
+                    return
+                elif output_schema.toolset:
+                    alternatives.append('include your response in a tool call')
+                elif ctx.deps.tool_manager.tools is None or ctx.deps.tool_manager.tools:
+                    # tools is None when the tool manager is unprepared (e.g. UserPromptNode
+                    # skips to CallToolsNode, bypassing for_run_step); in that case we
+                    # default to suggesting tools to be safe
+                    alternatives.append('call a tool')
+
+                if output_schema.allows_image:
+                    if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
+                        self._next_node = await self._handle_image_response(ctx, image)
+                        return
+                    alternatives.append('return an image')
+
+                if text_processor := output_schema.text_processor:
+                    if text:
+                        self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                        return
+                    alternatives.insert(0, 'return text')
+
+                # handle responses with only parts that don't constitute output.
+                # This can happen with models that support thinking mode when they don't provide
+                # actionable output alongside their thinking content. so we tell the model to try again.
+                m = _messages.RetryPromptPart(
+                    content=f'Please {" or ".join(alternatives)}.',
+                )
+                raise ToolRetryError(m)
+            except ToolRetryError as e:
+                ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e)
+                self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
         try:
-            async for event in self._events_iterator:
+            async for event in _run_stream():
                 yield event
         except BaseException as e:
             self._stream_error = e
