@@ -154,9 +154,16 @@ _FINISH_REASON_PROTO_MAP: dict[int, FinishReason | None] = {
 }
 
 
-def _map_finish_reason(reason: int) -> FinishReason | None:
-    """Map an xAI proto finish reason to a pydantic-ai one, or `None` if it's unset/unrecognised."""
-    return _FINISH_REASON_PROTO_MAP.get(reason)
+def _map_finish_reason(response: chat_types.Response) -> FinishReason | None:
+    """Map an xAI response's finish reason to a pydantic-ai one, or `None` if it's unset/unrecognised.
+
+    `response.finish_reason` reflects a single output, and in multi-output responses (e.g. server-side tools) that
+    can be an intermediate `REASON_TOOL_CALLS` output rather than the final `REASON_STOP` one, so read the last
+    output instead. Streamed responses start out with a single empty output, whose `REASON_INVALID` keeps the
+    finish reason unset until the stream actually finishes.
+    """
+    outputs = response.proto.outputs
+    return _FINISH_REASON_PROTO_MAP.get(outputs[-1].finish_reason) if outputs else None
 
 
 class XaiModelSettings(ModelSettings, total=False):
@@ -867,12 +874,7 @@ class XaiModel(Model[AsyncClient]):
         # Convert usage with detailed token information
         usage = _extract_usage(response, self._model_name, self._provider.name, self._provider.base_url)
 
-        # Map finish reason.
-        #
-        # `response.finish_reason` reflects a single output, and in multi-output responses (e.g.
-        # server-side tools) that can be an intermediate TOOL_CALLS output rather than the final STOP
-        # one, so we derive the finish reason from the last output.
-        finish_reason = _map_finish_reason(outputs[-1].finish_reason) if outputs else None
+        finish_reason = _map_finish_reason(response)
 
         return ModelResponse(
             parts=parts,
@@ -959,12 +961,8 @@ class XaiStreamedResponse(StreamedResponse):
         if response.id and self.provider_response_id is None:
             self.provider_response_id = response.id
 
-        # Handle finish reason. Read it off the proto rather than `response.finish_reason`, which
-        # is the enum *name* of the same value, and take the last output for the same reason as
-        # `_process_response`. Chunks before the final one carry `REASON_INVALID`, which maps to
-        # `None` so the reason stays unset until the stream actually finishes.
-        if outputs := response.proto.outputs:
-            self.finish_reason = _map_finish_reason(outputs[-1].finish_reason)
+        # Handle finish reason
+        self.finish_reason = _map_finish_reason(response)
 
     def _collect_reasoning_events(
         self,

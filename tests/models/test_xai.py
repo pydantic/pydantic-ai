@@ -1403,6 +1403,38 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
             )
 
 
+def _text_chunk_with_proto_finish_reason(text: str, proto_reason: int) -> tuple[chat_types.Response, chat_types.Chunk]:
+    """Like `get_grok_text_chunk`, but sets the raw proto finish reason rather than a pydantic-ai one.
+
+    The helpers in `mock_xai` take a pydantic-ai `FinishReason` and translate it, which can't express
+    `REASON_INVALID` or `REASON_MAX_CONTEXT` and would hide the round trip under test.
+    """
+    chunk_proto = chat_pb2.GetChatCompletionChunk(id='grok-123')
+    chunk_proto.outputs.append(
+        chat_pb2.CompletionOutputChunk(
+            index=0,
+            finish_reason=proto_reason,
+            delta=chat_pb2.Delta(content=text, role=chat_pb2.MessageRole.ROLE_ASSISTANT),
+        )
+    )
+    chunk_proto.created.GetCurrentTime()
+
+    response_proto = chat_pb2.GetChatCompletionResponse(
+        id='grok-123',
+        outputs=[
+            chat_pb2.CompletionOutput(
+                index=0,
+                finish_reason=proto_reason,
+                message=chat_pb2.CompletionMessage(content=text, role=chat_pb2.MessageRole.ROLE_ASSISTANT),
+            )
+        ],
+        usage=usage_pb2.SamplingUsage(prompt_tokens=2, completion_tokens=1),
+    )
+    response_proto.created.GetCurrentTime()
+
+    return chat_types.Response(response_proto, index=None), chat_types.Chunk(chunk_proto, index=None)
+
+
 @pytest.mark.parametrize(
     ('proto_reason', 'expected'),
     [
@@ -1435,38 +1467,6 @@ async def test_xai_stream_finish_reason_covers_every_proto_reason(
         async for _ in stream_response:
             pass
         assert stream_response.finish_reason == expected
-
-
-def _text_chunk_with_proto_finish_reason(text: str, proto_reason: int) -> tuple[chat_types.Response, chat_types.Chunk]:
-    """Like `get_grok_text_chunk`, but sets the raw proto finish reason rather than a pydantic-ai one.
-
-    The helpers in `mock_xai` take a pydantic-ai `FinishReason` and translate it, which can't express
-    `REASON_INVALID` or `REASON_MAX_CONTEXT` and would hide the round trip under test.
-    """
-    chunk_proto = chat_pb2.GetChatCompletionChunk(id='grok-123')
-    chunk_proto.outputs.append(
-        chat_pb2.CompletionOutputChunk(
-            index=0,
-            finish_reason=proto_reason,
-            delta=chat_pb2.Delta(content=text, role=chat_pb2.MessageRole.ROLE_ASSISTANT),
-        )
-    )
-    chunk_proto.created.GetCurrentTime()
-
-    response_proto = chat_pb2.GetChatCompletionResponse(
-        id='grok-123',
-        outputs=[
-            chat_pb2.CompletionOutput(
-                index=0,
-                finish_reason=proto_reason,
-                message=chat_pb2.CompletionMessage(content=text, role=chat_pb2.MessageRole.ROLE_ASSISTANT),
-            )
-        ],
-        usage=usage_pb2.SamplingUsage(prompt_tokens=2, completion_tokens=1),
-    )
-    response_proto.created.GetCurrentTime()
-
-    return chat_types.Response(response_proto, index=None), chat_types.Chunk(chunk_proto, index=None)
 
 
 def test_xai_sdk_reports_finish_reasons_as_proto_enum_names():
