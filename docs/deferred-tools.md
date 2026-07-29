@@ -310,6 +310,81 @@ _(This example is complete, it can be run "as is")_
 !!! note "Tool result ordering"
     Tool results follow the order in which the model emitted the corresponding tool calls. In the message history above, `delete_file`'s denied result appears before `update_file`'s result for `.env` because the model emitted `delete_file` first. This is an intentional behavior change in v2: results are no longer grouped by tool kind, so the ordering you see reflects the model's emission order.
 
+### Binding approval to tool-call arguments
+
+For sensitive tools, it can be useful to bind the approval decision to the exact
+tool name and arguments that were presented to the reviewer. This prevents an
+approval from being treated as a reusable session flag if the action changes
+before execution.
+
+One way to do this is to compute a stable fingerprint for each pending
+[`ToolCallPart`][pydantic_ai.messages.ToolCallPart], store it with the approval
+metadata, and recompute it inside the tool before performing the side effect:
+
+```python {title="approval_bound_tool_call.py"}
+import hashlib
+import json
+from typing import Any
+
+from pydantic_ai import (
+    Agent,
+    ApprovalRequired,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+)
+
+
+def tool_call_fingerprint(tool_name: str, args: dict[str, Any]) -> str:
+    payload = json.dumps(
+        {'tool_name': tool_name, 'args': args},
+        sort_keys=True,
+        separators=(',', ':'),
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+
+
+@agent.tool
+def update_file(ctx: RunContext, path: str, content: str) -> str:
+    if path == '.env' and not ctx.tool_call_approved:
+        raise ApprovalRequired(metadata={'reason': 'protected'})
+
+    if ctx.tool_call_approved:
+        metadata = ctx.tool_call_metadata or {}
+        expected_fingerprint = metadata.get('approved_fingerprint')
+        actual_fingerprint = tool_call_fingerprint(
+            'update_file',
+            {'path': path, 'content': content},
+        )
+        if expected_fingerprint != actual_fingerprint:
+            raise RuntimeError('Approved tool call no longer matches execution arguments.')
+
+    return f'File {path!r} updated: {content!r}'
+
+
+result = agent.run_sync('Clear `.env`')
+messages = result.all_messages()
+
+assert isinstance(result.output, DeferredToolRequests)
+requests = result.output
+
+results = DeferredToolResults()
+for call in requests.approvals:
+    results.approvals[call.tool_call_id] = True
+    results.metadata[call.tool_call_id] = {
+        'approved_fingerprint': tool_call_fingerprint(call.tool_name, call.args_as_dict()),
+    }
+
+agent.run_sync(message_history=messages, deferred_tool_results=results)
+```
+
+This pattern does not replace authenticating the caller or authorizing the tool
+function. It adds an additional invariant: the approval result is only valid for
+the specific tool call that produced the fingerprint.
+
 ## External Tool Execution
 
 When the result of a tool call cannot be generated inside the same agent run in which it was called, the tool is considered to be external.
