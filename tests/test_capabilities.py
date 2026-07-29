@@ -12588,6 +12588,23 @@ async def test_wrapper_capability_has_wrap_node_run():
     assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True
 
 
+async def test_combined_capability_has_wrap_node_run():
+    """CombinedCapability.has_wrap_node_run reports whether any child overrides the hook.
+
+    Nothing in the library branches on this anymore — the bare-iteration warning it used to gate
+    is gone now that `async for node in agent_run` fires node hooks — but it stays available for
+    capability authors introspecting a chain, alongside `has_wrap_run_event_stream`.
+    """
+
+    @dataclass
+    class NodeRunCap(AbstractCapability):
+        async def wrap_node_run(self, ctx: RunContext, *, node: Any, handler: Any) -> Any:
+            return await handler(node)  # pragma: no cover
+
+    assert CombinedCapability([CustomCapability()]).has_wrap_node_run is False
+    assert CombinedCapability([CustomCapability(), NodeRunCap()]).has_wrap_node_run is True
+
+
 async def test_wrapper_capability_delegates_resolve_model_id():
     """WrapperCapability delegates `resolve_model_id` (and `has_resolve_model_id`) to the wrapped capability."""
     resolved = TestModel()
