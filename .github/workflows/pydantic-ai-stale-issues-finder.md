@@ -49,6 +49,8 @@ engine:
   env:
     ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
     ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+    # The custom shim is stateless, so an outer retry repeats the whole task.
+    GH_AW_HARNESS_MAX_RETRIES: "0"
 tools:
   github:
     mode: gh-proxy
@@ -72,6 +74,14 @@ safe-outputs:
   threat-detection:
     # Detection's separate AWF config does not inherit the model pricing below.
     max-ai-credits: -1
+    # Detection uses the stateful Claude CLI, so it retains normal recovery.
+    engine:
+      id: claude
+      model: ${{ vars.GH_AW_MODEL }}
+      env:
+        ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
+        ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+        GH_AW_HARNESS_MAX_RETRIES: "3"
 timeout-minutes: 60
 # MiniMax pricing for AI-credit enforcement and run-cost reporting, in dollars
 # per 1M tokens. AWF v0.27.42 uses the default for models absent from its

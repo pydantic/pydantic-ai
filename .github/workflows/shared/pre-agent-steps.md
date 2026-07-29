@@ -26,8 +26,4 @@ pre-agent-steps:
     run: bash .github/scripts/install-sandbox-tools.sh
   - name: Pre-warm Pydantic AI gh-aw shim uv environment
     run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
-    env:
-      # This step runs before the agent container. Keep the token scoped here:
-      # it authenticates the bounded context prefetch and is not exposed to the model.
-      GH_TOKEN: ${{ github.token }}
 ---

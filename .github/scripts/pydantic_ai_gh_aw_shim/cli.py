@@ -160,7 +160,17 @@ class _RecoverMCPToolErrors(AbstractCapability[object]):
 # pydantic-ai's built-in request_limit default of 50 is too low for the
 # deep multi-step workflows here; gh-aw's api-proxy still caps the run.
 REQUEST_LIMIT = 200
+ATTENTION_REQUEST_LIMIT = 25
 SUBAGENT_REQUEST_LIMIT = 75
+ATTENTION_WORKFLOW = 'Pydantic AI Attention Triage'
+
+
+def run_request_limit() -> int:
+    """Return the workflow-specific cap on model requests."""
+    if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW:
+        return ATTENTION_REQUEST_LIMIT
+    return REQUEST_LIMIT
+
 
 # Per-request HTTP timeout for every LLM call. The read timeout is the
 # critical one: MiniMax's proxy can hold a streaming connection open without
@@ -906,7 +916,7 @@ async def run(
             ProcessEventStream(_stream_events),
         ],
     )
-    limits = UsageLimits(request_limit=REQUEST_LIMIT)
+    limits = UsageLimits(request_limit=run_request_limit())
     emit({'type': 'system', 'subtype': 'init', 'session_id': session_id, 'model': label})
 
     started = time.perf_counter()
@@ -958,13 +968,14 @@ def main() -> int:
             emit_result('empty prompt', usage=None, session_id=session_id, is_error=True)
             return 1
         model, label = build_model(args)
-        claude_code_toolset = select_claude_code_toolset(args.allowed_tools, args.permission_mode, task=task)
+        task_tool = None if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW else task
+        claude_code_toolset = select_claude_code_toolset(args.allowed_tools, args.permission_mode, task=task_tool)
         mcp_servers = build_mcp_servers(args)
         logger.info(
             'model=%s permission_mode=%s request_limit=%d claude_code_tool_names=%s mcp_servers=%d prompt_chars=%d',
             label,
             args.permission_mode or '(none)',
-            REQUEST_LIMIT,
+            run_request_limit(),
             list(CLAUDE_CODE_TOOL_NAMES),
             len(mcp_servers),
             len(prompt),

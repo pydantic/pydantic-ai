@@ -53,10 +53,10 @@ jobs:
       - name: Test GitHub agentic workflow policy
         env:
           UV_NO_SYNC: "1"
-        run: |
-          uv run pytest .github/scripts/test_pydantic_ai_runner.py \
-            -k "launcher_rejects_unsupported_continuation or prefetch_github_context or shared_pre_agent_step or issue_filing_prompts or attention"
-          uv run pytest .github/scripts/test_issue_pr_attention_monitor.py
+        run: >-
+          uv run pytest
+          .github/scripts/test_pydantic_ai_runner.py
+          .github/scripts/test_issue_pr_attention_monitor.py
 
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:

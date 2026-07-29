@@ -6,10 +6,8 @@
 # launcher uses, so the agent run reuses the warm cache instead of depending
 # on PyPI access through the AWF firewall.
 #
-# This warms the uv script environment and prefetches GitHub list data before
-# the firewall proxy is enabled. Both operations are non-fatal: the sandboxed
-# runner can still install from scratch, and the agent can noop safely when the
-# GitHub context is unavailable.
+# This warms the uv script environment before the firewall proxy is enabled.
+# It is non-fatal because the sandboxed runner can still install from scratch.
 set -uo pipefail
 export UV_CACHE_DIR=/tmp/gh-aw/uv/cache
 export UV_PYTHON_INSTALL_DIR=/tmp/gh-aw/uv/python
@@ -25,13 +23,4 @@ else
   echo "[harness-prewarm] using uv=${uv_bin} cache=${UV_CACHE_DIR}"
   "${uv_bin}" sync --script "${runner}" \
     || echo "::warning::harness uv pre-warm failed; agent will install under the firewall"
-fi
-
-context_script="${GITHUB_WORKSPACE}/.github/scripts/prefetch-github-context.sh"
-if [ -f "${context_script}" ]; then
-  # The prefetch script owns its expected failure handling so it can preserve
-  # whichever corpus succeeded and report a specific warning for the other.
-  bash "${context_script}"
-else
-  echo "::warning::${context_script} not found; GitHub context will be unavailable"
 fi

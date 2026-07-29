@@ -88,18 +88,14 @@ def test_launcher_rejects_unsupported_continuation_without_output():
 def _run_context_prefetch(
     tmp_path: Path,
     *,
-    git_remote: str = 'https://github.com/pydantic/pydantic-ai.git',
     gh_script: str | None = None,
     env_vars: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
-    fake_git = bin_dir / 'git'
-    fake_git.write_text(
-        f'#!/bin/sh\nprintf "%s\\n" "{git_remote}"\n',
-        encoding='utf-8',
-    )
-    fake_git.chmod(0o755)
+    fake_timeout = bin_dir / 'timeout'
+    fake_timeout.write_text('#!/bin/sh\nshift\nexec "$@"\n', encoding='utf-8')
+    fake_timeout.chmod(0o755)
     if gh_script is not None:
         fake_gh = bin_dir / 'gh'
         fake_gh.write_text(f'#!/bin/sh\n{gh_script}', encoding='utf-8')
@@ -127,22 +123,6 @@ case "$1:$2" in
   *) exit 8 ;;
 esac
 """
-
-
-def test_prefetch_github_context_uses_authenticated_remote(tmp_path: Path):
-    result, agent_dir = _run_context_prefetch(
-        tmp_path,
-        git_remote='https://x-access-token:test-token@github.com/pydantic/pydantic-ai.git',
-        gh_script='[ "$GH_TOKEN" = "test-token" ] || exit 9\n' + _SUCCESSFUL_GH_PREFETCH,
-        env_vars={'GITHUB_REPOSITORY': 'pydantic/pydantic-ai'},
-    )
-
-    assert result.returncode == 0
-    assert 'test-token' not in result.stdout + result.stderr
-    assert json.loads((agent_dir / 'github-context/open-issues.json').read_text()) == [{'number': 1, 'title': 'Issue'}]
-    assert json.loads((agent_dir / 'github-context/open-pull-requests.json').read_text()) == [
-        {'number': 2, 'title': 'PR'}
-    ]
 
 
 def test_prefetch_github_context_prefers_gh_token(tmp_path: Path):
@@ -197,8 +177,8 @@ def test_prefetch_github_context_without_repository_is_non_fatal(tmp_path: Path)
     [
         (
             'issue:list',
-            (),
-            ('open-issues.json', 'open-pull-requests.json'),
+            ('open-pull-requests.json',),
+            ('open-issues.json',),
             'Could not prefetch open issues',
         ),
         (
@@ -246,18 +226,46 @@ fi
         env_vars={'GH_TOKEN': 'test-token', 'GITHUB_REPOSITORY': 'pydantic/pydantic-ai'},
     )
 
-    corpus = 'open-issues.json' if malformed_command == 'issue:list' else 'open-pull-requests.json'
+    rejected_corpus = 'open-issues.json' if malformed_command == 'issue:list' else 'open-pull-requests.json'
+    preserved_corpus = 'open-pull-requests.json' if malformed_command == 'issue:list' else 'open-issues.json'
     assert result.returncode == 0
     assert 'Could not prefetch' in result.stdout
-    assert not (agent_dir / 'github-context' / corpus).exists()
+    assert not (agent_dir / 'github-context' / rejected_corpus).exists()
+    assert (agent_dir / 'github-context' / preserved_corpus).exists()
 
 
-def test_shared_pre_agent_step_scopes_token_to_context_prefetch():
+def test_prefetch_github_context_rejects_capped_corpus(tmp_path: Path):
+    result, agent_dir = _run_context_prefetch(
+        tmp_path,
+        gh_script="""\
+if [ "$1:$2" = "issue:list" ]; then
+  python3 -c 'import json; print(json.dumps([{}] * 1000))'
+  exit 0
+fi
+"""
+        + _SUCCESSFUL_GH_PREFETCH,
+        env_vars={'GH_TOKEN': 'test-token', 'GITHUB_REPOSITORY': 'pydantic/pydantic-ai'},
+    )
+
+    context_dir = agent_dir / 'github-context'
+    assert result.returncode == 0
+    assert 'Could not prefetch open issues' in result.stdout
+    assert not (context_dir / 'open-issues.json').exists()
+    assert (context_dir / 'open-pull-requests.json').exists()
+
+
+def test_issue_filing_context_scopes_token_to_prefetch():
     shared_steps = Path(__file__).parent.parent / 'workflows' / 'shared' / 'pre-agent-steps.md'
-    text = shared_steps.read_text(encoding='utf-8')
+    shared_text = shared_steps.read_text(encoding='utf-8')
+    context_steps = shared_steps.with_name('issue-filing-context.md')
+    context_text = context_steps.read_text(encoding='utf-8')
+    prewarm = Path(__file__).with_name('prewarm-pydantic-ai-runner.sh').read_text(encoding='utf-8')
 
-    assert 'run: bash .github/scripts/prewarm-pydantic-ai-runner.sh' in text
-    assert '      GH_TOKEN: ${{ github.token }}' in text
+    assert 'run: bash .github/scripts/prewarm-pydantic-ai-runner.sh' in shared_text
+    assert 'GH_TOKEN' not in shared_text
+    assert 'run: bash .github/scripts/prefetch-github-context.sh' in context_text
+    assert '      GH_TOKEN: ${{ github.token }}' in context_text
+    assert 'prefetch-github-context.sh' not in prewarm
 
 
 @pytest.mark.parametrize(
@@ -280,6 +288,10 @@ def test_issue_filing_prompts_use_prefetched_context(prompt_name: str):
     assert 'gh issue list' not in text
     assert 'gh pr list' not in text
     assert 'gh api --paginate' not in text
+
+    workflow_name = prompt_name.removesuffix('.md')
+    workflow = prompt.parent.parent.parent / f'{workflow_name}.md'
+    assert '  - shared/issue-filing-context.md' in workflow.read_text(encoding='utf-8')
 
 
 def test_unknown_future_claude_flags_are_tolerated():
@@ -794,8 +806,14 @@ def test_plan_mode_keeps_new_readonly_tools_drops_multiedit():
     assert {'TodoWrite', 'ExitPlanMode'} <= names  # non-mutating callables
 
 
-def test_request_limit_is_a_constant():
+def test_request_limit_is_bounded_for_attention(monkeypatch: pytest.MonkeyPatch):
     assert shim.REQUEST_LIMIT == 200
+    assert shim.ATTENTION_REQUEST_LIMIT == 25
+
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI Attention Triage')
+    assert shim.run_request_limit() == 25
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Other Pydantic AI workflow')
+    assert shim.run_request_limit() == 200
 
 
 def test_instructions_encourage_parallel_tool_calls():
@@ -877,14 +895,48 @@ def test_subagent_request_limit_is_a_constant():
     assert shim.SUBAGENT_REQUEST_LIMIT == 75
 
 
+@pytest.mark.parametrize('disable_task', [False, True])
+def test_main_can_disable_task(disable_task: bool, monkeypatch: pytest.MonkeyPatch):
+    selected_tasks: list[shim.TaskCallable | None] = []
+
+    if disable_task:
+        monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI Attention Triage')
+    else:
+        monkeypatch.setenv('GITHUB_WORKFLOW', 'Other Pydantic AI workflow')
+    monkeypatch.setattr(sys, 'argv', ['pydantic-ai-runner', '--print', 'test prompt'])
+    monkeypatch.setattr(shim, 'configure_observability', lambda: None)
+
+    def build_test_model(_args: shim.Args) -> tuple[_Model[Any], str]:
+        return cast(_Model[Any], object()), 'test-model'
+
+    monkeypatch.setattr(shim, 'build_model', build_test_model)
+
+    def capture_task(
+        _allowed: frozenset[str] | None,
+        _permission_mode: str | None,
+        *,
+        task: shim.TaskCallable | None,
+    ) -> AbstractToolset[object]:
+        selected_tasks.append(task)
+        raise RuntimeError('stop after task selection')
+
+    monkeypatch.setattr(shim, 'select_claude_code_toolset', capture_task)
+    with redirect_stdout(io.StringIO()):
+        assert shim.main() == 1
+
+    assert selected_tasks == [None if disable_task else shim.task]
+
+
 def test_attention_workflow_uses_one_direct_bounded_classification_pass():
     workflow = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.md'
     text = workflow.read_text(encoding='utf-8')
 
-    assert 'use `Read` exactly once to load `attention-candidates.json`' in text
-    assert 'classify every\ncandidate yourself' in text
-    assert 'independent decision calls in parallel in one response' in text
+    assert 'use `Read` to load `attention-candidates.json`' in text
+    assert 'continue\nfrom the reported offset until the complete snapshot is loaded' in text
+    assert 'Classify every candidate yourself' in text
+    assert 'parallel in one response when possible' in text
     assert 'Do not use `Task`, `LS`, `TodoWrite`' in text
+    assert 'name: "Pydantic AI Attention Triage"' in text
     assert 'PYDANTIC_AI_DYNAMIC_WORKFLOW' not in text
     assert 'run_workflow' not in text
     assert 'Monty' not in text
@@ -899,6 +951,15 @@ def test_attention_workflow_uses_one_direct_bounded_classification_pass():
     lock = workflow.with_suffix('.lock.yml').read_text(encoding='utf-8')
     assert '      pull-requests: write' in lock
     assert 'GH_AW_FAILURE_REPORT_AS_ISSUE: "false"' in lock
+
+    engine = workflow.parent / 'shared' / 'engine-minimax.md'
+    engine_text = engine.read_text(encoding='utf-8')
+    assert 'GH_AW_HARNESS_MAX_RETRIES: "0"' in engine_text
+    assert 'GH_AW_HARNESS_MAX_RETRIES: "3"' in engine_text
+    for compiled_workflow in workflow.parent.glob('pydantic-ai-*.lock.yml'):
+        compiled_text = compiled_workflow.read_text(encoding='utf-8')
+        assert compiled_text.count('GH_AW_HARNESS_MAX_RETRIES: 0') == 1
+        assert compiled_text.count('GH_AW_HARNESS_MAX_RETRIES: 3') == 1
 
 
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pytest.MonkeyPatch):

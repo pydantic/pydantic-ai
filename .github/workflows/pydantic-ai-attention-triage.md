@@ -132,10 +132,10 @@ Age, validity, importance, or an unanswered conversation alone are not enough. R
 when the evidence clearly shows that a maintainer must make the next decision. The host validates every
 item against the immutable snapshot, then applies fixed labels and assignment without model-generated text.
 
-If there are candidates, use `Read` exactly once to load `attention-candidates.json`, classify every
-candidate yourself, then call `record_attention_decision` exactly once for every candidate. Make the
-independent decision calls in parallel in one response when possible. Do not use `Task`, `LS`, `TodoWrite`,
-or read any other file.
+If there are candidates, use `Read` to load `attention-candidates.json`. If it reports truncation, continue
+from the reported offset until the complete snapshot is loaded. Classify every candidate yourself, then
+call `record_attention_decision` exactly once for every candidate. Make the independent decision calls in
+parallel in one response when possible. Do not use `Task`, `LS`, `TodoWrite`, or read any other file.
 
 The host applies assignment and attention labels only for high-confidence maintainer decisions. Other
 items remain eligible after later activity changes who must act next. If the snapshot is empty, call

@@ -15,12 +15,9 @@
 # setup-uv isn't writable by the sandbox user UID 1001).
 set -euo pipefail
 
-# gh-aw's Claude harness retries a failed command with `--continue`, but this
-# custom Pydantic AI shim has no persisted Claude session to resume. Starting it
-# anyway would repeat the entire investigation with an empty prompt. Exit
-# silently so the pinned harness sees a no-output retry and stops without
-# launching another model run; the first attempt's structured error remains in
-# the workflow log.
+# This shim has no persisted Claude session. Outer retries are disabled in the
+# main engine config, and this guard rejects unsupported continuation if that
+# configuration drifts.
 for arg in "$@"; do
   if [ "$arg" = "--continue" ]; then
     exit 1
