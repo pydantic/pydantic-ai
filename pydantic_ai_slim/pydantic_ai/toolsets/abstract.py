@@ -90,9 +90,9 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
     Only consulted for `'leaf'` toolsets (those that implement their own tool listing and calling), as
     wrappers delegate to the leaves they wrap. The [durable execution](../durable_execution/overview.md)
-    integrations wrap the leaf types they know how to checkpoint
-    ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], [`MCPToolset`][pydantic_ai.mcp.MCPToolset],
-    and `DynamicToolset`) and raise a
+    integrations wrap the leaf types they know how to checkpoint —
+    [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset],
+    [`MCPToolset`][pydantic_ai.mcp.MCPToolset] and `DynamicToolset` — and raise a
     [`UserError`][pydantic_ai.exceptions.UserError] for any other leaf, whose `get_tools()` and
     `call_tool()` would otherwise run un-checkpointed inside the workflow or flow.
 
