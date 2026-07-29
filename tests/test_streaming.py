@@ -324,6 +324,20 @@ async def test_run_stream_sync_rejects_running_event_loop():
         agent.run_stream_sync('Hello')
 
 
+def test_run_stream_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
+    """`run_stream_sync` must replace a closed thread-current event loop.
+
+    This uses `TestModel` rather than VCR because the failure occurs while scheduling the
+    stream owner task, before any model request is made.
+    """
+    with Agent(TestModel()).run_stream_sync('Hello') as result:
+        assert result.get_output()
+
+    replacement_loop = asyncio.get_event_loop()
+    assert replacement_loop is not closed_event_loop
+    assert not replacement_loop.is_closed()
+
+
 def test_run_stream_sync_works_with_disabled_threads():
     """`run_stream_sync` does not need a worker thread.
 

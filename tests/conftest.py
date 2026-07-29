@@ -414,6 +414,22 @@ def event_loop() -> Iterator[None]:
     new_loop.close()
 
 
+@pytest.fixture
+def closed_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    original_loop = asyncio.get_event_loop()
+    closed_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(closed_loop)
+    closed_loop.close()
+
+    try:
+        yield closed_loop
+    finally:
+        current_loop = asyncio.get_event_loop()
+        if current_loop is not closed_loop:
+            current_loop.close()
+        asyncio.set_event_loop(original_loop)
+
+
 @pytest.fixture(autouse=True)
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
