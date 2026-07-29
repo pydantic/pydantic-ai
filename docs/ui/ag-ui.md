@@ -37,6 +37,8 @@ There are three ways to run a Pydantic AI agent based on AG-UI run input with st
 2. The [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] class method takes an agent and a Starlette request (e.g. from FastAPI) coming from an AG-UI frontend, and returns a streaming Starlette response of AG-UI events that you can return directly from your endpoint. It also takes optional [`Agent.iter()`][pydantic_ai.agent.Agent.iter] arguments including `deps`, that you can vary for each request (e.g. based on the authenticated user). This is a convenience method that combines [`AGUIAdapter.from_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.from_request], [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream], and [`AGUIAdapter.streaming_response()`][pydantic_ai.ui.ag_ui.AGUIAdapter.streaming_response].
 3. Build a stand-alone [`Starlette`](https://www.starlette.io/applications/) app with a single `/` route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]. The same Starlette app can be [mounted](https://fastapi.tiangolo.com/advanced/sub-applications/) at a path in an existing FastAPI app.
 
+When a run is [cancelled](../agent.md#cancelling-a-run), the adapter closes any open text or tool events and emits a bare `RUN_FINISHED`. AG-UI currently has no cancelled outcome, so cancellation is not reported as `RUN_ERROR`. Pass an `on_cancel` callback (see the `run_stream()` example below) to persist the resumable message history from [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages].
+
 ### Handle run input and output directly
 
 This example uses [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] and performs its own request parsing and response generation.
@@ -51,13 +53,18 @@ from fastapi.requests import Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunCancelled
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 agent = Agent('openai:gpt-5.2', instructions='Be fun!')
 
 app = FastAPI()
+
+
+async def on_cancel(cancelled: RunCancelled) -> None:
+    messages = cancelled.all_messages()  # the resumable history to persist
+    print(f'cancelled after {len(messages)} messages')
 
 
 @app.post('/')
@@ -73,7 +80,7 @@ async def run_agent(request: Request) -> Response:
         )
 
     adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=accept)
-    event_stream = adapter.run_stream() # (2)
+    event_stream = adapter.run_stream(on_cancel=on_cancel)  # (2)
 
     sse_event_stream = adapter.encode_stream(event_stream)
     return StreamingResponse(sse_event_stream, media_type=accept) # (3)
@@ -106,6 +113,11 @@ from pydantic_ai.ui.ag_ui import AGUIAdapter
 agent = Agent('openai:gpt-5.2', instructions='Be fun!')
 
 app = FastAPI()
+
+
+async def on_cancel(cancelled: RunCancelled) -> None:
+    messages = cancelled.all_messages()  # the resumable history to persist
+    print(f'cancelled after {len(messages)} messages')
 
 @app.post('/')
 async def run_agent(request: Request) -> Response:

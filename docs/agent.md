@@ -619,6 +619,8 @@ async def main():
 1. `cancel()` is idempotent and thread-safe. One token may govern multiple concurrent runs, cancelling all of them.
 2. [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] contains everything completed before cancellation, including completed tool results. Any dangling tool call is [repaired automatically](message-history.md#making-histories-provider-valid) when the history is resumed.
 
+[UI adapter](ui/overview.md) users can persist this resumable history with the `on_cancel` callback.
+
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
 [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] accepts the same token. Calling `token.cancel()` from another thread is the only way to interrupt a synchronous run while it is blocked.

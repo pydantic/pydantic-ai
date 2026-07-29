@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from ..._utils import now_utc
+from ...exceptions import RunCancelled
 from ...messages import (
     FunctionToolResultEvent,
     NativeToolCallPart,
@@ -91,6 +92,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     _reasoning_text: bool = False
     _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
     _error: bool = False
+    _cancelled_run: bool = False
 
     def __post_init__(self) -> None:
         self._use_reasoning = parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION
@@ -135,6 +137,16 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if self._error:
             return
 
+        if self._cancelled_run:
+            # AG-UI has no cancelled outcome; revisit when the protocol fills this spec gap:
+            # https://github.com/ag-ui-protocol/ag-ui/issues/880
+            yield RunFinishedEvent(
+                thread_id=self.run_input.thread_id,
+                run_id=self.run_input.run_id,
+                timestamp=self._get_timestamp(),
+            )
+            return
+
         # `RunFinishedEvent.outcome` only exists in ag-ui-protocol >= 0.1.19. `ConfiguredBaseModel`
         # allows extra fields, so passing `outcome=None` on the old path wouldn't raise — but it
         # would serialize an `outcome` field that pre-interrupt clients don't expect, so we branch
@@ -174,6 +186,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
         self._error = True
         yield RunErrorEvent(message=str(error), timestamp=self._get_timestamp())
+
+    async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[BaseEvent]:
+        self._cancelled_run = True
+        return
+        yield
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseEvent]:
         if follows_text:

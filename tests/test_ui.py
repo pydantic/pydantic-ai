@@ -14,6 +14,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import HandleDeferredToolCalls, ReinjectSystemPrompt
+from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.messages import (
     BinaryImage,
     DeferredToolRequestsEvent,
@@ -809,7 +810,9 @@ async def test_run_stream_cancelled_run_closes_tools_as_interrupted():
     @agent.tool
     async def tool(ctx: RunContext, query: str) -> str:
         ctx.cancel_run()
-        return 'never reached'  # pragma: no cover
+        # `cancel_run()` returns; the cancellation lands at the next await point, so this tool
+        # completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
 
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
     adapter = DummyUIAdapter(agent, request)
@@ -830,6 +833,64 @@ async def test_run_stream_cancelled_run_closes_tools_as_interrupted():
             '</stream>',
         ]
     )
+
+
+async def test_run_stream_on_cancel():
+    agent = Agent(model=TestModel())
+
+    @agent.tool
+    async def tool(ctx: RunContext, query: str) -> str:
+        ctx.cancel_run()
+        # `cancel_run()` returns; the cancellation lands at the next await point, so this tool
+        # completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = DummyUIAdapter(agent, request)
+    event_stream = adapter.build_event_stream()
+    cancellations: list[RunCancelled] = []
+    completions: list[AgentRunResult[Any]] = []
+
+    async def on_cancel(cancelled: RunCancelled) -> AsyncIterator[str]:
+        cancellations.append(cancelled)
+        yield '<cancelled>'
+
+    events = [
+        event
+        async for event in event_stream.transform_stream(
+            adapter.run_stream_native(), on_complete=completions.append, on_cancel=on_cancel
+        )
+    ]
+
+    assert '<cancelled>' in events
+    assert completions == []
+    assert cancellations == [event_stream.cancelled]
+    assert cancellations[0].all_messages()
+
+
+async def test_run_stream_on_cancel_not_called_for_success_or_error():
+    cancellations: list[RunCancelled] = []
+
+    success_adapter = DummyUIAdapter(
+        Agent(model=TestModel()), DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    )
+    success_stream = success_adapter.build_event_stream()
+    async for _ in success_stream.transform_stream(success_adapter.run_stream_native(), on_cancel=cancellations.append):
+        pass
+
+    async def stream_error(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        raise ValueError('plain error')
+        yield  # pragma: no cover
+
+    error_adapter = DummyUIAdapter(
+        Agent(model=FunctionModel(stream_function=stream_error)),
+        DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]),
+    )
+    async for _ in error_adapter.run_stream(on_cancel=cancellations.append):
+        pass
+
+    assert cancellations == []
+    assert success_stream.cancelled is None
 
 
 async def test_run_stream_request_error():
