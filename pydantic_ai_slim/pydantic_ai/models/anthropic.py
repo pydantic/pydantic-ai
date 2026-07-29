@@ -1630,6 +1630,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if mid_conversation_system_prompts:
                     _append_user_anchor_if_needed(anthropic_messages)
                     system_message_indexes.append(len(anthropic_messages))
+                    # The API takes two shapes here, and this is the undocumented one: the reference
+                    # says "there is no `system` role for input messages" and documents a
+                    # `mid_conv_system` *content block* instead. The role is served anyway, with its
+                    # own placement diagnostics ("role 'system' must precede an 'assistant' message
+                    # or end the array"), and it measures at least as well — asked to lift a
+                    # restriction the top-level prompt set, Opus 5 acts on the role form every time
+                    # and on the block form 7 times in 10. The block also has to be the last block of
+                    # its turn, which would tie placement to a user message instead of leaving it
+                    # free to move. Worth revisiting if the role stops being served.
                     anthropic_messages.append(
                         BetaMessageParam(
                             role='system',
