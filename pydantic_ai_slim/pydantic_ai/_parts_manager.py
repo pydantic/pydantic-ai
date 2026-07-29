@@ -132,7 +132,7 @@ class ModelResponsePartsManager:
         """
         for part_index in tuple(self._string_buffers):
             if not isinstance(self._parts[part_index], ToolCallPartDelta):
-                self._materialize_part(part_index)
+                self._materialize_and_cache_part(part_index)
         return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
 
     def get_part_by_vendor_id(self, vendor_id: VendorId) -> ManagedPart | None:
@@ -146,7 +146,7 @@ class ModelResponsePartsManager:
         """
         part_index = self._vendor_id_to_part_index.get(vendor_id)
         if part_index is not None:
-            return self._materialize_part(part_index)
+            return self._materialize_and_cache_part(part_index)
         return None
 
     def handle_text_delta(
@@ -208,7 +208,7 @@ class ModelResponsePartsManager:
                 elif isinstance(existing_part, TextPart):
                     existing_text_part_and_index = existing_part, part_index
                 else:
-                    existing_part = self._materialize_part(part_index)
+                    existing_part = self._materialize_and_cache_part(part_index)
                     raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
 
         if thinking_tags and content == thinking_tags[0]:
@@ -293,7 +293,7 @@ class ModelResponsePartsManager:
             if part_index is not None:
                 existing_part = self._parts[part_index]
                 if not isinstance(existing_part, ThinkingPart):
-                    existing_part = self._materialize_part(part_index)
+                    existing_part = self._materialize_and_cache_part(part_index)
                     raise UnexpectedModelBehavior(f'Cannot apply a thinking delta to {existing_part=}')
                 existing_thinking_part_and_index = existing_part, part_index
 
@@ -410,7 +410,7 @@ class ModelResponsePartsManager:
             if part_index is not None:
                 existing_part = self._parts[part_index]
                 if not isinstance(existing_part, ToolCallPartDelta | ToolCallPart | NativeToolCallPart):
-                    existing_part = self._materialize_part(part_index)
+                    existing_part = self._materialize_and_cache_part(part_index)
                     raise UnexpectedModelBehavior(f'Cannot apply a tool call delta to {existing_part=}')
                 existing_matching_part_and_index = existing_part, part_index
 
@@ -576,7 +576,7 @@ class ModelResponsePartsManager:
                 isinstance(existing_part, ToolCallPartDelta) and delta.tool_name_delta is not None
             )
             if should_materialize and part_index in self._string_buffers:
-                materialized_part = self._materialize_part(part_index)
+                materialized_part = self._materialize_and_cache_part(part_index)
                 if not isinstance(
                     materialized_part, ToolCallPartDelta | ToolCallPart | NativeToolCallPart
                 ):  # pragma: no cover
@@ -597,7 +597,7 @@ class ModelResponsePartsManager:
             return delta.apply(existing_part)
 
         if delta.tool_name_delta is not None:
-            materialized_part = self._materialize_part(part_index)
+            materialized_part = self._materialize_and_cache_part(part_index)
             if not isinstance(materialized_part, ToolCallPartDelta):  # pragma: no cover
                 raise AssertionError(f'Expected an incomplete tool call, got {materialized_part!r}')
             return delta.apply(materialized_part)
@@ -698,7 +698,7 @@ class ModelResponsePartsManager:
             return materialized
         raise AssertionError(f'Cannot materialize string deltas for {part!r}')  # pragma: no cover
 
-    def _materialize_part(self, part_index: int) -> ManagedPart:
+    def _materialize_and_cache_part(self, part_index: int) -> ManagedPart:
         """Materialize buffered string deltas for one part, caching the result in `_parts`."""
         part = self._materialized_part(part_index)
         if part_index in self._string_buffers:
