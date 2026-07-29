@@ -6700,6 +6700,9 @@ async def test_durability_run_sync_in_workflow_fails_the_workflow_task(client: C
     fails the workflow *task*, which Temporal retries forever: the caller hangs instead of seeing
     an error. That's why this test asserts against the recorded task failure and terminates the
     workflow rather than awaiting its result.
+
+    Tracked in https://github.com/pydantic/pydantic-ai/issues/6899; update this to assert a clean
+    `UserError` once that's fixed.
     """
     async with Worker(
         client,
