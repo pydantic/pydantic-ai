@@ -66,11 +66,14 @@ async def grep(pattern: str, path: str = '.') -> str:
         if shutil.which('rg', path=search_path):
             command = f'rg --line-number --no-heading --color never -e {shlex.quote(pattern)} -- {shlex.quote(path)}'
         elif shutil.which('git', path=search_path) and Path(workspace(), '.git').exists():
-            git_path = path
-            if Path(path).is_absolute():
-                git_path = str(Path(path).resolve().relative_to(Path(workspace()).resolve())) or '.'
+            workspace_root = Path(workspace()).resolve()
+            target = Path(path)
+            if not target.is_absolute():
+                target = workspace_root / target
+            git_path = str(target.resolve().relative_to(workspace_root)) or '.'
             command = (
-                f'git grep --untracked --exclude-standard -n -I -E -e {shlex.quote(pattern)} -- {shlex.quote(git_path)}'
+                f'GIT_LITERAL_PATHSPECS=1 git grep --untracked --exclude-standard '
+                f'-n -I -E -e {shlex.quote(pattern)} -- {shlex.quote(git_path)}'
             )
         else:
             command = f'grep -r -n -I -E --exclude-dir=.git -e {shlex.quote(pattern)} -- {shlex.quote(path)}'

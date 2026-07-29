@@ -763,6 +763,31 @@ def test_grep_uses_git_ignores_without_ripgrep(tmp_path: Path, monkeypatch: pyte
     assert asyncio.run(grep_mod.grep('IGNORED', str(workspace))) == 'No matches found.'
 
 
+def test_grep_treats_git_pathspec_metacharacters_literally(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import importlib
+
+    grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    literal = workspace / 'a*'
+    literal.mkdir()
+    (literal / 'wanted.py').write_text('HIT\n', encoding='utf-8')
+    wildcard_match = workspace / 'a1'
+    wildcard_match.mkdir()
+    (wildcard_match / 'unwanted.py').write_text('HIT\n', encoding='utf-8')
+    subprocess.run(['git', 'init', '-q'], cwd=workspace, check=True)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
+    real_which = grep_mod.shutil.which
+
+    def no_ripgrep(command: str, *, path: str | None = None) -> str | None:
+        return None if command == 'rg' else real_which(command, path=path)
+
+    monkeypatch.setattr(grep_mod.shutil, 'which', no_ripgrep)
+    out = asyncio.run(grep_mod.grep('HIT', 'a*'))
+    assert 'a*/wanted.py:1:HIT' in out
+    assert 'unwanted.py' not in out
+
+
 def test_glob_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # `Glob` returns matches relative to the search path (workspace root for '.').
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
