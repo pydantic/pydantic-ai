@@ -69,7 +69,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
-from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
+from pydantic_ai.profiles import DEFAULT_THINKING_TAGS, ModelProfile
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, resolve_anthropic_effort
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
@@ -729,6 +729,7 @@ class BedrockConverseModel(Model[BaseClient]):
         yield BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
+            _model_profile=self.profile,
             _event_stream=response['stream'],
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
@@ -1547,6 +1548,7 @@ class BedrockStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Bedrock models."""
 
     _model_name: BedrockModelName
+    _model_profile: ModelProfile
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _provider_name: str
     _provider_url: str
@@ -1647,7 +1649,13 @@ class BedrockStreamedResponse(StreamedResponse):
                                 ):
                                     yield event
                         if text := delta.get('text'):
-                            for event in self._parts_manager.handle_text_delta(vendor_part_id=index, content=text):
+                            for event in self._parts_manager.handle_text_delta(
+                                vendor_part_id=index,
+                                content=text,
+                                ignore_leading_whitespace=self._model_profile.get(
+                                    'ignore_streamed_leading_whitespace', False
+                                ),
+                            ):
                                 yield event
                         if 'toolUse' in delta:
                             tool_use = delta['toolUse']
