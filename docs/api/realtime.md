@@ -89,7 +89,7 @@ completes.
 **Connection events** — [`RealtimeCodecEvent`][pydantic_ai.realtime.codec.RealtimeCodecEvent], the low-level codec
 vocabulary yielded by a connection:
 [`AudioDelta`][pydantic_ai.realtime.codec.AudioDelta],
-[`Transcript`][pydantic_ai.realtime.codec.Transcript],
+[`OutputTranscript`][pydantic_ai.realtime.codec.OutputTranscript],
 [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript],
 [`ToolCall`][pydantic_ai.realtime.codec.ToolCall],
 [`ToolCallCancelled`][pydantic_ai.realtime.codec.ToolCallCancelled],

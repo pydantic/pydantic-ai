@@ -630,11 +630,10 @@ for this. Each [`TranscriptUpdate`][pydantic_ai.realtime.TranscriptUpdate] carri
 `transcript`, so keying a bubble on `index` and setting its text — as the caption example above does —
 is correct whatever the provider does.
 
-Only if you append [`TranscriptUpdate.delta`][pydantic_ai.realtime.TranscriptUpdate.delta], or consume
-[`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta]s off the raw event stream, does the
-distinction matter: check
-[`replaces_transcript`][pydantic_ai.messages.SpeechPartDelta.replaces_transcript] and replace instead
-of appending when it is set.
+The distinction only surfaces if you consume
+[`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta]s off the raw event stream, where
+[`replaces_transcript`][pydantic_ai.messages.SpeechPartDelta.replaces_transcript] says to replace what
+you rendered rather than add to it.
 
 ### Images
 
@@ -721,8 +720,11 @@ Nested under it, each assistant response gets a `chat {model}` span (rendered as
 with `gen_ai.output.type` set to the same value, and each tool call gets an
 `execute_tool` span (including any delegated text-agent run). One conversational turn can produce
 several response spans, since a turn that calls tools is split into a response per step; the
-zero-duration `turn complete` span marks the end of the turn itself, alongside `user speech started`
-and `interrupt`. A response cut off by a barge-in carries `pydantic_ai.response.state='interrupted'`.
+zero-duration `turn complete` and `interrupt` spans mark those moments. The user's speech is not a
+moment but a stretch of time, so it gets a `user speech` span running from the provider's speech-onset
+detection to its speech-end detection — Gemini Live reports only the onset, so it records no span
+there rather than guessing the length. A response cut off by a barge-in carries
+`pydantic_ai.response.state='interrupted'`.
 On a [WebRTC sideband](#browser-webrtc) a `speak {model}` span additionally covers how long the model
 was *audible*, which the response spans can't show: the provider generates audio far ahead of playing
 it, so this span routinely outlasts the `turn complete` that ended the response.

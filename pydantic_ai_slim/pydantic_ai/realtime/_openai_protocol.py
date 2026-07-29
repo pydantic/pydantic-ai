@@ -84,12 +84,12 @@ from ._base import (
     InputSpeechStartEvent,
     InputTranscript,
     InputTranscriptionErrorEvent,
+    OutputTranscript,
     RealtimeCodecEvent,
     RealtimeError,
     RealtimeModelProfile,
     SessionErrorEvent,
     ToolCall,
-    Transcript,
     TurnCompleteEvent,
     TurnDetection,
     seed_pcm_audio,
@@ -548,19 +548,19 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
     if event_type in _AUDIO_TRANSCRIPT_DELTA_TYPES:
         event = ResponseAudioTranscriptDeltaEvent.construct(**data)
-        return Transcript(text=event.delta or '', is_final=False, item_id=event.item_id or None)
+        return OutputTranscript(text=event.delta or '', is_final=False, item_id=event.item_id or None)
 
     if event_type in _AUDIO_TRANSCRIPT_DONE_TYPES:
         event = ResponseAudioTranscriptDoneEvent.construct(**data)
-        return Transcript(text=event.transcript or '', is_final=True, item_id=event.item_id or None)
+        return OutputTranscript(text=event.transcript or '', is_final=True, item_id=event.item_id or None)
 
     if event_type == 'response.output_text.delta':
         event = ResponseTextDeltaEvent.construct(**data)
-        return Transcript(text=event.delta or '', is_final=False, output_text=True)
+        return OutputTranscript(text=event.delta or '', is_final=False, output_text=True)
 
     if event_type == 'response.output_text.done':
         event = ResponseTextDoneEvent.construct(**data)
-        return Transcript(text=event.text or '', is_final=True, output_text=True)
+        return OutputTranscript(text=event.text or '', is_final=True, output_text=True)
 
     if event_type in _INPUT_TRANSCRIPTION_TYPES:
         return _map_input_transcription_event(data, event_type)

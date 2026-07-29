@@ -75,9 +75,9 @@ from pydantic_ai.realtime.codec import (
     CommitAudio,
     CreateResponse,
     InputTranscript,
+    OutputTranscript,
     ToolCall,
     ToolResult,
-    Transcript,
     TruncateOutput,
 )
 from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
@@ -245,11 +245,11 @@ def test_map_audio_delta_non_string_delta() -> None:
 
 def test_map_transcript_delta_and_done() -> None:
     for event_type in ('response.output_audio_transcript.delta', 'response.audio_transcript.delta'):
-        assert map_event({'type': event_type, 'delta': 'hel', 'item_id': 'item-a'}) == Transcript(
+        assert map_event({'type': event_type, 'delta': 'hel', 'item_id': 'item-a'}) == OutputTranscript(
             text='hel', is_final=False, item_id='item-a'
         )
     for event_type in ('response.output_audio_transcript.done', 'response.audio_transcript.done'):
-        assert map_event({'type': event_type, 'transcript': 'hello', 'item_id': 'item-a'}) == Transcript(
+        assert map_event({'type': event_type, 'transcript': 'hello', 'item_id': 'item-a'}) == OutputTranscript(
             text='hello', is_final=True, item_id='item-a'
         )
 
@@ -257,16 +257,16 @@ def test_map_transcript_delta_and_done() -> None:
 def test_map_text_output_delta_and_done() -> None:
     # `output_text=True` distinguishes plain text output from an audio transcript, so the session
     # persists it as a `TextPart` rather than a `SpeechPart`.
-    assert map_event({'type': 'response.output_text.delta', 'delta': 'hel'}) == Transcript(
+    assert map_event({'type': 'response.output_text.delta', 'delta': 'hel'}) == OutputTranscript(
         text='hel', is_final=False, output_text=True
     )
-    assert map_event({'type': 'response.output_text.done', 'text': 'hello'}) == Transcript(
+    assert map_event({'type': 'response.output_text.done', 'text': 'hello'}) == OutputTranscript(
         text='hello', is_final=True, output_text=True
     )
 
 
 def test_map_transcript_missing_field_defaults_to_empty() -> None:
-    assert map_event({'type': 'response.output_audio_transcript.delta'}) == Transcript(text='', is_final=False)
+    assert map_event({'type': 'response.output_audio_transcript.delta'}) == OutputTranscript(text='', is_final=False)
 
 
 @pytest.mark.parametrize('status', ['completed', None])
@@ -497,22 +497,22 @@ def test_map_unhandled_event_returns_none() -> None:
         ({'type': 'response.audio.delta', 'delta': 'AQI=', 'item_id': 'a'}, AudioDelta(b'\x01\x02', 'a')),
         (
             {'type': 'response.output_audio_transcript.delta', 'delta': 'hel', 'item_id': 'a'},
-            Transcript('hel', is_final=False, item_id='a'),
+            OutputTranscript('hel', is_final=False, item_id='a'),
         ),
         (
             {'type': 'response.audio_transcript.delta', 'delta': 'hel', 'item_id': 'a'},
-            Transcript('hel', is_final=False, item_id='a'),
+            OutputTranscript('hel', is_final=False, item_id='a'),
         ),
         (
             {'type': 'response.output_audio_transcript.done', 'transcript': 'hello', 'item_id': 'a'},
-            Transcript('hello', is_final=True, item_id='a'),
+            OutputTranscript('hello', is_final=True, item_id='a'),
         ),
         (
             {'type': 'response.audio_transcript.done', 'transcript': 'hello', 'item_id': 'a'},
-            Transcript('hello', is_final=True, item_id='a'),
+            OutputTranscript('hello', is_final=True, item_id='a'),
         ),
-        ({'type': 'response.output_text.delta', 'delta': 'hel'}, Transcript('hel', False, output_text=True)),
-        ({'type': 'response.output_text.done', 'text': 'hello'}, Transcript('hello', True, output_text=True)),
+        ({'type': 'response.output_text.delta', 'delta': 'hel'}, OutputTranscript('hel', False, output_text=True)),
+        ({'type': 'response.output_text.done', 'text': 'hello'}, OutputTranscript('hello', True, output_text=True)),
         (
             {'type': 'conversation.item.input_audio_transcription.delta', 'delta': 'hel', 'item_id': 'u'},
             InputTranscript('hel', is_final=False, item_id='u'),
@@ -674,7 +674,7 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
     async with _connect(model, 'Be nice', tools=tools) as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [Transcript(text='hi', is_final=True)]
+    assert events == [OutputTranscript(text='hi', is_final=True)]
     assert fake_connect.url == 'wss://api.openai.com/v1/realtime?model=gpt-realtime'
     assert fake_connect.headers == {'Authorization': 'Bearer k'}
 
@@ -730,7 +730,7 @@ async def test_connect_webrtc_sideband_handshake(monkeypatch: pytest.MonkeyPatch
     assert first['session']['instructions'] == 'Be nice'
     # The served model is captured from `session.updated` (not `session.created`).
     assert conn.model_name == 'gpt-realtime-2.1'
-    assert events == [Transcript(text='hi', is_final=True)]
+    assert events == [OutputTranscript(text='hi', is_final=True)]
 
 
 @pytest.mark.anyio
@@ -2271,7 +2271,7 @@ async def test_clean_close_reconnects_when_a_policy_is_configured() -> None:
         reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
     )
     events = await collect_codec_events(conn)
-    assert events == [SessionReconnectEvent(state_restored=False), Transcript(text='still here', is_final=True)]
+    assert events == [SessionReconnectEvent(state_restored=False), OutputTranscript(text='still here', is_final=True)]
 
 
 @pytest.mark.anyio
@@ -2314,7 +2314,7 @@ async def test_reconnects_on_drop_and_resumes() -> None:
         reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
     )
     events = await collect_codec_events(conn)
-    assert events == [SessionReconnectEvent(state_restored=False), Transcript(text='hi', is_final=True)]
+    assert events == [SessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
 
 
 class _DropAfterHandshake(FakeWebSocket):
@@ -2364,7 +2364,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [SessionReconnectEvent(state_restored=False), Transcript(text='hi', is_final=True)]
+    assert events == [SessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
 
 
@@ -2387,7 +2387,7 @@ async def test_connect_webrtc_sideband_reconnect_closes_previous_connection(monk
     ) as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [SessionReconnectEvent(state_restored=False), Transcript(text='hi', is_final=True)]
+    assert events == [SessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
 
 
