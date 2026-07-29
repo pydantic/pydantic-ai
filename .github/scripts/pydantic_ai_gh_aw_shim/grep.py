@@ -1,12 +1,11 @@
 r"""Claude's `Grep` tool -- recursively regex-search workspace files.
 
-Runs ripgrep, or recursive grep when ripgrep is unavailable, through
-pydantic-ai-harness's `ShellToolset` -- the same shell capability that backs
-`Bash` -- instead of a hand-rolled subprocess. The harness owns process
-execution, the sandbox PATH, output truncation, and the timeout. Ripgrep keeps
-its speed and `.gitignore` filtering; the portable fallback avoids turning a
-missing optional binary into a failed tool call. The directory-scoped AGENTS.md
-/ CLAUDE.md context blocks are still prepended.
+Runs ripgrep, Git grep, or recursive grep through pydantic-ai-harness's
+`ShellToolset` -- the same shell capability that backs `Bash` -- instead of a
+hand-rolled subprocess. The harness owns process execution, the sandbox PATH,
+output truncation, and the timeout. Ripgrep and Git grep keep `.gitignore`
+filtering; the portable fallback keeps the tool usable outside a Git checkout.
+The directory-scoped AGENTS.md / CLAUDE.md context blocks are still prepended.
 
 Two adapters bridge a shell command back into a grep tool:
 
@@ -25,11 +24,12 @@ Two adapters bridge a shell command back into a grep tool:
 import re
 import shlex
 import shutil
+from pathlib import Path
 
 from pydantic_ai.exceptions import ModelRetry
 
-from ._backends import filesystem, shell
-from .shared import attach_context, clip
+from ._backends import augmented_env, filesystem, shell
+from .shared import attach_context, clip, workspace
 
 GREP_TIMEOUT = 60.0
 
@@ -58,16 +58,24 @@ async def grep(pattern: str, path: str = '.') -> str:
     # `file_info` accepts '' as the workspace root, but the search commands
     # reject an empty path argument, so normalize to the default root up front.
     path = path or '.'
-    if shutil.which('rg'):
-        command = f'rg --line-number --no-heading --color never -e {shlex.quote(pattern)} -- {shlex.quote(path)}'
-    else:
-        command = f'grep -r -n -I -E --exclude-dir=.git -e {shlex.quote(pattern)} -- {shlex.quote(path)}'
     # Preflight `path` through the filesystem containment check (an escape or a
     # missing path comes back as `ModelRetry`) before handing it to the shell.
     try:
         await filesystem().file_info(path)
+        search_path = augmented_env().get('PATH')
+        if shutil.which('rg', path=search_path):
+            command = f'rg --line-number --no-heading --color never -e {shlex.quote(pattern)} -- {shlex.quote(path)}'
+        elif shutil.which('git', path=search_path) and Path(workspace(), '.git').exists():
+            git_path = path
+            if Path(path).is_absolute():
+                git_path = str(Path(path).resolve().relative_to(Path(workspace()).resolve())) or '.'
+            command = (
+                f'git grep --untracked --exclude-standard -n -I -E -e {shlex.quote(pattern)} -- {shlex.quote(git_path)}'
+            )
+        else:
+            command = f'grep -r -n -I -E --exclude-dir=.git -e {shlex.quote(pattern)} -- {shlex.quote(path)}'
         out = await shell().run_command(command, timeout_seconds=GREP_TIMEOUT)
-    except (ModelRetry, OSError) as exc:
+    except (ModelRetry, OSError, ValueError) as exc:
         # The harness converts only a fixed set of errors to `ModelRetry`; a bare
         # `OSError` (e.g. `ENAMETOOLONG` from the `file_info` preflight resolving
         # an over-long path) would otherwise escape and abort the whole run.

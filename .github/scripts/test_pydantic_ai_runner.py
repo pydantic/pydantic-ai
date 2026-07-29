@@ -675,7 +675,7 @@ def test_grep_falls_back_when_ripgrep_is_unavailable(tmp_path: Path, monkeypatch
     grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
 
-    def no_search_command(command: str) -> None:
+    def no_search_command(command: str, *, path: str | None = None) -> None:
         return None
 
     monkeypatch.setattr(grep_mod.shutil, 'which', no_search_command)
@@ -706,11 +706,61 @@ def test_grep_fallback_does_not_follow_workspace_symlinks(tmp_path: Path, monkey
     (workspace / 'outside-link').symlink_to(outside, target_is_directory=True)
     monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
 
-    def no_ripgrep(command: str) -> None:
+    def no_ripgrep(command: str, *, path: str | None = None) -> None:
         return None
 
     monkeypatch.setattr(grep_mod.shutil, 'which', no_ripgrep)
     assert asyncio.run(grep_mod.grep('TOPSECRET', '.')) == 'No matches found.'
+
+
+def test_grep_probes_the_shell_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import importlib
+
+    grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    monkeypatch.setattr(grep_mod, 'augmented_env', lambda: {'PATH': '/harness/bin'})
+
+    def find_augmented_ripgrep(command: str, *, path: str | None = None) -> str | None:
+        assert path == '/harness/bin'
+        return '/harness/bin/rg' if command == 'rg' else None
+
+    class _FakeShell:
+        async def run_command(self, command: str, *, timeout_seconds: float) -> str:
+            assert command.startswith('rg ')
+            return '[stdout]\na.txt:1:hit\n'
+
+    class _FakeFs:
+        async def file_info(self, path: str) -> str:
+            return 'ok'
+
+    monkeypatch.setattr(grep_mod.shutil, 'which', find_augmented_ripgrep)
+    monkeypatch.setattr(grep_mod, 'shell', lambda: _FakeShell())
+    monkeypatch.setattr(grep_mod, 'filesystem', lambda: _FakeFs())
+    assert 'a.txt:1:hit' in asyncio.run(grep_mod.grep('hit', '.'))
+
+
+def test_grep_uses_git_ignores_without_ripgrep(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import importlib
+
+    grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    (workspace / '.gitignore').write_text('.venv/\n', encoding='utf-8')
+    (workspace / 'source.py').write_text('VISIBLE\n', encoding='utf-8')
+    ignored = workspace / '.venv'
+    ignored.mkdir()
+    (ignored / 'dependency.py').write_text('IGNORED\n', encoding='utf-8')
+    subprocess.run(['git', 'init', '-q'], cwd=workspace, check=True)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
+    real_which = grep_mod.shutil.which
+
+    def no_ripgrep(command: str, *, path: str | None = None) -> str | None:
+        return None if command == 'rg' else real_which(command, path=path)
+
+    monkeypatch.setattr(grep_mod.shutil, 'which', no_ripgrep)
+    assert 'source.py:1:VISIBLE' in asyncio.run(grep_mod.grep('VISIBLE', '.'))
+    assert asyncio.run(grep_mod.grep('IGNORED', '.')) == 'No matches found.'
+    assert asyncio.run(grep_mod.grep('IGNORED', str(workspace))) == 'No matches found.'
 
 
 def test_glob_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
