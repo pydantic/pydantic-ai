@@ -44,7 +44,9 @@ async def execute_activity(activity: Any, *, args: Sequence[Any], **config: Unpa
         # The cancellation hit this task because the shield kept the activity handle alive.
         # Delegate exactly one cancellation to Temporal, then wait for its configured
         # cancellation behavior without anyio redelivering cancellation on every loop turn.
-        if not handle.done():
+        # The already-done arm is a real race (cancel landing in the same tick the activity
+        # resolves) that cannot be timed deterministically through the workflow API.
+        if not handle.done():  # pragma: no branch
             handle.cancel()
             with anyio.CancelScope(shield=True):
                 await asyncio.wait([handle])

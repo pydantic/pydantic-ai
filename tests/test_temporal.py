@@ -464,7 +464,7 @@ class AnyioScopeActivityCancellationWorkflow:
             await asyncio.wait_for(run_in_task_group(), timeout=0.1)
         except asyncio.TimeoutError:
             return 'timed out cleanly'
-        return 'completed'
+        return 'completed'  # pragma: no cover
 
 
 async def test_anyio_scope_cancel_of_activity_await_does_not_wedge(client: Client) -> None:
@@ -498,7 +498,7 @@ class WaitForNonStreamingAgentTimeoutWorkflow:
             result = await asyncio.wait_for(_wait_for_nonstreaming_agent.run('say hi'), timeout=0.5)
         except asyncio.TimeoutError:
             return 'clean-timeout'
-        return f'unexpected-success:{result.output}'
+        return f'unexpected-success:{result.output}'  # pragma: no cover
 
 
 async def _slow_nonstreaming_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -572,7 +572,7 @@ class WaitForAgentTimeoutWorkflow:
             await asyncio.wait_for(_wait_for_timeout_agent.run('go slowly'), timeout=0.5)
         except asyncio.TimeoutError:
             return 'timed out cleanly'
-        return 'completed'
+        return 'completed'  # pragma: no cover
 
 
 async def test_wait_for_agent_timeout_in_workflow_does_not_livelock(client: Client) -> None:
