@@ -99,6 +99,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
+    * Hugging Face
     * MCP Sampling
     * xAI
     """
@@ -120,6 +121,8 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
+    * Hugging Face
+    * MCP Sampling
     * xAI
     """
 
@@ -139,6 +142,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
+    * Hugging Face
     * xAI
     """
 
@@ -165,7 +169,9 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Groq
     * Mistral (numeric seconds only, not `httpx.Timeout`)
-    * xAI
+
+    Not supported on xAI: the SDK takes a timeout when the client is constructed, not per request,
+    so pass it to [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider] instead.
     """
 
     parallel_tool_calls: bool
@@ -176,6 +182,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI (some models, not o1)
     * Groq
     * Anthropic
+    * Mistral
     * xAI
     """
 
@@ -208,8 +215,9 @@ class ModelSettings(TypedDict, total=False):
     * Google
     * Groq
     * Mistral
-    * HuggingFace
+    * Hugging Face
     * Bedrock
+    * Cohere (tools are restricted to the chosen subset; Cohere can't target a tool by name)
     * xAI
     """
 
@@ -223,6 +231,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Gemini
+    * Hugging Face
     * xAI
     """
 
@@ -236,6 +245,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Gemini
     * Mistral
+    * Hugging Face
     * xAI
     """
 
@@ -249,6 +259,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Gemini
     * Mistral
+    * Hugging Face
     * xAI
     """
 
@@ -259,6 +270,7 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Groq
+    * Hugging Face
     """
 
     stop_sequences: list[str]
@@ -273,6 +285,8 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * Cohere
     * Google
+    * Hugging Face
+    * MCP Sampling
     * xAI
     """
 
@@ -285,7 +299,10 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * Gemini
     * Groq
-    * xAI
+
+    Not supported on xAI: the SDK's `chat.create` takes no headers, so pass them as `metadata` when
+    constructing the `xai_sdk.AsyncClient` you hand to
+    [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider] instead.
     """
 
     thinking: ThinkingLevel
@@ -312,6 +329,7 @@ class ModelSettings(TypedDict, total=False):
     * Cerebras
     * xAI
     * Mistral
+    * Z.AI
     """
 
     service_tier: ServiceTier
@@ -338,6 +356,13 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Anthropic
     * Groq
+    * Hugging Face
+    * Cerebras
+    * OpenRouter
+    * Z.AI
+
+    On Cerebras, OpenRouter and Z.AI the keys given here are merged with the ones those models
+    derive from their own settings, so a key set on both sides is overridden by the model's.
     """
 
 

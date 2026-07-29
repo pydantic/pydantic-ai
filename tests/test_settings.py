@@ -1,5 +1,8 @@
+import ast
 import importlib
 import pkgutil
+import re
+from pathlib import Path
 
 import pytest
 
@@ -66,6 +69,111 @@ def test_model_settings_discovery():
     # every prefix check above silently disappears, which is what the hardcoded provider list did.
     assert len(_MODEL_MODULE_NAMES) >= 15, f'only walked {_MODEL_MODULE_NAMES}'
     assert _MODEL_SETTINGS_CLASSES, f'no settings classes found, unimportable modules: {_UNIMPORTABLE_MODEL_MODULES}'
+
+
+# The label each `Supported by:` list uses for a provider, mapped to the `pydantic_ai.models` module that
+# implements it. Several fields say `Gemini` where the module is `google`, and `Z.AI` where it's `zai`.
+_SUPPORTED_BY_LABELS = {
+    'Anthropic': 'anthropic',
+    'Bedrock': 'bedrock',
+    'Cerebras': 'cerebras',
+    'Cohere': 'cohere',
+    'Gemini': 'google',
+    'Google': 'google',
+    'Groq': 'groq',
+    'Hugging Face': 'huggingface',
+    'MCP Sampling': 'mcp_sampling',
+    'Mistral': 'mistral',
+    'OpenAI': 'openai',
+    'OpenRouter': 'openrouter',
+    'xAI': 'xai',
+    'Z.AI': 'zai',
+}
+
+# Fields a provider never reads as a `model_settings` lookup, so the source scan below can't see them:
+# `tool_choice` is resolved by `models._tool_choice.resolve_tool_choice` and `thinking` by
+# `ModelRequestParameters.thinking`, both of which every model receives whether it honours it or not.
+# Their `Supported by:` lists are therefore not machine-checkable and are excluded here.
+_INDIRECTLY_CONSUMED_FIELDS = {'tool_choice', 'thinking'}
+
+_MODEL_SOURCES = {
+    (path := Path(models.__file__).parent / f'{module_name.rsplit(".", maxsplit=1)[-1]}.py').stem: path.read_text(
+        encoding='utf-8'
+    )
+    for module_name in _MODEL_MODULE_NAMES
+}
+
+
+def _supported_by(field_docstring: str) -> list[str] | None:
+    match = re.search(r'Supported by:\n\n(.*?)(?:\n\n|\Z)', field_docstring, re.DOTALL)
+    if match is None:
+        return None
+    # Entries may carry a parenthesized caveat, e.g. `* OpenAI (some models, not o1)`.
+    return [
+        re.sub(r'\s*\(.*', '', line.strip().removeprefix('* '))
+        for line in match.group(1).splitlines()
+        if line.strip().startswith('* ')
+    ]
+
+
+def _documented_support() -> dict[str, list[str]]:
+    """Map each `ModelSettings` field to the provider labels its `Supported by:` list names."""
+    settings_source = Path(models.__file__).parent.parent / 'settings.py'
+    class_def = next(
+        node
+        for node in ast.parse(settings_source.read_text(encoding='utf-8')).body
+        if isinstance(node, ast.ClassDef) and node.name == 'ModelSettings'
+    )
+    documented: dict[str, list[str]] = {}
+    for annotation, following in zip(class_def.body, class_def.body[1:]):
+        if not (isinstance(annotation, ast.AnnAssign) and isinstance(annotation.target, ast.Name)):
+            continue
+        docstring = ast.literal_eval(following.value) if isinstance(following, ast.Expr) else ''
+        if isinstance(docstring, str) and (labels := _supported_by(docstring)) is not None:
+            documented[annotation.target.id] = labels
+    return documented
+
+
+_DOCUMENTED_SUPPORT = _documented_support()
+
+
+def _reads(field: str) -> set[str]:
+    """The `pydantic_ai.models` modules that forward `field` to their provider.
+
+    Scanned from the source rather than by importing, so an uninstalled optional group can't silently
+    drop a module from the comparison the way it would if the import were allowed to fail.
+    """
+    # `OpenAIResponsesModel` lives in `openai.py`, so its reads are attributed to `openai` either way.
+    read_by = {
+        name
+        for name, source in _MODEL_SOURCES.items()
+        if re.search(rf"""(model_settings|settings)(\.get\(\s*|\[\s*)['"]{field}['"]""", source)
+    }
+    # `xai.py` forwards settings through `_XAI_MODEL_SETTINGS_MAPPING` instead of looking each one up.
+    if re.search(rf"""^\s*['"]{field}['"]:""", _MODEL_SOURCES['xai'], re.MULTILINE):
+        read_by.add('xai')
+    return read_by
+
+
+@pytest.mark.parametrize('field', sorted(_DOCUMENTED_SUPPORT.keys() - _INDIRECTLY_CONSUMED_FIELDS))
+def test_supported_by_matches_implementation(field: str):
+    """Every `Supported by:` list names exactly the provider modules that read that field.
+
+    These lists are the only place a user can find out whether a general setting reaches a given
+    provider, and a setting that doesn't is silently dropped rather than rejected — so a stale list
+    is indistinguishable from a broken provider. Twelve had drifted: `huggingface.py` reads nine
+    general settings and was named by none of them, `mistral.py` reads `parallel_tool_calls`, three
+    models merge into `extra_body`, and xAI's `_XAI_MODEL_SETTINGS_MAPPING` covers neither `timeout`
+    nor `extra_headers` though both claimed it.
+
+    A unit test rather than a VCR one: it asserts a property of the source, which no recorded
+    interaction can express.
+    """
+    labels = _DOCUMENTED_SUPPORT[field]
+    unknown = set(labels) - _SUPPORTED_BY_LABELS.keys()
+    assert not unknown, f'unrecognised provider name(s) {unknown}, add them to `_SUPPORTED_BY_LABELS`'
+
+    assert _reads(field) == {_SUPPORTED_BY_LABELS[label] for label in labels}
 
 
 @pytest.mark.parametrize(
