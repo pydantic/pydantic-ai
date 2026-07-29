@@ -1105,6 +1105,126 @@ async def test_tool_call_round_builds_classic_history() -> None:
     )
 
 
+async def test_late_input_transcript_still_precedes_the_response_it_prompted() -> None:
+    """A user turn keeps its place in history however late the provider transcribes it.
+
+    Input transcription is asynchronous, and the final event can land after the response the speech
+    prompted has already been recorded — measured live on Azure and Gemini Live, and reachable on OpenAI
+    and xAI under load, because a function-call-only response finalizes long before the transcript. Read
+    back, an appended user turn says the model called a tool unprompted and only then heard the question.
+
+    The wire order here is Azure's, measured live: speech start, the transcript's partials, then the whole
+    tool round, and only afterwards the `.completed` snapshot.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            InputSpeechStartEvent(),
+            InputTranscript(text="what's the weather in Paris", item_id='item-1'),
+            ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
+            InputTranscript(text="what's the weather in Paris", is_final=True, item_id='item-1'),
+            OutputTranscript(text="It's sunny in Paris", is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'Sunny, 22C'
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    await collect_events(session)
+
+    assert [
+        (type(message).__name__, [type(part).__name__ for part in message.parts])
+        for message in session.new_messages()
+    ] == snapshot(
+        [
+            ('ModelRequest', ['SpeechPart']),
+            ('ModelResponse', ['ToolCallPart']),
+            ('ModelRequest', ['ToolReturnPart']),
+            ('ModelResponse', ['SpeechPart']),
+        ]
+    )
+
+
+async def test_late_input_transcript_of_a_second_turn_follows_the_first_exchange() -> None:
+    """A late transcript joins the conversation where its turn started, not at the front of history.
+
+    The first exchange is already recorded when the second spoken turn opens, so that turn's place is
+    after it — the same rule that keeps a first turn ahead of its own response has to know how far along
+    the conversation was.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='what is the weather', is_final=True, item_id='item-1'),
+            OutputTranscript(text='Sunny.', is_final=True),
+            TurnCompleteEvent(),
+            InputSpeechStartEvent(),
+            InputTranscript(text='and tomorrow', item_id='item-2'),
+            ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
+            InputTranscript(text='and tomorrow', is_final=True, item_id='item-2'),
+            OutputTranscript(text='Rain.', is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'Rain, 12C'
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    await collect_events(session)
+
+    assert [
+        (type(message).__name__, [type(part).__name__ for part in message.parts])
+        for message in session.new_messages()
+    ] == snapshot(
+        [
+            ('ModelRequest', ['SpeechPart']),
+            ('ModelResponse', ['SpeechPart']),
+            ('ModelRequest', ['SpeechPart']),
+            ('ModelResponse', ['ToolCallPart']),
+            ('ModelRequest', ['ToolReturnPart']),
+            ('ModelResponse', ['SpeechPart']),
+        ]
+    )
+
+
+async def test_late_input_transcript_anchors_from_sent_audio_without_speech_boundaries() -> None:
+    """The turn is placed even on a provider that reports no speech boundary at all.
+
+    Gemini Live sends neither `InputSpeechStartEvent` nor a final input transcript, so the turn is only
+    finalized at `TurnCompleteEvent` — by which time its tool round is long recorded. Audio starting is
+    then the only signal that a user turn began, so that is where its place in history comes from.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
+            InputTranscript(text="what's the weather in Paris"),
+            OutputTranscript(text="It's sunny in Paris", is_final=True),
+            TurnCompleteEvent(),
+        ]
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'Sunny, 22C'
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    async with session:
+        await session.send_audio(b'\x00\x01')
+        await drain_events(session)
+
+    assert [
+        (type(message).__name__, [type(part).__name__ for part in message.parts])
+        for message in session.new_messages()
+    ] == snapshot(
+        [
+            ('ModelRequest', ['SpeechPart']),
+            ('ModelResponse', ['ToolCallPart']),
+            ('ModelRequest', ['ToolReturnPart']),
+            ('ModelResponse', ['SpeechPart']),
+        ]
+    )
+
+
 async def test_tool_response_finalized_on_usage_is_not_duplicated_at_terminal() -> None:
     conn = FakeRealtimeConnection(
         [
