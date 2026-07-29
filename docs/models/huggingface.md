@@ -97,6 +97,24 @@ agent = Agent(model)
 ...
 ```
 
+## Logprobs
+
+You can return logprobs from the model by setting `huggingface_logprobs` and `huggingface_top_logprobs` in the [`HuggingFaceModelSettings`][pydantic_ai.models.huggingface.HuggingFaceModelSettings]. They are returned under `provider_details['logprobs']`, for both streamed and non-streamed requests.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceModelSettings
+
+model = HuggingFaceModel('Qwen/Qwen3-235B-A22B')
+settings = HuggingFaceModelSettings(huggingface_logprobs=True, huggingface_top_logprobs=2)
+agent = Agent(model, model_settings=settings)
+
+result = agent.run_sync('Your prompt here')
+logprobs = result.response.provider_details.get('logprobs')
+```
+
+Not every inference provider supports these parameters; one that doesn't will ignore them and return no logprobs.
+
 ## Streaming cancellation
 
 !!! warning "Cancellation limitations"
