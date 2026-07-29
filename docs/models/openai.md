@@ -105,7 +105,7 @@ agent = Agent(model)
 Use [`ImageGenerator`][pydantic_ai.images.ImageGenerator] with an `openai:` image model for direct generation and
 reference-image editing. This uses OpenAI's Images API rather than a conversational Responses model:
 
-```python {title="openai_image_generation.py" test="skip"}
+```python {title="openai_image_generation.py"}
 from pydantic_ai import ImageGenerator
 from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 

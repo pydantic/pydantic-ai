@@ -4,7 +4,7 @@ The [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] [capability](o
 generate an image. It prefers the conversational model provider's native image-generation tool and can fall back to a
 dedicated image model through the [direct image-generation API](../image-generation.md).
 
-```python {title="image_generation_capability.py" test="skip"}
+```python {title="image_generation_capability.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import ImageGeneration
 
@@ -26,7 +26,7 @@ agent = Agent(
 [`ImageGenerator`][pydantic_ai.images.ImageGenerator], or
 [`ImageGenerationModel`][pydantic_ai.images.ImageGenerationModel] to add a fallback without creating another agent:
 
-```python {title="image_generation_routing.py" test="skip" lint="skip"}
+```python {title="image_generation_routing.py"}
 from pydantic_ai import ImageGenerator
 from pydantic_ai.capabilities import ImageGeneration
 

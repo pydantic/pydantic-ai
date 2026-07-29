@@ -97,7 +97,7 @@ agent = Agent(model)
 Use [`ImageGenerator`][pydantic_ai.images.ImageGenerator] with an `xai:` image model for direct generation and
 reference-image editing through the official xAI SDK:
 
-```python {title="xai_image_generation.py" test="skip"}
+```python {title="xai_image_generation.py"}
 from pydantic_ai import ImageGenerator
 from pydantic_ai.images.xai import XaiImageGenerationSettings
 

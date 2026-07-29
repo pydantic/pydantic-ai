@@ -334,7 +334,7 @@ See the [input documentation](../input.md) for more details and examples.
 Use [`ImageGenerator`][pydantic_ai.images.ImageGenerator] with a `google:` image model for direct generation and
 reference-image editing through the Gemini API:
 
-```python {title="google_image_generation.py" test="skip"}
+```python {title="google_image_generation.py"}
 from pydantic_ai import ImageGenerator
 from pydantic_ai.images.google import GoogleImageGenerationSettings
 

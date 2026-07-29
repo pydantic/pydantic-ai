@@ -9,7 +9,7 @@ create an image.
 Pass a provider-prefixed model name to [`ImageGenerator`][pydantic_ai.images.ImageGenerator], then call
 [`generate()`][pydantic_ai.images.ImageGenerator.generate]:
 
-```python {title="image_generation_quickstart.py" test="skip"}
+```python {title="image_generation_quickstart.py"}
 from pathlib import Path
 
 from pydantic_ai import ImageGenerator
@@ -33,7 +33,7 @@ Pass reference images through `images` to edit or transform them. The input can 
 [`BinaryImage`][pydantic_ai.messages.BinaryImage], [`ImageUrl`][pydantic_ai.messages.ImageUrl], or
 [`UploadedFile`][pydantic_ai.messages.UploadedFile] objects:
 
-```python {title="image_edit.py" test="skip"}
+```python {title="image_edit.py"}
 from pydantic_ai import BinaryImage, ImageGenerator
 
 generator = ImageGenerator('google:gemini-3.1-flash-lite-image')
@@ -66,7 +66,7 @@ Gemini for image-only output, matching the `ImageGenerator` result contract and 
 [`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings] provides normalized settings. Defaults can be
 set on the generator and overridden for one call:
 
-```python {title="image_generation_settings.py" test="skip"}
+```python {title="image_generation_settings.py"}
 from pydantic_ai import ImageGenerator
 from pydantic_ai.images import ImageGenerationSettings
 
@@ -205,7 +205,7 @@ calculation, and is kept separate from [`cost()`][pydantic_ai.images.ImageGenera
 
 Enable OpenTelemetry instrumentation for one generator or for all generators:
 
-```python {title="instrumented_image_generation.py" test="skip"}
+```python {title="instrumented_image_generation.py"}
 import logfire
 
 from pydantic_ai import ImageGenerator
