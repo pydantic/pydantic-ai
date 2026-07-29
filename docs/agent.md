@@ -711,7 +711,38 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
-To stop only the current model response while letting the run continue (e.g. into tool execution), see [Cancelling Streams](output.md#cancelling-streams). How an interrupted response is recorded in message history is described under [Message History After Cancellation](output.md#message-history-after-cancellation).
+#### Message History After Cancellation
+
+When a stream is cancelled mid-generation, the response is recorded with `state='interrupted'` in the message history. The history includes any partial content that was received before cancellation:
+
+```python {title="stream_cancel_history.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.run_stream('Tell me about Python') as result:
+        async for text in result.stream_text(delta=True):
+            break
+        await result.cancel()
+
+    messages = result.all_messages()  # (1)!
+    print(messages[-1].state)  # (2)!
+    #> interrupted
+```
+
+1. The message history includes the interrupted response with any partial content that was received before cancellation.
+2. The interrupted response state lets your application decide whether to keep, inspect, or discard the partial response before reusing the history.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+!!! note "Reusing interrupted history"
+    Interrupted history can be passed directly into another run. Before the next model request, Pydantic AI [repairs the transcript](message-history.md#making-histories-provider-valid): any tool call that never received a result — including one whose arguments were cut off mid-stream — is answered with a synthesized [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] telling the model it was interrupted.
+
+!!! info "Usage tracking for cancelled streams"
+    Token usage reported by `usage` after cancellation is partial and provider-dependent. Pydantic AI stops pulling from the stream immediately, so final usage events may never arrive; some provider SDKs may also continue generation server-side after the local stream is closed. Do not rely on cancelled-stream usage for cost-critical accounting.
+    For OpenAI chat completions, [`openai_continuous_usage_stats`][pydantic_ai.models.openai.OpenAIChatModelSettings] can improve in-stream usage reporting by requesting cumulative usage data with each chunk, but cancelled-stream usage is still best-effort.
 
 ### Additional Configuration
 
