@@ -3,12 +3,14 @@ import functools
 import operator
 import re
 from collections.abc import AsyncIterator
-from datetime import timezone
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
+from pydantic_core import to_jsonable_python
 
 from pydantic_ai import (
     Agent,
@@ -185,6 +187,21 @@ def test_usage_so_far() -> None:
         )
 
 
+def test_usage_has_values_ignores_zero_details() -> None:
+    """`has_values()` must treat an all-zero `details` dict as no values, per its docstring.
+
+    A non-empty `details` dict is truthy, so the previous `any(asdict(...).values())` returned True
+    even when every count was zero. This pins the pure-method behavior directly; no model is involved,
+    so there is no VCR test to write.
+    """
+    assert RunUsage().has_values() is False
+    assert RunUsage(details={'reasoning_tokens': 0}).has_values() is False
+    assert RunUsage(input_tokens=1).has_values() is True
+    assert RunUsage(details={'reasoning_tokens': 3}).has_values() is True
+    # RequestUsage shares the same UsageBase implementation.
+    assert RequestUsage(details={'x': 0}).has_values() is False
+
+
 async def test_multi_agent_usage_no_incr():
     delegate_agent = Agent(TestModel(), output_type=int)
 
@@ -321,6 +338,35 @@ async def test_multi_agent_usage_no_incr():
         'gen_ai.usage.output_tokens': 13,
         'gen_ai.usage.details.custom1': 10,
         'gen_ai.usage.details.custom2': 20,
+        'gen_ai.usage.details.custom3': 0,
+    }
+
+
+def test_usage_opentelemetry_attributes_include_zero_details():
+    """A zero-valued detail is a real measurement and must survive the OTel mapping.
+
+    Providers report `reasoning_tokens=0` when a reasoning model didn't think on a given request;
+    dropping it makes "didn't reason" indistinguishable from "doesn't report reasoning tokens".
+    First-class token names stay excluded from `details.*` even at zero.
+    """
+    usage = RequestUsage(
+        input_tokens=100,
+        output_tokens=50,
+        details={'reasoning_tokens': 0, 'input_tokens': 0, 'output_tokens': 0},
+    )
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 100,
+        'gen_ai.usage.output_tokens': 50,
+        'gen_ai.usage.details.reasoning_tokens': 0,
+    }
+
+    # Provider data can put a `None` in `details` despite the `dict[str, int]` annotation, and `None` is
+    # not a valid OTel attribute value, so it's the one thing the guard still drops.
+    usage.details = {'reasoning_tokens': 0, 'unreported_tokens': None}  # pyright: ignore[reportAttributeAccessIssue]
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 100,
+        'gen_ai.usage.output_tokens': 50,
+        'gen_ai.usage.details.reasoning_tokens': 0,
     }
 
 
@@ -415,6 +461,139 @@ def test_request_usage_basics():
     usage = RequestUsage()
     assert usage.output_audio_tokens == 0
     assert usage.requests == 1
+
+
+def test_usage_arbitrary_fields():
+    usage = RequestUsage(future_tokens=1, label='original')
+
+    assert usage == snapshot(RequestUsage(future_tokens=1, label='original'))
+    assert usage == RequestUsage(future_tokens=1, label='original')
+    assert usage != RequestUsage(future_tokens=2, label='original')
+    assert usage != object()
+    assert RunUsage(requests=0, future_tokens=1) == snapshot(RunUsage(future_tokens=1))
+    assert RunUsage(requests=0) == RunUsage()
+
+    result = usage + RequestUsage(future_tokens=2, label='increment')
+    assert result == RequestUsage(future_tokens=3, label='original')
+
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_arbitrary_fields_pydantic_roundtrip(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    usage = usage_type(
+        input_tokens=5,
+        details={'reasoning_tokens': 3},
+        future_tokens=42,
+        label='original',
+        zero_tokens=0,
+    )
+    adapter = TypeAdapter(usage_type)
+
+    loaded = adapter.validate_json(adapter.dump_json(usage))
+    assert loaded == usage
+    assert loaded.__dict__['future_tokens'] == 42
+    assert adapter.validate_python(usage) is usage
+
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_reserved_fields_not_loaded_as_arbitrary(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    loaded = TypeAdapter(usage_type).validate_python({'input_tokens': 5, 'cache_hit_ratio': 0.5})
+
+    assert loaded == usage_type(input_tokens=5)
+    assert 'cache_hit_ratio' not in loaded.__dict__
+
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_details_none_deserialization(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    loaded = TypeAdapter(usage_type).validate_python({'details': None})
+
+    assert loaded.details == {}
+
+
+def test_usage_arbitrary_fields_pydantic_serialization_filters():
+    class ArbitraryValue(BaseModel):
+        included: int
+        excluded: int
+
+    adapter = TypeAdapter(RequestUsage)
+    usage = RequestUsage(
+        input_tokens=5,
+        future_tokens=42,
+        label=None,
+        breakdown={'a': 1, 'b': 2},
+        model=ArbitraryValue(included=1, excluded=2),
+        timestamp=datetime(2020, 1, 2),
+        unknown=object(),
+    )
+
+    assert adapter.dump_python(usage, include={'input_tokens'}) == {'input_tokens': 5}
+    assert adapter.dump_python(
+        usage,
+        include={'input_tokens', 'future_tokens', 'label'},
+        exclude_none=True,
+    ) == {'input_tokens': 5, 'future_tokens': 42}
+
+    serialized = adapter.dump_python(usage, exclude={'future_tokens'})
+    assert 'future_tokens' not in serialized
+    assert serialized['label'] is None
+    assert adapter.dump_python(usage, include={'future_tokens': True}) == {'future_tokens': 42}
+    assert 'future_tokens' not in adapter.dump_python(
+        usage,
+        exclude={'future_tokens': ...},  # pyright: ignore[reportArgumentType]
+    )
+
+    assert adapter.dump_python(usage, include={'breakdown': {'a'}}) == {'breakdown': {'a': 1}}
+    assert adapter.dump_python(usage, exclude={'breakdown': {'a'}})['breakdown'] == {'b': 2}
+    assert adapter.dump_python(
+        usage,
+        mode='json',
+        include={'model': {'included'}, 'timestamp': True, 'unknown': True},
+        fallback=lambda _: 'fallback',
+    ) == {
+        'model': {'included': 1},
+        'timestamp': '2020-01-02T00:00:00',
+        'unknown': 'fallback',
+    }
+
+
+def test_usage_pydantic_core_serialization_subclass():
+    @dataclass(repr=False, init=False, eq=False)
+    class CustomUsage(RequestUsage):
+        custom_tokens: int = 7
+
+    usage = CustomUsage(future_tokens=42)
+
+    assert to_jsonable_python(usage) == snapshot(
+        {
+            'input_tokens': 0,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 0,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {},
+            'custom_tokens': 7,
+            'future_tokens': 42,
+        }
+    )
+
+
+def test_cache_hit_ratio():
+    """Pure arithmetic on usage fields -- no model request to record."""
+    assert RequestUsage(input_tokens=1000, cache_read_tokens=900).cache_hit_ratio == 0.9
+    assert RequestUsage().cache_hit_ratio == 0.0
+    assert RequestUsage(input_tokens=1000).cache_hit_ratio == 0.0
+
+    run_usage = RunUsage()
+    run_usage.incr(RequestUsage(input_tokens=1000, cache_read_tokens=900))
+    run_usage.incr(RequestUsage(input_tokens=500, cache_read_tokens=300))
+    assert run_usage.cache_hit_ratio == 0.8
 
 
 def test_add_usages():

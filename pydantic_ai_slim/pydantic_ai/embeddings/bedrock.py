@@ -12,6 +12,7 @@ import anyio
 import anyio.to_thread
 
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import remove_bedrock_geo_prefix
 from pydantic_ai.usage import RequestUsage
@@ -572,6 +573,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        check_allow_model_requests()
         inputs_list, settings_dict = self.prepare_embed(inputs, settings)
         settings_typed = cast(BedrockEmbeddingSettings, settings_dict)
 
@@ -658,9 +660,15 @@ class BedrockEmbeddingModel(EmbeddingModel):
                 )
             )
         except ClientError as e:
-            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+            metadata = e.response.get('ResponseMetadata', {})
+            status_code = metadata.get('HTTPStatusCode')
             if isinstance(status_code, int):
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self.model_name,
+                    body=e.response,
+                    headers=metadata.get('HTTPHeaders'),
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
         # Extract input token count from HTTP headers
