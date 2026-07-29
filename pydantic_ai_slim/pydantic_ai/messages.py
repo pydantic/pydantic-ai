@@ -3429,8 +3429,14 @@ class SpeechPartDelta:
     transcript_delta: str | None = None
     """Transcript text this delta added, if any.
 
-    Empty when the provider *revised* what it had already transcribed instead of adding to it — see
-    `transcript`, which is the field to render.
+    !!! warning "Not every transcript delta has one"
+        This is empty whenever the provider *revised* what it had already transcribed instead of
+        adding to it, because there is no addition to report. How often that happens is up to the
+        provider — xAI Grok Voice does it routinely, OpenAI and Gemini not at all today — so appending
+        this field means a live transcript that is right on some providers and stale on others.
+
+        Render [`transcript`][pydantic_ai.messages.SpeechPartDelta.transcript] instead, which is always
+        the turn's full text. Reach for this one only when you specifically want what changed.
     """
 
     transcript: str | None = None

@@ -293,20 +293,16 @@ def gateway_gemini_ws_cassette(
 ) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
     """A Gemini Live provider that routes through the gateway's Vertex upstream, cassette-backed.
 
-    Skips (rather than errors) when the cassette is missing offline: a full session can't be recorded
-    yet because the gateway's realtime relay only matches the OpenAI-shaped `/proxy/<route>/realtime`
-    upgrade path, while the `google-genai` SDK dials the native Vertex Bidi path
-    (`/proxy/<route>/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent`), so the
-    upgrade isn't routed to the relay. (The Live model ids are also unpriced in genai-prices, which
-    would reject the upgrade on cost data even once routed.) Record with `--record-mode=rewrite` once
-    the gateway accepts the Vertex Bidi upgrade path.
+    The `google-genai` SDK dials the native Vertex Bidi path
+    (`/proxy/<route>/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent`) rather than
+    the OpenAI-shaped `/proxy/<route>/realtime` upgrade the other gateway route uses, so this fixture
+    covers the second protocol the gateway relays.
     """
     if not imports_successful():  # pragma: no cover
         pytest.skip('google-genai / websockets not installed')
     provider = _gateway_realtime_provider('google', gateway_api_key)
-    with _ws_cassette(request, 'gemini', skip_if_missing=True) as cassette:
-        # No cassette to replay until the gateway routes Bidi.
-        yield provider, cassette  # pragma: no cover
+    with _ws_cassette(request, 'gemini') as cassette:
+        yield provider, cassette
 
 
 @pytest.fixture(scope='session')
