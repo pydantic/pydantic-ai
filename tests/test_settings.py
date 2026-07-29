@@ -70,6 +70,7 @@ def test_model_settings_discovery():
 
 def test_huggingface_logprobs_settings():
     # HuggingFace-specific logprobs fields must be `huggingface_`-prefixed and accepted at runtime.
+    pytest.importorskip('huggingface_hub')
     from pydantic_ai_slim.pydantic_ai.models.huggingface import HuggingFaceModelSettings
 
     settings: HuggingFaceModelSettings = {
