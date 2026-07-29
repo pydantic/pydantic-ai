@@ -117,7 +117,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.realtime import (
     InputSpeechStartEvent,
-    ReconnectedEvent,
+    SessionReconnectEvent,
     SessionErrorEvent,
     TurnCompleteEvent,
 )
@@ -163,7 +163,7 @@ async def main():
                     show_tool_status('complete')
                 case TurnCompleteEvent(interrupted=interrupted):
                     finish_turn(interrupted)
-                case ReconnectedEvent(state_restored=state_restored):
+                case SessionReconnectEvent(state_restored=state_restored):
                     show_reconnected(state_restored)
                 case SessionErrorEvent(message=message):
                     show_error(message)
@@ -245,10 +245,10 @@ The remaining realtime control-plane events:
 | --- | --- |
 | [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] | OpenAI/Azure/xAI detected speech onset, or Gemini reported activity that interrupted model output. |
 | [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | OpenAI/Azure/xAI detected the end of speech; Gemini does not emit this event. |
-| [`InputTranscriptionFailedEvent`][pydantic_ai.realtime.InputTranscriptionFailedEvent] | The provider could not transcribe a user audio turn. The session continues, and `item_id` and `content_index` identify the affected turn when available. |
+| [`InputTranscriptionErrorEvent`][pydantic_ai.realtime.InputTranscriptionErrorEvent] | The provider could not transcribe a user audio turn. The session continues, and `item_id` and `content_index` identify the affected turn when available. |
 | [`OutputSpeechStartEvent`][pydantic_ai.realtime.OutputSpeechStartEvent] / [`OutputSpeechEndEvent`][pydantic_ai.realtime.OutputSpeechEndEvent] | The model became, or stopped being, audible. Only on a [WebRTC sideband](#browser-webrtc), where the provider holds the audio — see [Knowing when the model is speaking](#knowing-when-the-model-is-speaking). |
 | [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn. `interrupted` reflects cancellation or barge-in across all providers. |
-| [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] | The connection dropped and was automatically re-established. Conversation state is restored for Gemini and xAI; see [Reconnecting](#reconnecting). |
+| [`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] | The connection dropped and was automatically re-established. Conversation state is restored for Gemini and xAI; see [Reconnecting](#reconnecting). |
 | [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] | The provider reported a **recoverable** error mid-session; the session keeps running. Anything that ends the session raises instead — see [Errors](#errors). |
 
 ## Core tasks
@@ -871,7 +871,7 @@ A long-lived connection can drop, and every provider also caps how long one sess
 OpenAI closes an hour in, whether or not the conversation is still going. Pass a
 [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently re-dial with
 exponential backoff, re-apply the session configuration, and emit a
-[`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] event:
+[`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] event:
 
 ```python
 from pydantic_ai.realtime import ReconnectPolicy
@@ -886,7 +886,7 @@ up instead of re-dialing forever.
 
 For OpenAI and Azure OpenAI, reconnecting restores the session configuration but **not** server-side
 conversation state (the audio buffer and prior turns), so treat a
-[`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] with `state_restored=False` as the start of a fresh
+[`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] with `state_restored=False` as the start of a fresh
 turn. Without a
 policy (the default), a connection the server closes — for any reason, including the session cap —
 raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the session iterator, so the app can
@@ -896,7 +896,7 @@ Gemini and xAI reconnect via native **session resumption**, which restores prior
 the provider's resumption replay burst from the local event stream and enables resumption automatically
 whenever a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] is set. Its conversation handle is
 managed in memory and cannot be persisted to resume a session in another process. Their
-[`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] has `state_restored=True`.
+[`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] has `state_restored=True`.
 
 For Gemini, enable resumption with
 both `google_enable_session_resumption=True` and a
@@ -929,7 +929,7 @@ realtime vocabulary to learn:
 Failures that leave the session usable are events instead: a provider error scoped to one operation
 arrives as a [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent], and a turn the provider
 couldn't transcribe as an
-[`InputTranscriptionFailedEvent`][pydantic_ai.realtime.InputTranscriptionFailedEvent].
+[`InputTranscriptionErrorEvent`][pydantic_ai.realtime.InputTranscriptionErrorEvent].
 
 Exceptions surface from the call responsible where there is one (`await session.send_audio(...)`
 raises if the send fails), and otherwise from iterating the session, which is where the receive loop

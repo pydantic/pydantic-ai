@@ -310,7 +310,7 @@ async def test_audio_in_server_vad_transcription_requires_deployment(
             'InputSpeechEndEvent',
             'PartStartEvent',
             'PartEndEvent',
-            'InputTranscriptionFailedEvent',
+            'InputTranscriptionErrorEvent',
             'PartStartEvent',
             'PartDeltaEvent',
             'PartEndEvent',

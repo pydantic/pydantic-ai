@@ -77,7 +77,7 @@ from ._base import (
     InputSpeechEndEvent,
     InputSpeechStartEvent,
     InputTranscript,
-    InputTranscriptionFailedEvent,
+    InputTranscriptionErrorEvent,
     OutputSpeechEndEvent,
     OutputSpeechStartEvent,
     RealtimeCodecEvent,
@@ -88,8 +88,8 @@ from ._base import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSessionInput,
-    ReconnectedEvent,
     SessionErrorEvent,
+    SessionReconnectEvent,
     SessionUsageEvent,
     TextInput,
     ToolCall,
@@ -161,8 +161,8 @@ _TranslatableEvent: TypeAlias = (
     | InputSpeechEndEvent
     | OutputSpeechStartEvent
     | OutputSpeechEndEvent
-    | InputTranscriptionFailedEvent
-    | ReconnectedEvent
+    | InputTranscriptionErrorEvent
+    | SessionReconnectEvent
     | PartStartEvent
     | PartEndEvent
     | SessionErrorEvent
@@ -1674,7 +1674,7 @@ class RealtimeSession:
         """Return `False` for an xAI item that belongs to the resumption replay burst."""
         return not self._is_replayed_item(item_id, tool_call_id)
 
-    def _handle_reconnected(self, event: ReconnectedEvent) -> list[RealtimeEvent]:
+    def _handle_reconnected(self, event: SessionReconnectEvent) -> list[RealtimeEvent]:
         """Close state the provider lost before starting the reconnected turn."""
         if event.state_restored:
             return [event]
@@ -1703,9 +1703,9 @@ class RealtimeSession:
 
     def _handle_control_event(
         self,
-        event: InputSpeechStartEvent | ReconnectedEvent | OutputSpeechStartEvent | OutputSpeechEndEvent,
+        event: InputSpeechStartEvent | SessionReconnectEvent | OutputSpeechStartEvent | OutputSpeechEndEvent,
     ) -> list[RealtimeEvent]:
-        if isinstance(event, ReconnectedEvent):
+        if isinstance(event, SessionReconnectEvent):
             return self._handle_reconnected(event)
         # The playback boundary brackets the `speak` span and is otherwise passed straight through.
         if isinstance(event, OutputSpeechStartEvent):
@@ -1767,7 +1767,7 @@ class RealtimeSession:
             return [event]
         if isinstance(event, PartEndEvent):
             return [event]
-        if isinstance(event, InputTranscriptionFailedEvent):
+        if isinstance(event, InputTranscriptionErrorEvent):
             return [*self._finalize_failed_user_item(event.item_id), event]
         # The remaining control-plane events pass through unchanged. `assert_never` makes pyright flag
         # any new non-pump `RealtimeEvent` variant that isn't handled here.
@@ -1775,7 +1775,7 @@ class RealtimeSession:
             event,
             (
                 InputSpeechStartEvent,
-                ReconnectedEvent,
+                SessionReconnectEvent,
                 OutputSpeechStartEvent,
                 OutputSpeechEndEvent,
             ),

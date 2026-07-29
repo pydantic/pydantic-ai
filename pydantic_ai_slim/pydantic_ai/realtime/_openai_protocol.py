@@ -83,7 +83,7 @@ from ._base import (
     InputSpeechEndEvent,
     InputSpeechStartEvent,
     InputTranscript,
-    InputTranscriptionFailedEvent,
+    InputTranscriptionErrorEvent,
     RealtimeCodecEvent,
     RealtimeError,
     RealtimeModelProfile,
@@ -605,7 +605,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
 def _map_input_transcription_event(
     data: dict[str, Any], event_type: str
-) -> InputTranscript | InputTranscriptionFailedEvent | None:
+) -> InputTranscript | InputTranscriptionErrorEvent | None:
     """Map input transcription progress and failure events."""
     if event_type == 'conversation.item.input_audio_transcription.delta':
         event = ConversationItemInputAudioTranscriptionDeltaEvent.construct(**data)
@@ -626,7 +626,7 @@ def _map_input_transcription_event(
     code = event.error.code or None
     if code == _MISSING_TRANSCRIPTION_DEPLOYMENT_CODE:
         message = f'{message} {_MISSING_TRANSCRIPTION_DEPLOYMENT_HELP}'.strip()
-    return InputTranscriptionFailedEvent(
+    return InputTranscriptionErrorEvent(
         message=message,
         type=event.error.type or None,
         code=code,

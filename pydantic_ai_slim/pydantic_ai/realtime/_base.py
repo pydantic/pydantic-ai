@@ -542,7 +542,7 @@ class OutputSpeechEndEvent:
 
 
 @dataclass
-class InputTranscriptionFailedEvent:
+class InputTranscriptionErrorEvent:
     """The provider failed to transcribe a user audio input turn, but the session continues.
 
     This is recoverable; `item_id` and `content_index` locate the affected user turn.
@@ -559,7 +559,7 @@ class InputTranscriptionFailedEvent:
     content_index: int | None = None
     """Content index within the affected user turn, when available."""
 
-    event_kind: Literal['input_transcription_failed'] = 'input_transcription_failed'
+    event_kind: Literal['input_transcription_error'] = 'input_transcription_error'
     """Event type identifier, used as a discriminator."""
 
 
@@ -590,7 +590,7 @@ class SessionUsageEvent:
 
 
 @dataclass
-class ReconnectedEvent:
+class SessionReconnectEvent:
     """The connection dropped and was automatically re-established; inspect `state_restored` for continuity.
 
     Session configuration (instructions, tools, voice, ...) is restored on every reconnect. OpenAI
@@ -606,7 +606,7 @@ class ReconnectedEvent:
     session resumption is active) means prior turns were restored.
     """
 
-    event_kind: Literal['reconnected'] = 'reconnected'
+    event_kind: Literal['session_reconnect'] = 'session_reconnect'
     """Event type identifier, used as a discriminator."""
 
 
@@ -668,9 +668,9 @@ RealtimeCodecEvent = TypeAliasType(
     | InputSpeechEndEvent
     | OutputSpeechStartEvent
     | OutputSpeechEndEvent
-    | InputTranscriptionFailedEvent
+    | InputTranscriptionErrorEvent
     | SessionUsageEvent
-    | ReconnectedEvent
+    | SessionReconnectEvent
     | ConversationCreated
     | ConversationItemCreated
     | PartStartEvent
@@ -709,8 +709,8 @@ RealtimeEvent = TypeAliasType(
     | InputSpeechEndEvent
     | OutputSpeechStartEvent
     | OutputSpeechEndEvent
-    | InputTranscriptionFailedEvent
-    | ReconnectedEvent
+    | InputTranscriptionErrorEvent
+    | SessionReconnectEvent
     | SessionErrorEvent,
 )
 """Union of events yielded by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession].
@@ -1116,7 +1116,7 @@ class ReconnectPolicy:
     """How to recover when a realtime connection drops mid-session.
 
     On a dropped connection the session is re-dialed and its configuration (instructions, tools,
-    voice, ...) re-applied, emitting a [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] event. What
+    voice, ...) re-applied, emitting a [`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] event. What
     server-side state survives depends on the provider: OpenAI Realtime and Azure OpenAI start a
     fresh turn (the audio buffer and prior turns are lost), while Gemini Live and xAI restore prior
     turns. Gemini requires `google_enable_session_resumption=True`; xAI enables native resumption
