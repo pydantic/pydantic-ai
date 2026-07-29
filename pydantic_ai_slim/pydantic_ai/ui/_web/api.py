@@ -31,6 +31,13 @@ ModelsParam = Sequence[Model | KnownModelName | str] | Mapping[str, Model | Know
 # (server + bundled UI). See `VercelAIAdapter.sdk_version`.
 BUNDLED_UI_SDK_VERSION: Literal[7] = 7
 
+# `/chat` accepts JSON request bodies only. This is deliberately an allowlist rather than a denylist
+# of the media types we don't want: a JSON body can arrive declared as several other media types, or
+# with no media type at all, and the endpoint's contract is `application/json` specifically. The
+# bundled UI — and the Vercel AI SDK's `DefaultChatTransport` generally — always sends
+# `application/json`; other clients need to set the header explicitly.
+JSON_MEDIA_TYPE = 'application/json'
+
 
 class ModelInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
     """Defines an AI model with its associated built-in tools."""
@@ -177,6 +184,14 @@ def create_api_app(
 
     async def post_chat(request: Request) -> Response:
         """Handle chat requests via Vercel AI Adapter."""
+        if (media_type := request.headers.get('content-type', '').split(';')[0].strip().lower()) != JSON_MEDIA_TYPE:
+            # Checked up front so a request that doesn't meet the endpoint's contract is turned away
+            # before the body is parsed and before the agent is dispatched.
+            return JSONResponse(
+                {'error': f'Expected `Content-Type: {JSON_MEDIA_TYPE}`, got {media_type or "no content type"}'},
+                status_code=415,
+            )
+
         adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
             request, agent=agent, sdk_version=sdk_version
         )
