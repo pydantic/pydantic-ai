@@ -118,7 +118,7 @@ try:
     import temporalio.api.common.v1
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
-    from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
+    from temporalio.client import Client, WorkflowFailureError, WorkflowHandle, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
@@ -6531,6 +6531,195 @@ async def test_temporal_durability_iter_in_workflow_event_stream_handler(client:
     assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
     assert any(isinstance(event, PartStartEvent) for event in events)
     assert any(isinstance(event, FinalResultEvent) for event in events)
+
+
+# --- `run_sync()` / `run_stream()` / `run_stream_events()` inside a workflow ---
+# The deprecated `TemporalAgent` wrapper rejects all three inside a workflow (see
+# `test_temporal_agent_run_sync_in_workflow` and friends). The `TemporalDurability`
+# capability has no such guards, so these tests pin what the capability actually does:
+# the two streaming entry points work, and `run_sync()` does not.
+# `test_temporal_durability_buffers_caller_streams` already covers the single-step text
+# happy path for both streaming methods; these add the durability `event_stream_handler`
+# under `run_stream()` (completing the handler matrix alongside `run()` and `iter()`) and
+# a multi-step tool-calling run under `run_stream_events()`.
+
+
+_run_stream_handler_events: list[tuple[str, bool]] = []
+
+
+async def _run_stream_durability_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _run_stream_handler_events.append((type(event).__name__, activity.in_activity()))
+
+
+_run_stream_durable_agent = Agent(
+    _stream_fn_model,
+    name='durability_run_stream_agent',
+    capabilities=[
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_run_stream_durability_handler)
+    ],
+)
+
+
+@workflow.defn
+class RunStreamDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> tuple[str, list[str]]:
+        async with _run_stream_durable_agent.run_stream(prompt) as result:
+            deltas = [delta async for delta in result.stream_text(delta=True)]
+            return await result.get_output(), deltas
+
+
+async def test_durability_run_stream_in_workflow(client: Client) -> None:
+    """`agent.run_stream()` works inside a workflow under the `TemporalDurability` capability.
+
+    The model streams inside the request-stream activity — the capability's handler sees the model
+    events with `activity.in_activity()` true — and the workflow-side `StreamedRunResult` is fed by
+    the events the activity captured off the live stream, so it stays deterministic across replays.
+    The single text delta is not a durability artifact: `run_stream()` consumes events up to the
+    `FinalResultEvent` before yielding, so `stream_text(delta=True)` returns the same one chunk for
+    this model outside a workflow.
+    """
+    _run_stream_handler_events.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunStreamDurableAgentWorkflow],
+        plugins=[AgentPlugin(_run_stream_durable_agent)],
+    ):
+        output, deltas = await client.execute_workflow(
+            RunStreamDurableAgentWorkflow.run,
+            args=['Hello'],
+            id=RunStreamDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == snapshot('Streamed response')
+    assert deltas == snapshot(['Streamed response'])
+    assert _run_stream_handler_events == snapshot(
+        [
+            ('PartStartEvent', True),
+            ('FinalResultEvent', True),
+            ('PartDeltaEvent', True),
+            ('PartDeltaEvent', True),
+            ('PartEndEvent', True),
+        ]
+    )
+
+
+_run_stream_events_durable_agent = Agent(
+    TestModel(custom_output_text='Streamed events output'),
+    name='durability_run_stream_events_agent',
+    tools=[_durability_handler_tool],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class RunStreamEventsDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[str]:
+        async with _run_stream_events_durable_agent.run_stream_events(prompt) as stream:
+            return [type(event).__name__ async for event in stream]
+
+
+async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
+    """`agent.run_stream_events()` works inside a workflow under the `TemporalDurability` capability.
+
+    Model events are replayed workflow-side after each model-request activity completes, so the
+    workflow sees the full event stream (including tool call/result events) and the final
+    `AgentRunResultEvent`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunStreamEventsDurableAgentWorkflow],
+        plugins=[AgentPlugin(_run_stream_events_durable_agent)],
+    ):
+        events = await client.execute_workflow(
+            RunStreamEventsDurableAgentWorkflow.run,
+            args=['Hello'],
+            id=RunStreamEventsDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert events == snapshot(
+        [
+            'PartStartEvent',
+            'PartEndEvent',
+            'FunctionToolCallEvent',
+            'FunctionToolResultEvent',
+            'PartStartEvent',
+            'FinalResultEvent',
+            'PartDeltaEvent',
+            'PartDeltaEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'AgentRunResultEvent',
+        ]
+    )
+
+
+_run_sync_durable_agent = Agent(
+    TestModel(custom_output_text='Sync output'),
+    name='durability_run_sync_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class RunSyncDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = _run_sync_durable_agent.run_sync(prompt)
+        return result.output  # pragma: no cover
+
+
+async def _first_workflow_task_failure(handle: WorkflowHandle[Any, Any]) -> tuple[str, str]:
+    """Return the `(type, stack trace)` of the first workflow *task* failure recorded in history."""
+
+    async def poll() -> tuple[str, str]:
+        while True:
+            async for event in handle.fetch_history_events():
+                if event.HasField('workflow_task_failed_event_attributes'):
+                    failure = event.workflow_task_failed_event_attributes.failure
+                    return failure.application_failure_info.type, failure.stack_trace
+            await asyncio.sleep(0.1)  # pragma: lax no cover
+
+    return await asyncio.wait_for(poll(), timeout=30)
+
+
+async def test_durability_run_sync_in_workflow_fails_the_workflow_task(client: Client) -> None:
+    """`agent.run_sync()` inside a workflow is unusable under the `TemporalDurability` capability.
+
+    The deprecated `TemporalAgent` wrapper raises a clean `UserError` telling you to `await
+    agent.run()` instead; the capability has no such guard, so the call reaches
+    `loop.run_until_complete()` on Temporal's workflow event loop, which is an
+    `asyncio.AbstractEventLoop` subclass that leaves that method unimplemented. The resulting
+    `NotImplementedError` isn't one of the plugin's `workflow_failure_exception_types`, so it
+    fails the workflow *task*, which Temporal retries forever: the caller hangs instead of seeing
+    an error. That's why this test asserts against the recorded task failure and terminates the
+    workflow rather than awaiting its result.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunSyncDurableAgentWorkflow],
+        plugins=[AgentPlugin(_run_sync_durable_agent)],
+    ):
+        handle = await client.start_workflow(
+            RunSyncDurableAgentWorkflow.run,
+            args=['Hello'],
+            id=RunSyncDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        try:
+            failure_type, stack_trace = await _first_workflow_task_failure(handle)
+        finally:
+            await handle.terminate()
+
+    assert failure_type == snapshot('NotImplementedError')
+    assert 'run_until_complete' in stack_trace
 
 
 async def test_temporal_durability_event_stream_handler_outside_workflow() -> None:
