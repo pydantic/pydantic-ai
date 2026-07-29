@@ -1295,7 +1295,7 @@ async def test_huggingface_close_stream_only_suppresses_async_generator_race(err
         await response.close_stream()
 
 
-_LOGPROBS = [
+_LOGPROBS: list[dict[str, Any]] = [
     {
         'token': 'hello',
         'logprob': -0.1,
@@ -1337,7 +1337,7 @@ async def test_huggingface_logprobs_in_provider_details(allow_model_requests: No
     agent = Agent(model)
 
     result = await agent.run('hello')
-    response = result.all_messages()[1]
+    response = message(result.all_messages(), ModelResponse, index=1)
     assert response.provider_details == snapshot(
         {
             'finish_reason': 'stop',
@@ -1373,7 +1373,7 @@ async def test_huggingface_stream_logprobs_in_provider_details(allow_model_reque
     async with agent.run_stream('') as result:
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello world'])
 
-    response = result.all_messages()[1]
+    response = message(result.all_messages(), ModelResponse, index=1)
     assert response.provider_details == snapshot(
         {
             'finish_reason': 'stop',
