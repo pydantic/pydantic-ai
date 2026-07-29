@@ -65,11 +65,13 @@ class SambaNovaProvider(Provider[AsyncOpenAI]):
         }
 
         profile = None
+        # SambaNova's model names are mixed case (`DeepSeek-R1-0528`, `Qwen3-32B`), and the family
+        # profile functions match on lowercase prefixes, so they need the lowercased name too.
         model_name_lower = model_name.lower()
 
         for prefix, profile_func in prefix_to_profile.items():
             if model_name_lower.startswith(prefix):
-                profile = profile_func(model_name)
+                profile = profile_func(model_name_lower)
                 break
 
         # Wrap into OpenAIModelProfile since SambaNova is OpenAI-compatible

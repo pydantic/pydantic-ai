@@ -105,6 +105,23 @@ def test_heroku_model_profile_routes_thinking_capable_families():
     assert fallback.get('supports_thinking') is None
 
 
+def test_heroku_model_profile_is_case_insensitive():
+    """The prefix match is case-insensitive, so the dispatched name has to be too.
+
+    Matching on the lowercased name but handing the family profile the original casing means a
+    mixed-case model ID selects the right profile function and then detects nothing inside it --
+    every family profile keys off lowercase prefixes.
+    """
+    provider = HerokuProvider(api_key='api-key')
+
+    for model_name in ('deepseek-r1', 'claude-3-7-sonnet'):
+        assert provider.model_profile(model_name.upper()) == provider.model_profile(model_name), model_name
+
+    deepseek_profile = provider.model_profile('DeepSeek-R1')
+    assert deepseek_profile is not None
+    assert deepseek_profile.get('supports_thinking') is True
+
+
 async def test_heroku_model_provider_claude_3_7_sonnet(allow_model_requests: None, heroku_inference_key: str):
     provider = HerokuProvider(api_key=heroku_inference_key)
     m = OpenAIChatModel('claude-3-7-sonnet', provider=provider)
