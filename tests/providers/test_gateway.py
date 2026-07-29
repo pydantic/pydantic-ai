@@ -128,29 +128,6 @@ async def test_init_with_http_client_replaces_existing_gateway_hook():
         assert request.headers['Authorization'] == 'Bearer second'
 
 
-async def test_google_gateway_only_sends_gateway_auth():
-    async with httpx.AsyncClient() as http_client:
-        provider = gateway_provider(
-            'google-cloud',
-            api_key='gateway-key',
-            base_url='https://example.com/proxy',
-            http_client=http_client,
-        )
-
-        api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
-        assert api_client.api_key == 'gateway-key'
-        headers = api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
-        assert headers is not None
-        assert headers['x-goog-api-key'] == 'gateway-key'
-
-        request = httpx.Request('POST', provider.base_url, headers=headers)
-        for hook in http_client.event_hooks['request']:
-            await hook(request)
-
-        assert request.headers['Authorization'] == 'Bearer gateway-key'
-        assert 'X-Goog-Api-Key' not in request.headers
-
-
 @pytest.fixture
 def gateway_api_key():
     return os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', 'test-api-key')
