@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
 from datetime import datetime
@@ -99,6 +98,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     _result_override: AgentRunResult[OutputDataT] | None = dataclasses.field(default=None, repr=False, init=False)
     _node_error: BaseException | None = dataclasses.field(default=None, repr=False, init=False)
     """Stores the original exception from node execution, before context manager __aexit__ may transform it."""
+    _last_yielded_node: _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]] | None = (
+        dataclasses.field(default=None, repr=False, init=False)
+    )
+    """The node most recently yielded by `__anext__`, run on the following iteration."""
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...
@@ -188,14 +191,6 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
     ) -> AsyncIterator[_agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]]:
         """Provide async-iteration over the nodes in the agent run."""
-        if self.ctx.deps.root_capability.has_wrap_node_run:
-            warnings.warn(
-                'A capability has `wrap_node_run` hooks, but bare `async for node in agent_run` '
-                'does not fire them. Use `agent_run.next(node)` to advance the run, or use '
-                '`agent.run()` which drives via `next()` automatically.',
-                UserWarning,
-                stacklevel=2,
-            )
         return self
 
     async def __anext__(
@@ -203,34 +198,28 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         """Advance to the next node automatically based on the last returned node.
 
-        Note: this uses the graph run's internal iteration which does NOT call
-        node hooks (`before_node_run`, `wrap_node_run`, `after_node_run`,
-        `on_node_run_error`). Use `next()` for capability-hooked iteration, or
-        use `agent.run()` which drives via `next()` automatically.
+        Yields each node before it runs, ending with the [`End`][pydantic_graph.basenode.End] node.
+        Advancing goes through [`next()`][pydantic_ai.run.AgentRun.next], so capability hooks fire
+        exactly as they do for [`agent.run()`][pydantic_ai.agent.AbstractAgent.run].
         """
         if self._result_override is not None:
             raise StopAsyncIteration
-        try:
-            task = await anext(self._graph_run)
-        except BaseException as exc:
-            self._node_error = exc
-            raise
-        # The completed step's messages are already recorded on `state.message_history`,
-        # so if it absorbed an external cancellation, re-assert it before advancing.
-        _utils.raise_if_cancelling()
-        node = self._task_to_node(task)
-        if isinstance(node, End) and self._graph_run.state.pending_messages:
-            # `asap` messages drain in `before_model_request` (which fires either way), but
-            # `when_idle` messages and end-of-run redirects drain in `after_node_run`, which
-            # bare iteration skips. Reaching `End` with a non-empty queue means those were
-            # stranded — fail loudly rather than silently dropping the messages.
-            raise exceptions.UndrainedPendingMessagesError(
-                'The agent run ended with undrained pending messages enqueued via `enqueue`. '
-                'Bare `async for node in agent_run` does not drain `when_idle` messages or '
-                'end-of-run redirects, because they fire in `after_node_run`, which bare iteration '
-                'skips. Use `agent_run.next(node)` to advance the run, or `agent.run()` which drives '
-                'via `next()` automatically.'
-            )
+
+        previous = self._last_yielded_node
+        if previous is None:
+            # The first node hasn't run yet: yield it so the caller can inspect (or replace) it,
+            # and run it on the next iteration.
+            node = self.next_node
+        elif isinstance(previous, End):
+            raise StopAsyncIteration
+        else:
+            try:
+                node = await self.next(previous)
+            except BaseException as exc:
+                self._node_error = exc
+                raise
+
+        self._last_yielded_node = node
         return node
 
     def _task_to_node(
@@ -409,7 +398,21 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
-        return await self._run_node_with_hooks(node, self._advance_graph)
+        return await self._run_node_with_hooks(node, self._stream_and_advance)
+
+    async def _stream_and_advance(
+        self,
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        """Execute a single graph step, streaming the node first if capabilities need its events.
+
+        A capability that overrides `wrap_run_event_stream` only sees events if the node is
+        streamed, so streaming is enabled for it here the same way `agent.run()` enables it.
+        `node.stream()` applies the capability chain itself, so draining it is all that's needed.
+        """
+        if self.ctx.deps.root_capability.has_wrap_run_event_stream:
+            await _agent_graph.drain_node_event_stream(node, self.ctx)
+        return await self._advance_graph(node)
 
     @property
     def usage(self) -> _usage.RunUsage:

@@ -39,9 +39,12 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
       The events it yields replace the inner stream for downstream wrappers and consumers,
       so it can modify, drop, or add events.
 
-    When this capability is registered, `agent.run()` automatically
-    enables streaming so the handler fires without requiring an explicit `event_stream_handler`
-    argument.
+    When this capability is registered, `agent.run()` and
+    [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable streaming so the
+    handler fires without requiring an explicit `event_stream_handler` argument. The handler
+    sees the same events however the run is driven, including under
+    [`agent.iter()`][pydantic_ai.agent.Agent.iter] and when you stream a node yourself with
+    `node.stream()`.
 
     !!! note "Durable execution"
 

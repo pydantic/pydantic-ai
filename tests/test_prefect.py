@@ -705,6 +705,38 @@ async def test_prefect_agent_run_in_flow_with_runtime_event_stream_handler(
     assert exported_messages != []
 
 
+async def test_prefect_agent_iter_in_flow_fires_event_stream_handler(
+    allow_model_requests: None, capfire: CaptureLogfire
+) -> None:
+    """`agent.iter()` inside a Prefect flow delivers events to the durable `event_stream_handler`.
+
+    The handler used to be skipped entirely under `iter()`, because `wrap_run_event_stream` was
+    applied by `run()`/`run_stream()` rather than by the node stream primitives.
+    """
+    agent = Agent(
+        FunctionModel(stream_function=runtime_handler_stream_function),
+        name='iter_handler_stream_agent',
+        capabilities=[PrefectDurability(event_stream_handler=runtime_event_stream_handler)],
+    )
+
+    @flow(name='test_prefect_agent_iter_in_flow_fires_event_stream_handler')
+    async def run_iter_flow() -> str | None:
+        async with agent.iter('Say hello') as run:
+            async for _node in run:
+                pass
+        assert run.result is not None
+        return run.result.output
+
+    assert await run_iter_flow() == snapshot('Hello world')
+
+    exported_messages = [
+        attributes['logfire.msg']
+        for span in capfire.exporter.exported_spans_as_dict()
+        if (attributes := span.get('attributes')) and attributes.get('logfire.msg') == 'runtime_event'
+    ]
+    assert exported_messages != []
+
+
 async def test_event_stream_handler_property_outside_flow() -> None:
     # Outside a Prefect flow, the `event_stream_handler` property resolves to the effective handler
     # directly, rather than the in-flow per-event dispatcher.

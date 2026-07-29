@@ -606,22 +606,14 @@ async def main():
             node = await agent_run.next(node)
 ```
 
-The example drives the run with [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] +
-[`AgentRun.next()`][pydantic_ai.run.AgentRun.next] because `'when_idle'` messages are only
-drained when the agent would otherwise reach an `End` — that drain happens in `after_node_run`,
-which doesn't fire inside a bare `async for node in agent_run:` loop. `'asap'` messages are
-drained in `before_model_request` (which fires either way) and also at the same end-of-run point
-if anything arrived during the final step. Reaching the end of a bare `async for` loop with
-undrained pending messages raises [`UndrainedPendingMessagesError`][pydantic_ai.exceptions.UndrainedPendingMessagesError],
-since those messages would otherwise be silently lost.
+`'when_idle'` messages are only drained when the agent would otherwise reach an `End` — that
+drain happens in `after_node_run`. `'asap'` messages are drained in `before_model_request`, and
+also at the same end-of-run point if anything arrived during the final step. Both fire however
+you drive the run, so [`Agent.run`][pydantic_ai.agent.AbstractAgent.run],
+[`AgentRun.next()`][pydantic_ai.run.AgentRun.next], and a bare `async for node in agent_run:`
+loop all deliver enqueued messages.
 
 !!! info "Limitations"
-    - End-of-run redirects need [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] or
-      explicit [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] driving — they
-      aren't drained inside a bare `async for node in agent_run:` loop (which raises
-      [`UndrainedPendingMessagesError`][pydantic_ai.exceptions.UndrainedPendingMessagesError]
-      if it ends with undrained messages). Messages delivered into a
-      `before_model_request` work in either case.
     - Inside a [Temporal](durable_execution/temporal.md) workflow, tools run in
       activities and don't share state with the workflow, so `ctx.enqueue` from a
       tool doesn't currently propagate back to the run. Enqueue from the workflow

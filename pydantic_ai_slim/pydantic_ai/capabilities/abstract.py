@@ -612,10 +612,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     ) -> AsyncIterable[AgentStreamEvent]:
         """Wraps the event stream for a streamed node. Can observe or transform events.
 
+        The wrapper is applied where the node's stream is produced, so it fires however the run
+        is driven — including under [`agent.iter()`][pydantic_ai.agent.Agent.iter] and when the
+        caller streams a node itself with `node.stream()`.
+
         Note: when this method is overridden (or [`Hooks.on.event`][pydantic_ai.capabilities.hooks.Hooks.on]
         / [`Hooks.on.run_event_stream`][pydantic_ai.capabilities.hooks.Hooks.on] are registered),
-        `agent.run()` automatically enables streaming mode so this hook
-        fires even without an explicit `event_stream_handler`.
+        `agent.run()` and [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable
+        streaming mode so this hook fires even without an explicit `event_stream_handler`.
         """
         async for event in stream:
             yield event

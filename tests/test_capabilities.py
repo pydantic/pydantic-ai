@@ -73,7 +73,6 @@ from pydantic_ai.exceptions import (
     SkipToolExecution,
     SkipToolValidation,
     ToolFailed,
-    UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -6592,6 +6591,108 @@ class TestProcessEventStream:
         """ProcessEventStream holds a callable so it cannot participate in spec-based construction."""
         assert ProcessEventStream.get_serialization_name() is None
 
+    @pytest.mark.parametrize('drive', ['run', 'bare_async_for', 'next', 'manual_stream'])
+    async def test_handler_fires_under_every_drive_mode(self, drive: str):
+        """Every way of driving a run delivers the same events to the capability's handler.
+
+        `wrap_run_event_stream` used to be applied by `run()`/`run_stream()` rather than by the
+        node stream primitives, so `agent.iter()` silently skipped the handler no matter how the
+        caller advanced the run.
+        """
+        handler_events: list[AgentStreamEvent] = []
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                handler_events.append(event)
+
+        agent = Agent(
+            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
+            capabilities=[ProcessEventStream(handler=handler)],
+        )
+
+        @agent.tool_plain
+        def get_thing() -> str:
+            return 'thing'
+
+        if drive == 'run':
+            await agent.run('hello')
+        else:
+            async with agent.iter('hello') as agent_run:
+                if drive == 'bare_async_for':
+                    async for _node in agent_run:
+                        pass
+                else:
+                    node = agent_run.next_node
+                    while not isinstance(node, End):
+                        if drive == 'manual_stream' and (
+                            Agent.is_model_request_node(node) or Agent.is_call_tools_node(node)
+                        ):
+                            # Streaming the node by hand must not stop `next()` from advancing it,
+                            # and must not stream it a second time.
+                            async with node.stream(agent_run.ctx) as stream:
+                                async for _event in stream:
+                                    pass
+                        node = await agent_run.next(node)
+
+        assert [type(event).__name__ for event in handler_events] == snapshot(
+            [
+                'PartStartEvent',
+                'PartEndEvent',
+                'FunctionToolCallEvent',
+                'FunctionToolResultEvent',
+                'PartStartEvent',
+                'FinalResultEvent',
+                'PartEndEvent',
+            ]
+        )
+
+    async def test_processor_transforms_events_seen_by_manual_stream(self):
+        """A processor's transformations reach a caller streaming a node by hand under `iter()`.
+
+        The processor form replaces the stream for downstream consumers, so a dropped event must
+        not surface to the `node.stream()` consumer either.
+        """
+
+        async def drop_part_starts(
+            _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterator[AgentStreamEvent]:
+            async for event in stream:
+                if not isinstance(event, PartStartEvent):
+                    yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ProcessEventStream(handler=drop_part_starts)],
+        )
+
+        seen: list[AgentStreamEvent] = []
+        async with agent.iter('hello') as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                if Agent.is_model_request_node(node):
+                    async with node.stream(agent_run.ctx) as stream:
+                        async for event in stream:
+                            seen.append(event)
+                node = await agent_run.next(node)
+
+        assert seen != []
+        assert not any(isinstance(event, PartStartEvent) for event in seen)
+
+    async def test_next_does_not_force_streaming_without_event_hooks(self):
+        """`next()` only streams when a capability registers event-stream hooks.
+
+        Without them there are no events to deliver, so the run keeps using non-streamed model
+        requests — `FunctionModel` without a `stream_function` would fail if it streamed.
+        """
+        agent = Agent(FunctionModel(simple_model_function))
+
+        async with agent.iter('hello') as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                node = await agent_run.next(node)
+
+        assert agent_run.result is not None
+
 
 class TestWrapRunShortCircuit:
     """Test short-circuiting wrap_run via iter() and run_stream()."""
@@ -6975,23 +7076,27 @@ class TestWrapNodeRunHook:
 
         assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
 
-    async def test_bare_async_for_warns_with_wrap_node_run(self):
-        """Using bare async for on iter() warns when a capability has wrap_node_run."""
+    async def test_bare_async_for_fires_wrap_node_run(self):
+        """Bare `async for` fires `wrap_node_run`, matching `next()` driving and `agent.run()`."""
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
-            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                return await handler(node)  # pragma: no cover — bare async for doesn't call this
+            nodes: list[str] = field(default_factory=lambda: [])
 
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[NodeObserverCap()])
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                self.nodes.append(type(node).__name__)
+                return await handler(node)
+
+        cap = NodeObserverCap()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
             async with agent.iter('hello') as agent_run:
                 async for _node in agent_run:
                     pass
-        assert len(w) == 1
-        assert 'wrap_node_run' in str(w[0].message)
+        assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
+        assert w == []
 
     async def test_works_with_manual_next(self):
         """wrap_node_run fires when using manual next() driving."""
@@ -16149,13 +16254,12 @@ async def test_enqueue_from_agent_run():
     )
 
 
-async def test_bare_async_for_raises_with_undrained_pending_messages():
-    """Bare `async for` reaching End with undrained `when_idle` messages raises rather than stranding them.
+async def test_bare_async_for_drains_pending_messages():
+    """Bare `async for` drains `when_idle` messages, because it advances through `next()`.
 
-    `when_idle` (and end-of-step `asap` leftovers) drain in `after_node_run`, which bare
-    iteration skips — so they'd be silently lost. `__anext__` raises
-    `UndrainedPendingMessagesError` when it would yield the `End` node with a non-empty queue,
-    pointing the user at `next()` driving.
+    `when_idle` messages (and end-of-step `asap` leftovers) drain in `after_node_run`. Bare
+    iteration used to skip the node hooks and strand them, raising `UndrainedPendingMessagesError`
+    instead; it now fires the same hooks as `agent.run()`, so the message is delivered.
     """
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -16168,12 +16272,15 @@ async def test_bare_async_for_raises_with_undrained_pending_messages():
 
     async with agent.iter('hi') as agent_run:
         agent_run.enqueue('stranded follow-up', priority='when_idle')
-        with pytest.raises(UndrainedPendingMessagesError, match='undrained pending messages'):
-            async for _ in agent_run:
-                pass
+        async for _ in agent_run:
+            pass
 
-        # The message was never delivered: it's still queued.
-        assert len(agent_run.pending_messages) == 1
+        assert agent_run.pending_messages == []
+        assert any(
+            isinstance(part, UserPromptPart) and part.content == 'stranded follow-up'
+            for message in agent_run.all_messages()
+            for part in message.parts
+        )
 
 
 async def test_pending_messages_accessible_on_run_context():

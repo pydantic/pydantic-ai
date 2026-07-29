@@ -449,6 +449,31 @@ def is_agent_node(
     return isinstance(node, AgentNode)
 
 
+async def drain_node_event_stream(
+    node: AgentNode[T, S],
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[T, S]],
+) -> None:
+    """Run the node's event stream to completion, so capabilities wrapping it see its events.
+
+    `ModelRequestNode` and `CallToolsNode` are the nodes that emit events; the rest never do.
+    Both record that their stream was opened, so a caller that streamed the node itself under
+    [`agent.iter()`][pydantic_ai.agent.Agent.iter] doesn't get it streamed a second time when
+    the run is then advanced.
+    """
+    if isinstance(node, ModelRequestNode):
+        if node._did_stream:  # pyright: ignore[reportPrivateUsage]
+            return
+        async with node.stream(ctx) as model_stream:
+            async for _event in model_stream:
+                pass
+    elif isinstance(node, CallToolsNode):
+        if node._events_iterator is not None:  # pyright: ignore[reportPrivateUsage]
+            return
+        async with node.stream(ctx) as tool_stream:
+            async for _event in tool_stream:
+                pass
+
+
 @dataclasses.dataclass
 class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that handles the user prompt and instructions."""
@@ -1711,7 +1736,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> AsyncGenerator[AsyncIterator[_messages.AgentStreamEvent]]:
         """Process the model response and yield events for the start and end of each function tool call."""
-        stream = _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
+        inner = _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
+        stream = aiter(ctx.deps.root_capability.wrap_run_event_stream(build_run_context(ctx), stream=inner))
         yield stream
 
         # Run the stream to completion if it was not finished:

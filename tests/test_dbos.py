@@ -292,6 +292,12 @@ runtime_handler_stream_agent = Agent(
 )
 runtime_handler_stream_dbos_agent = DBOSAgent(runtime_handler_stream_agent)  # pyright: ignore[reportDeprecated]
 
+iter_handler_stream_agent = Agent(
+    FunctionModel(stream_function=runtime_handler_stream_function),
+    name='iter_handler_stream_agent',
+    capabilities=[DBOSDurability(event_stream_handler=runtime_event_stream_handler)],
+)
+
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
     # Set a workflow ID for testing list steps
@@ -702,6 +708,39 @@ async def test_dbos_agent_run_in_workflow_with_runtime_event_stream_handler(
     # events asserted below). It is no longer invoked a second time at the graph level against the
     # already-consumed, empty stream, so it doesn't appear as a separate top-level workflow step.
     assert 'runtime_event_stream_handler' not in step_names
+
+    exported_event_messages = [
+        event
+        for span in capfire.exporter.exported_spans_as_dict()
+        if (attributes := span.get('attributes'))
+        and attributes.get('logfire.msg') == 'runtime_event'
+        and isinstance((event := attributes.get('event')), str)
+    ]
+    assert exported_event_messages != []
+
+
+async def test_dbos_agent_iter_in_workflow_fires_event_stream_handler(
+    allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire
+) -> None:
+    """`agent.iter()` inside a DBOS workflow delivers events to the durable `event_stream_handler`.
+
+    The handler used to be skipped entirely under `iter()`, because `wrap_run_event_stream` was
+    applied by `run()`/`run_stream()` rather than by the node stream primitives.
+    """
+
+    @DBOS.workflow()
+    async def run_iter_workflow() -> str | None:
+        async with iter_handler_stream_agent.iter('Say hello') as run:
+            async for _node in run:
+                pass
+        assert run.result is not None
+        return run.result.output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_iter_workflow()
+
+    assert output == snapshot('Hello world')
 
     exported_event_messages = [
         event
