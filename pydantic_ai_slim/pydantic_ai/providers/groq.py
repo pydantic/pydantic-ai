@@ -73,6 +73,7 @@ class GroqProvider(Provider[AsyncGroq]):
             'mistral': mistral_model_profile,
             'moonshotai/': groq_moonshotai_model_profile,
             'compound-': groq_model_profile,
+            'groq/compound': groq_model_profile,
             'openai/': openai_model_profile,
         }
 
