@@ -29,6 +29,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
 from .conftest import try_import
@@ -980,32 +981,31 @@ class TestMCPToolsetIntegration:
         toolset = MCPToolset('https://example.com/mcp')
         assert 'MCPToolset' in toolset.label
 
-    async def test_tool_for_tool_def_inherits_ctx_retries_when_unset(self, run_context: RunContext):
-        from pydantic_ai.tools import ToolDefinition
+    @pytest.mark.parametrize(
+        'toolset_max_retries,ctx_max_retries,expected',
+        [
+            pytest.param(None, 5, 5, id='inherits-ctx'),
+            pytest.param(2, 5, 2, id='explicit-wins'),
+        ],
+    )
+    async def test_tool_for_tool_def_retry_budget(
+        self, run_context: RunContext, toolset_max_retries: int | None, ctx_max_retries: int, expected: int
+    ):
+        """Resolution table for `tool_for_tool_def`: an explicit `max_retries` wins, else `ctx.max_retries`.
 
-        run_context = replace(run_context, max_retries=5)
-        toolset = MCPToolset('https://example.com/mcp')
+        A unit rather than an agent-run test because `ToolsetTool.max_retries` is only observable
+        end-to-end as a retry *count*; the durable end-to-end proof lives in
+        `tests/test_dbos.py::test_dbos_mcp_tool_inherits_agent_retries`.
+        """
+        toolset = MCPToolset('https://example.com/mcp', max_retries=toolset_max_retries)
         tool = toolset.tool_for_tool_def(
             ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'}),
-            ctx=run_context,
+            ctx=replace(run_context, max_retries=ctx_max_retries),
         )
-        assert tool.max_retries == 5
-
-    async def test_tool_for_tool_def_explicit_retries_take_precedence(self, run_context: RunContext):
-        from pydantic_ai.tools import ToolDefinition
-
-        run_context = replace(run_context, max_retries=5)
-        toolset = MCPToolset('https://example.com/mcp', max_retries=2)
-        tool = toolset.tool_for_tool_def(
-            ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'}),
-            ctx=run_context,
-        )
-        assert tool.max_retries == 2
+        assert tool.max_retries == expected
 
     async def test_tool_for_tool_def_defaults_to_one_retry_without_ctx(self):
-        """`ctx` is optional to keep the pre-existing `tool_for_tool_def(tool_def)` calling convention working."""
-        from pydantic_ai.tools import ToolDefinition
-
+        """`ctx` is optional so external `tool_for_tool_def(tool_def)` callers keep working."""
         toolset = MCPToolset('https://example.com/mcp')
         tool = toolset.tool_for_tool_def(
             ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'})
