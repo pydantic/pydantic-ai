@@ -1,4 +1,4 @@
-"""Capability creation: let an agent write and register real pydantic-ai capabilities mid-run."""
+"""Runtime capability creation for agent-authored Pydantic AI capabilities."""
 
 from __future__ import annotations
 
@@ -28,10 +28,10 @@ _DEFAULT_GUIDANCE = (
 
 @dataclass
 class CapabilityCreation(AbstractCapability[AgentDepsT]):
-    """Let an agent author, validate, and persist real pydantic-ai capabilities at runtime.
+    """Create Pydantic AI capabilities during one run for activation on the next.
 
     Exposes `author_capability(name, code)`, `list_authored_capabilities`, and
-    `disable_authored_capability`. Authoring writes a real `.py` to `directory`,
+    `disable_authored_capability`. Authoring writes Python source to `directory`,
     imports it, and validates it (exactly one `AbstractCapability` subclass that
     constructs with no arguments and whose static getters run). Authored
     capabilities hold live code, so they are not spec-serializable and are
@@ -57,9 +57,7 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     ```
 
     This executes authored Python in-process -- the same trust boundary an agent
-    that already runs shell commands and edits files operates under. The dormant
-    `pa` Monty hook-slot registration system is the sandboxed alternative; see the
-    capability README.
+    that already runs shell commands and edits files operates under.
     """
 
     directory: Path

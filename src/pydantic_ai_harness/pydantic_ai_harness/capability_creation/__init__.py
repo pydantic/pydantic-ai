@@ -1,4 +1,4 @@
-"""Capability creation: let an agent write, validate, and register real capabilities mid-run."""
+"""Runtime capability creation for agent-authored Pydantic AI capabilities."""
 
 from pydantic_ai_harness.capability_creation._capability import CapabilityCreation
 from pydantic_ai_harness.capability_creation._store import AuthoredCapability, CapabilityStore

@@ -1,4 +1,4 @@
-# Capability Creation
+# Runtime Capability Creation
 
 > [!NOTE]
 > Import this capability from its submodule -- there is no top-level `pydantic_ai_harness` re-export:
@@ -9,7 +9,12 @@
 >
 > The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
 
-Let an agent author, validate, and persist real pydantic-ai capabilities at runtime.
+Runtime capability creation lets an agent write, validate, and persist Pydantic AI
+capabilities during one run for activation on the next.
+
+`CapabilityCreation` is for capabilities authored by the agent as Python source. For
+capabilities written or selected by application code, see
+[Building Custom Capabilities](https://pydantic.dev/docs/ai/capabilities/custom/).
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/capability_creation/)
 
@@ -18,8 +23,8 @@ Let an agent author, validate, and persist real pydantic-ai capabilities at runt
 A coding agent often discovers, mid-task, that it wants a behavior its host does not
 yet have: a guardrail, an extra instruction, a tool, a request hook. The capability
 surface to express that already exists -- but only a developer can write a capability
-class, wire it into the agent, and restart. The agent itself cannot extend its own host
-while it runs.
+class, wire it into the agent, and restart. Without runtime capability creation, the
+agent cannot author that extension during a run and make it available to the next run.
 
 ## The solution
 
@@ -33,7 +38,8 @@ while it runs.
   async lifecycle hooks are not run -- they need a live `RunContext`.
 - `list_authored_capabilities()` -- list authored capabilities with status and any
   validation error.
-- `disable_authored_capability(name)` -- stop a capability from being injected.
+- `disable_authored_capability(name)` -- stop a capability from being injected on the
+  next run.
 
 A "hook" is not a standalone object in pydantic-ai -- it is a method on a capability. So
 authoring a hook means authoring a capability that overrides one lifecycle method.
@@ -54,6 +60,7 @@ string; set `guidance=''` to omit it entirely.
 
 ## Activation boundary
 
+Writing and validation happen in the current run; activation happens on the next run.
 A capability **cannot** be added to a live, already-executing run. pydantic-ai resolves
 the effective capability set once at the start of each run (the run's `root_capability`
 is fixed; there is no setter). So an authored capability is live on the **next**
@@ -98,7 +105,7 @@ validation error -- the surface a UI can read to show what the agent has authore
 Capability names must be lowercase letters, digits, and underscores, starting with a
 letter; reusing a name replaces the previous capability of that name.
 
-## Trust boundary and the sandboxed alternative
+## Trust boundary
 
 Authoring executes arbitrary Python in-process at import, construction, and run time. That
 is the same trust boundary an agent that already runs shell commands and edits files
@@ -109,14 +116,6 @@ executing on your host.
 Because authored capabilities hold live code, they are not spec-serializable
 (`get_serialization_name()` returns `None`) and are persisted as source rather than as an
 agent spec.
-
-The sandboxed alternative is the dormant `pa` Monty hook-slot registration system in the
-Loopy tree (`pa/slots.py`, `pa/registration_tools.py`, `pa/capability.py`
-`PaRegistrations`, `pa/registrations.py`, `pa/registration_runtime.py`,
-`pa/monty_bridge.py`). It wires type-checked, resource-limited, allowlist-gated
-`pydantic_monty` snippets into typed hook slots instead of importing native `.py`. It
-trades native power for sandboxing and is also next-run-only. `CapabilityCreation` chooses
-native authoring; this note records the alternative so the tradeoff is on file.
 
 ## Typing
 

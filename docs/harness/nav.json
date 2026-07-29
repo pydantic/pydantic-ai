@@ -21,7 +21,7 @@
       { "label": "Planning", "slug": "planning" },
       { "label": "Memory", "slug": "memory" },
       { "label": "Modal Sandbox", "slug": "modal-sandbox" },
-      { "label": "Capability Creation", "slug": "capability-creation" },
+      { "label": "Runtime Capability Creation", "slug": "capability-creation" },
       { "label": "Guardrails", "slug": "guardrails" },
       { "label": "Managed Prompt", "slug": "managed-prompt" },
       { "label": "LocalStack", "slug": "localstack" },

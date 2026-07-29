@@ -115,7 +115,7 @@ Checks:
   purpose. Mechanism belongs lower down.
 - **Name matches the capability.** The doc filename, its `# H1`, and the
   README's `# H1` all use the capability's descriptive name (e.g.
-  "Tool Output Limits", not "Overflow"; "Capability Creation", not
+  "Tool Output Limits", not "Overflow"; "Runtime Capability Creation", not
   "Authoring").
 - **Source link.** Each page links its source module
   (`https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/<module>/`)

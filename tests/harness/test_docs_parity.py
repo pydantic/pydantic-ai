@@ -133,7 +133,7 @@ _CAPABILITY_PAGE_META = {
     'subagents.md': ('subagents', 'Subagents'),
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
     'planning.md': ('planning', 'Planning'),
-    'capability-creation.md': ('capability_creation', 'Capability Creation'),
+    'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input & Output Guardrails'),
     'localstack.md': ('localstack', 'LocalStack'),
     'acp.md': ('experimental/acp', 'ACP (Agent Client Protocol)'),

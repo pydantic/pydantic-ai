@@ -1,11 +1,13 @@
 ---
-title: Capability Creation
-description: Let an agent write, validate, and persist real pydantic-ai capabilities at runtime, live on the next run.
+title: Runtime Capability Creation
+description: Let an agent create, validate, and persist Pydantic AI capabilities during one run for activation on the next.
 ---
 
-# Capability Creation
+# Runtime Capability Creation
 
-`CapabilityCreation` lets an agent author, validate, and persist real pydantic-ai capabilities while it runs. It exposes three tools that let the model write a capability class to disk as Python source, validate it immediately, and manage the set of authored capabilities. Each authored capability is a real `pydantic_ai.capabilities.AbstractCapability` subclass, so it can contribute instructions, model settings, a toolset, native tools, or a lifecycle hook.
+Runtime capability creation lets an agent write, validate, and persist Pydantic AI capabilities during one run for activation on the next. `CapabilityCreation` exposes tools that let the model write an `AbstractCapability` subclass to disk as Python source and validate it immediately; the orchestrator loads active authored capabilities into the next `agent.run(...)`.
+
+`CapabilityCreation` is for capabilities authored by the agent as Python source. For capabilities written or selected by application code, see [Building Custom Capabilities](/ai/capabilities/custom/).
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/capability_creation/)
 
@@ -13,7 +15,7 @@ description: Let an agent write, validate, and persist real pydantic-ai capabili
 
 ## The problem
 
-A coding agent often discovers, mid-task, that it wants a behavior its host does not yet have: a guardrail, an extra instruction, a tool, a request hook. The capability surface to express that already exists -- but normally only a developer can write a capability class, wire it into the agent, and restart. The agent itself cannot extend its own host while it runs.
+A coding agent often discovers, mid-task, that it wants a behavior its host does not yet have: a guardrail, an extra instruction, a tool, a request hook. The capability surface to express that already exists -- but normally only a developer can write a capability class, wire it into the agent, and restart. Without runtime capability creation, the agent cannot author that extension during a run and make it available to the next run.
 
 ## The solution
 
@@ -43,6 +45,7 @@ The agent can now call `author_capability`, `list_authored_capabilities`, and `d
 
 ## Activation boundary
 
+Writing and validation happen in the current run; activation happens on the next run.
 A capability **cannot** be added to a live, already-executing run. pydantic-ai resolves the effective capability set once at the start of each run (the run's root capability is fixed; there is no setter). So an authored capability is live on the **next** `agent.run(...)`, not the run that authored it. Authoring writes and validates the capability immediately, but its tools and hooks only exist once the next run's toolset and capability chain are assembled at run start.
 
 ### Integration contract
