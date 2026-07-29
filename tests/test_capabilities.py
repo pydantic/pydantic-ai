@@ -1875,7 +1875,10 @@ def test_model_json_schema_with_capabilities():
                         },
                         'size': {
                             'anyOf': [
-                                {'type': 'string'},
+                                {
+                                    'enum': ['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'],
+                                    'type': 'string',
+                                },
                                 {'type': 'null'},
                             ],
                             'title': 'Size',
