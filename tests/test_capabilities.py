@@ -931,8 +931,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-2.5-flash-lite',
                         'gateway/google-cloud:gemini-2.5-pro',
                         'gateway/google-cloud:gemini-3-flash-preview',
-                        'gateway/google-cloud:gemini-3-pro-image-preview',
-                        'gateway/google-cloud:gemini-3.1-flash-image-preview',
+                        'gateway/google-cloud:gemini-3-pro-image',
+                        'gateway/google-cloud:gemini-3.1-flash-image',
                         'gateway/google-cloud:gemini-3.1-flash-lite',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/google-cloud:gemini-3.5-flash',
@@ -943,8 +943,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-2.5-flash-lite',
                         'gateway/google:gemini-2.5-pro',
                         'gateway/google:gemini-3-flash-preview',
-                        'gateway/google:gemini-3-pro-image-preview',
-                        'gateway/google:gemini-3.1-flash-image-preview',
+                        'gateway/google:gemini-3-pro-image',
+                        'gateway/google:gemini-3.1-flash-image',
                         'gateway/google:gemini-3.1-flash-lite',
                         'gateway/google:gemini-3.1-pro-preview',
                         'gateway/google:gemini-3.5-flash',
@@ -955,8 +955,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/groq:openai/gpt-oss-120b',
                         'gateway/groq:openai/gpt-oss-20b',
                         'gateway/groq:openai/gpt-oss-safeguard-20b',
-                        'gateway/openai:computer-use-preview',
-                        'gateway/openai:computer-use-preview-2025-03-11',
                         'gateway/openai:gpt-3.5-turbo',
                         'gateway/openai:gpt-3.5-turbo-0125',
                         'gateway/openai:gpt-3.5-turbo-1106',
@@ -978,8 +976,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-4o-mini-2024-07-18',
                         'gateway/openai:gpt-5',
                         'gateway/openai:gpt-5-2025-08-07',
-                        'gateway/openai:gpt-5-chat-latest',
-                        'gateway/openai:gpt-5-codex',
                         'gateway/openai:gpt-5-mini',
                         'gateway/openai:gpt-5-mini-2025-08-07',
                         'gateway/openai:gpt-5-nano',
@@ -988,9 +984,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-5-pro-2025-10-06',
                         'gateway/openai:gpt-5.1',
                         'gateway/openai:gpt-5.1-2025-11-13',
-                        'gateway/openai:gpt-5.1-chat-latest',
-                        'gateway/openai:gpt-5.1-codex',
-                        'gateway/openai:gpt-5.1-codex-max',
                         'gateway/openai:gpt-5.2',
                         'gateway/openai:gpt-5.2-2025-12-11',
                         'gateway/openai:gpt-5.2-chat-latest',
@@ -1025,9 +1018,9 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-2.5-flash-preview-09-2025',
                         'google-cloud:gemini-2.5-pro',
                         'google-cloud:gemini-3-flash-preview',
-                        'google-cloud:gemini-3-pro-image-preview',
+                        'google-cloud:gemini-3-pro-image',
                         'google-cloud:gemini-3-pro-preview',
-                        'google-cloud:gemini-3.1-flash-image-preview',
+                        'google-cloud:gemini-3.1-flash-image',
                         'google-cloud:gemini-3.1-flash-lite',
                         'google-cloud:gemini-3.1-pro-preview',
                         'google-cloud:gemini-3.5-flash',
@@ -1043,9 +1036,9 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-2.5-flash-preview-09-2025',
                         'google:gemini-2.5-pro',
                         'google:gemini-3-flash-preview',
-                        'google:gemini-3-pro-image-preview',
+                        'google:gemini-3-pro-image',
                         'google:gemini-3-pro-preview',
-                        'google:gemini-3.1-flash-image-preview',
+                        'google:gemini-3.1-flash-image',
                         'google:gemini-3.1-flash-lite',
                         'google:gemini-3.1-pro-preview',
                         'google:gemini-3.5-flash',
@@ -1116,8 +1109,6 @@ def test_model_json_schema_with_capabilities():
                         'moonshotai:moonshot-v1-8k',
                         'moonshotai:moonshot-v1-8k-vision-preview',
                         'moonshotai:moonshot-v1-auto',
-                        'openai-chat:computer-use-preview',
-                        'openai-chat:computer-use-preview-2025-03-11',
                         'openai-chat:gpt-3.5-turbo',
                         'openai-chat:gpt-3.5-turbo-0125',
                         'openai-chat:gpt-3.5-turbo-0301',
@@ -1151,8 +1142,6 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-4o-search-preview-2025-03-11',
                         'openai-chat:gpt-5',
                         'openai-chat:gpt-5-2025-08-07',
-                        'openai-chat:gpt-5-chat-latest',
-                        'openai-chat:gpt-5-codex',
                         'openai-chat:gpt-5-mini',
                         'openai-chat:gpt-5-mini-2025-08-07',
                         'openai-chat:gpt-5-nano',
@@ -1161,9 +1150,6 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-5-pro-2025-10-06',
                         'openai-chat:gpt-5.1',
                         'openai-chat:gpt-5.1-2025-11-13',
-                        'openai-chat:gpt-5.1-chat-latest',
-                        'openai-chat:gpt-5.1-codex',
-                        'openai-chat:gpt-5.1-codex-max',
                         'openai-chat:gpt-5.2',
                         'openai-chat:gpt-5.2-2025-12-11',
                         'openai-chat:gpt-5.2-chat-latest',
@@ -1194,8 +1180,6 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:o4-mini-2025-04-16',
                         'openai-chat:o4-mini-deep-research',
                         'openai-chat:o4-mini-deep-research-2025-06-26',
-                        'openai:computer-use-preview',
-                        'openai:computer-use-preview-2025-03-11',
                         'openai:gpt-3.5-turbo',
                         'openai:gpt-3.5-turbo-0125',
                         'openai:gpt-3.5-turbo-0301',
@@ -1224,8 +1208,6 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-4o-mini-audio-preview-2024-12-17',
                         'openai:gpt-5',
                         'openai:gpt-5-2025-08-07',
-                        'openai:gpt-5-chat-latest',
-                        'openai:gpt-5-codex',
                         'openai:gpt-5-mini',
                         'openai:gpt-5-mini-2025-08-07',
                         'openai:gpt-5-nano',
@@ -1234,9 +1216,6 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-5-pro-2025-10-06',
                         'openai:gpt-5.1',
                         'openai:gpt-5.1-2025-11-13',
-                        'openai:gpt-5.1-chat-latest',
-                        'openai:gpt-5.1-codex',
-                        'openai:gpt-5.1-codex-max',
                         'openai:gpt-5.2',
                         'openai:gpt-5.2-2025-12-11',
                         'openai:gpt-5.2-chat-latest',
@@ -7810,11 +7789,28 @@ class TestImageGenerationCapability:
             ]
         )
 
-    @pytest.mark.parametrize('model_name', ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'])
-    def test_image_generation_rejects_image_only_model(self, model_name: str):
-        """Using a dedicated image model like gpt-image-2 raises a clear error at construction."""
-        with pytest.raises(UserError, match=f'{model_name!r} is a dedicated image generation model'):
-            ImageGeneration(fallback_model=f'openai-responses:{model_name}')
+    @pytest.mark.parametrize(
+        'provider, model_name, suggestion',
+        [
+            ('openai-responses', 'gpt-image-2', 'openai-responses:gpt-5.5'),
+            ('openai-responses', 'gpt-image-1.5', 'openai-responses:gpt-5.5'),
+            ('openai-responses', 'gpt-image-1', 'openai-responses:gpt-5.4'),
+            ('openai-responses', 'gpt-image-1-mini', 'openai-responses:gpt-5.4'),
+            ('google', 'imagen-3.0-generate-002', 'google:gemini-3-pro-image'),
+            ('google', 'imagen-3.0-fast-generate-001', 'google:gemini-3-pro-image'),
+        ],
+    )
+    def test_image_generation_rejects_image_only_model(self, provider: str, model_name: str, suggestion: str):
+        """Using a dedicated image model raises a clear error with a conversational alternative."""
+        with pytest.raises(
+            UserError,
+            match=re.escape(
+                f'{model_name!r} is a dedicated image generation model that cannot be used as '
+                f'`fallback_model` directly. Use a conversational model with image generation '
+                f'support instead, e.g. {suggestion!r}.'
+            ),
+        ):
+            ImageGeneration(fallback_model=f'{provider}:{model_name}')
 
     @pytest.mark.vcr()
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
