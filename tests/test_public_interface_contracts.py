@@ -248,8 +248,9 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     # is explicitly passed as `toolsets=None` so the runtime toolsets are not added twice.
     ('DBOSAgent', 'iter'): frozenset({'toolsets'}),
     ('PrefectAgent', 'iter'): frozenset({'toolsets'}),
-    # Forwarded only when set, through a `**` splat this walk deliberately does not read, so a
-    # wrapped `override` that predates the keyword is never handed it.
+    # Forwarded only when set, through a `**` splat this walk deliberately does not read. The
+    # conditional is residue of the removed `output_retries` deprecation shim (`24c8cdca7`) rather
+    # than a compatibility mechanism; the other nine keywords forward unconditionally.
     ('WrapperAgent', 'override'): frozenset({'retries'}),
 }
 
