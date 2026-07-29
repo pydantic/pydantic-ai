@@ -357,7 +357,7 @@ def get_grok_tool_chunk(
     response = create_response(
         content='',
         tool_calls=response_tool_calls,
-        finish_reason=finish_reason if finish_reason else None,
+        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
         usage=usage,
     )
 
@@ -378,7 +378,7 @@ def get_grok_text_chunk(text: str, finish_reason: str = 'stop') -> tuple[chat_ty
     usage = usage_pb2.SamplingUsage(prompt_tokens=2, completion_tokens=1) if finish_reason else None
     response = create_response(
         content=text,
-        finish_reason=finish_reason if finish_reason else None,
+        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
         usage=usage,
     )
 
@@ -402,7 +402,7 @@ def get_grok_reasoning_text_chunk(
     usage = usage_pb2.SamplingUsage(prompt_tokens=2, completion_tokens=1) if finish_reason else None
     response = create_response(
         content=text,
-        finish_reason=finish_reason if finish_reason else None,
+        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
         usage=usage,
         reasoning_content=reasoning_content,
         encrypted_content=encrypted_content,

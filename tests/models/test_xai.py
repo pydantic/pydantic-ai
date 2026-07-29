@@ -6171,13 +6171,26 @@ def test_xai_finish_reason_proto_map_covers_all_enum_members():
 
     # REASON_INVALID (0) is the proto default meaning "not finished yet" and is deliberately unmapped.
     expected_unmapped = {sample_pb2.FinishReason.REASON_INVALID}
-    mapped = set(xai_module._FINISH_REASON_PROTO_MAP.keys())
+    mapped = set(xai_module._FINISH_REASON_PROTO_MAP.keys())  # pyright: ignore[reportPrivateUsage]
     all_members = {value for name, value in sample_pb2.FinishReason.items() if name.startswith('REASON')}
 
     unmapped = all_members - mapped
     assert unmapped == expected_unmapped, (
         f'Expected only {expected_unmapped} to be unmapped, but got unmapped={unmapped}'
     )
+
+
+def test_xai_map_finish_reason_empty_outputs_returns_none():
+    """`_map_finish_reason` returns None when the response has no outputs."""
+    import xai_sdk.chat as chat_types
+    from xai_sdk.proto import chat_pb2
+
+    from pydantic_ai.models.xai import _map_finish_reason  # pyright: ignore[reportPrivateUsage]
+
+    proto = chat_pb2.GetChatCompletionResponse(id='grok-123', outputs=[])
+    response = chat_types.Response(proto, index=None)
+
+    assert _map_finish_reason(response) is None
 
 
 # End of tests
