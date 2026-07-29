@@ -166,11 +166,12 @@ def gateway_provider(
 
     own_http_client = http_client is None
     http_client = http_client or create_async_http_client()
-    _add_request_hook(http_client, _GatewayRequestHook(api_key))
+    remove_google_api_key = canonical == 'google-cloud'
+    _add_request_hook(http_client, _GatewayRequestHook(api_key, remove_google_api_key=remove_google_api_key))
 
     def _http_client_factory() -> httpx.AsyncClient:
         client = create_async_http_client()
-        _add_request_hook(client, _GatewayRequestHook(api_key))
+        _add_request_hook(client, _GatewayRequestHook(api_key, remove_google_api_key=remove_google_api_key))
         return client
 
     def _with_http_client(provider: Provider[Any]) -> Provider[Any]:
@@ -216,8 +217,9 @@ class _GatewayRequestHook:
     can dedupe the gateway's own hook via `isinstance` on repeated calls with the same client.
     """
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, *, remove_google_api_key: bool = False) -> None:
         self._api_key = api_key
+        self._remove_google_api_key = remove_google_api_key
 
     async def __call__(self, request: httpx.Request) -> httpx.Request:
         from opentelemetry.propagate import inject
@@ -226,6 +228,10 @@ class _GatewayRequestHook:
         inject(headers)
         request.headers.update(headers)
 
+        if self._remove_google_api_key:
+            # The Gateway key authenticates with the Gateway, not Google. google-genai
+            # treats the same value as an upstream API key and adds this header.
+            request.headers.pop('X-Goog-Api-Key', None)
         if 'Authorization' not in request.headers:
             request.headers['Authorization'] = f'Bearer {self._api_key}'
 
