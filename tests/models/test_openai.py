@@ -4948,6 +4948,38 @@ async def test_openai_gpt_5_2_temperature_warns_when_reasoning_enabled(allow_mod
     assert 'temperature' not in get_mock_chat_completion_kwargs(mock_client)[0]
 
 
+async def test_sampling_params_dropped_for_reasoning_without_mutating_caller(allow_model_requests: None):
+    """Dropping the sampling params for a reasoning model doesn't empty the caller's settings dict.
+
+    `merge_model_settings` returns the caller's own dict by identity when only one of the model's and
+    the run's settings is set, so `_drop_sampling_params_for_reasoning`'s `pop` loop used to strip the
+    user's dict. Reusing it then silently lost the settings — with a reasoning and a non-reasoning
+    model sharing one dict, the second model's `temperature` was dropped too, which is exactly the
+    case `_drop_sampling_params_for_reasoning` is careful *not* to apply to.
+
+    A unit test rather than a VCR one: the assertions are on a caller-side object and on the request
+    a second model receives, neither of which a recorded interaction can express.
+    """
+    shared_settings = OpenAIChatModelSettings(temperature=0.5, top_p=0.9)
+
+    reasoning_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='hi', role='assistant')))
+    reasoning_model = OpenAIChatModel('o3-mini', provider=OpenAIProvider(openai_client=reasoning_client))
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await Agent(reasoning_model, model_settings=shared_settings).run('hello')
+
+    assert shared_settings == {'temperature': 0.5, 'top_p': 0.9}
+    # Still dropped from the request itself, which is the point of the helper.
+    assert 'temperature' not in get_mock_chat_completion_kwargs(reasoning_client)[0]
+
+    # The settings the reasoning model rejected still reach a model that accepts them.
+    chat_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='hi', role='assistant')))
+    chat_model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=chat_client))
+    await Agent(chat_model, model_settings=shared_settings).run('hello')
+
+    chat_kwargs = get_mock_chat_completion_kwargs(chat_client)[0]
+    assert (chat_kwargs['temperature'], chat_kwargs['top_p']) == (0.5, 0.9)
+
+
 async def test_openai_model_cerebras_provider(allow_model_requests: None, cerebras_api_key: str):
     m = OpenAIChatModel('llama3.3-70b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m)
