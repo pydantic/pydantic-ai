@@ -66,7 +66,7 @@ async def test_map_non_iterable_raises_error():
 
     g.add(
         g.edge_from(g.start_node).to(return_non_iterable),
-        g.edge_from(return_non_iterable).map().to(process_item),  # type: ignore  # purposely have a type error here
+        g.edge_from(return_non_iterable).map().to(process_item),  # pyright: ignore[reportAttributeAccessIssue, reportUnknownArgumentType, reportUnknownMemberType]  # purposely have a type error here
         g.edge_from(process_item).to(g.end_node),
     )
 

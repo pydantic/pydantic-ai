@@ -4894,7 +4894,7 @@ async def test_xai_stream_tool_call_without_name_ignored(allow_model_requests: N
                 final_response = response
 
     assert final_response is not None
-    assert not any(isinstance(p, ToolCallPart) for p in final_response.parts)
+    assert not final_response.tool_calls
 
 
 async def test_xai_stream_client_side_tool_call_prefers_delta_when_accumulated_missing_or_empty(
@@ -4946,7 +4946,7 @@ async def test_xai_stream_client_side_tool_call_prefers_delta_when_accumulated_m
                 final_response = response
 
     assert final_response is not None
-    tool_calls = [p for p in final_response.parts if isinstance(p, ToolCallPart)]
+    tool_calls = final_response.tool_calls
     assert tool_calls, 'expected at least one client-side ToolCallPart'
     assert any(p.tool_name == 'final_result' and p.args == '{"first": "One"}' for p in tool_calls)
 
@@ -4984,7 +4984,7 @@ async def test_xai_stream_client_tool_args_non_prefix_path(allow_model_requests:
     assert final_response is not None
     # The tool call part should have args that include both delta applications
     # (the behavior is to concatenate, so we get 'ABCXYZ')
-    tool_calls = [p for p in final_response.parts if isinstance(p, ToolCallPart)]
+    tool_calls = final_response.tool_calls
     assert tool_calls, 'expected at least one client-side ToolCallPart'
     assert any(p.tool_name == 'final_result' and p.args == 'ABCXYZ' for p in tool_calls)
 
