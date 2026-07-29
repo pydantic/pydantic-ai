@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
     AbstractToolset,
@@ -4025,6 +4026,16 @@ async def test_tool_metadata_crosses_activity_boundary_as_json():
     assert exc_info.value.metadata == snapshot(
         {'set': ['a'], 'tuple': [1, 2], 'dataclass': {'label': 'x'}, 'bytes': '\x01', 'int_keys': {'1': 'one'}}
     )
+
+    # Only UTF-8-decodable bytes make it across at all; arbitrary binary needs base64 encoding.
+    binary_params = CallToolParams(
+        name='analyze',
+        tool_args={},
+        serialized_run_context={},
+        tool_def=ToolDefinition(name='analyze', metadata={'bytes': b'\xff'}),
+    )
+    with pytest.raises(PydanticSerializationError, match='invalid utf-8 sequence'):
+        await pydantic_data_converter.encode([binary_params])
 
 
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
