@@ -485,7 +485,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 f'Capabilities added per-run inside a Temporal workflow are not supported: {names}. '
                 'Temporal activities must be registered with the worker before the workflow runs. '
                 'Attach all capabilities at agent construction time so `TemporalDurability.for_agent()` '
-                'can register their activities.'
+                'can register the activities for the toolsets they contribute.'
             )
 
     async def wrap_model_request(
