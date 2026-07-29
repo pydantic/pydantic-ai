@@ -134,6 +134,11 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         item_id = ResponseFunctionCallArgumentsDoneEvent.construct(**data).item_id
         if item_id:
             event = replace(event, item_id=item_id)
+    elif isinstance(event, InputTranscript):
+        # xAI's final `.completed` is a whole snapshot like its `.updated` partials, so it too must
+        # replace the accumulated text. Read as an increment it would be *appended* to the snapshots it
+        # supersedes, and a revised turn would end up saying everything twice.
+        event = replace(event, cumulative=True)
     return event
 
 

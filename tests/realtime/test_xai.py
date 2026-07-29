@@ -109,8 +109,16 @@ def test_map_input_transcription_updated_tolerates_a_thin_frame(frame: dict[str,
 
 
 def test_map_input_transcription_completed_delegates_to_openai_codec() -> None:
+    """The final snapshot is read through the OpenAI codec, but still marked cumulative.
+
+    xAI's `.completed` carries the whole transcript, like its `.updated` partials. Read as an increment
+    it would be appended to the snapshots it supersedes, so a turn xAI revised mid-flight ends up saying
+    everything twice (measured live: `'Hello, my name.'` then `'Hello, my name is Marcelo.'` became
+    `'Hello, my name.Hello, my name is Marcelo.'`). `test_session`'s
+    `test_cumulative_transcripts_revise_the_turn_instead_of_doubling_up` pins the session half.
+    """
     event = map_event({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'weather?'})
-    assert event == InputTranscript(text='weather?', is_final=True)
+    assert event == InputTranscript(text='weather?', is_final=True, cumulative=True)
 
 
 def test_map_tool_call_preserves_xai_item_id() -> None:
@@ -150,7 +158,7 @@ def test_map_input_transcription_completed_respects_status() -> None:
     }
     assert map_event({**base, 'status': 'in_progress'}) is None
     assert map_event({**base, 'status': 'completed'}) == InputTranscript(
-        text='weather?', is_final=True, item_id='item-1'
+        text='weather?', is_final=True, item_id='item-1', cumulative=True
     )
 
 
