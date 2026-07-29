@@ -14,7 +14,7 @@ from pathlib import Path
 
 from pydantic_ai import ImageGenerator
 
-generator = ImageGenerator('openai:gpt-image-1.5')
+generator = ImageGenerator('openai:gpt-image-2')
 
 
 async def main():
@@ -49,7 +49,8 @@ async def replace_subject(source: BinaryImage) -> BinaryImage:
 
 The order of multiple reference images is preserved. Provider-hosted files are supported by Google and xAI, and the
 [`UploadedFile.provider_name`][pydantic_ai.messages.UploadedFile] must match the selected provider. OpenAI's image-edit
-endpoint requires file content, so use `BinaryImage` or `ImageUrl` with OpenAI.
+endpoint requires file content, so use `BinaryImage` or `ImageUrl` with OpenAI. Image URLs downloaded by Pydantic AI
+are limited to 50 MiB.
 
 | Provider | Generation | Reference editing | `UploadedFile` | Multiple outputs |
 | --- | --- | --- | --- | --- |
@@ -63,16 +64,17 @@ Gemini for image-only output, matching the `ImageGenerator` result contract and 
 
 ## Settings
 
-[`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings] provides normalized settings. Defaults can be
-set on the generator and overridden for one call:
+[`ImageGenerationSettings`][pydantic_ai.images.ImageGenerationSettings] provides portable settings, while provider
+settings classes add provider-prefixed controls. Defaults can be set on the generator and overridden for one call:
 
 ```python {title="image_generation_settings.py"}
 from pydantic_ai import ImageGenerator
 from pydantic_ai.images import ImageGenerationSettings
+from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 
 generator = ImageGenerator(
     'openai:gpt-image-2',
-    settings=ImageGenerationSettings(quality='low', output_format='jpeg'),
+    settings=OpenAIImageGenerationSettings(openai_quality='low', openai_output_format='jpeg'),
 )
 
 
@@ -81,16 +83,14 @@ async def main():
         'A cinematic desert observatory at dusk.',
         settings=ImageGenerationSettings(dimensions=(1280, 720)),
     )
-    assert result.images[0].content.media_type == 'image/jpeg'
+    assert result.images[0].content.media_type.startswith('image/')
 ```
 
-Settings are applied on a best-effort basis. A provider adapter warns when it cannot apply an explicit normalized
-setting. Provider-specific settings take precedence over their normalized equivalent and also produce a warning when
-the values conflict.
+Settings are applied on a best-effort basis. A provider adapter warns when it cannot apply an explicit setting.
 
-OpenAI transparent backgrounds require `output_format='png'` or `'webp'`. GPT Image 2 does not support transparent
-backgrounds in any format. The OpenAI adapter raises [`UserError`][pydantic_ai.exceptions.UserError] for both cases
-before sending a paid request; see the [OpenAI image-generation notes](models/openai.md#image-generation).
+OpenAI transparent backgrounds require `openai_output_format='png'` or `'webp'`. GPT Image 2 does not support
+transparent backgrounds in any format. The OpenAI adapter raises [`UserError`][pydantic_ai.exceptions.UserError] for
+both cases before sending a paid request; see the [OpenAI image-generation notes](models/openai.md#image-generation).
 
 ### Output Geometry
 
@@ -99,11 +99,11 @@ Use one of these settings to control output geometry:
 - `dimensions=(width, height)` requests an exact pixel shape. It raises
   [`UserError`][pydantic_ai.exceptions.UserError] when the selected model cannot produce that exact shape.
 - `aspect_ratio='16:9'` requests a ratio and lets Pydantic AI select a canonical model-specific shape.
-- `size='1024x1024'` is a provider-dependent compatibility setting: OpenAI interprets pixel dimensions, while Google
-  and xAI interpret resolution tiers such as `1K` and `2K`.
 
-`dimensions` is mutually exclusive with both `aspect_ratio` and `size`. `aspect_ratio` and `size` can be combined when
-they describe a geometry supported by the selected model.
+`dimensions` and `aspect_ratio` are mutually exclusive. Provider-specific geometry controls — `openai_size`,
+`google_image_config.image_size`, `xai_aspect_ratio`, and `xai_resolution` — remain prefixed because the providers use
+different concepts and value ranges. An explicit provider-specific geometry setting takes precedence over a portable
+one and produces a warning.
 
 ### Canonical Dimensions for `aspect_ratio`
 
@@ -183,7 +183,8 @@ Use the provider settings types when you need an option that is not portable:
 These types extend `ImageGenerationSettings`. Their provider-prefixed fields use public types from the corresponding
 provider SDK where those types are available. See the [OpenAI](models/openai.md#image-generation),
 [Google](models/google.md#image-generation), and [xAI](models/xai.md#image-generation) pages for provider-specific setup
-and limitations.
+and limitations. Image count, output format, quality, background, moderation, input fidelity, compression, and
+provider resolution are not portable settings; use the relevant provider-prefixed field.
 
 ## Results and Usage
 
@@ -212,7 +213,7 @@ from pydantic_ai import ImageGenerator
 
 logfire.configure()
 
-generator = ImageGenerator('openai:gpt-image-1.5', instrument=True)
+generator = ImageGenerator('openai:gpt-image-2', instrument=True)
 
 # Or instrument all image generators globally
 ImageGenerator.instrument_all()
@@ -220,7 +221,8 @@ ImageGenerator.instrument_all()
 
 Pydantic AI image-generation spans include model identity, usage, image count, and non-binary output metadata. They do
 not include reference-image contents, generated bytes, URLs, or provider file IDs. Provider SDKs can emit their own
-independent spans and must be configured separately.
+independent spans and must be configured separately. The `extra_headers` and `extra_body` request escape hatches are
+also excluded, matching core model instrumentation.
 
 ## Testing
 
@@ -235,10 +237,10 @@ async def test_image_workflow():
     test_model = TestImageGenerationModel()
     generator = ImageGenerator(test_model)
 
-    result = await generator.generate('A test image', settings={'n': 2})
+    result = await generator.generate('A test image', settings={'dimensions': (1024, 1024)})
 
-    assert len(result.images) == 2
-    assert test_model.last_settings == {'n': 2}
+    assert len(result.images) == 1
+    assert test_model.last_settings == {'dimensions': (1024, 1024)}
 ```
 
 ## Using Image Generation with an Agent

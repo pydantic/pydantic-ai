@@ -22,7 +22,7 @@ from pydantic_ai.usage import RequestUsage
 
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
-from .settings import ImageGenerationSettings, warn_image_generation_settings
+from .settings import ImageGenerationSettings, validate_image_count, warn_image_generation_settings
 
 try:
     import grpc
@@ -55,6 +55,9 @@ class XaiImageGenerationSettings(ImageGenerationSettings, total=False):
     """
 
     # ALL FIELDS MUST BE `xai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+
+    xai_n: int
+    """The number of images to generate."""
 
     xai_user: str
     """A unique identifier representing your end-user."""
@@ -118,7 +121,7 @@ class XaiImageGenerationModel(ImageGenerationModel):
         resolved = _resolve_xai_settings(xai_settings, model_name=self.model_name)
         warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
         image_url, image_file_id, image_urls, image_file_ids = await self._map_input_images(images)
-        n = xai_settings.get('n') or 1
+        n = xai_settings.get('xai_n') or 1
 
         with _map_api_errors(self.model_name):
             if n == 1:
@@ -157,6 +160,9 @@ class XaiImageGenerationModel(ImageGenerationModel):
     async def _map_input_images(
         self, images: Sequence[ImageGenerationInput]
     ) -> tuple[str | None, str | None, list[str] | None, list[str] | None]:
+        if len(images) > 3:
+            raise UserError('xAI image editing accepts at most three reference images')
+
         image_references: list[str] = []
         file_ids: list[str] = []
         input_kinds: list[Literal['reference', 'file_id']] = []
@@ -275,11 +281,7 @@ class _XaiResolvedSettings:
 def _resolve_xai_settings(
     settings: XaiImageGenerationSettings, *, model_name: XaiImageGenerationModelName
 ) -> _XaiResolvedSettings:
-    ignored = [
-        name
-        for name in ('background', 'input_fidelity', 'moderation', 'output_compression', 'output_format', 'quality')
-        if name in settings
-    ]
+    validate_image_count('xAI', settings.get('xai_n'), maximum=10)
     geometry = resolve_xai_geometry(
         model_name,
         settings,
@@ -290,7 +292,7 @@ def _resolve_xai_settings(
     return _XaiResolvedSettings(
         aspect_ratio=geometry.aspect_ratio,
         resolution=geometry.resolution,
-        ignored=ignored + geometry.ignored,
+        ignored=geometry.ignored,
         conflicts=geometry.conflicts,
     )
 

@@ -88,8 +88,13 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
         }
 
         include_settings = self.instrumentation_settings.include_model_request_parameters
+        recorded_settings: dict[str, object] | None = None
         if settings and include_settings:
-            attributes['image_generation_settings'] = json.dumps(self.serialize_any(settings))
+            recorded_settings = {
+                key: value for key, value in settings.items() if key not in ('extra_headers', 'extra_body')
+            }
+            if recorded_settings:
+                attributes['image_generation_settings'] = json.dumps(self.serialize_any(recorded_settings))
 
         if self.instrumentation_settings.include_content:
             attributes['prompt'] = prompt
@@ -101,7 +106,7 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
                     'prompt_length': {'type': 'integer'},
                     'input_image_count': {'type': 'integer'},
                     'image_count': {'type': 'integer'},
-                    **({'image_generation_settings': {'type': 'object'}} if include_settings else {}),
+                    **({'image_generation_settings': {'type': 'object'}} if recorded_settings else {}),
                     **({'prompt': {'type': 'string'}} if self.instrumentation_settings.include_content else {}),
                 },
             }

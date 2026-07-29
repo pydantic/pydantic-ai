@@ -14,7 +14,6 @@ from pydantic_ai.images import (
     ImageGenerationSize,
     ImageGenerator,
 )
-from pydantic_ai.images.settings import image_generation_tool_settings
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import ImageGenerationModelName, ImageGenerationTool
@@ -25,6 +24,9 @@ from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
     from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel
+
+_NATIVE_IMAGE_SIZES = frozenset({'auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'})
+_NATIVE_IMAGE_ASPECT_RATIOS = frozenset({'21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5'})
 
 
 @dataclass(kw_only=True)
@@ -88,11 +90,10 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     The existing `fallback_model` path delegates to a subagent running an
     image-capable conversational model and is preserved for backwards compatibility.
 
-    Image generation settings are applied to the direct fallback using
-    `ImageGenerationSettings`. Each direct provider maps the normalized settings it
-    supports and warns about settings it cannot apply. The native path and the legacy
-    `fallback_model` subagent retain the existing `ImageGenerationTool` surface; direct-only
-    geometry settings are ignored there with a migration warning.
+    Portable `dimensions` and `aspect_ratio` settings are applied to the direct fallback
+    using `ImageGenerationSettings`. Other fields configure the native
+    `ImageGenerationTool`; configure provider-specific direct settings on an explicit
+    `ImageGenerator` or `ImageGenerationModel`.
     """
 
     fallback_model: ImageGenerationFallbackModel
@@ -121,8 +122,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     background: Literal['transparent', 'opaque', 'auto'] | None
     """Background type for the generated image.
 
-    Supported by: OpenAI Responses and direct OpenAI image models. `'transparent'` requires `'png'` or `'webp'` and is
-    not supported by GPT Image 2.
+    Supported by: OpenAI Responses.
     """
 
     input_fidelity: Literal['high', 'low'] | None
@@ -162,18 +162,16 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     """
 
     size: ImageGenerationSize | None
-    """Size of the generated image.
+    """Size of the generated image for the native tool.
 
-    For direct image models, this is a provider-dependent compatibility setting: OpenAI uses
-    pixel-size strings, while Google and xAI use resolution tiers. Prefer `dimensions` for exact
-    cross-provider pixel semantics. Direct-only values are ignored by the legacy path with a warning.
+    Direct image APIs use provider-prefixed size or resolution settings.
     """
 
     dimensions: ImageDimensions | None
     """Exact direct-model output dimensions as `(width, height)` in pixels.
 
-    This is mutually exclusive with `aspect_ratio` and `size`. The legacy native/fallback-model
-    path ignores it with a warning. Supported shapes are model-specific; see the
+    This is mutually exclusive with `aspect_ratio`. The native/fallback-model path ignores it
+    with a warning. Supported shapes are model-specific; see the
     [Image Generation guide](../image-generation.md#supported-exact-dimensions).
     """
 
@@ -298,23 +296,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             description=description,
         )
 
-    def _image_settings(self) -> ImageGenerationSettings:
-        """Collect normalized settings shared by native and direct image generation."""
+    def _direct_image_settings(self) -> ImageGenerationSettings:
+        """Collect portable settings for direct image generation."""
         settings: ImageGenerationSettings = {}
-        if self.background is not None:
-            settings['background'] = self.background
-        if self.input_fidelity is not None:
-            settings['input_fidelity'] = self.input_fidelity
-        if self.moderation is not None:
-            settings['moderation'] = self.moderation
-        if self.output_compression is not None:
-            settings['output_compression'] = self.output_compression
-        if self.output_format is not None:
-            settings['output_format'] = self.output_format
-        if self.quality is not None:
-            settings['quality'] = self.quality
-        if self.size is not None:
-            settings['size'] = self.size
         if self.dimensions is not None:
             settings['dimensions'] = self.dimensions
         if self.aspect_ratio is not None:
@@ -323,7 +307,33 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     def _image_gen_kwargs(self) -> dict[str, Any]:
         """Collect settings supported by the legacy `ImageGenerationTool` path."""
-        settings, ignored = image_generation_tool_settings(self._image_settings())
+        kwargs: dict[str, Any] = {}
+        if self.background is not None:
+            kwargs['background'] = self.background
+        if self.input_fidelity is not None:
+            kwargs['input_fidelity'] = self.input_fidelity
+        if self.moderation is not None:
+            kwargs['moderation'] = self.moderation
+        if self.output_compression is not None:
+            kwargs['output_compression'] = self.output_compression
+        if self.output_format is not None:
+            kwargs['output_format'] = self.output_format
+        if self.quality is not None:
+            kwargs['quality'] = self.quality
+
+        ignored: list[str] = []
+        if self.dimensions is not None:
+            ignored.append('dimensions')
+        if self.size is not None:
+            if self.size in _NATIVE_IMAGE_SIZES:
+                kwargs['size'] = self.size
+            else:
+                ignored.append('size')
+        if self.aspect_ratio is not None:
+            if self.aspect_ratio in _NATIVE_IMAGE_ASPECT_RATIOS:
+                kwargs['aspect_ratio'] = self.aspect_ratio
+            else:
+                ignored.append('aspect_ratio')
         if ignored:
             warnings.warn(
                 'The legacy `ImageGeneration` native/fallback_model path ignored direct-only '
@@ -333,7 +343,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                 stacklevel=3,
             )
 
-        kwargs: dict[str, Any] = dict(settings)
         if self.action is not None:
             kwargs['action'] = self.action
         if self.image_model is not None:
@@ -349,9 +358,32 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return super()._resolve_local_strategy(name)
 
     def _direct_local_tool(self, generator: ImageGenerator | ImageGenerationModel) -> Tool[Any]:
+        ignored: list[str] = []
+        if self.background is not None:
+            ignored.append('background')
+        if self.input_fidelity is not None:
+            ignored.append('input_fidelity')
+        if self.moderation is not None:
+            ignored.append('moderation')
+        if self.output_compression is not None:
+            ignored.append('output_compression')
+        if self.output_format is not None:
+            ignored.append('output_format')
+        if self.quality is not None:
+            ignored.append('quality')
+        if self.size is not None:
+            ignored.append('size')
+        if ignored:
+            warnings.warn(
+                'The direct `ImageGeneration` fallback ignored native-tool setting(s): '
+                f'{", ".join(ignored)}. Configure provider-specific direct settings on the '
+                '`ImageGenerator` or `ImageGenerationModel` instead.',
+                UserWarning,
+                stacklevel=3,
+            )
         return _direct_image_generation_tool(
             generator,
-            settings={'n': 1, **self._image_settings()},
+            settings=self._direct_image_settings(),
             action=self.action,
             image_model=self.image_model,
         )

@@ -112,6 +112,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
     AbstractNativeTool,
@@ -141,11 +142,14 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, message, remove_schema_descriptions
+from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, message, remove_schema_descriptions, try_import
 
 pytestmark = [
     pytest.mark.anyio,
 ]
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
 
 
 def test_capability_types() -> None:
@@ -7473,8 +7477,8 @@ class _MultipleImageGenerationModel(TestImageGenerationModel):
         images: Sequence[ImageGenerationInput] | None = None,
         settings: ImageGenerationSettings | None = None,
     ) -> ImageGenerationResult:
-        forced_settings: ImageGenerationSettings = {**(settings or {}), 'n': 2}
-        return await super().generate(prompt, images=images, settings=forced_settings)
+        result = await super().generate(prompt, images=images, settings=settings)
+        return replace(result, images=[*result.images, *result.images])
 
 
 class TestImageGenerationCapability:
@@ -7551,11 +7555,9 @@ class TestImageGenerationCapability:
         assert cap.get_toolset() is not None
 
     async def test_image_generation_direct_fallback(self, allow_model_requests: None):
-        """The recommended fallback calls `ImageGenerator` directly and returns one image."""
+        """The direct fallback applies portable settings and warns for native-only settings."""
         image_model = TestImageGenerationModel(
             settings={
-                'n': 3,
-                'output_format': 'webp',
                 'extra_headers': {'x-test': 'preserved'},
             }
         )
@@ -7567,41 +7569,66 @@ class TestImageGenerationCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        with pytest.warns(UserWarning, match='ignored native-tool setting'):
+            capability = ImageGeneration(
+                native=False,
+                local=generator,
+                background='opaque',
+                input_fidelity='high',
+                moderation='low',
+                output_compression=80,
+                output_format='jpeg',
+                quality='low',
+                dimensions=(1024, 1024),
+            )
         agent = Agent(
             outer_model,
-            capabilities=[
-                ImageGeneration(
-                    native=False,
-                    local=generator,
-                    background='opaque',
-                    input_fidelity='high',
-                    moderation='low',
-                    output_compression=80,
-                    output_format='jpeg',
-                    quality='low',
-                    dimensions=(1024, 1024),
-                )
-            ],
+            capabilities=[capability],
         )
 
         result = await agent.run('Generate an image')
 
         assert result.output == 'done'
         assert image_model.last_settings == {
-            'n': 1,
-            'background': 'opaque',
-            'input_fidelity': 'high',
-            'moderation': 'low',
-            'output_compression': 80,
-            'output_format': 'jpeg',
-            'quality': 'low',
             'dimensions': (1024, 1024),
             'extra_headers': {'x-test': 'preserved'},
         }
         tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
         assert len(tool_returns) == 1
         assert isinstance(tool_returns[0].content, BinaryImage)
-        assert tool_returns[0].content.media_type == 'image/jpeg'
+        assert tool_returns[0].content.media_type == 'image/png'
+
+    @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+    async def test_image_generation_direct_fallback_instrumentation_omits_binary_tool_result(
+        self, allow_model_requests: None, capfire: CaptureLogfire
+    ):
+        """Tool span redaction does not change the binary result delivered to the outer model."""
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(
+            outer_model,
+            capabilities=[
+                ImageGeneration(native=False, local=TestImageGenerationModel()),
+                Instrumentation(settings=InstrumentationSettings(include_binary_content=False)),
+            ],
+        )
+
+        result = await agent.run('Generate an image')
+
+        tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
+        assert len(tool_returns) == 1
+        assert isinstance(tool_returns[0].content, BinaryImage)
+
+        spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        tool_span = next(span for span in spans if span['name'] == 'execute_tool generate_image')
+        tool_result = tool_span['attributes']['gen_ai.tool.call.result']
+        assert tool_result['media_type'] == 'image/png'
+        assert 'data' not in tool_result
 
     async def test_image_generation_direct_fallback_rejects_edit_action(self, allow_model_requests: None):
         """The prompt-only capability tool cannot silently turn a requested edit into generation."""
@@ -7658,6 +7685,7 @@ class TestImageGenerationCapability:
         agent = Agent(
             outer_model,
             capabilities=[ImageGeneration(native=False, local=_MultipleImageGenerationModel())],
+            retries=0,
         )
 
         with pytest.raises(UnexpectedModelBehavior, match='returned 2 images; expected exactly one'):

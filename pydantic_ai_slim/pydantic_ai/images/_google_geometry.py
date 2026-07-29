@@ -157,14 +157,8 @@ def resolve_google_geometry(
             aspect_ratio = _prefer_google_value(
                 aspect_ratio, mapped_aspect_ratio, setting_name='aspect_ratio', conflicts=conflicts
             )
-            if default_size is not None and not provider_size_is_set and 'size' not in settings:
+            if default_size is not None and not provider_size_is_set:
                 image_size = default_size
-
-    if common_size := settings.get('size'):
-        if not google_supports_image_size(model_name, common_size):
-            ignored.append('size')
-        else:
-            image_size = _prefer_google_value(image_size, common_size, setting_name='size', conflicts=conflicts)
 
     return _GoogleGeometry(
         aspect_ratio=aspect_ratio,

@@ -114,7 +114,7 @@ generator = ImageGenerator(
     settings=OpenAIImageGenerationSettings(
         dimensions=(1280, 720),
         openai_quality='low',
-        output_format='jpeg',
+        openai_output_format='jpeg',
     ),
 )
 ```

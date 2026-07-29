@@ -33,9 +33,10 @@ Cassette Format:
 
 from __future__ import annotations as _annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from ..conftest import try_import
 
@@ -74,6 +75,8 @@ class StreamInteraction:
 
 
 ImageMethod = Literal['sample', 'sample_batch']
+_BINARY_PLACEHOLDER_RE = re.compile(r'<(bytes|data URL) len=\d+>')
+SanitizedValue: TypeAlias = str | int | float | bool | None | list['SanitizedValue'] | dict[str, 'SanitizedValue']
 
 
 @dataclass
@@ -83,7 +86,7 @@ class ImageMethodInteraction:
     method: ImageMethod
     response_raw: bytes
     response_count: int
-    request_json: dict[str, Any] | None = None
+    request_json: dict[str, SanitizedValue] | None = None
     response_json: dict[str, Any] | None = None
 
 
@@ -451,7 +454,9 @@ class _CassetteImageStub:
 
     _client: XaiProtoCassetteClient
 
-    def _consume(self, expected_method: ImageMethod) -> ImageMethodInteraction:
+    def _consume(
+        self, expected_method: ImageMethod, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> ImageMethodInteraction:
         interaction = self._client.next_interaction()
         if not isinstance(interaction, ImageMethodInteraction) or interaction.method != expected_method:
             raise RuntimeError(
@@ -460,15 +465,16 @@ class _CassetteImageStub:
                 + (f' (method={interaction.method})' if isinstance(interaction, ImageMethodInteraction) else '')
                 + '. Re-record the cassette.'
             )
+        _validate_image_request(interaction, self._client.interaction_idx - 1, args, kwargs)
         return interaction
 
-    async def sample(self, *_args: Any, **_kwargs: Any) -> ImageResponse:
-        interaction = self._consume('sample')
+    async def sample(self, *args: Any, **kwargs: Any) -> ImageResponse:
+        interaction = self._consume('sample', args, kwargs)
         proto = image_pb2.ImageResponse.FromString(interaction.response_raw)
         return ImageResponse(proto, 0)
 
-    async def sample_batch(self, *_args: Any, **_kwargs: Any) -> list[ImageResponse]:
-        interaction = self._consume('sample_batch')
+    async def sample_batch(self, *args: Any, **kwargs: Any) -> list[ImageResponse]:
+        interaction = self._consume('sample_batch', args, kwargs)
         proto = image_pb2.ImageResponse.FromString(interaction.response_raw)
         return [ImageResponse(proto, index) for index in range(interaction.response_count)]
 
@@ -673,7 +679,7 @@ class _HybridImageStub:
 
     _client: XaiProtoCassetteHybridClient
 
-    def _replay(self, method: ImageMethod) -> list[ImageResponse] | None:
+    def _replay(self, method: ImageMethod, args: tuple[Any, ...], kwargs: dict[str, Any]) -> list[ImageResponse] | None:
         interaction = self._client.peek_interaction()
         if not isinstance(interaction, ImageMethodInteraction):
             return None
@@ -682,12 +688,13 @@ class _HybridImageStub:
                 f'Cassette out of order at interaction {self._client.interaction_idx}: '
                 f'expected image.{interaction.method}(), got image.{method}(). Re-record the cassette.'
             )
+        _validate_image_request(interaction, self._client.interaction_idx, args, kwargs)
         self._client.consume_interaction()
         proto = image_pb2.ImageResponse.FromString(interaction.response_raw)
         return [ImageResponse(proto, index) for index in range(interaction.response_count)]
 
     async def sample(self, *args: Any, **kwargs: Any) -> ImageResponse:
-        if responses := self._replay('sample'):
+        if responses := self._replay('sample', args, kwargs):
             return responses[0]
 
         response = await self._client.inner_image.sample(*args, **kwargs)
@@ -695,7 +702,7 @@ class _HybridImageStub:
         return response
 
     async def sample_batch(self, *args: Any, **kwargs: Any) -> list[ImageResponse]:
-        if responses := self._replay('sample_batch'):
+        if responses := self._replay('sample_batch', args, kwargs):
             return responses
 
         responses = list(await self._client.inner_image.sample_batch(*args, **kwargs))
@@ -905,18 +912,56 @@ class _RecorderCollectionsStub:
         )
 
 
-def _sanitize_kwargs(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+def _sanitize_kwargs(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, SanitizedValue]:
     """Return a JSON-friendly snapshot of method args for cassette debuggability.
 
     Strips binary payloads (`bytes`) and replaces non-serializable values with their repr so
     large proto/config objects still show up in a readable form.
     """
-    sanitized: dict[str, Any] = {}
+    sanitized: dict[str, SanitizedValue] = {}
     if args:
         sanitized['_args'] = [repr(a) for a in args]
     for key, value in kwargs.items():
         sanitized[key] = _sanitize_value(value)
     return sanitized
+
+
+def _validate_image_request(
+    interaction: ImageMethodInteraction,
+    interaction_idx: int,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> None:
+    """Reject a replay request that differs from the recorded image request."""
+    if interaction.request_json is None:
+        return
+
+    actual_request = _sanitize_kwargs(args, kwargs)
+    if not _matches_sanitized_request(interaction.request_json, actual_request):
+        raise RuntimeError(
+            f'Cassette request mismatch at interaction {interaction_idx}: '
+            f'expected {interaction.request_json!r}, got {actual_request!r}. Re-record the cassette.'
+        )
+
+
+def _matches_sanitized_request(recorded: SanitizedValue, actual: SanitizedValue) -> bool:
+    """Compare request snapshots while treating binary-content placeholders as opaque."""
+    if isinstance(recorded, str) and (recorded_match := _BINARY_PLACEHOLDER_RE.fullmatch(recorded)):
+        return (
+            isinstance(actual, str)
+            and (actual_match := _BINARY_PLACEHOLDER_RE.fullmatch(actual)) is not None
+            and (recorded_match.group(1) == actual_match.group(1))
+        )
+    if isinstance(recorded, dict) and isinstance(actual, dict):
+        return recorded.keys() == actual.keys() and all(
+            _matches_sanitized_request(recorded[key], actual[key]) for key in recorded
+        )
+    if isinstance(recorded, list) and isinstance(actual, list):
+        return len(recorded) == len(actual) and all(
+            _matches_sanitized_request(recorded_value, actual_value)
+            for recorded_value, actual_value in zip(recorded, actual, strict=True)
+        )
+    return recorded == actual
 
 
 def _make_image_interaction(
@@ -963,7 +1008,7 @@ def _sanitize_image_response_json(response_json: dict[str, Any] | None) -> dict[
     return response_json
 
 
-def _sanitize_value(value: Any) -> Any:
+def _sanitize_value(value: Any) -> SanitizedValue:
     if isinstance(value, bytes):
         return f'<bytes len={len(value)}>'
     if isinstance(value, str) and value.startswith('data:'):

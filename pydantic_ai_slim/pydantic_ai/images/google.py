@@ -250,14 +250,6 @@ class _GoogleResolvedSettings:
 
 def _resolve_google_settings(settings: GoogleImageGenerationSettings, *, model_name: str) -> _GoogleResolvedSettings:
     image_config = ImageConfigDict(**(settings.get('google_image_config') or {}))
-    ignored = [
-        name
-        for name in ('background', 'input_fidelity', 'moderation', 'output_compression', 'output_format', 'quality')
-        if name in settings
-    ]
-
-    if (n := settings.get('n')) is not None and n != 1:
-        ignored.append('n')
 
     geometry = resolve_google_geometry(
         model_name,
@@ -283,7 +275,7 @@ def _resolve_google_settings(settings: GoogleImageGenerationSettings, *, model_n
             image_config=image_config or None,
             http_options=http_options or None,
         ),
-        ignored=ignored + geometry.ignored,
+        ignored=geometry.ignored,
         conflicts=geometry.conflicts,
     )
 

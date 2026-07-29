@@ -7,7 +7,7 @@ import warnings
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast, get_args
+from typing import Literal, cast, get_args
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -42,7 +42,6 @@ from pydantic_ai.images import (
     infer_image_generation_model,
     merge_image_generation_settings,
 )
-from pydantic_ai.images.settings import image_generation_tool_settings
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -85,9 +84,7 @@ with try_import() as xai_imports_successful:
     import pydantic_ai.images.xai as xai_images
     from pydantic_ai.images.xai import XaiImageGenerationModel, XaiImageGenerationSettings
     from pydantic_ai.providers.xai import XaiProvider
-
-with try_import() as image_demo_imports_successful:
-    import pydantic_ai.images._demo as images_demo
+    from tests.models.xai_proto_cassettes import ImageMethodInteraction, XaiProtoCassette, XaiProtoCassetteClient
 
 TINY_PNG = (
     b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
@@ -100,16 +97,11 @@ async def test_image_generator_with_test_model():
     test_model = TestImageGenerationModel()
     generator = ImageGenerator(test_model)
 
-    result = await generator.generate('tiny robot', settings={'n': 2})
+    result = await generator.generate('tiny robot')
 
     assert result == snapshot(
         ImageGenerationResult(
             images=[
-                GeneratedImage(
-                    content=BinaryImage(data=TINY_PNG, media_type='image/png'),
-                    size='1x1',
-                    output_format='png',
-                ),
                 GeneratedImage(
                     content=BinaryImage(data=TINY_PNG, media_type='image/png'),
                     size='1x1',
@@ -121,11 +113,20 @@ async def test_image_generator_with_test_model():
             provider_name='test',
             timestamp=IsDatetime(),
             usage=RequestUsage(input_tokens=2),
-            settings={'n': 2},
+            settings={},
             provider_response_id=IsStr(),
         )
     )
-    assert test_model.last_settings == {'n': 2}
+    assert test_model.last_settings == {}
+
+
+async def test_test_image_generation_model_generates_png():
+    result = await TestImageGenerationModel().generate('tiny robot')
+
+    generated_image = result.images[0]
+    assert generated_image.content.media_type == 'image/png'
+    assert generated_image.content.data.startswith(b'\x89PNG\r\n\x1a\n')
+    assert generated_image.output_format == 'png'
 
 
 def test_images_module_exports_image_generator():
@@ -133,12 +134,12 @@ def test_images_module_exports_image_generator():
 
 
 async def test_image_generator_settings_precedence():
-    test_model = TestImageGenerationModel(settings={'n': 1, 'output_format': 'png', 'quality': 'high'})
-    generator = ImageGenerator(test_model, settings={'n': 2, 'quality': 'low'})
+    test_model = TestImageGenerationModel(settings={'dimensions': (1024, 1024), 'extra_body': {'quality': 'high'}})
+    generator = ImageGenerator(test_model, settings={'dimensions': (512, 512), 'extra_body': {'quality': 'low'}})
 
-    result = await generator.generate('tiny robot', settings={'n': 3, 'output_format': 'webp'})
+    result = await generator.generate('tiny robot', settings={'extra_body': {'quality': 'auto'}})
 
-    expected_settings: ImageGenerationSettings = {'n': 3, 'output_format': 'webp', 'quality': 'low'}
+    expected_settings: ImageGenerationSettings = {'dimensions': (512, 512), 'extra_body': {'quality': 'auto'}}
     assert result.settings == expected_settings
     assert test_model.last_settings == expected_settings
 
@@ -202,7 +203,7 @@ def test_infer_image_generation_model_requires_provider_prefix():
 
 
 async def test_wrapper_image_generation_model_delegates_properties():
-    wrapped = TestImageGenerationModel(settings={'n': 2})
+    wrapped = TestImageGenerationModel(settings={'dimensions': (1024, 1024)})
     model = WrapperImageGenerationModel(wrapped)
 
     result = await model.generate('tiny robot')
@@ -210,7 +211,7 @@ async def test_wrapper_image_generation_model_delegates_properties():
     assert result.model_name == 'test'
     assert model.model_name == wrapped.model_name
     assert model.system == wrapped.system
-    assert model.settings == {'n': 2}
+    assert model.settings == {'dimensions': (1024, 1024)}
     assert model.base_url is None
 
 
@@ -251,46 +252,25 @@ async def test_image_generation_rejects_invalid_input_type():
 
 
 def test_merge_image_generation_settings():
-    base: ImageGenerationSettings = {'n': 1, 'extra_body': {'provider_option': True}}
-    overrides: ImageGenerationSettings = {'n': 2, 'output_format': 'webp'}
+    base: ImageGenerationSettings = {'dimensions': (1024, 1024), 'extra_body': {'provider_option': True}}
+    overrides: ImageGenerationSettings = {'aspect_ratio': '16:9'}
 
     assert merge_image_generation_settings(base, overrides) == snapshot(
-        {'n': 2, 'extra_body': {'provider_option': True}, 'output_format': 'webp'}
+        {'dimensions': (1024, 1024), 'extra_body': {'provider_option': True}, 'aspect_ratio': '16:9'}
     )
     assert merge_image_generation_settings(None, overrides) == overrides
     assert merge_image_generation_settings(base, None) == base
-
-
-def test_image_generation_tool_settings_filters_new_geometry():
-    filtered, ignored = image_generation_tool_settings(
-        {'dimensions': (1024, 1024), 'size': '2048x2048', 'aspect_ratio': '1:2'}
-    )
-
-    assert filtered == {}
-    assert ignored == ['dimensions', 'size', 'aspect_ratio']
-
-    supported, ignored = image_generation_tool_settings({'size': '1024x1024', 'aspect_ratio': '1:1'})
-
-    assert supported == {'size': '1024x1024', 'aspect_ratio': '1:1'}
-    assert ignored == []
 
 
 @pytest.mark.parametrize(
     'settings',
     [
         {'dimensions': (1024, 1024), 'aspect_ratio': '1:1'},
-        {'dimensions': (1024, 1024), 'size': '1024x1024'},
     ],
 )
 async def test_image_generation_dimensions_are_mutually_exclusive(settings: ImageGenerationSettings):
     with pytest.raises(UserError, match='mutually exclusive'):
         await TestImageGenerationModel().generate('tiny robot', settings=settings)
-
-
-@pytest.mark.parametrize('n', [0, -1, True, cast(int, '1')])
-async def test_image_generation_n_must_be_a_positive_integer(n: int):
-    with pytest.raises(UserError, match=r'`n` must be a positive integer'):
-        await TestImageGenerationModel().generate('tiny robot', settings={'n': n})
 
 
 @pytest.mark.parametrize(
@@ -331,18 +311,75 @@ def test_known_google_image_generation_model_names():
 
 
 def test_known_xai_image_generation_model_names():
-    """Pin the curated xAI image models, including the `grok-imagine-image-pro` tier.
-
-    `grok-imagine-image-pro` is a real, released model (xai_sdk `ImageGenerationModel` literal;
-    https://docs.x.ai/developers/models/grok-imagine-image-pro) that was missing from the known set.
-    """
+    """Pin the current curated xAI image models."""
     known_names = get_args(KnownImageGenerationModelName.__value__)
 
     assert {name for name in known_names if name.startswith('xai:')} == {
         'xai:grok-imagine-image',
-        'xai:grok-imagine-image-pro',
         'xai:grok-imagine-image-quality',
     }
+
+
+def _xai_cassette_response_bytes() -> bytes:
+    response = xai_image_pb2.ImageResponse()
+    response.images.add().base64 = 'dGlueSByb2JvdA=='
+    return response.SerializeToString()
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+@pytest.mark.parametrize('method', ['sample', 'sample_batch'])
+async def test_xai_proto_cassette_replay_validates_image_request_with_binary_placeholder(
+    method: Literal['sample', 'sample_batch'],
+):
+    cassette = XaiProtoCassette()
+    cassette.interactions.append(
+        ImageMethodInteraction(
+            method=method,
+            response_raw=_xai_cassette_response_bytes(),
+            response_count=1,
+            request_json={
+                '_args': ["'tiny robot'", "'grok-imagine-image'"],
+                'image_url': '<data URL len=999>',
+                'image_format': 'base64',
+            },
+        )
+    )
+    client = XaiProtoCassetteClient(cassette)
+
+    if method == 'sample':
+        await client.image.sample(
+            'tiny robot',
+            'grok-imagine-image',
+            image_url='data:image/png;base64,dGlueSByb2JvdA==',
+            image_format='base64',
+        )
+    else:
+        responses = await client.image.sample_batch(
+            'tiny robot',
+            'grok-imagine-image',
+            image_url='data:image/png;base64,dGlueSByb2JvdA==',
+            image_format='base64',
+        )
+        assert len(responses) == 1
+
+    assert client.interaction_idx == 1
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_proto_cassette_replay_rejects_different_image_request():
+    cassette = XaiProtoCassette()
+    cassette.interactions.append(
+        ImageMethodInteraction(
+            method='sample',
+            response_raw=_xai_cassette_response_bytes(),
+            response_count=1,
+            request_json={'_args': ["'tiny robot'", "'grok-imagine-image'"], 'image_format': 'base64'},
+        )
+    )
+    client = XaiProtoCassetteClient(cassette)
+
+    with pytest.raises(RuntimeError, match='Cassette request mismatch'):
+        await client.image.sample('different robot', 'grok-imagine-image', image_format='base64')
 
 
 def test_google_geometry_profiles_conflicts_and_unknown_models():
@@ -386,10 +423,10 @@ def test_google_geometry_profiles_conflicts_and_unknown_models():
     assert future_geometry.image_size == '4K'
     supported_size = google_geometry.resolve_google_geometry(
         'gemini-3.1-flash-image',
-        {'size': '2K'},
+        {},
         provider_aspect_ratio=None,
-        provider_size=None,
-        provider_size_is_set=False,
+        provider_size='2K',
+        provider_size_is_set=True,
     )
     assert supported_size.image_size == '2K'
     with pytest.raises(UserError, match='does not support'):
@@ -448,48 +485,6 @@ def test_xai_geometry_reports_provider_conflicts_with_dimensions():
         provider_resolution='1k',
     )
     assert matching_geometry.conflicts == []
-
-
-@pytest.mark.skipif(not image_demo_imports_successful(), reason='Image demo dependencies not installed')
-async def test_image_demo_section_selection(monkeypatch: pytest.MonkeyPatch):
-    calls: list[str] = []
-    parse_selection = images_demo._parse_selection  # pyright: ignore[reportPrivateUsage]
-    monkeypatch.setattr(images_demo, '_run_openai_demo', AsyncMock(side_effect=lambda: calls.append('openai')))
-    monkeypatch.setattr(images_demo, '_run_google_demo', AsyncMock(side_effect=lambda: calls.append('google')))
-    monkeypatch.setattr(images_demo, '_run_xai_demo', AsyncMock(side_effect=lambda: calls.append('xai')))
-    monkeypatch.setattr(
-        images_demo,
-        '_run_image_capability_demo',
-        AsyncMock(side_effect=lambda: calls.append('capability')),
-    )
-
-    assert parse_selection([]) == images_demo.DemoSelection(
-        providers=frozenset({'openai', 'google', 'xai'}),
-        capability=True,
-    )
-    assert parse_selection(['--provider', 'google']) == images_demo.DemoSelection(
-        providers=frozenset({'google'}),
-        capability=False,
-    )
-    assert parse_selection(['--capability']) == images_demo.DemoSelection(
-        providers=frozenset(),
-        capability=True,
-    )
-    assert parse_selection(['-p', 'google', '-p', 'openai', '--capability']) == images_demo.DemoSelection(
-        providers=frozenset({'openai', 'google'}),
-        capability=True,
-    )
-
-    await images_demo.run_demo(images_demo.DemoSelection(frozenset({'google'}), capability=False))
-    assert calls == ['google']
-
-    calls.clear()
-    await images_demo.run_demo(images_demo.DemoSelection(frozenset(), capability=True))
-    assert calls == ['capability']
-
-    calls.clear()
-    await images_demo.run_demo()
-    assert calls == ['openai', 'google', 'xai', 'capability']
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -571,52 +566,41 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
     provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
     model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
     settings = GoogleImageGenerationSettings(
-        aspect_ratio='1:1',
-        size='1K',
-        quality='low',
+        google_image_config={'aspect_ratio': '1:1'},
         extra_headers={'x-test-header': 'test-value'},
     )
 
     try:
-        with pytest.warns(UserWarning, match=r'ignored unsupported settings: `quality`, `size`'):
-            result = await model.generate(
-                'replace the subject',
-                images=[
-                    BinaryImage(
-                        data=b'first-image',
-                        media_type='image/png',
-                        vendor_metadata={'media_resolution': {'level': 'MEDIA_RESOLUTION_LOW'}},
-                    ),
-                    UploadedFile(
-                        file_id='https://generativelanguage.googleapis.com/v1beta/files/file-123',
-                        provider_name='google',
-                        media_type='image/webp',
-                    ),
-                    ImageUrl(
-                        'https://generativelanguage.googleapis.com/v1beta/files/file-456',
-                        media_type='image/jpeg',
-                    ),
-                ],
-                settings=settings,
-            )
+        result = await model.generate(
+            'replace the subject',
+            images=[
+                BinaryImage(
+                    data=b'first-image',
+                    media_type='image/png',
+                    vendor_metadata={'media_resolution': {'level': 'MEDIA_RESOLUTION_LOW'}},
+                ),
+                UploadedFile(
+                    file_id='https://generativelanguage.googleapis.com/v1beta/files/file-123',
+                    provider_name='google',
+                    media_type='image/webp',
+                ),
+                ImageUrl(
+                    'https://generativelanguage.googleapis.com/v1beta/files/file-456',
+                    media_type='image/jpeg',
+                ),
+            ],
+            settings=settings,
+        )
 
         conflicting_settings = GoogleImageGenerationSettings(
-            n=2,
             aspect_ratio='16:9',
-            size='2K',
             google_image_config={'aspect_ratio': '1:1'},
         )
         with pytest.warns(
             UserWarning,
-            match=r'ignored unsupported settings: `n`, `size`.*used provider-specific settings instead of: `aspect_ratio`',
+            match=r'used provider-specific settings instead of: `aspect_ratio`',
         ):
             await model.generate('conflicting settings', settings=conflicting_settings)
-
-        with pytest.warns(UserWarning, match=r'ignored unsupported settings: `size`'):
-            await model.generate(
-                'unsupported settings',
-                settings=GoogleImageGenerationSettings(size='1024x1024'),
-            )
 
         with pytest.raises(UserError, match=r"does not support `google_image_config.image_size='4K'`"):
             await model.generate(
@@ -626,7 +610,7 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
     finally:
         await http_client.aclose()
 
-    assert len(requests) == 3
+    assert len(requests) == 2
     request = requests[0]
     assert request.method == 'POST'
     assert request.url.path == '/v1beta/models/gemini-2.5-flash-image:generateContent'
@@ -1011,8 +995,8 @@ async def test_google_image_generation_supported_settings_emit_no_warning():
     """A fully-supported Google settings combination emits no warning.
 
     Over-warning erodes the signal of the warning channel; warnings are reserved for settings a request
-    genuinely ignores or overrides. `n=1`, a `google_image_config` aspect ratio, `extra_headers`, and
-    `extra_body` are all honored by the adapter, so the call must be silent.
+    genuinely ignores or overrides. A `google_image_config` aspect ratio, `extra_headers`, and `extra_body`
+    are all honored by the adapter, so the call must be silent.
 
     - `warn_image_generation_settings` channel: `pydantic_ai/images/settings.py`.
     - Negative-warning coverage gap: `local-notes/review-items.md` §4 (warnings coverage should include the negative).
@@ -1038,7 +1022,6 @@ async def test_google_image_generation_supported_settings_emit_no_warning():
     provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
     model = GoogleImageGenerationModel('gemini-3-pro-image', provider=provider)
     settings = GoogleImageGenerationSettings(
-        n=1,
         extra_headers={'x-team': 'growth'},
         extra_body={'labels': {'team': 'growth'}},
         google_image_config={'aspect_ratio': '16:9'},
@@ -1272,7 +1255,7 @@ async def test_xai_image_generation_wire_payload_and_response_mapping():
     mock_client.image.sample_batch.return_value = responses
     provider = XaiProvider(xai_client=cast(XaiAsyncClient, mock_client))
     model = XaiImageGenerationModel('grok-imagine-image', provider=provider)
-    settings = XaiImageGenerationSettings(n=2, xai_user='user-123', aspect_ratio='1:1', size='1K')
+    settings = XaiImageGenerationSettings(xai_n=2, xai_user='user-123', aspect_ratio='1:1', xai_resolution='1k')
 
     result = await model.generate(
         'replace the subject',
@@ -1334,14 +1317,12 @@ async def test_xai_image_generation_wire_payload_and_response_mapping():
     mock_client.image.sample.return_value = responses[0]
     conflicting_settings = XaiImageGenerationSettings(
         aspect_ratio='16:9',
-        size='2K',
-        quality='low',
         xai_aspect_ratio='1:1',
         xai_resolution='1k',
     )
     with pytest.warns(
         UserWarning,
-        match=r'ignored unsupported settings: `quality`.*used provider-specific settings instead of: `aspect_ratio`, `size`',
+        match=r'used provider-specific settings instead of: `aspect_ratio`',
     ):
         await model.generate('conflicting settings', settings=conflicting_settings)
 
@@ -1358,11 +1339,42 @@ async def test_xai_image_generation_wire_payload_and_response_mapping():
         resolution='1k',
     )
 
-    with pytest.warns(UserWarning, match=r'ignored unsupported settings: `aspect_ratio`, `size`'):
+    with pytest.warns(UserWarning, match=r'ignored unsupported settings: `aspect_ratio`'):
         await model.generate(
             'unsupported settings',
-            settings=XaiImageGenerationSettings(aspect_ratio='4:5', size='4K'),
+            settings=XaiImageGenerationSettings(aspect_ratio='4:5'),
         )
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+@pytest.mark.parametrize('xai_n', [0, True, 11])
+async def test_xai_image_generation_rejects_invalid_count(xai_n: int):
+    mock_client = AsyncMock()
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    with pytest.raises(UserError, match='integer between 1 and 10'):
+        await model.generate('tiny robot', settings=XaiImageGenerationSettings(xai_n=xai_n))
+
+    mock_client.image.sample.assert_not_awaited()
+    mock_client.image.sample_batch.assert_not_awaited()
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_rejects_more_than_three_reference_images():
+    mock_client = AsyncMock()
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+    images = [BinaryImage(data=TINY_PNG, media_type='image/png') for _ in range(4)]
+
+    with pytest.raises(UserError, match='at most three reference images'):
+        await model.generate('edit these images', images=images)
+
+    mock_client.image.sample.assert_not_awaited()
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
@@ -1620,7 +1632,7 @@ async def test_xai_image_generation_skips_moderated_batch_slots(monkeypatch: pyt
         provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
     )
 
-    result = await model.generate('tiny robot', settings={'n': 3})
+    result = await model.generate('tiny robot', settings=XaiImageGenerationSettings(xai_n=3))
 
     assert [image.content.data for image in result.images] == [b'first-image', b'third-image']
     assert all(image.provider_details == {'respect_moderation': True} for image in result.images)
@@ -1653,7 +1665,7 @@ async def test_xai_image_generation_all_slots_moderated_raises_content_filter():
     )
 
     with pytest.raises(ContentFilterError, match='content moderation'):
-        await model.generate('tiny robot', settings={'n': 2})
+        await model.generate('tiny robot', settings=XaiImageGenerationSettings(xai_n=2))
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
@@ -1685,7 +1697,7 @@ async def test_xai_image_generation_empty_response():
     )
 
     with pytest.raises(UnexpectedModelBehavior, match='did not contain any images'):
-        await model.generate('tiny robot', settings={'n': 2})
+        await model.generate('tiny robot', settings=XaiImageGenerationSettings(xai_n=2))
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
@@ -1807,8 +1819,7 @@ def test_xai_image_generation_unlisted_model_vcr(xai_provider: XaiProvider):
     through a `str`-typed variable — not the `KnownImageGenerationModelName` / `xai_sdk` Literal — proves
     the non-Literal branch of `XaiImageGenerationModelName` runs end-to-end against the live API, so a
     brand-new model id not yet in any Literal still works. Recorded against the real
-    `grok-imagine-image-pro` tier (https://docs.x.ai/developers/models/grok-imagine-image-pro); it is in
-    the curated set, so the `str` annotation (not the model string) is what exercises the forward path.
+    retired `grok-imagine-image-pro` tier, so the `str` annotation and model value both exercise the forward path.
 
     Live-API note, pinned by the `model_name` assertion below: xAI resolves the requested
     `grok-imagine-image-pro` id to `grok-imagine-image-quality` in the response's `model` field, and
@@ -1884,7 +1895,9 @@ async def test_openai_image_generation_response_mapping():
     mock_client.images.generate.return_value = ImagesResponse.model_construct(
         created=123,
         background='opaque',
-        data=[Image.model_construct(b64_json='aGVsbG8=', revised_prompt='A tiny friendly robot')],
+        data=[
+            Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode(), revised_prompt='A tiny friendly robot')
+        ],
         output_format='png',
         quality='low',
         size='1024x1024',
@@ -1900,14 +1913,13 @@ async def test_openai_image_generation_response_mapping():
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
 
     settings = OpenAIImageGenerationSettings(
-        n=1,
-        aspect_ratio='1:1',
-        size='auto',
-        background='opaque',
-        moderation='low',
-        output_format='png',
-        output_compression=80,
-        quality='low',
+        openai_n=1,
+        openai_size='auto',
+        openai_background='opaque',
+        openai_moderation='low',
+        openai_output_format='png',
+        openai_output_compression=80,
+        openai_quality='low',
     )
     result = await model.generate('tiny robot', settings=settings)
 
@@ -1915,7 +1927,7 @@ async def test_openai_image_generation_response_mapping():
         ImageGenerationResult(
             images=[
                 GeneratedImage(
-                    content=BinaryImage(data=b'hello', media_type='image/png'),
+                    content=BinaryImage(data=TINY_PNG, media_type='image/png'),
                     revised_prompt='A tiny friendly robot',
                     size='1024x1024',
                     quality='low',
@@ -1943,27 +1955,26 @@ async def test_openai_image_generation_response_mapping():
         )
     )
     assert 'response_format' not in mock_client.images.generate.await_args.kwargs
-    assert mock_client.images.generate.await_args.kwargs['size'] == '1024x1024'
+    assert mock_client.images.generate.await_args.kwargs['size'] == 'auto'
     assert mock_client.images.generate.await_args.kwargs['background'] == 'opaque'
     assert mock_client.images.generate.await_args.kwargs['moderation'] == 'low'
     assert mock_client.images.generate.await_args.kwargs['quality'] == 'low'
     assert mock_client.images.generate.await_args.kwargs['output_compression'] == 80
 
     unsupported_settings = OpenAIImageGenerationSettings(
-        input_fidelity='high',
-        size='1K',
+        openai_input_fidelity='high',
         aspect_ratio='16:9',
     )
     with pytest.warns(
         UserWarning,
-        match=r'ignored unsupported settings: `input_fidelity`, `size`, `aspect_ratio`',
+        match=r'ignored unsupported settings: `input_fidelity`, `aspect_ratio`',
     ):
         await model.generate('unsupported settings', settings=unsupported_settings)
 
-    with pytest.warns(UserWarning, match=r'ignored unsupported settings: `aspect_ratio`'):
+    with pytest.warns(UserWarning, match=r'used provider-specific settings instead of: `aspect_ratio`'):
         await model.generate(
             'conflicting normalized dimensions',
-            settings=OpenAIImageGenerationSettings(size='1024x1024', aspect_ratio='3:2'),
+            settings=OpenAIImageGenerationSettings(openai_size='1024x1024', aspect_ratio='3:2'),
         )
 
     await model.generate(
@@ -1973,10 +1984,26 @@ async def test_openai_image_generation_response_mapping():
 
     await model.generate(
         'valid transparent background',
-        settings=OpenAIImageGenerationSettings(background='transparent', output_format='webp'),
+        settings=OpenAIImageGenerationSettings(openai_background='transparent', openai_output_format='webp'),
     )
     assert mock_client.images.generate.await_args.kwargs['background'] == 'transparent'
     assert mock_client.images.generate.await_args.kwargs['output_format'] == 'webp'
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize('openai_n', [0, True, 11])
+async def test_openai_image_generation_rejects_invalid_count(openai_n: int):
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    model = OpenAIImageGenerationModel(
+        'gpt-image-1',
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+    )
+
+    with pytest.raises(UserError, match='integer between 1 and 10'):
+        await model.generate('tiny robot', settings=OpenAIImageGenerationSettings(openai_n=openai_n))
+
+    mock_client.images.generate.assert_not_awaited()
 
 
 _JPEG_MAGIC_BYTES = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01' + b'\x00' * 8
@@ -1991,8 +2018,6 @@ _WEBP_MAGIC_BYTES = b'RIFF\x00\x00\x00\x00WEBPVP8 '
         pytest.param(TINY_PNG, 'png', 'image/png', 'png', id='png-echo-and-bytes-agree'),
         pytest.param(_JPEG_MAGIC_BYTES, 'jpeg', 'image/jpeg', 'jpeg', id='jpeg-sniffed'),
         pytest.param(_WEBP_MAGIC_BYTES, 'webp', 'image/webp', 'webp', id='webp-sniffed'),
-        pytest.param(b'not really an image', 'webp', 'image/webp', 'webp', id='unknown-bytes-fall-back-to-echo'),
-        pytest.param(b'not really an image', 'jpeg', 'image/jpeg', 'jpeg', id='unknown-bytes-fall-back-to-jpeg-echo'),
     ],
 )
 async def test_openai_media_type_reflects_actual_bytes(
@@ -2006,8 +2031,7 @@ async def test_openai_media_type_reflects_actual_bytes(
     gpt-image-2 silently ignores `output_format='webp'` and returns PNG bytes while the response still
     echoes `output_format: webp`, so trusting the echo makes `GeneratedImage.content.media_type` lie and
     breaks downstream content-type handling. We sniff PNG/JPEG/WebP magic bytes and prefer the sniffed
-    type, keeping `content.media_type` and `output_format` consistent with each other; the echo is used
-    only as a fallback for bytes we can't recognize.
+    type, keeping `content.media_type` and `output_format` consistent with each other.
 
     https://github.com/openai/openai-node/issues/1850
     See `local-notes/image-gen-research/openai-images-api.md` §1c, §7.
@@ -2036,7 +2060,7 @@ async def test_openai_image_generation_usage_falls_back_to_sdk_totals(monkeypatc
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
     mock_client.images.generate.return_value = ImagesResponse.model_construct(
-        data=[Image.model_construct(b64_json='aGVsbG8=')],
+        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())],
         usage=Usage.model_construct(
             input_tokens=3,
             input_tokens_details=UsageInputTokensDetails.model_construct(text_tokens=3, image_tokens=0),
@@ -2072,7 +2096,7 @@ async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio():
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
     mock_client.images.generate.return_value = ImagesResponse.model_construct(
-        data=[Image.model_construct(b64_json='aGVsbG8=')], output_format='png'
+        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
     )
     model = OpenAIImageGenerationModel(
         'gpt-image-2',
@@ -2085,7 +2109,10 @@ async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio():
     await model.generate('wide ratio', settings={'aspect_ratio': '16:9'})
     assert mock_client.images.generate.await_args.kwargs['size'] == '1280x720'
 
-    await model.generate('compatibility size', settings={'size': '2048x1152', 'aspect_ratio': '16:9'})
+    await model.generate(
+        'provider size',
+        settings=OpenAIImageGenerationSettings(openai_size='2048x1152', aspect_ratio='16:9'),
+    )
     assert mock_client.images.generate.await_args.kwargs['size'] == '2048x1152'
 
     mock_client.images.generate.reset_mock()
@@ -2105,10 +2132,10 @@ async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio():
 @pytest.mark.parametrize(
     'model_name,settings',
     [
-        ('gpt-image-2', OpenAIImageGenerationSettings(background='transparent')),
+        ('gpt-image-2', OpenAIImageGenerationSettings(openai_background='transparent')),
         (
             'gpt-image-2-2026-04-21',
-            OpenAIImageGenerationSettings(background='opaque', openai_background='transparent'),
+            OpenAIImageGenerationSettings(openai_background='transparent'),
         ),
     ],
 )
@@ -2129,18 +2156,11 @@ async def test_openai_gpt_image_2_rejects_transparent_background(
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-@pytest.mark.parametrize(
-    'settings',
-    [
-        OpenAIImageGenerationSettings(input_fidelity='low'),
-        OpenAIImageGenerationSettings(openai_input_fidelity='high'),
-    ],
-)
-async def test_openai_gpt_image_2_ignores_input_fidelity_on_edit(settings: OpenAIImageGenerationSettings):
+async def test_openai_gpt_image_2_ignores_input_fidelity_on_edit():
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
     mock_client.images.edit.return_value = ImagesResponse.model_construct(
-        data=[Image.model_construct(b64_json='ZWRpdGVk')], output_format='png'
+        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
     )
     model = OpenAIImageGenerationModel(
         'gpt-image-2',
@@ -2150,8 +2170,8 @@ async def test_openai_gpt_image_2_ignores_input_fidelity_on_edit(settings: OpenA
     with pytest.warns(UserWarning, match=r'ignored unsupported settings: `input_fidelity`'):
         await model.generate(
             'edit this image',
-            images=[BinaryImage(data=b'image', media_type='image/png')],
-            settings=settings,
+            images=[BinaryImage(data=TINY_PNG, media_type='image/png')],
+            settings=OpenAIImageGenerationSettings(openai_input_fidelity='high'),
         )
 
     mock_client.images.edit.assert_awaited_once()
@@ -2170,8 +2190,8 @@ async def test_openai_rejects_transparent_background_with_jpeg_edit():
     with pytest.raises(UserError, match='require `output_format="png"` or `"webp"`'):
         await model.generate(
             'transparent edit',
-            images=[BinaryImage(data=b'image', media_type='image/png')],
-            settings=OpenAIImageGenerationSettings(background='transparent', output_format='jpeg'),
+            images=[BinaryImage(data=TINY_PNG, media_type='image/png')],
+            settings=OpenAIImageGenerationSettings(openai_background='transparent', openai_output_format='jpeg'),
         )
 
     mock_client.images.edit.assert_not_awaited()
@@ -2187,9 +2207,9 @@ async def test_openai_gpt_image_2_generation_vcr(openai_api_key: str):
         'A cat with a cowboy hat, dancing in Rome.',
         settings=OpenAIImageGenerationSettings(
             dimensions=(1280, 720),
-            output_format='jpeg',
-            output_compression=10,
-            quality='low',
+            openai_output_format='jpeg',
+            openai_output_compression=10,
+            openai_quality='low',
         ),
     )
 
@@ -2223,7 +2243,9 @@ async def test_openai_gpt_image_2_webp_generation_vcr(openai_api_key: str):
 
     result = await model.generate(
         'A small red circle centered on a plain white background.',
-        settings=OpenAIImageGenerationSettings(dimensions=(1024, 1024), output_format='webp', quality='low'),
+        settings=OpenAIImageGenerationSettings(
+            dimensions=(1024, 1024), openai_output_format='webp', openai_quality='low'
+        ),
     )
 
     assert len(result.images) == 1
@@ -2262,6 +2284,15 @@ async def test_openai_response_without_image_data():
     assert exc_info.value.body is not None
     assert '!!!!' in exc_info.value.body
 
+    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+        created=123, data=[Image.model_construct(b64_json=base64.b64encode(b'not an image').decode())]
+    )
+    with pytest.raises(UnexpectedModelBehavior, match='recognized image format') as exc_info:
+        await model.generate('tiny robot')
+
+    assert exc_info.value.body is not None
+    assert 'not an image' not in exc_info.value.body
+
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 async def test_openai_image_edit_request():
@@ -2269,7 +2300,7 @@ async def test_openai_image_edit_request():
     mock_client.base_url = 'https://api.openai.com/v1/'
     mock_client.images.edit.return_value = ImagesResponse.model_construct(
         created=456,
-        data=[Image.model_construct(b64_json='ZWRpdGVk')],
+        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())],
         output_format='webp',
         quality='high',
         size='1024x1024',
@@ -2278,15 +2309,7 @@ async def test_openai_image_edit_request():
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
 
     settings = OpenAIImageGenerationSettings(
-        n=1,
-        background='transparent',
-        input_fidelity='low',
-        moderation='auto',
-        output_format='webp',
-        output_compression=50,
-        quality='low',
-        size='1024x1536',
-        aspect_ratio='3:2',
+        openai_n=1,
         extra_headers={'x-test': 'header'},
         extra_body={'provider_option': True},
         openai_size='1024x1024',
@@ -2294,18 +2317,16 @@ async def test_openai_image_edit_request():
         openai_background='opaque',
         openai_input_fidelity='high',
         openai_moderation='low',
+        openai_output_format='webp',
         openai_output_compression=80,
         openai_user='user-123',
     )
-    with pytest.warns(
-        UserWarning,
-        match=r'ignored unsupported settings: `moderation`.*used provider-specific settings instead',
-    ):
+    with pytest.warns(UserWarning, match=r'ignored unsupported settings: `moderation`'):
         result = await model.generate(
             'turn these into one image',
             images=[
-                BinaryImage(data=b'first', media_type='image/png'),
-                BinaryImage(data=b'second', media_type='image/jpeg'),
+                BinaryImage(data=TINY_PNG, media_type='image/png'),
+                BinaryImage(data=_JPEG_MAGIC_BYTES, media_type='image/jpeg'),
             ],
             settings=settings,
         )
@@ -2314,8 +2335,8 @@ async def test_openai_image_edit_request():
     mock_client.images.edit.assert_awaited_once()
     kwargs = mock_client.images.edit.await_args.kwargs
     assert kwargs['image'] == [
-        ('image-0.png', b'first', 'image/png'),
-        ('image-1.jpg', b'second', 'image/jpeg'),
+        ('image-0.png', TINY_PNG, 'image/png'),
+        ('image-1.jpg', _JPEG_MAGIC_BYTES, 'image/jpeg'),
     ]
     assert kwargs['prompt'] == 'turn these into one image'
     assert kwargs['model'] == 'gpt-image-1'
@@ -2330,7 +2351,7 @@ async def test_openai_image_edit_request():
     assert kwargs['extra_headers'] == {'x-test': 'header'}
     assert kwargs['extra_body'] == {'provider_option': True}
     assert 'moderation' not in kwargs
-    assert result.images[0].content == BinaryImage(data=b'edited', media_type='image/webp')
+    assert result.images[0].content == BinaryImage(data=TINY_PNG, media_type='image/png')
     assert result.provider_details == {'created': 456}
 
 
@@ -2344,7 +2365,7 @@ async def test_openai_image_edit_wire_payload():
             200,
             json={
                 'created': 456,
-                'data': [{'b64_json': 'ZWRpdGVk'}],
+                'data': [{'b64_json': base64.b64encode(TINY_PNG).decode()}],
                 'output_format': 'png',
             },
         )
@@ -2353,7 +2374,9 @@ async def test_openai_image_edit_wire_payload():
     openai_client = AsyncOpenAI(api_key='test-api-key', base_url='https://example.com/v1', http_client=http_client)
     provider = OpenAIProvider(openai_client=openai_client)
     model = OpenAIImageGenerationModel('gpt-image-1.5', provider=provider)
-    settings = OpenAIImageGenerationSettings(output_format='png', openai_input_fidelity='high', openai_moderation='low')
+    settings = OpenAIImageGenerationSettings(
+        openai_output_format='png', openai_input_fidelity='high', openai_moderation='low'
+    )
 
     try:
         with pytest.warns(UserWarning, match=r'ignored unsupported settings: `moderation`'):
@@ -2396,8 +2419,8 @@ async def test_openai_image_edit_vcr(openai_api_key: str, assets_path: Path):
     model = OpenAIImageGenerationModel('gpt-image-1.5', provider=provider)
     reference_image = BinaryImage(data=(assets_path / 'kiwi.jpg').read_bytes(), media_type='image/jpeg')
     settings = OpenAIImageGenerationSettings(
-        n=1,
-        output_format='jpeg',
+        openai_n=1,
+        openai_output_format='jpeg',
         openai_size='1024x1024',
         openai_quality='low',
         openai_input_fidelity='low',
@@ -2435,7 +2458,7 @@ async def test_openai_image_edit_downloads_image_url(monkeypatch: pytest.MonkeyP
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
     mock_client.images.edit.return_value = ImagesResponse.model_construct(
-        data=[Image.model_construct(b64_json='ZWRpdGVk')], output_format='png'
+        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
     )
     provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
@@ -2585,11 +2608,10 @@ async def test_openai_image_generation_moderation_blocked():
         'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
     )
 
-    with pytest.raises(ModelHTTPError) as exc_info:
+    with pytest.raises(ContentFilterError) as exc_info:
         await model.generate('a blocked prompt')
 
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.body == snapshot(
+    assert json.loads(exc_info.value.body or '') == snapshot(
         {
             'error': {
                 'code': 'moderation_blocked',
@@ -2683,12 +2705,12 @@ async def test_openai_image_generation_supported_settings_emit_no_warning():
         'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
     )
     settings = OpenAIImageGenerationSettings(
-        n=1,
-        size='1024x1024',
-        quality='high',
-        background='opaque',
-        moderation='low',
-        output_format='png',
+        openai_n=1,
+        openai_size='1024x1024',
+        openai_quality='high',
+        openai_background='opaque',
+        openai_moderation='low',
+        openai_output_format='png',
     )
 
     with warnings.catch_warnings():
@@ -2708,7 +2730,11 @@ async def test_instrumentation(capfire: CaptureLogfire):
             BinaryImage(data=TINY_PNG, media_type='image/png'),
             UploadedFile(file_id=provider_file_id, provider_name='openai', media_type='image/png'),
         ],
-        settings={'n': 1},
+        settings={
+            'dimensions': (1024, 1024),
+            'extra_headers': {'authorization': 'Bearer test'},
+            'extra_body': {'application_data': 'test'},
+        },
     )
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
@@ -2728,7 +2754,7 @@ async def test_instrumentation(capfire: CaptureLogfire):
                 'gen_ai.request.model': 'test',
                 'prompt_length': 10,
                 'input_image_count': 3,
-                'image_generation_settings': {'n': 1},
+                'image_generation_settings': {'dimensions': [1024, 1024]},
                 'prompt': 'tiny robot',
                 'logfire.json_schema': {
                     'type': 'object',
@@ -2884,7 +2910,7 @@ async def test_instrumentation_respects_content_and_request_parameter_flags(capf
             include_model_request_parameters=False,
         ),
     )
-    await generator.generate('tiny robot', settings={'n': 1})
+    await generator.generate('tiny robot', settings={'dimensions': (1024, 1024)})
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     span = next(span for span in spans if 'image_generation' in span['name'])

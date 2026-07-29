@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import download_item
 from pydantic_ai.providers import Provider, infer_provider
@@ -16,7 +17,7 @@ from ._media_type import image_media_type_from_bytes
 from ._openai_geometry import is_gpt_image_2, resolve_openai_geometry
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
-from .settings import ImageGenerationSettings, warn_image_generation_settings
+from .settings import ImageGenerationSettings, ImageOutputFormat, validate_image_count, warn_image_generation_settings
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI
@@ -42,6 +43,12 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
     """
 
     # ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+
+    openai_n: int
+    """The number of images to generate."""
+
+    openai_output_format: ImageOutputFormat
+    """The generated image format."""
 
     openai_size: str
     """OpenAI image size setting.
@@ -133,9 +140,9 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                     image=await self._map_input_images(images),
                     prompt=prompt,
                     model=self.model_name,
-                    n=openai_settings.get('n') or OMIT,
+                    n=openai_settings.get('openai_n') or OMIT,
                     size=resolved.size or OMIT,
-                    output_format=openai_settings.get('output_format') or OMIT,
+                    output_format=openai_settings.get('openai_output_format') or OMIT,
                     quality=resolved.quality or OMIT,
                     background=resolved.background or OMIT,
                     input_fidelity=resolved.input_fidelity or OMIT,
@@ -150,9 +157,9 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                 response = await self._client.images.generate(
                     prompt=prompt,
                     model=self.model_name,
-                    n=openai_settings.get('n') or OMIT,
+                    n=openai_settings.get('openai_n') or OMIT,
                     size=resolved.size or OMIT,
-                    output_format=openai_settings.get('output_format') or OMIT,
+                    output_format=openai_settings.get('openai_output_format') or OMIT,
                     quality=resolved.quality or OMIT,
                     background=resolved.background or OMIT,
                     moderation=resolved.moderation or OMIT,
@@ -165,6 +172,14 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                 )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
+                match e.body:
+                    case {'error': {'code': 'moderation_blocked'}}:
+                        raise ContentFilterError(
+                            'OpenAI image generation was blocked for content moderation',
+                            json.dumps(e.body),
+                        ) from e
+                    case _:
+                        pass
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
@@ -206,7 +221,6 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         if not response_data:
             raise UnexpectedModelBehavior('OpenAI image generation response did not contain any images')
 
-        echoed_output_format = response.output_format or settings.get('output_format') or 'png'
         images: list[GeneratedImage] = []
         for image in response_data:
             if not image.b64_json:
@@ -223,14 +237,15 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                 ) from e
 
             # OpenAI echoes the requested `output_format` even when it returns bytes in a different
-            # format (openai-node#1850), so trust the actual bytes and fall back to the echo only when
-            # they're unrecognized. `content.media_type` and `output_format` stay consistent either way.
-            if (sniffed_media_type := image_media_type_from_bytes(image_data)) is not None:
-                media_type = sniffed_media_type
-                output_format = sniffed_media_type.removeprefix('image/')
-            else:
-                output_format = echoed_output_format
-                media_type = _media_type_from_output_format(output_format)
+            # format (openai-node#1850), so trust the actual bytes rather than attach an unverified
+            # media type to arbitrary data.
+            if (sniffed_media_type := image_media_type_from_bytes(image_data)) is None:
+                raise UnexpectedModelBehavior(
+                    'OpenAI image generation response did not contain a recognized image format',
+                    response.model_dump_json(exclude_none=True),
+                )
+            media_type = sniffed_media_type
+            output_format = sniffed_media_type.removeprefix('image/')
 
             images.append(
                 GeneratedImage(
@@ -253,12 +268,6 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
             settings=settings,
             provider_details=_response_provider_details(response),
         )
-
-
-def _media_type_from_output_format(output_format: str) -> str:
-    if output_format == 'jpeg':
-        return 'image/jpeg'
-    return f'image/{output_format}'
 
 
 def _openai_input_extension(media_type: str) -> str:
@@ -291,39 +300,12 @@ def _resolve_openai_settings(
     ignored: list[str] = []
     conflicts: list[str] = []
 
+    validate_image_count('OpenAI', settings.get('openai_n'), maximum=10)
     quality = settings.get('openai_quality')
-    if quality is None:
-        quality = settings.get('quality')
-    elif (common_quality := settings.get('quality')) is not None and common_quality != quality:
-        conflicts.append('quality')
-
     background = settings.get('openai_background')
-    if background is None:
-        background = settings.get('background')
-    elif (common_background := settings.get('background')) is not None and common_background != background:
-        conflicts.append('background')
-
     input_fidelity = settings.get('openai_input_fidelity')
-    if input_fidelity is None:
-        input_fidelity = settings.get('input_fidelity')
-    elif (common_input_fidelity := settings.get('input_fidelity')) is not None and (
-        common_input_fidelity != input_fidelity
-    ):
-        conflicts.append('input_fidelity')
-
     moderation = settings.get('openai_moderation')
-    if moderation is None:
-        moderation = settings.get('moderation')
-    elif (common_moderation := settings.get('moderation')) is not None and common_moderation != moderation:
-        conflicts.append('moderation')
-
     output_compression = settings.get('openai_output_compression')
-    if output_compression is None:
-        output_compression = settings.get('output_compression')
-    elif (common_compression := settings.get('output_compression')) is not None and (
-        common_compression != output_compression
-    ):
-        conflicts.append('output_compression')
 
     if is_edit:
         if moderation is not None:
@@ -334,7 +316,7 @@ def _resolve_openai_settings(
     elif input_fidelity is not None:
         ignored.append('input_fidelity')
 
-    _validate_openai_background(model_name, background, settings.get('output_format'))
+    _validate_openai_background(model_name, background, settings.get('openai_output_format'))
 
     geometry = resolve_openai_geometry(model_name, settings, provider_size=settings.get('openai_size'))
 

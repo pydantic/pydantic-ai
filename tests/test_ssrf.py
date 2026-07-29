@@ -613,6 +613,43 @@ class TestSafeDownload:
         assert call_args[1]['headers']['Host'] == 'example.com'
         assert call_args[1]['extensions'] == {'sni_hostname': 'example.com'}
 
+    async def test_max_bytes_reads_streamed_body(self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A bounded download buffers a streamed response only after enforcing its limit."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        def handle_request(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b'streamed content', request=request)
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+
+        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
+            return http_client
+
+        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+
+        response = await safe_download('https://example.com/file.txt', max_bytes=16)
+
+        assert response.content == b'streamed content'
+
+    async def test_max_bytes_rejects_oversized_streamed_body(
+        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing or false content-length header cannot bypass the streamed-body limit."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        def handle_request(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b'content longer than the limit', request=request)
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+
+        def create_http_client(*, timeout: int) -> httpx.AsyncClient:
+            return http_client
+
+        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+
+        with pytest.raises(ValueError, match='maximum size of 16 bytes'):
+            await safe_download('https://example.com/file.txt', max_bytes=16)
+
     async def test_redirect_followed(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True

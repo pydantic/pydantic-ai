@@ -55,7 +55,6 @@ KnownImageGenerationModelName = TypeAliasType(
         'openai:gpt-image-1.5',
         'openai:gpt-image-2',
         'xai:grok-imagine-image',
-        'xai:grok-imagine-image-pro',
         'xai:grok-imagine-image-quality',
     ],
 )

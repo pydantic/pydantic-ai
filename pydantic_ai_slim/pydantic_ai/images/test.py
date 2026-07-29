@@ -67,18 +67,14 @@ class TestImageGenerationModel(ImageGenerationModel):
         prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
         self.last_images = images
         self.last_settings = settings
-        image_count = settings.get('n') or 1
-        output_format = settings.get('output_format') or 'png'
-        media_type = f'image/{output_format}'
 
         return ImageGenerationResult(
             images=[
                 GeneratedImage(
-                    content=BinaryImage(data=_TINY_PNG, media_type=media_type),
+                    content=BinaryImage(data=_TINY_PNG, media_type='image/png'),
                     size='1x1',
-                    output_format=output_format,
+                    output_format='png',
                 )
-                for _ in range(image_count)
             ],
             prompt=prompt,
             usage=RequestUsage(input_tokens=_estimate_tokens(prompt)),

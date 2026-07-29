@@ -439,6 +439,7 @@ async def safe_download(
     headers: dict[str, str] | None = None,
     allowed_domains: list[str] | None = None,
     blocked_domains: list[str] | None = None,
+    max_bytes: int | None = None,
 ) -> httpx.Response:
     """Download content from a URL with SSRF protection.
 
@@ -457,6 +458,8 @@ async def safe_download(
                     Cloud metadata endpoints are always blocked regardless.
         max_redirects: Maximum number of redirects to follow (default: 10).
         timeout: Request timeout in seconds (default: 30).
+        max_bytes: Maximum response-body size in bytes. When set, the response body
+            is read as a stream and rejected if it exceeds this limit.
         headers: Additional HTTP headers to include in the request.
                 The `Host` header is always set to the original hostname
                 and cannot be overridden.
@@ -473,10 +476,13 @@ async def safe_download(
                 or too many redirects occur.
         httpx.HTTPStatusError: If the response has an error status code.
     """
+    if max_bytes is not None and max_bytes < 0:
+        raise ValueError('max_bytes must be non-negative')
+
     current_url = url
     redirects_followed = 0
     original_hostname = urlparse(url).hostname
-    effective_headers: dict[str, str] = dict(headers) if headers else {}
+    effective_headers: dict[str, str] = dict(headers or {})
 
     async with create_async_http_client(timeout=timeout) as client:
         while True:
@@ -498,16 +504,22 @@ async def safe_download(
             request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
             request_headers['Host'] = resolved.hostname
 
-            # Make request with Host header set to original hostname
-            response = await client.get(
-                request_url,
-                headers=request_headers,
-                extensions=extensions,
-                follow_redirects=False,
-            )
+            # Make request with Host header set to original hostname. Keep the existing
+            # buffered path for callers without a body limit.
+            if max_bytes is None:
+                response = await client.get(
+                    request_url,
+                    headers=request_headers,
+                    extensions=extensions,
+                    follow_redirects=False,
+                )
+            else:
+                request = client.build_request('GET', request_url, headers=request_headers, extensions=extensions)
+                response = await client.send(request, follow_redirects=False, stream=True)
 
             # Check if we need to follow a redirect
             if response.is_redirect:
+                await response.aclose()
                 redirects_followed += 1
                 if redirects_followed > max_redirects:
                     raise ValueError(f'Too many redirects ({redirects_followed}). Maximum allowed: {max_redirects}')
@@ -529,5 +541,23 @@ async def safe_download(
                 continue
 
             # Not a redirect, we're done
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+                if max_bytes is not None:
+                    content = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        content.extend(chunk)
+                        if len(content) > max_bytes:
+                            raise ValueError(f'Download exceeds the maximum size of {max_bytes} bytes.')
+                    return httpx.Response(
+                        response.status_code,
+                        headers=response.headers,
+                        content=bytes(content),
+                        request=response.request,
+                        history=response.history,
+                        extensions=response.extensions,
+                    )
+            finally:
+                if max_bytes is not None:
+                    await response.aclose()
             return response

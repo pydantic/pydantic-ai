@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import StatusCode
-from pydantic_core import to_json
+from pydantic_core import from_json, to_json
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
@@ -35,6 +35,22 @@ from .abstract import (
     WrapRunHandler,
     WrapToolExecuteHandler,
 )
+
+_JsonValue: TypeAlias = str | int | float | bool | None | list['_JsonValue'] | dict[str, '_JsonValue']
+
+
+def _remove_binary_content(value: _JsonValue) -> _JsonValue:
+    if isinstance(value, list):
+        return [_remove_binary_content(item) for item in value]
+    elif isinstance(value, dict):
+        return {
+            key: _remove_binary_content(item)
+            for key, item in value.items()
+            if not (value.get('kind') == 'binary' and key == 'data')
+        }
+    else:
+        return value
+
 
 if TYPE_CHECKING:
     from pydantic_ai._run_context import RunContext
@@ -410,7 +426,13 @@ class Instrumentation(AbstractCapability[Any]):
             span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=self._tool_span_attributes(call),
             action=lambda: handler(args),
-            serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
+            serialize_result=(
+                lambda value: (
+                    tool_return_ta.dump_json(value).decode()
+                    if self.settings.include_binary_content
+                    else to_json(_remove_binary_content(from_json(tool_return_ta.dump_json(value)))).decode()
+                )
+            ),
             handle_tool_control_flow=True,
         )
 

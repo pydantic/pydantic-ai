@@ -5,17 +5,24 @@ generate an image. It prefers the conversational model provider's native image-g
 dedicated image model through the [direct image-generation API](../image-generation.md).
 
 ```python {title="image_generation_capability.py"}
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ImageGenerator
 from pydantic_ai.capabilities import ImageGeneration
+from pydantic_ai.images.openai import OpenAIImageGenerationSettings
+
+image_generator = ImageGenerator(
+    'openai:gpt-image-2',
+    settings=OpenAIImageGenerationSettings(
+        openai_output_format='png',
+        openai_quality='low',
+    ),
+)
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
     capabilities=[
         ImageGeneration(
             native=False,
-            local='openai:gpt-image-1.5',
-            output_format='png',
-            quality='low',
+            local=image_generator,
             dimensions=(1024, 1024),
         )
     ],
@@ -29,6 +36,7 @@ agent = Agent(
 ```python {title="image_generation_routing.py"}
 from pydantic_ai import ImageGenerator
 from pydantic_ai.capabilities import ImageGeneration
+from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 
 # Native preferred; use the direct model when native generation is unavailable
 ImageGeneration(local='openai:gpt-image-1.5')
@@ -37,8 +45,14 @@ ImageGeneration(local='openai:gpt-image-1.5')
 ImageGeneration(native=False, local='google:gemini-3.1-flash-lite-image')
 
 # Supply reusable direct settings through an explicit generator
-generator = ImageGenerator('openai:gpt-image-1.5', settings={'output_format': 'jpeg'})
-ImageGeneration(native=False, local=generator, quality='low')
+generator = ImageGenerator(
+    'openai:gpt-image-2',
+    settings=OpenAIImageGenerationSettings(
+        openai_output_format='jpeg',
+        openai_quality='low',
+    ),
+)
+ImageGeneration(native=False, local=generator, dimensions=(1280, 720))
 
 
 # A custom callable or Tool can still implement the local side
@@ -48,9 +62,10 @@ def my_generator(prompt: str) -> bytes: ...
 ImageGeneration(local=my_generator)
 ```
 
-The capability's normalized settings override the defaults on an explicit generator. Provider-specific settings on
-that generator take precedence over conflicting normalized values and produce a warning. The local tool always requests
-and returns one [`BinaryImage`][pydantic_ai.messages.BinaryImage]; use
+The portable `dimensions` and `aspect_ratio` capability settings override defaults on an explicit generator.
+Native-tool-only settings such as `quality` and `output_format` do not apply to a direct fallback; configure their
+provider-prefixed equivalents on the generator. The local tool requires exactly one generated
+[`BinaryImage`][pydantic_ai.messages.BinaryImage]; use
 [`ImageGenerator`][pydantic_ai.images.ImageGenerator] directly for multiple images or reference-image editing.
 
 [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] remains the native implementation. Pass an

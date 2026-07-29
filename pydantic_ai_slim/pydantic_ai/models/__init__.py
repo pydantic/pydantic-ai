@@ -37,6 +37,7 @@ from ..messages import (
     FileUrl,
     FinalResultEvent,
     FinishReason,
+    ImageUrl,
     InstructionPart,
     ModelMessage,
     ModelRequest,
@@ -77,6 +78,8 @@ DEFAULT_HTTP_TIMEOUT: int = 600
 This matches the default timeout used by OpenAI's Python client.
 See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
 """
+
+_MAX_IMAGE_URL_DOWNLOAD_BYTES = 50 * 1024 * 1024
 
 ModelContextDepsT = TypeVar('ModelContextDepsT')
 
@@ -1388,6 +1391,7 @@ async def download_item(
     - Private/internal IP addresses are blocked by default
     - Cloud metadata endpoints (169.254.169.254) are always blocked
     - Hostnames are resolved before requests to prevent DNS rebinding
+    - `ImageUrl` response bodies are limited to 50 MiB
 
     Set `item.force_download='allow-local'` to allow private IP addresses.
 
@@ -1405,7 +1409,7 @@ async def download_item(
     Raises:
         UserError: If the URL points to a YouTube video.
         ValueError: If the URL uses an unsupported protocol or targets a private/internal
-            IP address (unless allow-local is set).
+            IP address (unless allow-local is set), or an image exceeds 50 MiB.
     """
     if isinstance(item, VideoUrl) and item.is_youtube:
         raise UserError('Downloading YouTube videos is not supported.')
@@ -1413,7 +1417,8 @@ async def download_item(
     from .._ssrf import safe_download
 
     allow_local = item.force_download == 'allow-local'
-    response = await safe_download(item.url, allow_local=allow_local)
+    max_bytes = _MAX_IMAGE_URL_DOWNLOAD_BYTES if isinstance(item, ImageUrl) else None
+    response = await safe_download(item.url, allow_local=allow_local, max_bytes=max_bytes)
 
     if content_type := response.headers.get('content-type'):
         content_type = content_type.split(';')[0]

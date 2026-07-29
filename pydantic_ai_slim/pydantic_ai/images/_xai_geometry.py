@@ -28,7 +28,6 @@ _XAI_GEOMETRIES: dict[ImageAspectRatio, dict[ImageResolution, ImageDimensions]] 
 }
 _XAI_GEOMETRY_MODELS = frozenset({'grok-imagine-image', 'grok-imagine-image-quality'})
 _XAI_ASPECT_RATIOS: dict[str, ImageAspectRatio] = {value: value for value in _XAI_GEOMETRIES}
-_XAI_RESOLUTIONS: dict[str, ImageResolution] = {'1K': '1k', '2K': '2k'}
 
 
 @dataclass
@@ -80,16 +79,8 @@ def resolve_xai_geometry(
     else:
         aspect_ratio = mapped_aspect_ratio
 
-    common_size = settings.get('size')
-    mapped_resolution = resolve_xai_size(common_size) if common_size else None
-    if common_size is not None and mapped_resolution is None:
-        ignored.append('size')
     if provider_resolution is not None:
-        if mapped_resolution is not None and mapped_resolution != provider_resolution:
-            conflicts.append('size')
         resolution = provider_resolution
-    elif mapped_resolution is not None:
-        resolution = mapped_resolution
     elif mapped_aspect_ratio is not None:
         # A common ratio promises one canonical model geometry. Pin xAI's documented default tier
         # instead of relying on a provider default that could change independently.
@@ -120,8 +111,3 @@ def resolve_xai_dimensions(model_name: str, dimensions: ImageDimensions) -> tupl
 def resolve_xai_aspect_ratio(aspect_ratio: ImageGenerationAspectRatio) -> ImageAspectRatio | None:
     """Map a portable aspect ratio to the xAI SDK type when supported."""
     return _XAI_ASPECT_RATIOS.get(aspect_ratio)
-
-
-def resolve_xai_size(size: str) -> ImageResolution | None:
-    """Map the compatibility size vocabulary to an xAI resolution tier."""
-    return _XAI_RESOLUTIONS.get(size)
