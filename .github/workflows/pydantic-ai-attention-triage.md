@@ -12,8 +12,6 @@ permissions:
 concurrency:
   group: attention-triage-advisory
   cancel-in-progress: false
-env:
-  PYDANTIC_AI_DYNAMIC_WORKFLOW: attention-triage
 network:
   allowed:
     - defaults
@@ -134,33 +132,11 @@ Age, validity, importance, or an unanswered conversation alone are not enough. R
 when the evidence clearly shows that a maintainer must make the next decision. The host validates every
 item against the immutable snapshot, then applies fixed labels and assignment without model-generated text.
 
-If there are candidates, first use the outer `Read` tool to load `attention-candidates.json` for your own
-decisions, then use `run_workflow` once. Each specialist has a fixed zero-argument
-`read_attention_candidates` host tool for loading the same snapshot. Monty intentionally has no configured
-filesystem or environment access: inside `run_workflow`, never use `open`, `pathlib`, `os`, environment
-variables, stdin, or file writes, and never interpolate candidate contents into Python code. Use exactly
-this fixed shape:
+If there are candidates, use `Read` exactly once to load `attention-candidates.json`, classify every
+candidate yourself, then call `record_attention_decision` exactly once for every candidate. Make the
+independent decision calls in parallel in one response when possible. Do not use `Task`, `LS`, `TodoWrite`,
+or read any other file.
 
-```python
-import asyncio
-
-classifier_result, skeptic_result = await asyncio.gather(
-    attention_classifier(
-        task="Call read_attention_candidates, then classify every candidate in the returned snapshot."
-    ),
-    false_positive_skeptic(
-        task="Call read_attention_candidates, then challenge maintainer attention for every candidate."
-    ),
-)
-{"classifier": classifier_result, "skeptic": skeptic_result}
-```
-
-Compare both specialists' evidence for every decision. The host bounds the two calls.
-
-This specialist review is advisory deliberation. Security does not depend on the model calling it or
-following it. The host-side allowlist, enum validation, and current-state checks are the write boundary.
-
-Call `record_attention_decision` exactly once for every candidate. The host applies assignment and
-attention labels only for high-confidence maintainer decisions. Other items remain eligible after later
-activity changes who must act next. If the snapshot is empty, call `noop` with a short fixed summary.
-Never include repository content in any output text.
+The host applies assignment and attention labels only for high-confidence maintainer decisions. Other
+items remain eligible after later activity changes who must act next. If the snapshot is empty, call
+`noop` with a short fixed summary. Never include repository content in any output text.

@@ -877,175 +877,28 @@ def test_subagent_request_limit_is_a_constant():
     assert shim.SUBAGENT_REQUEST_LIMIT == 75
 
 
-def test_attention_dynamic_workflow_is_bounded_to_specialists():
-    """Attention triage gets a tiny purpose-built crew, not recursive free-form delegation."""
-    from pydantic_ai.models.test import TestModel
-
-    workflow = shim.attention_dynamic_workflow(TestModel())
-    assert workflow.max_agent_calls == 2
-    assert workflow.max_retries == 3
-    # Wall-clock while awaiting the specialists' asyncio.gather: generous
-    # enough for two real model calls, still bounded well under the job timeout.
-    assert workflow.resource_limits == {'max_duration_secs': 300}
-    assert workflow.forward_usage is False
-    assert workflow.inherit_model is True
-    assert workflow.sub_agent_usage_limits is not None
-    assert workflow.sub_agent_usage_limits.request_limit == 2
-    assert {agent.name for agent in workflow.agents} == {'attention_classifier', 'false_positive_skeptic'}
-
-
-def test_attention_candidate_reader_uses_fixed_json_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / 'attention-candidates.json').write_text('[{"number": 1, "title": "hostile \\" text"}]')
-
-    assert json.loads(shim.read_attention_candidates()) == [{'number': 1, 'title': 'hostile " text'}]
-
-    (tmp_path / 'attention-candidates.json').write_text('{"number": 1}')
-    with pytest.raises(ValueError, match='must contain a JSON array'):
-        shim.read_attention_candidates()
-
-
-def test_attention_dynamic_workflow_runs_bounded_fanout():
-    """Exercise the actual Monty script path, including concurrent specialist calls."""
-    from pydantic_ai import Agent
-    from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
-    from pydantic_ai.usage import UsageLimits
-
-    script = """
-import asyncio
-results = await asyncio.gather(
-    attention_classifier(task="Call read_attention_candidates, then classify every candidate."),
-    false_positive_skeptic(task="Call read_attention_candidates, then challenge every candidate."),
-)
-results
-"""
-    specialist_calls = 0
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal specialist_calls
-        if 'run_workflow' not in {tool.name for tool in info.function_tools}:
-            assert 'read_attention_candidates' in {tool.name for tool in info.function_tools}
-            specialist_calls += 1
-            return ModelResponse(parts=[TextPart('specialist evidence')])
-        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-            return ModelResponse(parts=[TextPart('done')])
-        return ModelResponse(parts=[ToolCallPart('run_workflow', {'code': script})])
-
-    model = FunctionModel(respond)
-    agent = Agent(model, capabilities=[shim.attention_dynamic_workflow(model)])
-    result = asyncio.run(agent.run('go', usage_limits=UsageLimits(request_limit=5)))
-
-    assert result.output == 'done'
-    assert specialist_calls == 2
-
-
-def test_attention_dynamic_workflow_recovers_from_monty_file_access():
-    """Two unsupported file reads remain bounded retries instead of crashing the run."""
-    from pydantic_ai import Agent
-    from pydantic_ai.messages import ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
-    from pydantic_ai.usage import UsageLimits
-
-    invalid_scripts = [
-        'import json\nwith open("attention-candidates.json") as f:\n    json.load(f)',
-        'from pathlib import Path\nPath("attention-candidates.json").read_text()',
-    ]
-    valid_script = """
-import asyncio
-results = await asyncio.gather(
-    attention_classifier(task="Call read_attention_candidates, then classify every candidate."),
-    false_positive_skeptic(task="Call read_attention_candidates, then challenge every candidate."),
-)
-results
-"""
-    workflow_calls = specialist_calls = 0
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal workflow_calls, specialist_calls
-        if 'run_workflow' not in {tool.name for tool in info.function_tools}:
-            assert 'read_attention_candidates' in {tool.name for tool in info.function_tools}
-            specialist_calls += 1
-            return ModelResponse(parts=[TextPart('specialist evidence')])
-        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-            return ModelResponse(parts=[TextPart('done')])
-        retry_count = sum(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
-        workflow_calls += 1
-        code = invalid_scripts[retry_count] if retry_count < len(invalid_scripts) else valid_script
-        return ModelResponse(parts=[ToolCallPart('run_workflow', {'code': code})])
-
-    model = FunctionModel(respond)
-    agent = Agent(model, capabilities=[shim.attention_dynamic_workflow(model)])
-    result = asyncio.run(agent.run('go', usage_limits=UsageLimits(request_limit=7)))
-
-    assert result.output == 'done'
-    assert workflow_calls == 3
-    assert specialist_calls == 2
-
-
-def test_attention_workflow_documents_monty_safe_data_flow():
+def test_attention_workflow_uses_one_direct_bounded_classification_pass():
     workflow = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.md'
     text = workflow.read_text(encoding='utf-8')
 
-    assert 'first use the outer `Read` tool' in text
-    assert 'Monty intentionally has no configured' in text
-    assert 'filesystem or environment access' in text
-    assert 'never use `open`, `pathlib`, `os`' in text
-    assert 'never interpolate candidate contents into Python code' in text
-    assert 'task="Call read_attention_candidates' in text
+    assert 'use `Read` exactly once to load `attention-candidates.json`' in text
+    assert 'classify every\ncandidate yourself' in text
+    assert 'independent decision calls in parallel in one response' in text
+    assert 'Do not use `Task`, `LS`, `TodoWrite`' in text
+    assert 'PYDANTIC_AI_DYNAMIC_WORKFLOW' not in text
+    assert 'run_workflow' not in text
+    assert 'Monty' not in text
     assert '        pull-requests: write' in text
     assert 'report-failure-as-issue: false' in text
+
+    runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
+    assert 'pydantic-ai-harness==0.7.0' in runner
+    assert 'dynamic-workflow' not in runner
+    assert 'pydantic-monty' not in runner
 
     lock = workflow.with_suffix('.lock.yml').read_text(encoding='utf-8')
     assert '      pull-requests: write' in lock
     assert 'GH_AW_FAILURE_REPORT_AS_ISSUE: "false"' in lock
-
-
-def test_dynamic_workflow_gate_env_toggles_run_workflow_tool(monkeypatch: pytest.MonkeyPatch):
-    """The attention crew is wired only when PYDANTIC_AI_DYNAMIC_WORKFLOW matches
-    the exact `attention-triage` literal. Both attention tests bypass this gate by
-    calling `attention_dynamic_workflow` directly, so a typo in the literal (here
-    or in the workflow .md) would silently drop the crew while CI stayed green.
-    Drive the real `run()` seam offline and assert the `run_workflow` tool appears
-    only when the env value matches, and pin the workflow .md's env line.
-    """
-    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
-
-    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
-
-    def _tools_seen_during_run() -> set[str]:
-        seen: set[str] = set()
-
-        def _respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            seen.update(tool.name for tool in info.function_tools)
-            return ModelResponse(parts=[TextPart('done')])
-
-        async def _stream(messages: list[ModelMessage], info: AgentInfo):
-            seen.update(tool.name for tool in info.function_tools)
-            yield 'done'
-
-        asyncio.run(
-            shim.run(
-                prompt='classify the candidates',
-                model=FunctionModel(_respond, stream_function=_stream),
-                label='test-model',
-                claude_code_toolset=shim.select_claude_code_toolset(None, None, task=None),
-                mcp_servers=[],
-                session_id='sess',
-            )
-        )
-        return seen
-
-    monkeypatch.setenv('PYDANTIC_AI_DYNAMIC_WORKFLOW', 'attention-triage')
-    assert 'run_workflow' in _tools_seen_during_run()
-
-    monkeypatch.delenv('PYDANTIC_AI_DYNAMIC_WORKFLOW', raising=False)
-    assert 'run_workflow' not in _tools_seen_during_run()
-
-    workflow = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.md'
-    assert 'PYDANTIC_AI_DYNAMIC_WORKFLOW: attention-triage' in workflow.read_text(encoding='utf-8')
 
 
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pytest.MonkeyPatch):
