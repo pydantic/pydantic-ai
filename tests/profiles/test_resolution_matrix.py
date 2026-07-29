@@ -1292,6 +1292,8 @@ def test_ollama_gpt_oss():
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
             'ignore_streamed_leading_whitespace': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
@@ -1301,6 +1303,36 @@ def test_ollama_gpt_oss():
             'openai_supports_tool_choice_required': False,
         }
     )
+
+
+# =============================================================================
+# Harmony (gpt-oss) — reasoning flags must resolve on every provider that routes
+# gpt-oss through `harmony_model_profile` (#6834)
+# =============================================================================
+_HARMONY_GPT_OSS_PROVIDERS = [
+    pytest.param('pydantic_ai.providers.ollama', 'OllamaProvider', 'gpt-oss:20b', id='ollama'),
+    pytest.param('pydantic_ai.providers.heroku', 'HerokuProvider', 'gpt-oss-120b', id='heroku'),
+    pytest.param('pydantic_ai.providers.nebius', 'NebiusProvider', 'openai/gpt-oss-120b', id='nebius'),
+    pytest.param('pydantic_ai.providers.ovhcloud', 'OVHcloudProvider', 'gpt-oss-120b', id='ovhcloud'),
+    pytest.param('pydantic_ai.providers.cerebras', 'CerebrasProvider', 'gpt-oss-120b', id='cerebras'),
+]
+
+
+@pytest.mark.parametrize(('module', 'cls', 'model_name'), _HARMONY_GPT_OSS_PROVIDERS)
+def test_harmony_gpt_oss_resolves_thinking(module: str, cls: str, model_name: str):
+    """Every provider routing gpt-oss through `harmony_model_profile` must resolve
+    `supports_thinking`/`thinking_always_enabled` so `ModelSettings(thinking=...)`
+    is not silently dropped by `Model.prepare_request` (#6834)."""
+    import importlib
+
+    provider_cls = getattr(importlib.import_module(module), cls)
+    profile = provider_cls.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_thinking') is True, f'{cls} did not resolve supports_thinking for {model_name!r}'
+    assert profile.get('thinking_always_enabled') is True, (
+        f'{cls} did not resolve thinking_always_enabled for {model_name!r}'
+    )
+    assert profile.get('ignore_streamed_leading_whitespace') is True
 
 
 def test_ollama_unknown_falls_back_to_overlay_only():

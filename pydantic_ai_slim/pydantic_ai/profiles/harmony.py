@@ -11,5 +11,15 @@ def harmony_model_profile(model_name: str) -> ModelProfile | None:
     """
     return merge_profile(
         openai_model_profile(model_name),
-        OpenAIModelProfile(openai_supports_tool_choice_required=False, ignore_streamed_leading_whitespace=True),
+        OpenAIModelProfile(
+            openai_supports_tool_choice_required=False,
+            ignore_streamed_leading_whitespace=True,
+            # Harmony models reason unconditionally — reasoning is always-on with a `medium`
+            # default and no off switch (see the guide linked in the docstring). Setting these
+            # here ensures bare gpt-oss names that fall through `_REASONING_SUPPORT_BY_PREFIX`
+            # (which only enumerates OpenAI Responses API models) still resolve thinking support,
+            # so `ModelSettings(thinking=...)` is not silently dropped by `Model.prepare_request`.
+            supports_thinking=True,
+            thinking_always_enabled=True,
+        ),
     )
