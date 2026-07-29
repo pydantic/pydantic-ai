@@ -50,6 +50,9 @@ class GitHubProvider(Provider[AsyncOpenAI]):
         provider_to_profile = {
             'xai': grok_model_profile,
             'meta': meta_model_profile,
+            # OpenAI's own models are published under `openai/`; Microsoft's Phi models under
+            # `microsoft/` share the same profile.
+            'openai': openai_model_profile,
             'microsoft': openai_model_profile,
             'mistral-ai': mistral_model_profile,
             'cohere': cohere_model_profile,

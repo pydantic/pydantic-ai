@@ -96,6 +96,11 @@ def test_github_provider_model_profile(mocker: MockerFixture):
     assert grok_profile is not None
     assert grok_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
+    openai_profile = provider.model_profile('openai/o3')
+    openai_model_profile_mock.assert_called_with('o3')
+    assert openai_profile is not None
+    assert openai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
     microsoft_profile = provider.model_profile('microsoft/Phi-3.5-mini-instruct')
     openai_model_profile_mock.assert_called_with('phi-3.5-mini-instruct')
     assert microsoft_profile is not None
@@ -106,7 +111,37 @@ def test_github_provider_model_profile(mocker: MockerFixture):
     assert unknown_profile is not None
     assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
+    openai_model_profile_mock.reset_mock()
     unknown_profile_with_prefix = provider.model_profile('unknown-publisher/some-unknown-model')
-    openai_model_profile_mock.assert_called_with('some-unknown-model')
+    # An unrecognised publisher gets no family profile at all, only the OpenAI-compatible base.
+    # Without the reset, `assert_called_with` would pass against the previous unprefixed lookup.
+    openai_model_profile_mock.assert_not_called()
     assert unknown_profile_with_prefix is not None
     assert unknown_profile_with_prefix.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+
+# The `openai/`-prefixed names GitHub actually publishes, one per capability shape that
+# `openai_model_profile` distinguishes: a reasoning model that can't disable reasoning, one whose
+# system role is remapped, and a non-reasoning model.
+# https://models.github.ai/catalog/models
+@pytest.mark.parametrize('model_name', ['openai/o3', 'openai/o1-mini', 'openai/gpt-4.1'])
+def test_github_openai_prefixed_models_resolve_the_openai_profile(model_name: str):
+    """GitHub publishes OpenAI's own models under `openai/`, which must reach `openai_model_profile`.
+
+    The publisher map had no `openai` entry, so these fell through to the OpenAI-compatible base
+    alone and every capability flag resolved to unset. `supports_thinking` unset means the unified
+    `thinking` setting is silently dropped, so `Agent('github:openai/o3')` with `thinking='high'`
+    sent no `reasoning_effort` at all — a no-op with no error, on the largest publisher in the
+    catalog. `openai_system_prompt_role` unset means `o1-mini` keeps the `system` role its API
+    rejects.
+
+    A unit test rather than a VCR one: profile resolution happens before any request, and the
+    defect is a *missing* request field, which the cassette matchers aren't sensitive to — a
+    recording made against the broken code plays back identically.
+    """
+    profile = GitHubProvider.model_profile(model_name)
+    assert profile is not None
+    expected = openai_model_profile(model_name.removeprefix('openai/'))
+    # Compared whole rather than flag by flag so a capability added to `openai_model_profile`
+    # later is covered here without this test being updated.
+    assert {key: profile.get(key) for key in expected} == expected
