@@ -60,6 +60,7 @@ class _EventStreamHandlerParams:
     serialized_run_context: Any
 
 
+# TODO(v3): remove `TemporalAgent` in favor of the `TemporalDurability` capability.
 @deprecated(
     """`TemporalAgent` is deprecated in favor of the `TemporalDurability` capability. Migrate each constructor argument as follows:
 - `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[TemporalDurability(...)])`.

@@ -930,8 +930,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-2.5-flash-lite',
                         'gateway/google-cloud:gemini-2.5-pro',
                         'gateway/google-cloud:gemini-3-flash-preview',
-                        'gateway/google-cloud:gemini-3-pro-image-preview',
-                        'gateway/google-cloud:gemini-3.1-flash-image-preview',
                         'gateway/google-cloud:gemini-3.1-flash-lite',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/google-cloud:gemini-3.5-flash',
@@ -942,8 +940,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-2.5-flash-lite',
                         'gateway/google:gemini-2.5-pro',
                         'gateway/google:gemini-3-flash-preview',
-                        'gateway/google:gemini-3-pro-image-preview',
-                        'gateway/google:gemini-3.1-flash-image-preview',
                         'gateway/google:gemini-3.1-flash-lite',
                         'gateway/google:gemini-3.1-pro-preview',
                         'gateway/google:gemini-3.5-flash',
@@ -954,8 +950,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/groq:openai/gpt-oss-120b',
                         'gateway/groq:openai/gpt-oss-20b',
                         'gateway/groq:openai/gpt-oss-safeguard-20b',
-                        'gateway/openai:computer-use-preview',
-                        'gateway/openai:computer-use-preview-2025-03-11',
                         'gateway/openai:gpt-3.5-turbo',
                         'gateway/openai:gpt-3.5-turbo-0125',
                         'gateway/openai:gpt-3.5-turbo-1106',
@@ -977,8 +971,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-4o-mini-2024-07-18',
                         'gateway/openai:gpt-5',
                         'gateway/openai:gpt-5-2025-08-07',
-                        'gateway/openai:gpt-5-chat-latest',
-                        'gateway/openai:gpt-5-codex',
                         'gateway/openai:gpt-5-mini',
                         'gateway/openai:gpt-5-mini-2025-08-07',
                         'gateway/openai:gpt-5-nano',
@@ -987,9 +979,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-5-pro-2025-10-06',
                         'gateway/openai:gpt-5.1',
                         'gateway/openai:gpt-5.1-2025-11-13',
-                        'gateway/openai:gpt-5.1-chat-latest',
-                        'gateway/openai:gpt-5.1-codex',
-                        'gateway/openai:gpt-5.1-codex-max',
                         'gateway/openai:gpt-5.2',
                         'gateway/openai:gpt-5.2-2025-12-11',
                         'gateway/openai:gpt-5.2-chat-latest',
@@ -1024,8 +1013,10 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-2.5-flash-preview-09-2025',
                         'google-cloud:gemini-2.5-pro',
                         'google-cloud:gemini-3-flash-preview',
+                        'google-cloud:gemini-3-pro-image',
                         'google-cloud:gemini-3-pro-image-preview',
                         'google-cloud:gemini-3-pro-preview',
+                        'google-cloud:gemini-3.1-flash-image',
                         'google-cloud:gemini-3.1-flash-image-preview',
                         'google-cloud:gemini-3.1-flash-lite',
                         'google-cloud:gemini-3.1-pro-preview',
@@ -1042,8 +1033,10 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-2.5-flash-preview-09-2025',
                         'google:gemini-2.5-pro',
                         'google:gemini-3-flash-preview',
+                        'google:gemini-3-pro-image',
                         'google:gemini-3-pro-image-preview',
                         'google:gemini-3-pro-preview',
+                        'google:gemini-3.1-flash-image',
                         'google:gemini-3.1-flash-image-preview',
                         'google:gemini-3.1-flash-lite',
                         'google:gemini-3.1-pro-preview',
@@ -7914,11 +7907,28 @@ class TestImageGenerationCapability:
             ]
         )
 
-    @pytest.mark.parametrize('model_name', ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'])
-    def test_image_generation_rejects_image_only_model(self, model_name: str):
-        """Using a dedicated image model like gpt-image-2 raises a clear error at construction."""
-        with pytest.raises(UserError, match=f'{model_name!r} is a dedicated image generation model'):
-            ImageGeneration(fallback_model=f'openai-responses:{model_name}')
+    @pytest.mark.parametrize(
+        'provider, model_name, suggestion',
+        [
+            ('openai-responses', 'gpt-image-2', 'openai-responses:gpt-5.5'),
+            ('openai-responses', 'gpt-image-1.5', 'openai-responses:gpt-5.5'),
+            ('openai-responses', 'gpt-image-1', 'openai-responses:gpt-5.4'),
+            ('openai-responses', 'gpt-image-1-mini', 'openai-responses:gpt-5.4'),
+            ('google', 'imagen-3.0-generate-002', 'google:gemini-3-pro-image'),
+            ('google', 'imagen-3.0-fast-generate-001', 'google:gemini-3-pro-image'),
+        ],
+    )
+    def test_image_generation_rejects_image_only_model(self, provider: str, model_name: str, suggestion: str):
+        """Using a dedicated image model raises a clear error with a conversational alternative."""
+        with pytest.raises(
+            UserError,
+            match=re.escape(
+                f'{model_name!r} is a dedicated image generation model that cannot be used as '
+                f'`fallback_model` directly. Use a conversational model with image generation '
+                f'support instead, e.g. {suggestion!r}.'
+            ),
+        ):
+            ImageGeneration(fallback_model=f'{provider}:{model_name}')
 
     @pytest.mark.vcr()
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
@@ -8015,7 +8025,7 @@ class TestImageGenerationCapability:
             tool = info.function_tools[0]
             return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
 
-        inner_model = GoogleModel('gemini-3-pro-image-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        inner_model = GoogleModel('gemini-3-pro-image', provider=GoogleProvider(api_key=gemini_api_key))
         outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
         result = await agent.run('Generate an image of a cute baby sea otter')
@@ -10823,7 +10833,8 @@ class TestRunErrorHooks:
                     self.log.append('wrap_run:caught')
                     return AgentRunResult(output='wrap_recovered')
 
-            async def on_run_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_run_error(  # pragma: no cover
                 self, ctx: RunContext[Any], *, error: BaseException
             ) -> AgentRunResult[Any]:
                 self.log.append('on_run_error')
@@ -13607,7 +13618,8 @@ class TestModelRetryFromHooks:
             ) -> ModelResponse:
                 raise ModelRetry('retry please')
 
-            async def on_model_request_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_model_request_error(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -14134,7 +14146,8 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Wrap says retry tool')
 
-            async def on_tool_execute_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_tool_execute_error(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -17208,7 +17221,8 @@ class TestBeforeOutputValidate:
                 output_context: OutputContext,
                 output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
-                log.append('validate')  # pragma: no cover — should NOT fire for plain text
+                # The uncovered body is the assertion: this hook must not fire for plain text.
+                log.append('validate')  # pragma: no cover
                 return output  # pragma: no cover
 
             async def before_output_process(
@@ -17678,7 +17692,8 @@ class TestModelRetryFromOutputHooks:
                     raise ModelRetry('Bad output, please try again')
                 return result
 
-            async def on_output_process_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_output_process_error(  # pragma: no cover
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, error: Exception
             ) -> Any:
                 nonlocal error_hook_called
@@ -18440,7 +18455,8 @@ class TestToolOutputWithOutputHooks:
 
         @dataclass
         class BothHooksCap(AbstractCapability[Any]):
-            async def before_tool_validate(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def before_tool_validate(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -18451,7 +18467,8 @@ class TestToolOutputWithOutputHooks:
                 log.append(f'tool_validate:{call.tool_name}')
                 return args
 
-            async def before_tool_execute(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def before_tool_execute(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -20836,7 +20853,8 @@ class TestImageOutputWithHooks:
             async def before_output_validate(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
-                log.append('validate')  # pragma: no cover — should NOT fire for images
+                # The uncovered body is the assertion: this hook must not fire for images.
+                log.append('validate')  # pragma: no cover
                 return output  # pragma: no cover
 
             async def before_output_process(
@@ -23333,7 +23351,8 @@ async def test_dynamic_capability_contributes_toolset_function() -> None:
 
     @toolset.tool_plain
     def func_tool() -> str:
-        return 'from func'  # pragma: no cover — the tool listing is what's asserted
+        # The tool listing is what's asserted.
+        return 'from func'  # pragma: no cover
 
     @dataclass
     class AsyncToolFuncCap(AbstractCapability):

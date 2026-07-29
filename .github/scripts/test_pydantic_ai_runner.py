@@ -33,6 +33,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Tool callables, shared helpers, and the CLI live in distinct submodules;
 # tests import each from where it actually lives, not from a re-export.
 import pydantic_ai_gh_aw_shim as pkg
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData
 from pydantic_ai_gh_aw_shim import (
     cli as shim,
     shared,
@@ -1552,6 +1554,66 @@ def test_mcp_wrapped_in_filter_when_allowlist_present(tmp_path: Path):
     )
     assert len(servers) == 2
     assert {s.__class__.__name__ for s in servers} == {'FilteredToolset'}
+
+
+# --------------------------------------------------------------------------- #
+# MCP tool-error recovery (the empty-body-`APPROVE` crash: a bare `McpError`
+# from the gh-aw gateway escaped `MCPToolset` and killed the whole run).
+# --------------------------------------------------------------------------- #
+def _mcp_error(message: str) -> McpError:
+    return McpError(ErrorData(code=-32602, message=message))
+
+
+def _error_hook_ctx() -> RunContext[None]:
+    from pydantic_ai.usage import RunUsage
+
+    return RunContext(
+        deps=None,
+        model=cast(_Model[Any], None),
+        usage=RunUsage(),
+        prompt=None,
+        messages=[],
+        run_step=0,
+    )
+
+
+def test_mcp_protocol_error_message_recognizes_only_mcp_errors():
+    err = _mcp_error('review body is empty')
+    assert shim._mcp_protocol_error_message(err) == str(err)  # pyright: ignore[reportPrivateUsage]
+    # A non-MCP exception (e.g. a real bug in a tool) must not be swallowed as a tool result.
+    assert shim._mcp_protocol_error_message(RuntimeError('not mcp')) is None  # pyright: ignore[reportPrivateUsage]
+
+
+def test_recover_mcp_tool_errors_returns_error_string_instead_of_crashing():
+    from pydantic_ai.messages import ToolCallPart
+    from pydantic_ai.tools import ToolDefinition
+
+    cap = shim._RecoverMCPToolErrors()  # pyright: ignore[reportPrivateUsage]
+    call = ToolCallPart(tool_name='mcp__safeoutputs__submit_pull_request_review', args={}, tool_call_id='c1')
+    out = asyncio.run(
+        cap.on_tool_execute_error(
+            _error_hook_ctx(),
+            call=call,
+            tool_def=ToolDefinition(name=call.tool_name),
+            args={},
+            error=_mcp_error('review body is empty and no create_pull_request_review_comment calls were made'),
+        )
+    )
+    assert out.startswith('error:') and 'review body is empty' in out
+
+
+def test_recover_mcp_tool_errors_reraises_non_mcp_errors():
+    from pydantic_ai.messages import ToolCallPart
+    from pydantic_ai.tools import ToolDefinition
+
+    cap = shim._RecoverMCPToolErrors()  # pyright: ignore[reportPrivateUsage]
+    call = ToolCallPart(tool_name='Bash', args={}, tool_call_id='c2')
+    with pytest.raises(RuntimeError, match='boom'):
+        asyncio.run(
+            cap.on_tool_execute_error(
+                _error_hook_ctx(), call=call, tool_def=ToolDefinition(name='Bash'), args={}, error=RuntimeError('boom')
+            )
+        )
 
 
 def test_mcp_allow_predicate_server_wildcard_vs_specific():

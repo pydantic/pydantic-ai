@@ -13088,6 +13088,133 @@ async def test_openai_responses_phase_streamed(allow_model_requests: None):
     assert text_parts[0].provider_details == snapshot({'phase': 'final_answer'})
 
 
+async def test_openai_responses_phase_streamed_on_part_start(allow_model_requests: None, openai_api_key: str):
+    """Real cassette: `phase` rides the `PartStartEvent`, so commentary can be filtered as it streams.
+
+    The API announces `phase` on `output_item.added` — before the first delta — so a consumer knows
+    what kind of text a part holds the moment it opens, without buffering the part to find out.
+    """
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        instructions='Briefly narrate what you are about to do before calling each tool.',
+    )
+
+    @agent.tool_plain
+    async def get_capital(country: str) -> str:
+        return 'Potato City'
+
+    text_part_starts: list[tuple[str, Any]] = []
+    text_delta_count = 0
+    delta_phases: set[Any] = set()
+    async with agent.run_stream_events('What is the capital of PotatoLand?') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                text_part_starts.append((event.part.content, (event.part.provider_details or {}).get('phase')))
+            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                text_delta_count += 1
+                delta_phases.add((event.delta.provider_details or {}).get('phase'))
+
+    # Each part's phase is known as it opens, and the content is only the first chunk, not the whole part.
+    assert text_part_starts == snapshot([('I', 'commentary'), ('The', 'final_answer')])
+    # The phase opens the part and is not repeated on any of the deltas that follow.
+    assert text_delta_count == snapshot(23)
+    assert delta_phases == snapshot({None})
+
+
+async def test_openai_responses_phase_streamed_without_deltas(allow_model_requests: None):
+    """`phase` is still captured when a gateway emits `output_text.done` without any deltas.
+
+    Not a VCR test: OpenAI itself always sends deltas — `test_openai_responses_phase_streamed_on_part_start`
+    records them for every text part — so this fallback only ever runs against OpenAI-compatible gateways
+    whose streams we have no way to record.
+    """
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-5.5',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage.model_construct(
+                id='msg_001',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+                phase='final_answer',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text='Paris.',
+            type='response.output_text.done',
+            sequence_number=2,
+            logprobs=[],
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=ResponseOutputMessage.model_construct(
+                id='msg_001',
+                content=cast(list[Content], [ResponseOutputText(text='Paris.', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+                phase='final_answer',
+            ),
+            output_index=0,
+            type='response.output_item.done',
+            sequence_number=3,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=4,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    events: list[Any] = []
+    async with agent.iter(user_prompt='What is the capital of France?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        events.append(event)
+                # The run would go on to retry this text-less response; only the stream matters here.
+                break
+
+    # Same contract as the delta path: the phase arrives on the `PartStartEvent` that opens the
+    # part, and the completed part carries it too.
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=TextPart(content='', provider_name='openai', provider_details={'phase': 'final_answer'}),
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(
+                index=0,
+                part=TextPart(content='', provider_name='openai', provider_details={'phase': 'final_answer'}),
+            ),
+        ]
+    )
+
+
 async def test_openai_responses_phase_round_trip(allow_model_requests: None):
     """When the profile supports phase, it's sent back on the assistant ResponseOutputMessageParam."""
     mock_client = MockOpenAIResponses.create_mock(
