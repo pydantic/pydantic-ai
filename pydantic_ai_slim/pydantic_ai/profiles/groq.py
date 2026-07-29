@@ -60,8 +60,13 @@ def groq_model_profile(model_name: str) -> ModelProfile:
     )
     is_qwen3 = model_name.startswith('qwen/qwen3')
     is_gpt_oss = model_name.startswith('openai/gpt-oss')
+    # Groq renamed the compound systems from `compound-beta`/`compound-beta-mini` to
+    # `groq/compound`/`groq/compound-mini` (https://console.groq.com/docs/compound); the responses in
+    # `tests/models/cassettes/test_groq/test_groq_model_web_search_tool.yaml` already come back with
+    # `"model": "groq/compound"`. Accept both, since the old IDs still resolve.
+    is_compound = model_name.startswith('compound-') or model_name.startswith('groq/compound')
     return GroqModelProfile(
-        groq_always_has_web_search_builtin_tool=model_name.startswith('compound-'),
+        groq_always_has_web_search_builtin_tool=is_compound,
         supports_thinking=is_reasoning_model,
         # qwen3 can disable reasoning with reasoning_effort='none'; gpt-oss and legacy models can't
         thinking_always_enabled=is_reasoning_model and not is_qwen3,
