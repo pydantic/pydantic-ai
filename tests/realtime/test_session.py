@@ -338,13 +338,17 @@ async def test_consumption_views_run_concurrently_with_event_stream() -> None:
 
         assert events == [
             PartStartEvent(index=0, part=SpeechPart(speaker='user', transcript='')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='hello')),
+            PartDeltaEvent(
+                index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='hello', transcript='hello')
+            ),
             PartEndEvent(index=0, part=SpeechPart(speaker='user', transcript='hello')),
             PartStartEvent(index=1, part=SpeechPart(speaker='assistant', transcript='')),
             PartDeltaEvent(index=1, delta=SpeechPartDelta(speaker='assistant', audio_chunk=b'audio-1')),
-            PartDeltaEvent(index=1, delta=SpeechPartDelta(speaker='assistant', transcript_delta='hi')),
+            PartDeltaEvent(index=1, delta=SpeechPartDelta(speaker='assistant', transcript_delta='hi', transcript='hi')),
             PartDeltaEvent(index=1, delta=SpeechPartDelta(speaker='assistant', audio_chunk=b'audio-2')),
-            PartDeltaEvent(index=1, delta=SpeechPartDelta(speaker='assistant', transcript_delta=' there')),
+            PartDeltaEvent(
+                index=1, delta=SpeechPartDelta(speaker='assistant', transcript_delta=' there', transcript='hi there')
+            ),
             PartEndEvent(index=1, part=SpeechPart(speaker='assistant', transcript='hi there')),
             TurnCompleteEvent(),
         ]
@@ -387,12 +391,17 @@ async def test_cumulative_transcripts_revise_the_turn_instead_of_doubling_up() -
         )
 
     assert [event for event in events if isinstance(event, PartDeltaEvent)] == [
-        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='Hello?')),
+        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='Hello?', transcript='Hello?')),
+        # The revision added no text, so only the corrected whole is reported.
+        PartDeltaEvent(
+            index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='', transcript='Hello, my name is')
+        ),
         PartDeltaEvent(
             index=0,
-            delta=SpeechPartDelta(speaker='user', transcript_delta='Hello, my name is', replaces_transcript=True),
+            delta=SpeechPartDelta(
+                speaker='user', transcript_delta=' Marcelo.', transcript='Hello, my name is Marcelo.'
+            ),
         ),
-        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta=' Marcelo.')),
     ]
     # The revision reaches the caption view, and `transcript` is the turn's real text throughout.
     assert deltas == [
@@ -421,7 +430,7 @@ async def test_cumulative_transcript_repeating_itself_emits_nothing() -> None:
         )
 
     assert [event for event in events if isinstance(event, PartDeltaEvent)] == [
-        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='Hello'))
+        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='Hello', transcript='Hello'))
     ]
     assert deltas == [TranscriptUpdate(index=0, speaker='user', delta='Hello', transcript='Hello')]
 
@@ -556,8 +565,12 @@ async def test_assistant_transcript_partials_then_final() -> None:
     assert events == snapshot(
         [
             PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='Hi ')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='there')),
+            PartDeltaEvent(
+                index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='Hi ', transcript='Hi ')
+            ),
+            PartDeltaEvent(
+                index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='there', transcript='Hi there')
+            ),
             PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='Hi there')),
             TurnCompleteEvent(),
         ]
@@ -582,7 +595,10 @@ async def test_assistant_transcript_final_only() -> None:
     assert events == snapshot(
         [
             PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='Hello world')),
+            PartDeltaEvent(
+                index=0,
+                delta=SpeechPartDelta(speaker='assistant', transcript_delta='Hello world', transcript='Hello world'),
+            ),
             PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='Hello world')),
             TurnCompleteEvent(),
         ]
@@ -723,8 +739,13 @@ async def test_user_transcript_final_becomes_request() -> None:
     assert events == snapshot(
         [
             PartStartEvent(index=0, part=SpeechPart(speaker='user', transcript='')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='what is ')),
-            PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='the weather')),
+            PartDeltaEvent(
+                index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='what is ', transcript='what is ')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=SpeechPartDelta(speaker='user', transcript_delta='the weather', transcript='what is the weather'),
+            ),
             PartEndEvent(index=0, part=SpeechPart(speaker='user', transcript='what is the weather')),
         ]
     )
@@ -2903,7 +2924,12 @@ async def test_grounding_streams_and_folds_native_tool_parts() -> None:
 
     assert events == [
         PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
-        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='assistant', transcript_delta='It is sunny in Rome')),
+        PartDeltaEvent(
+            index=0,
+            delta=SpeechPartDelta(
+                speaker='assistant', transcript_delta='It is sunny in Rome', transcript='It is sunny in Rome'
+            ),
+        ),
         *_native_part_events(grounding),
         PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='It is sunny in Rome')),
         TurnCompleteEvent(),

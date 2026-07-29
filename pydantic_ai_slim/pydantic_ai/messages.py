@@ -3427,16 +3427,20 @@ class SpeechPartDelta:
     """
 
     transcript_delta: str | None = None
-    """New transcript text, appended to the existing transcript — or replacing it, if
-    [`replaces_transcript`][pydantic_ai.messages.SpeechPartDelta.replaces_transcript] is set."""
+    """Transcript text this delta added, if any.
 
-    replaces_transcript: bool = False
-    """Whether `transcript_delta` is the whole transcript again rather than more of it.
+    Empty when the provider *revised* what it had already transcribed instead of adding to it — see
+    `transcript`, which is the field to render.
+    """
 
-    Speech recognition is revisable: later audio can change how earlier audio is read, so a provider
-    may correct words it already transcribed instead of only adding to them. Appending would then
-    duplicate the corrected text, so such an update arrives with this set and the full transcript so
-    far in `transcript_delta` — replace what you have rendered rather than adding to it.
+    transcript: str | None = None
+    """The whole transcript of this turn so far, when this delta carries transcript text.
+
+    Render this and a live transcript is correct on every provider, with no accumulating of your own.
+    Speech recognition is revisable — later audio changes how earlier audio is read — so some
+    providers correct words they already transcribed rather than only adding to them, which an
+    appended `transcript_delta` cannot express. Reading this field means never having to know which
+    providers do that. It also recovers a consumer that missed an earlier delta.
     """
 
     audio_chunk: bytes | None = None
@@ -3452,12 +3456,12 @@ class SpeechPartDelta:
     def apply(self, part: ModelResponsePart) -> SpeechPart:
         """Apply this delta to an existing `SpeechPart`.
 
-        `transcript_delta` is appended to the part's transcript (a part with `transcript=None` gets
-        `transcript=transcript_delta`), or replaces it when `replaces_transcript` is set — that is how
-        a provider's revision of what it already transcribed is applied. `audio_chunk` is appended to
-        the part's retained audio data, but only if the part already has `audio` set: a part with
-        `audio=None` is not retaining audio, so the chunk is intentionally not stored — it remains
-        available on the delta itself for live playback.
+        `transcript` replaces the part's transcript when set, which is how a provider's revision of
+        what it already transcribed is applied; otherwise `transcript_delta` is appended (a part with
+        `transcript=None` gets `transcript=transcript_delta`). `audio_chunk` is appended to the part's
+        retained audio data, but only if the part already has `audio` set: a part with `audio=None` is
+        not retaining audio, so the chunk is intentionally not stored — it remains available on the
+        delta itself for live playback.
 
         Args:
             part: The existing model response part, which must be a `SpeechPart`.
@@ -3471,8 +3475,8 @@ class SpeechPartDelta:
         if not isinstance(part, SpeechPart):
             raise ValueError('Cannot apply SpeechPartDeltas to non-SpeechParts')
         transcript = part.transcript
-        if self.replaces_transcript:
-            transcript = self.transcript_delta
+        if self.transcript is not None:
+            transcript = self.transcript
         elif self.transcript_delta:
             transcript = (transcript or '') + self.transcript_delta
         audio = part.audio

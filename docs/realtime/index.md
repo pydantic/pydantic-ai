@@ -630,10 +630,12 @@ for this. Each [`TranscriptUpdate`][pydantic_ai.realtime.TranscriptUpdate] carri
 `transcript`, so keying a bubble on `index` and setting its text — as the caption example above does —
 is correct whatever the provider does.
 
-The distinction only surfaces if you consume
-[`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta]s off the raw event stream, where
-[`replaces_transcript`][pydantic_ai.messages.SpeechPartDelta.replaces_transcript] says to replace what
-you rendered rather than add to it.
+Consuming [`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta]s off the raw event stream needs
+nothing extra either: every one that carries transcript text also carries
+[`transcript`][pydantic_ai.messages.SpeechPartDelta.transcript], the turn's whole transcript so far.
+Render that and the revision is handled — there is no flag to check and no accumulating to get wrong.
+[`transcript_delta`][pydantic_ai.messages.SpeechPartDelta.transcript_delta] remains for appending, and
+is empty when the provider revised rather than added.
 
 ### Images
 
