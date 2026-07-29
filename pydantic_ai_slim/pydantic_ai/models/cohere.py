@@ -150,7 +150,7 @@ class CohereModel(Model[AsyncClientV2]):
 
     @property
     def base_url(self) -> str:
-        client_wrapper = self.client._client_wrapper  # type: ignore
+        client_wrapper = self.client._client_wrapper  # pyright: ignore[reportPrivateUsage]
         return str(client_wrapper.get_base_url())
 
     @property
@@ -204,7 +204,9 @@ class CohereModel(Model[AsyncClientV2]):
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+                raise ModelHTTPError(
+                    status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
     def _get_tool_choice(

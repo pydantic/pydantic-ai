@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import os
 import re
+import sys
 import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
@@ -81,6 +82,7 @@ from pydantic_ai.exceptions import (
     CallDeferred,
     ModelRetry,
     SkipModelRequest,
+    ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
@@ -121,11 +123,11 @@ try:
     from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
-    from temporalio.exceptions import ApplicationError
+    from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
-    from temporalio.workflow import ActivityConfig
+    from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
     from pydantic_ai.durable_exec._toolset import (
         CallToolResult,
@@ -159,7 +161,6 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
-import sys
 
 if sys.version_info >= (3, 14):
     pytest.skip(
@@ -291,10 +292,12 @@ def _kill_leaked_temporal_server(port: int) -> None:
             check=False,
             timeout=2,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):  # pragma: lax no cover - no `ss` or unresponsive
+    except (FileNotFoundError, subprocess.TimeoutExpired):  # pragma: lax no cover
+        # No `ss` on this platform, or it was unresponsive.
         return
 
-    for line in result.stdout.splitlines():  # pragma: lax no cover - body fires only on a real leak
+    # The body fires only on a real leak, so it's covered on some runs and not on others.
+    for line in result.stdout.splitlines():  # pragma: lax no cover
         if 'temporal-sdk-py' not in line:
             continue
         match = re.search(r'pid=(\d+)', line)
@@ -379,6 +382,96 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, client: 
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+_cancellation_activity_started: asyncio.Event | None = None
+_cancellation_activity_cancel_absorbed = False
+
+
+async def _cancellation_stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    global _cancellation_activity_cancel_absorbed
+
+    assert _cancellation_activity_started is not None
+    _cancellation_activity_started.set()
+    try:
+        while True:
+            activity.heartbeat()
+            await asyncio.sleep(0.01)
+    except asyncio.CancelledError:
+        _cancellation_activity_cancel_absorbed = True
+        yield 'completed despite activity cancellation'
+
+
+async def _cancellation_event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    try:
+        async for _ in stream:
+            pass
+    except asyncio.CancelledError:
+        pass
+
+
+_cancellation_agent = Agent(
+    FunctionModel(stream_function=_cancellation_stream_model),
+    name='cancellation_backstop_agent',
+    deps_type=type(None),
+    capabilities=[
+        TemporalDurability(
+            event_stream_handler=_cancellation_event_stream_handler,
+            model_activity_config=ActivityConfig(
+                cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+                heartbeat_timeout=timedelta(seconds=1),
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class CancellationBackstopWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _cancellation_agent.run(prompt)).output
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason='the cancellation backstop needs `Task.cancelling()` (Python 3.11+); on 3.10 the absorbed cancel legitimately completes',
+)
+async def test_temporal_cancellation_backstop_survives_absorbed_activity_cancel(client: Client) -> None:
+    """A cancelled workflow cannot complete after its streaming model activity absorbs cancellation."""
+    global _cancellation_activity_cancel_absorbed, _cancellation_activity_started
+
+    _cancellation_activity_started = asyncio.Event()
+    _cancellation_activity_cancel_absorbed = False
+    workflow_id = f'{CancellationBackstopWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CancellationBackstopWorkflow],
+        plugins=[AgentPlugin(_cancellation_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            CancellationBackstopWorkflow.run,
+            args=['cancel me'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        await _cancellation_activity_started.wait()
+        await handle.cancel()
+
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await handle.result()
+        assert isinstance(exc_info.value.__cause__, TemporalCancelledError)
+        assert _cancellation_activity_cancel_absorbed
+
+        history = await handle.fetch_history()
+
+    await Replayer(
+        workflows=[CancellationBackstopWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(history)
 
 
 async def _migration_event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -3370,6 +3463,47 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
         )
 
 
+tool_failed_agent = Agent(TestModel(call_tools=['failing_tool']), name='tool_failed_agent')
+
+
+@tool_failed_agent.tool_plain
+def failing_tool() -> str:
+    raise ToolFailed('Disk full')
+
+
+tool_failed_temporal_agent = TemporalAgent(tool_failed_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
+
+
+@workflow.defn
+class ToolFailedWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[tuple[str, Any, str]]:
+        result = await tool_failed_temporal_agent.run(prompt)
+        return [
+            (part.tool_name, part.content, part.outcome)
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+
+async def test_temporal_agent_with_tool_failed(client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ToolFailedWorkflow],
+        plugins=[AgentPlugin(tool_failed_temporal_agent)],
+    ):
+        tool_returns = await client.execute_workflow(
+            ToolFailedWorkflow.run,
+            args=['Call the failing tool'],
+            id=ToolFailedWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert tool_returns == [('failing_tool', 'Disk full', 'failed')]
+
+
 class CustomModelSettings(ModelSettings, total=False):
     custom_setting: str
 
@@ -3658,6 +3792,35 @@ def test_temporal_run_context_preserves_run_id():
     assert reconstructed.run_id == 'run-123'
 
 
+run_id_test_agent = Agent(TestModel(custom_output_text='ok'), name='run_id_test_agent')
+run_id_temporal_agent = TemporalAgent(run_id_test_agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
+
+
+@workflow.defn
+class RunIdAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, run_id: str) -> list[str]:
+        result = await run_id_temporal_agent.run(prompt, run_id=run_id)
+        return [result.run_id, *[m.run_id or '<unset>' for m in result.all_messages()]]
+
+
+async def test_temporal_agent_explicit_run_id(client: Client):
+    """A pre-minted `run_id=` survives Temporal activity serialization and stamps all new messages."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunIdAgentWorkflow],
+        plugins=[AgentPlugin(run_id_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            RunIdAgentWorkflow.run,
+            args=['Hello', 'run-from-temporal'],
+            id=RunIdAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == ['run-from-temporal', 'run-from-temporal', 'run-from-temporal']
+
+
 def test_temporal_run_context_serializes_metadata():
     ctx = RunContext(
         deps=None,
@@ -3700,6 +3863,25 @@ def test_temporal_run_context_excludes_agent():
     assert agent.name == 'test_agent'
 
 
+def test_temporal_run_context_enqueue_raises_inside_activity():
+    """`ctx.enqueue()` inside a Temporal activity raises the shared durable explanation.
+
+    `pending_messages` isn't serialized across the activity boundary, so any code running
+    activity-side (a tool, a `process_tool_call` hook, an `event_stream_handler`) is in a
+    durable unit whose result is replayed without re-running it; an enqueue would be dropped.
+    """
+    from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
+
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
+        reconstructed.enqueue('later')
+    # An empty enqueue stays a no-op, matching a normal run.
+    assert reconstructed.enqueue() is None
+
+
 def test_temporal_run_context_serializes_usage():
     ctx = RunContext(
         deps=None,
@@ -3710,6 +3892,9 @@ def test_temporal_run_context_serializes_usage():
             input_tokens=123,
             output_tokens=456,
             details={'foo': 1},
+            future_tokens=7,
+            label='original',
+            zero_tokens=0,
         ),
         run_id='run-123',
     )
@@ -5281,9 +5466,10 @@ async def test_text_content_serialization_in_workflow(client: Client):
 
 def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Simple model function for durability tests that echoes the last user prompt."""
-    for msg in reversed(messages):  # pragma: no branch - first message always carries the prompt
-        for part in msg.parts:  # pragma: no branch - first part is always the UserPromptPart
-            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
+    # The first message always carries the prompt and its first part is always the `UserPromptPart`, so none branch.
+    for msg in reversed(messages):  # pragma: no branch
+        for part in msg.parts:  # pragma: no branch
+            if isinstance(part, UserPromptPart):  # pragma: no branch
                 return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
     return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
 
@@ -6096,8 +6282,9 @@ _missing_cap_agent = Agent(_durability_fn_model, name='no_cap_in_attr')
 class _MissingCapWorkflow:
     __pydantic_ai_agents__ = [_missing_cap_agent]
 
+    # `configure_worker` rejects before this can execute.
     @workflow.run
-    async def run(self, prompt: str) -> str:  # pragma: no cover - configure_worker rejects before exec
+    async def run(self, prompt: str) -> str:  # pragma: no cover
         result = await _missing_cap_agent.run(prompt)
         return result.output
 
@@ -6110,7 +6297,8 @@ async def test_pydantic_ai_plugin_rejects_bare_agent_without_durability(client: 
             task_queue=TASK_QUEUE,
             workflows=[_MissingCapWorkflow],
         ):
-            pass  # pragma: no cover - error raised before reaching here
+            # The error is raised before reaching here.
+            pass  # pragma: no cover
 
 
 # --- Toolset without ID raises UserError ---
@@ -6128,7 +6316,7 @@ def test_durability_unwrapped_toolset_without_id_is_allowed():
     assert TemporalDurability.from_agent(agent) is not None
 
 
-# --- temporalize returning non-TemporalWrapperToolset (line 294->297 branch) ---
+# --- temporalize returning non-TemporalWrapperToolset (passthrough / unwrapped leaf) ---
 
 
 def test_durability_non_temporal_wrapper_toolset_not_in_registry():
@@ -6368,7 +6556,8 @@ def test_durability_tool_metadata_disables_activity():
     """Tool metadata={'temporal': False} disables activity wrapping for that tool."""
 
     async def slow_tool() -> str:
-        return 'slow'  # pragma: no cover - registered with toolset; test only verifies wrapping
+        # Registered with the toolset; the test only verifies wrapping.
+        return 'slow'  # pragma: no cover
 
     toolset = FunctionToolset[object](id='meta_toolset')
     toolset.add_function(slow_tool, metadata={'temporal': False})
@@ -6397,7 +6586,8 @@ def test_resolve_tool_activity_config_reads_metadata():
     fn_toolset = FunctionToolset[None](id='resolve_meta_toolset')
 
     async def fn_tool() -> str:
-        return 'ok'  # pragma: no cover - registered with toolset; test only resolves metadata
+        # Registered with the toolset; the test only resolves metadata.
+        return 'ok'  # pragma: no cover
 
     fn_toolset.add_function(fn_tool, metadata={'temporal': metadata_config})
     tool_def = ToolDefinition(name='fn_tool', metadata={'temporal': metadata_config})
@@ -7485,15 +7675,17 @@ _durability_mcp_dynamic_toolset_agent = Agent(
 
 @_durability_mcp_dynamic_toolset_agent.toolset(id='durability_mcp_toolset')
 def _durability_my_mcp_dynamic_toolset(ctx: RunContext[object]) -> MCPToolset[object]:
-    return MCPToolset('https://mcp.deepwiki.com/mcp')  # pragma: no cover - exercised only by the skipped test below
+    # Exercised only by the skipped test below.
+    return MCPToolset('https://mcp.deepwiki.com/mcp')  # pragma: no cover
 
 
 @workflow.defn
 class DurabilityMCPDynamicToolsetAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await _durability_mcp_dynamic_toolset_agent.run(prompt)  # pragma: no cover - skipped test
-        return result.output  # pragma: no cover - skipped test
+        # This body runs only under the skipped test below.
+        result = await _durability_mcp_dynamic_toolset_agent.run(prompt)  # pragma: no cover
+        return result.output  # pragma: no cover
 
 
 @pytest.mark.skip(
@@ -7538,8 +7730,9 @@ _durability_mcptoolset_agent = Agent(
 class DurabilityMCPToolsetAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await _durability_mcptoolset_agent.run(prompt)  # pragma: no cover - skipped test
-        return result.output  # pragma: no cover - skipped test
+        # This body runs only under the skipped test below.
+        result = await _durability_mcptoolset_agent.run(prompt)  # pragma: no cover
+        return result.output  # pragma: no cover
 
 
 @pytest.mark.skip(
@@ -7942,7 +8135,8 @@ async def _opted_out_runtime_tool() -> str:
     return 'tool-result'
 
 
-async def _not_opted_out_runtime_tool() -> str:  # pragma: no cover — rejected before any tool runs
+# Rejected before any tool runs.
+async def _not_opted_out_runtime_tool() -> str:  # pragma: no cover
     return 'other-result'
 
 

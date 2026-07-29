@@ -31,7 +31,7 @@ class GoogleCloudProvider(BaseGoogleProvider):
         api_key: str | None = None,
         credentials: Credentials | None = None,
         project: str | None = None,
-        location: GoogleCloudLocation | Literal['global'] | str | None = None,
+        location: GoogleCloudLocation | Literal['global', 'us', 'eu'] | str | None = None,
         client: Client | None = None,
         http_client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
@@ -48,8 +48,12 @@ class GoogleCloudProvider(BaseGoogleProvider):
                 [Set up Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials).
             project: The Google Cloud project ID to use for quota. Can be obtained from environment variables
                 (for example, `GOOGLE_CLOUD_PROJECT`).
-            location: The location to send API requests to (for example, `us-central1`). Can be obtained from
-                the `GOOGLE_CLOUD_LOCATION` environment variable.
+            location: The location to send API requests to, for example `us-central1` (a single region) or
+                `global`. `'us'` and `'eu'` are multi-region values routed to the `aiplatform.{us,eu}.rep.googleapis.com`
+                data-residency endpoints. Model availability differs between single regions, multi-regions, and
+                `global` — see the
+                [Vertex AI locations docs](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions).
+                Can be obtained from the `GOOGLE_CLOUD_LOCATION` environment variable.
             client: A pre-initialized client to use.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Google Cloud API.

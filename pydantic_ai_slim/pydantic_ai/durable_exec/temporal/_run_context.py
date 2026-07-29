@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
+from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -106,4 +107,9 @@ def deserialize_run_context(
     if agent is not None:
         ctx.__dict__['agent'] = agent
         ctx.__dict__['root_capability'] = agent.root_capability
+    # `pending_messages` isn't serialized across the activity boundary, and any code running inside
+    # an activity (a tool, a `process_tool_call` hook, an `event_stream_handler`) is in a durable
+    # unit whose result is replayed without re-running it, so an enqueue would be dropped. Install
+    # the same guard the in-process engines use so `ctx.enqueue()` raises the shared explanation.
+    ctx.__dict__['pending_messages'] = EnqueueGuard(enqueue_not_supported_message('activity', 'workflow'))
     return ctx

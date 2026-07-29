@@ -64,6 +64,7 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    check_allow_model_requests,
     download_item,
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
@@ -120,9 +121,15 @@ def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except ClientError as e:
-        status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+        metadata = e.response.get('ResponseMetadata', {})
+        status_code = metadata.get('HTTPStatusCode')
         if isinstance(status_code, int):
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.response) from e
+            raise ModelHTTPError(
+                status_code=status_code,
+                model_name=model_name,
+                body=e.response,
+                headers=metadata.get('HTTPHeaders'),
+            ) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
 
@@ -228,6 +235,8 @@ LatestBedrockModelNames = Literal[
     'global.anthropic.claude-opus-4-7',
     'us.anthropic.claude-opus-4-8',
     'global.anthropic.claude-opus-4-8',
+    'us.anthropic.claude-opus-5',
+    'global.anthropic.claude-opus-5',
     'us.anthropic.claude-sonnet-5',
     'global.anthropic.claude-sonnet-5',
     'us.anthropic.claude-fable-5',
@@ -505,6 +514,12 @@ class BedrockConverseModel(Model[BaseClient]):
 
         super().__init__(settings=settings, profile=profile)
 
+        if self.profile.get('bedrock_supported_on_converse', True) is False:
+            raise UserError(
+                f'Model {model_name!r} is not served by the Bedrock Converse API. Use `BedrockMantleProvider` '
+                "(the `bedrock-mantle:` prefix) to access it through Bedrock Mantle's OpenAI-compatible API."
+            )
+
     @property
     def client(self) -> BedrockRuntimeClient:
         """The boto3 client used to make requests to the Bedrock Converse API.
@@ -648,6 +663,7 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -667,6 +683,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         Check the actual supported models on <https://docs.aws.amazon.com/bedrock/latest/userguide/count-tokens.html>
         """
+        check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         settings = cast(BedrockModelSettings, model_settings or {})
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
@@ -702,6 +719,7 @@ class BedrockConverseModel(Model[BaseClient]):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
+        check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -1072,7 +1090,22 @@ class BedrockConverseModel(Model[BaseClient]):
                         content_mode: Literal['str', 'jsonable'] = (
                             'str' if profile.get('bedrock_tool_result_format', 'text') == 'text' else 'jsonable'
                         )
-                        for item in part.content_items(mode=content_mode):
+
+                        # Two mutually exclusive ways to render a failed return, picked here so the loop
+                        # below stays free of per-item failure guards:
+                        # - No native error status: fold the failure into one wrapped `{'error': ...}` text
+                        #   block, then iterate only the files. Each file still gets its "See file X."
+                        #   reference below so the model can cross-reference the media with the result.
+                        # - Otherwise (success, or failed with `status='error'` set below): send every
+                        #   content item verbatim; the status field carries the failure signal unwrapped.
+                        items: Sequence[Any]
+                        if part.outcome == 'failed' and not supports_tool_result_status:
+                            tool_result_content.append({'text': part.model_response_str()})
+                            items = part.files
+                        else:
+                            items = part.content_items(mode=content_mode, wrap_if_error=False)
+
+                        for item in items:
                             if isinstance(item, UploadedFile):
                                 self._validate_uploaded_file_provider(item)
                                 if not item.file_id.startswith('s3://'):
@@ -1116,10 +1149,8 @@ class BedrockConverseModel(Model[BaseClient]):
                                         # The media can't share the `toolResult`'s turn; defer it to a later user turn.
                                         deferred_media_content.append(media_note)
                                         deferred_media_content.append(file_block)
-                            elif isinstance(item, str):
-                                tool_result_content.append({'text': item})
                             else:
-                                tool_result_content.append({'json': item})
+                                tool_result_content.append({'text': item} if isinstance(item, str) else {'json': item})
                         if not tool_result_content:
                             tool_result_content.append(
                                 {'text': str(part.content)} if content_mode == 'str' else {'json': part.content}
@@ -1130,7 +1161,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             'content': tool_result_content,
                         }
                         if supports_tool_result_status:
-                            success_result['status'] = 'success'
+                            success_result['status'] = 'error' if part.outcome == 'failed' else 'success'
                         bedrock_messages.append(
                             {
                                 'role': 'user',

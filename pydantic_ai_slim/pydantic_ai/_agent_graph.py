@@ -81,6 +81,7 @@ __all__ = (
     'HistoryProcessor',
     'resolve_conversation_id',
     'process_tool_calls',
+    'resolve_run_id',
 )
 
 
@@ -252,6 +253,40 @@ def resolve_conversation_id(
     return str(uuid7())
 
 
+def resolve_run_id(
+    explicit: str | None,
+    message_history: Sequence[_messages.ModelMessage] | None,
+) -> str:
+    """Resolve the `run_id` to use for an agent run.
+
+    Unlike `conversation_id`, `run_id` is never inherited from `message_history`.
+    Each agent run — including a deferred-tool resume — gets its own id so
+    `new_messages()` can key off stamped `run_id` values.
+
+    Priority:
+
+    1. Explicit string → used as-is (raises `UserError` if empty, or if that id already
+       appears on `message_history`).
+    2. Fresh UUID7.
+    """
+    if explicit is not None:
+        if explicit == '':
+            raise exceptions.UserError(
+                '`run_id` must be a non-empty string when provided. '
+                'Empty `run_id` breaks `new_messages()` boundary detection.'
+            )
+        if message_history and _first_run_id_index(message_history, explicit) < len(message_history):
+            raise exceptions.UserError(
+                f'`run_id={explicit!r}` already appears in `message_history`. '
+                'Each agent run needs a distinct `run_id`; reuse breaks `new_messages()`. '
+                'Use `conversation_id` to correlate across turns or deferred-tool resume. '
+                'When retrying a failed run with the same `run_id`, rebuild `message_history` '
+                "without the failed attempt's messages."
+            )
+        return explicit
+    return str(uuid7())
+
+
 @dataclasses.dataclass(kw_only=True)
 class GraphAgentState:
     """State kept across the execution of the agent graph."""
@@ -261,6 +296,11 @@ class GraphAgentState:
     output_retries_used: int = 0
     run_step: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid7()))
+    """The unique identifier of this agent run.
+
+    Resolved from the `run_id` argument to `Agent.run` (etc.), or a freshly generated
+    UUID7. Unlike `conversation_id`, this is never inherited from `message_history`.
+    """
     conversation_id: str = dataclasses.field(default_factory=lambda: str(uuid7()))
     """The unique identifier of the conversation this run belongs to.
 
@@ -1312,8 +1352,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         self.request.timestamp = now_utc()
         if not self.is_resuming_without_prompt:
-            self.request.run_id = self.request.run_id or ctx.state.run_id
-            self.request.conversation_id = self.request.conversation_id or ctx.state.conversation_id
+            fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.message_history.append(self.request)
 
         ctx.state.run_step += 1
@@ -1417,7 +1456,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Hand off to the model class for any history shapes the active provider can't
         # ship on the wire — currently typed `NativeToolSearch*Part` instances translated
-        # to local-shape `ToolSearch*Part` when the profile doesn't support `ToolSearchTool`.
+        # to local-shape `ToolSearch*Part` when they came from another provider or the
+        # profile doesn't support `ToolSearchTool`.
         #
         # Lives on `Model.prepare_messages` rather than inline here for two reasons:
         # 1. The translation depends on `self.profile`, which is per-model state.
@@ -1444,6 +1484,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
             usage.incr(counted_usage)
+
+            ctx.deps.usage_limits.check_per_request_input_tokens(counted_usage.input_tokens)
 
         ctx.deps.usage_limits.check_before_request(usage)
 
@@ -1610,6 +1652,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+            # For a continuation chain (Anthropic `pause_turn`, OpenAI background mode) the merged
+            # response sums usage across segments (see `_check_continuation_usage`), so this caps the
+            # chain's combined input rather than any single segment's — conservative, not lenient.
+            ctx.deps.usage_limits.check_per_request_input_tokens(response.usage.input_tokens)
         ctx.state.message_history.append(response)
 
     async def _build_retry_node(
@@ -2305,7 +2351,7 @@ def _narrow_tool_call_parts(
     return replace(response, parts=new_parts) if changed else response
 
 
-def _first_run_id_index(messages: list[_messages.ModelMessage], run_id: str) -> int:
+def _first_run_id_index(messages: Sequence[_messages.ModelMessage], run_id: str) -> int:
     """Return the index of the first message for the current run, or len(messages) if none are found."""
     for index, message in enumerate(messages):
         if message.run_id == run_id:

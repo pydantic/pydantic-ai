@@ -135,12 +135,14 @@ def tool_kind_encrypted_value(
 ) -> str | None:
     """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
 
-    AG-UI has no generic per-tool metadata field, so we carry the `tool_kind` discriminator in
-    `encrypted_value` — the protocol's opaque, client-echoed state-continuity slot. Our payload is
-    nested under a `pydantic_ai` key so a genuine provider blob in the same slot (e.g. Google's
-    encrypted thinking on a tool call) is never read as our data. The claim is untrusted coming back
-    in: `parse_encrypted_tool_kind` returns it only when the key is present, and it degrades to a
-    plain part if it doesn't validate.
+    AG-UI documents `encrypted_value` for opaque, client-echoed reasoning continuity, and its
+    standard reducer can attach it to a message or tool call. AG-UI has no generic per-tool metadata
+    event, so we also use that reducer-compatible carrier for Pydantic AI continuity claims. This is
+    a namespaced compatibility mechanism, not a claim that the payload is encrypted reasoning. Our
+    payload is nested under a `pydantic_ai` key so a genuine provider blob in the same slot (e.g.
+    Google's encrypted thinking on a tool call) is never read as our data. The claim is untrusted
+    coming back in: `parse_encrypted_tool_kind` returns it only when the key is present, and it
+    degrades to a plain part if it doesn't validate.
 
     A non-`'success'` result outcome rides the same payload: a `ToolMessage` has no outcome slot,
     so without the claim a dump/load round-trip would upgrade a failed/denied/interrupted return to

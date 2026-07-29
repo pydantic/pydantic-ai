@@ -16,7 +16,7 @@ import re
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock
 
 import anyio
@@ -27,7 +27,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
@@ -36,6 +36,7 @@ from .conftest import try_import
 
 with try_import() as imports_successful:
     from fastmcp.client import Client
+    from fastmcp.client.client import CallToolResult
     from fastmcp.client.transports import (
         SSETransport,
         StreamableHttpTransport,
@@ -484,6 +485,97 @@ class TestMCPToolsetIntegration:
             with pytest.raises(ToolError):
                 await toolset.call_tool('boom', {}, run_context, tools['boom'])
 
+    async def test_tool_error_raises_tool_failed_when_configured(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='failed')
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            with pytest.raises(ToolFailed, match='boom'):
+                await toolset.call_tool('boom', {}, run_context, tools['boom'])
+
+    @pytest.mark.parametrize(
+        ('tool_error_behavior', 'expected_exception'),
+        [
+            pytest.param('retry', ModelRetry, id='retry'),
+            pytest.param('failed', ToolFailed, id='failed'),
+        ],
+    )
+    async def test_direct_tool_error_is_converted(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext,
+        tool_error_behavior: Literal['retry', 'failed'],
+        expected_exception: type[ModelRetry] | type[ToolFailed],
+    ):
+        """A direct FastMCP `ToolError` still follows the configured model-visible behavior."""
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior=tool_error_behavior)
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = AsyncMock(side_effect=ToolError('direct tool error'))
+            with pytest.raises(expected_exception, match='direct tool error'):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+    async def test_tool_failed_preserves_structured_error_content(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """Structured MCP error details remain model-visible instead of collapsing to the first text block.
+
+        This uses an in-process client result because no external model or HTTP provider boundary is involved.
+        """
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='failed')
+        structured_error = {'errorCategory': 'validation', 'isRetryable': False, 'detail': 'bad input'}
+
+        async def call_tool(*args: Any, **kwargs: Any) -> Any:
+            assert kwargs['raise_on_error'] is False
+            return CallToolResult(
+                content=[
+                    mcp_types.TextContent(type='text', text='bad input'),
+                    mcp_types.ImageContent(
+                        type='image', data=base64.b64encode(b'image').decode(), mimeType='image/png'
+                    ),
+                ],
+                structured_content=structured_error,
+                meta=None,
+                is_error=True,
+            )
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = call_tool
+            with pytest.raises(ToolFailed) as exc_info:
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+        assert json.loads(exc_info.value.message) == structured_error
+
+    @pytest.mark.parametrize(
+        'content',
+        [
+            pytest.param([], id='empty'),
+            pytest.param(
+                [mcp_types.ImageContent(type='image', data=base64.b64encode(b'image').decode(), mimeType='image/png')],
+                id='non-text',
+            ),
+        ],
+    )
+    async def test_tool_failed_without_text_uses_fallback_message(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext,
+        content: list[mcp_types.ContentBlock],
+    ):
+        """An MCP error without text keeps FastMCP's informative fallback instead of an empty message."""
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='failed')
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = AsyncMock(
+                return_value=CallToolResult(content=content, structured_content=None, meta=None, is_error=True)
+            )
+            with pytest.raises(ToolFailed, match="Tool 'echo' returned an error"):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
     @pytest.mark.parametrize(
         'leaf_factory',
         [
@@ -516,6 +608,40 @@ class TestMCPToolsetIntegration:
             tools = await toolset.get_tools(run_context)
             toolset.client.call_tool = call_tool_in_failing_task_group
             with pytest.raises(ModelRetry, match='grouped tool error'):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+    @pytest.mark.parametrize(
+        ('leaf_factory', 'expected_exception'),
+        [
+            pytest.param(lambda: ToolError('grouped tool error'), ToolFailed, id='tool-error'),
+            pytest.param(
+                lambda: McpError(mcp_types.ErrorData(code=400, message='grouped protocol error')),
+                ModelRetry,
+                id='mcp-error',
+            ),
+        ],
+    )
+    async def test_call_tool_unwraps_real_exception_group_with_failed_behavior(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext,
+        leaf_factory: Any,
+        expected_exception: type[ToolFailed] | type[ModelRetry],
+    ):
+        """Failed behavior converts completed tool errors but keeps grouped protocol errors retryable."""
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='failed')
+
+        async def call_tool_in_failing_task_group(*args: Any, **kwargs: Any) -> Any:
+            async def fail() -> None:
+                raise leaf_factory()
+
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(fail)
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = call_tool_in_failing_task_group
+            with pytest.raises(expected_exception, match=r'grouped (tool|protocol) error'):
                 await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
 
     async def test_call_tool_reraises_grouped_errors_it_must_not_convert(
@@ -552,6 +678,44 @@ class TestMCPToolsetIntegration:
             error_toolset.client.call_tool = failing_call_tool(ToolError('grouped tool error'))
             with pytest.raises(BaseExceptionGroup):
                 await error_toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+    @pytest.mark.parametrize('behavior', ['retry', 'failed'])
+    async def test_call_tool_converts_bare_mcp_error_to_model_retry(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext, behavior: Literal['retry', 'failed']
+    ):
+        """A bare, un-grouped `McpError` — a JSON-RPC error the server/gateway returns for a call it
+        refuses, rather than a `ToolError` or a result-level error — is a protocol error, so like the
+        grouped protocol-error case it stays a recoverable `ModelRetry` even under
+        `tool_error_behavior='failed'`, instead of escaping the toolset and crashing the run.
+
+        A unit test because it injects at the real escape seam (`self.client.call_tool`): no in-process
+        FastMCP tool surfaces a bare protocol `McpError` instead of a `ToolError`.
+        """
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior=behavior)
+
+        async def call_tool_raising_bare_mcp_error(*args: Any, **kwargs: Any) -> Any:
+            raise McpError(mcp_types.ErrorData(code=400, message='bare protocol error'))
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = call_tool_raising_bare_mcp_error
+            with pytest.raises(ModelRetry, match='bare protocol error'):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+    async def test_call_tool_propagates_bare_mcp_error_when_configured(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """With `tool_error_behavior='error'`, a bare `McpError` propagates unchanged to the caller."""
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='error')
+
+        async def call_tool_raising_bare_mcp_error(*args: Any, **kwargs: Any) -> Any:
+            raise McpError(mcp_types.ErrorData(code=400, message='bare protocol error'))
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = call_tool_raising_bare_mcp_error
+            with pytest.raises(McpError, match='bare protocol error'):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
 
     async def test_process_tool_call_hook_runs(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         seen: list[tuple[str, dict[str, Any]]] = []
