@@ -210,7 +210,7 @@ If you prefer strict ordering, you can configure the agent to run tools sequenti
 
 ### Toolsets at Runtime
 
-Additional toolsets can be passed per run via `agent.run(toolsets=...)`. Non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools DBOS runs inline, are supported. [`MCPToolset`][pydantic_ai.mcp.MCPToolset]s and dynamic toolsets must be set when constructing the agent so their steps are registered before the workflow runs; passing them at runtime raises a `UserError`. A custom toolset that isn't one of these types is rejected at runtime for the same reason it is at construction time (see [Agent and Toolset Requirements](#agent-and-toolset-requirements)) — it can't be turned into steps at all.
+Additional toolsets can be passed per run via `agent.run(toolsets=...)`. Non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools DBOS runs inline, are supported. [`MCPToolset`][pydantic_ai.mcp.MCPToolset]s and dynamic toolsets must be set when constructing the agent so their steps are registered before the workflow runs; passing them at runtime raises a `UserError`. A custom toolset that isn't one of these types is rejected at runtime for the same reason it is at construction time (see [Agent and Toolset Requirements](#agent-and-toolset-requirements)), unless it declares [`requires_durable_wrapping = False`][pydantic_ai.toolsets.AbstractToolset.requires_durable_wrapping].
 
 
 ## Step Configuration
