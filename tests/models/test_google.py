@@ -3848,8 +3848,9 @@ def test_google_allowed_function_names_sorted(google_provider: GoogleProvider) -
     settings = GoogleModelSettings(tool_choice=['zebra_tool', 'alpha_tool', 'mango_tool'])
     _tools, tool_config, _image_config = model._get_tool_config(params, settings)  # pyright: ignore[reportPrivateUsage]
     assert tool_config is not None
-    fcc = tool_config['function_calling_config']
-    assert fcc['allowed_function_names'] == ['alpha_tool', 'mango_tool', 'zebra_tool']
+    fcc = tool_config.get('function_calling_config')
+    assert fcc is not None
+    assert fcc.get('allowed_function_names') == ['alpha_tool', 'mango_tool', 'zebra_tool']
 
 
 def test_google_allowed_function_names_filters_unavailable(google_provider: GoogleProvider) -> None:
@@ -3867,8 +3868,9 @@ def test_google_allowed_function_names_filters_unavailable(google_provider: Goog
     with pytest.warns(UserWarning, match='will be ignored'):
         _tools, tool_config, _image_config = model._get_tool_config(params, settings)  # pyright: ignore[reportPrivateUsage]
     assert tool_config is not None
-    fcc = tool_config['function_calling_config']
-    assert fcc['allowed_function_names'] == ['real_tool']
+    fcc = tool_config.get('function_calling_config')
+    assert fcc is not None
+    assert fcc.get('allowed_function_names') == ['real_tool']
 
 
 @pytest.mark.vcr()
