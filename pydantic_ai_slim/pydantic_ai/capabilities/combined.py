@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from pydantic_ai._instructions import AgentInstructions, normalize_instructions
+from pydantic_ai._instructions import AgentInstructions, SourcedInstruction
 from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
@@ -95,13 +95,19 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             capability._validate_runtime_capabilities(ctx, capabilities)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        instructions: list[str | SystemPromptFunc[AgentDepsT]] = []
+        instructions: list[str | SystemPromptFunc[AgentDepsT]] = [
+            sourced.instruction for sourced in self._collect_instructions()
+        ]
+        return instructions or None
+
+    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        instructions: list[SourcedInstruction[AgentDepsT]] = []
         for capability in self.capabilities:
             if capability.defer_loading is True:
                 continue
-            instructions.extend(normalize_instructions(capability.get_instructions()))
+            instructions.extend(capability._collect_instructions())
 
-        return instructions or None
+        return instructions
 
     def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
         # Collect settings in order, preserving each capability's position in the merge chain.

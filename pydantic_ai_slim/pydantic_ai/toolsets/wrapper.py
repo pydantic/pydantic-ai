@@ -6,6 +6,7 @@ from typing import Any
 
 from typing_extensions import Self
 
+from .._instructions import normalize_toolset_instructions
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
@@ -54,8 +55,12 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
 
         This explicit delegation ensures type safety and proper propagation of the
         instructions from wrapped toolsets to the agent's system prompt.
+
+        A wrapper has no `id` of its own, so it stamps the wrapped toolset's onto the parts it
+        passes along, keeping them addressable the same way they would be if the toolset were
+        registered with the agent directly.
         """
-        return await self.wrapped.get_instructions(ctx)
+        return normalize_toolset_instructions(await self.wrapped.get_instructions(ctx), self.wrapped.id) or None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return await self.wrapped.get_tools(ctx)

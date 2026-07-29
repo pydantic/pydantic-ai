@@ -993,7 +993,7 @@ Always respond with a JSON object that's compatible with this schema:
 Don't include any text or Markdown fencing before or after.
 """,
                 instruction_parts=[
-                    InstructionPart(content='Be kind'),
+                    InstructionPart(content='Be kind', id='agent'),
                     InstructionPart(
                         content="""\
 
@@ -1100,7 +1100,7 @@ Don't include any text or Markdown fencing before or after.
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': [
-                            {'content': 'Be kind', 'dynamic': False, 'part_kind': 'instruction'},
+                            {'content': 'Be kind', 'dynamic': False, 'id': 'agent', 'part_kind': 'instruction'},
                             {
                                 'content': """\
 
@@ -1111,6 +1111,7 @@ Always respond with a JSON object that's compatible with this schema:
 Don't include any text or Markdown fencing before or after.
 """,
                                 'dynamic': False,
+                                'id': None,
                                 'part_kind': 'instruction',
                             },
                         ],

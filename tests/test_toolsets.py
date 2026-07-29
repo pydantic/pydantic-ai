@@ -1639,11 +1639,12 @@ async def test_wrapper_toolsets_delegate_instructions():
     """Test that wrapper toolsets properly delegate instructions calls."""
     base_instructions = 'Follow the base toolset instructions carefully.'
     base_toolset = MockToolsetWithInstructions(instructions=base_instructions)
+    expected = [InstructionPart(content=base_instructions, dynamic=True)]
     ctx = build_run_context(None)
 
     # Test PrefixedToolset delegation
     prefixed_toolset = base_toolset.prefixed('test')
-    assert await prefixed_toolset.get_instructions(ctx) == base_instructions
+    assert await prefixed_toolset.get_instructions(ctx) == expected
 
     # Test FilteredToolset delegation
     def allow_all_filter(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
@@ -1651,16 +1652,16 @@ async def test_wrapper_toolsets_delegate_instructions():
 
     assert allow_all_filter(ctx, ToolDefinition(name='test', description='', parameters_json_schema={})) is True
     filtered_toolset = base_toolset.filtered(allow_all_filter)
-    assert await filtered_toolset.get_instructions(ctx) == base_instructions
+    assert await filtered_toolset.get_instructions(ctx) == expected
 
     # Test RenamedToolset delegation
     rename_map = {'old_name': 'new_name'}
     renamed_toolset = base_toolset.renamed(rename_map)
-    assert await renamed_toolset.get_instructions(ctx) == base_instructions
+    assert await renamed_toolset.get_instructions(ctx) == expected
 
     # Test ApprovalRequiredToolset delegation
     approval_toolset = base_toolset.approval_required()
-    assert await approval_toolset.get_instructions(ctx) == base_instructions
+    assert await approval_toolset.get_instructions(ctx) == expected
 
     # Test PreparedToolset delegation
     async def prepare_func(ctx: RunContext[Any], tools: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -1668,7 +1669,16 @@ async def test_wrapper_toolsets_delegate_instructions():
 
     assert await prepare_func(ctx, []) == []
     prepared_toolset = base_toolset.prepared(prepare_func)
-    assert await prepared_toolset.get_instructions(ctx) == base_instructions
+    assert await prepared_toolset.get_instructions(ctx) == expected
+
+    # A wrapper has no id of its own, so it stamps the wrapped toolset's onto what it passes along.
+    identified_toolset = MockToolsetWithInstructions(instructions=base_instructions, id='base')
+    assert await identified_toolset.prefixed('test').get_instructions(ctx) == [
+        InstructionPart(content=base_instructions, dynamic=True, id='toolset:base')
+    ]
+
+    # Nothing to delegate: no parts rather than an empty list.
+    assert await MockToolsetWithInstructions().prefixed('test').get_instructions(ctx) is None
 
 
 async def test_renamed_toolset_name_collision():
@@ -1713,9 +1723,13 @@ async def test_combined_toolset_instructions():
     combined = CombinedToolset([toolset1, toolset2, toolset3])
     ctx = build_run_context(None)
 
-    # CombinedToolset aggregates non-None instructions from all contained toolsets as a list
+    # CombinedToolset aggregates non-None instructions from all contained toolsets as parts,
+    # each identified by the toolset that contributed it.
     instructions = await combined.get_instructions(ctx)
-    assert instructions == ['Instructions from toolset 1.', 'Instructions from toolset 2.']
+    assert instructions == [
+        InstructionPart(content=instructions1, dynamic=True, id='toolset:toolset1'),
+        InstructionPart(content=instructions2, dynamic=True, id='toolset:toolset2'),
+    ]
 
 
 async def test_combined_toolset_instructions_all_none():

@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
 
-from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._instructions import (
+    AgentInstructions,
+    SourcedInstruction,
+    capability_instruction_id,
+    normalize_instructions,
+    source_instructions,
+)
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
@@ -324,6 +330,20 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
+    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        """Return this capability's instructions, each paired with the id to address it by.
+
+        The agent uses this instead of [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions]
+        so a capability with an [`id`][pydantic_ai.capabilities.AbstractCapability.id] gets its own
+        [`InstructionPart`][pydantic_ai.messages.InstructionPart]s rather than being folded into the
+        agent's — computed contributions included, since addressing the capability means addressing
+        everything it tells the model. Container capabilities override this to keep each leaf's
+        contribution attributed; every other capability inherits this default, so overriding
+        `get_instructions` is enough.
+        """
+        instruction_id = capability_instruction_id(self.id) if self.id is not None else None
+        return source_instructions(normalize_instructions(self.get_instructions()), instruction_id)
+
     def get_description(self) -> CapabilityDescription[AgentDepsT] | None:
         """Return a human-readable description of this capability, or None.
 
@@ -627,7 +647,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Called before each model request. Can modify messages, settings, and parameters."""
+        """Called before each model request. Can modify messages, settings, and parameters.
+
+        [`model_request_parameters.instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts]
+        is the source of truth for the instructions: rewriting them here changes what the model
+        receives, and the request recorded in message history is re-rendered from them afterwards.
+        Assigning to a [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest] in
+        `request_context.messages` is not propagated the other way, so it does not reach the model.
+        """
         return request_context
 
     async def after_model_request(

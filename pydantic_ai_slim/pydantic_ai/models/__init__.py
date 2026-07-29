@@ -197,7 +197,18 @@ class ModelRequestContext:
     model: Model
     messages: list[ModelMessage]
     model_settings: ModelSettings | None
+
     model_request_parameters: ModelRequestParameters
+    """The tool, output, and instruction configuration for this request.
+
+    [`instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts] is the source of
+    truth for the instructions in the agent flow: a
+    [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook that
+    rewrites them changes what the model receives, and the [`ModelRequest`][pydantic_ai.messages.ModelRequest]
+    recorded in message history is re-rendered from them afterwards, so history and traces keep showing
+    what was sent. Assigning to that message's `instructions` instead is not propagated back into the
+    parts, and so does not reach the model.
+    """
 
     model_id: str | None = field(default=None, init=False)
     """The model-name string this request's model was selected/resolved from, if any.

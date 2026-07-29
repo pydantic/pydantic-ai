@@ -713,6 +713,22 @@ async def _get_instructions(
     return parts or None
 
 
+def _apply_instruction_parts(
+    request: _messages.ModelRequest, instruction_parts: list[_messages.InstructionPart] | None
+) -> None:
+    """Render the instruction parts being sent onto the request that records them.
+
+    `ModelRequestParameters.instruction_parts` is what the model reads, so a `before_model_request`
+    hook that rewrites the parts would otherwise leave message history and OTel reporting
+    instructions the model never received.
+
+    `None` means "unset" rather than "no instructions" — it's what makes `Model._get_instruction_parts`
+    fall back to the request's own `instructions` — so it leaves the request alone.
+    """
+    if instruction_parts is not None:
+        request.instructions = _messages.InstructionPart.join(instruction_parts)
+
+
 async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     instruction_parts: list[_messages.InstructionPart] | None,
@@ -1418,6 +1434,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
         fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
+        # The hook may have rewritten the instruction parts the model will actually be sent, so bring
+        # the request that records them back in step. It's the request this step created and set
+        # instructions on above, which is not necessarily the last message anymore: a hook can append
+        # further messages (e.g. `ToolSearch`'s auto-load synthesizes a call/return pair).
+        _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
+
         if self.is_resuming_without_prompt:
             # No separate user-prompt request this run: the trailing request that arrived via
             # `message_history` *is* the request being sent, so it's prior context, not new. Track it
@@ -1569,6 +1591,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if isinstance(message := base_messages[index], _messages.ModelRequest):
                 ctx.deps.resumed_request = message
                 ctx.deps.resumed_request_index = index
+                # That request is also the one whose `instructions` this continuation is echoing
+                # back, so it's where a hook's rewrite has to land.
+                _apply_instruction_parts(message, model_request_parameters.instruction_parts)
                 break
 
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so

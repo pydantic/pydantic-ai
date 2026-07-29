@@ -256,7 +256,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _output_schema: _output.OutputSchema[OutputDataT] = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
-    _instructions: list[str | SystemPromptFunc[AgentDepsT]] = dataclasses.field(repr=False)
+    _instructions: list[_instructions.SourcedInstruction[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
@@ -453,7 +453,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type)
         self._output_validators = []
 
-        self._instructions = _instructions.normalize_instructions(instructions)
+        # The agent's own literal instructions are one addressable block; instruction functions are
+        # only addressable if `@agent.instructions(id=...)` declares an id for them.
+        self._instructions = _instructions.source_agent_instructions(_instructions.normalize_instructions(instructions))
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -536,7 +538,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Initialize capability-contributed fields before binding so `for_agent` can safely
         # inspect `agent.toolsets`. Contributions from the bound capability are extracted below.
         self._cap_toolsets: list[AgentToolset[AgentDepsT]] = []
-        self._cap_instructions: list[str | SystemPromptFunc[AgentDepsT]] = []
+        self._cap_instructions: list[_instructions.SourcedInstruction[AgentDepsT]] = []
         self._cap_native_tools: list[AgentNativeTool[AgentDepsT]] = []
         self._cap_model_settings: AgentModelSettings[AgentDepsT] | None = None
 
@@ -563,7 +565,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         _validate_capability_ids(static_capabilities)
 
         # Extract capability-contributed configuration (after for_agent so caps can provide instructions etc.)
-        self._cap_instructions = _instructions.normalize_instructions(self._root_capability.get_instructions())
+        self._cap_instructions = self._root_capability._collect_instructions()  # pyright: ignore[reportPrivateUsage]
         self._cap_native_tools = list(self._root_capability.get_native_tools())
         _validate_native_tool_ids(self._cap_native_tools, source='agent capabilities')
         self._cap_model_settings = self._root_capability.get_model_settings()
@@ -1423,7 +1425,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             source_cap = None
 
         if source_cap is not None:
-            cap_instructions = _instructions.normalize_instructions(source_cap.get_instructions())
+            cap_instructions = source_cap._collect_instructions()  # pyright: ignore[reportPrivateUsage]
             cap_native_tools = list(source_cap.get_native_tools())
             cap_model_settings = source_cap.get_model_settings()
             cap_ts = source_cap.get_toolset()
@@ -1502,7 +1504,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         # Build instructions with per-run capability contributions
-        instructions_literal, instructions_functions = self._get_instructions(
+        static_instruction_parts, instructions_functions = self._get_instructions(
             additional_instructions=instructions,
             cap_instructions=cap_instructions,
         )
@@ -1510,15 +1512,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         async def get_instructions(
             run_context: RunContext[AgentDepsT],
         ) -> list[_messages.InstructionPart] | None:
-            parts: list[_messages.InstructionPart] = []
-
-            if instructions_literal:
-                parts.append(_messages.InstructionPart(content=instructions_literal, dynamic=False))
+            parts: list[_messages.InstructionPart] = [*static_instruction_parts]
 
             for func in instructions_functions:
-                text = await func.run(run_context)
+                text = await func.runner.run(run_context)
                 if text:
-                    parts.append(_messages.InstructionPart(content=text, dynamic=True))
+                    parts.append(_messages.InstructionPart(content=text, dynamic=True, id=func.id))
 
             return parts or None
 
@@ -1625,8 +1624,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
             deferred_tool_results=deferred_tool_results,
-            instructions=instructions_literal,
-            instructions_functions=instructions_functions,
+            instructions=_messages.InstructionPart.join(static_instruction_parts),
+            instructions_functions=[func.runner for func in instructions_functions],
             system_prompts=self._system_prompts,
             system_prompt_functions=self._system_prompt_functions,
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
@@ -2096,12 +2095,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def instructions(self, func: Callable[[], Awaitable[str | None]], /) -> Callable[[], Awaitable[str | None]]: ...
 
     @overload
-    def instructions(self, /) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
+    def instructions(
+        self, /, *, id: str | None = None
+    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
         self,
         func: SystemPromptFunc[AgentDepsT] | None = None,
         /,
+        *,
+        id: str | None = None,
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function.
 
@@ -2127,19 +2130,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         async def async_instructions(ctx: RunContext[str]) -> str:
             return f'{ctx.deps} is the best'
         ```
+
+        Args:
+            func: The instructions function to register.
+            id: An optional ID for the instruction block this function produces, used as
+                `'agent:<id>'` on [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an
+                application can address this block specifically, where the bare `'agent'` key addresses
+                the agent's literal instructions. See [instruction blocks](../agent.md#instruction-blocks).
         """
-        if func is None:
+        instruction_id = (
+            _instructions.declared_instruction_id(_instructions.AGENT_INSTRUCTION_ID, id) if id is not None else None
+        )
 
-            def decorator(
-                func_: SystemPromptFunc[AgentDepsT],
-            ) -> SystemPromptFunc[AgentDepsT]:
-                self._instructions.append(func_)
-                return func_
+        def decorator(
+            func_: SystemPromptFunc[AgentDepsT],
+        ) -> SystemPromptFunc[AgentDepsT]:
+            self._instructions.append(_instructions.SourcedInstruction(func_, instruction_id))
+            return func_
 
-            return decorator
-        else:
-            self._instructions.append(func)
-            return func
+        return decorator if func is None else decorator(func)
 
     async def system_prompt_parts(
         self,
@@ -2775,9 +2784,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _get_instructions(
         self,
         additional_instructions: AgentInstructions[AgentDepsT] = None,
-        cap_instructions: list[str | SystemPromptFunc[AgentDepsT]] | None = None,
-    ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
-        """Prepare agent-level instructions, splitting them into literal strings and functions.
+        cap_instructions: list[_instructions.SourcedInstruction[AgentDepsT]] | None = None,
+    ) -> tuple[list[_messages.InstructionPart], list[_instructions.SourcedInstructionRunner[AgentDepsT]]]:
+        """Prepare agent-level instructions, splitting them into static parts and functions.
 
         Toolset instructions are collected separately during run execution.
 
@@ -2786,34 +2795,60 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_instructions: Instructions from capabilities, resolved at run time.
 
         Returns:
-            A tuple of (literal_instructions, instruction_functions) where:
-            - literal_instructions: Combined literal string instructions or None
-            - instruction_functions: List of instruction functions that need to be evaluated at runtime
+            A tuple of (static_parts, instruction_functions) where:
+            - static_parts: Literal instructions, as one `InstructionPart` per source
+            - instruction_functions: Instruction functions that need to be evaluated at runtime,
+              each with the id its output should be addressed by
         """
         override_instructions = self._override_instructions.get()
+        instructions: list[_instructions.SourcedInstruction[AgentDepsT]]
         if override_instructions:
-            # Override replaces all instructions, including capability contributions.
-            instructions = override_instructions.value
+            # Override replaces all instructions, including capability contributions, so what it
+            # provides takes the place of (and the id of) the agent's own instructions.
+            instructions = _instructions.source_agent_instructions(override_instructions.value)
         else:
-            instructions = self._instructions.copy()
+            instructions = [*self._instructions]
             instructions.extend(cap_instructions if cap_instructions is not None else self._cap_instructions)
             if additional_instructions is not None:
-                instructions.extend(_instructions.normalize_instructions(additional_instructions))
+                # Instructions passed to a specific run are already the caller's to change, and
+                # aren't part of the agent's own configured block.
+                instructions.extend(
+                    _instructions.source_instructions(
+                        _instructions.normalize_instructions(additional_instructions), None
+                    )
+                )
 
-        literal_parts: list[str] = []
-        functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
+        static_parts: list[_messages.InstructionPart] = []
+        functions: list[_instructions.SourcedInstructionRunner[AgentDepsT]] = []
+        # Literals from the same source (the agent itself, or one capability) make up a single
+        # addressable block; a new source starts a new part.
+        group: list[_messages.InstructionPart] = []
 
-        for instruction in instructions:
+        def flush_group() -> None:
+            if content := _messages.InstructionPart.join(group):
+                static_parts.append(_messages.InstructionPart(content=content, id=group[0].id))
+            group.clear()
+
+        for sourced in instructions:
+            instruction = sourced.instruction
             if isinstance(instruction, str):
-                literal_parts.append(instruction)
+                if not (content := instruction.strip()):
+                    continue
+                if group and group[0].id != sourced.id:
+                    flush_group()
+                group.append(_messages.InstructionPart(content=content, id=sourced.id))
             else:
                 # TemplateStr instances land here too: they are callable with a
                 # RunContext parameter, so SystemPromptRunner handles them like
                 # any other system prompt function.
-                functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
+                functions.append(
+                    _instructions.SourcedInstructionRunner(
+                        _system_prompt.SystemPromptRunner[AgentDepsT](instruction), sourced.id
+                    )
+                )
+        flush_group()
 
-        literal = '\n'.join(literal_parts).strip() or None
-        return literal, functions
+        return static_parts, functions
 
     def _get_toolset(
         self,

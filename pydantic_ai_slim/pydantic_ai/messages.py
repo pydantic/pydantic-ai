@@ -1688,6 +1688,41 @@ class InstructionPart:
     or toolset `get_instructions()` methods.
     """
 
+    id: str | None = None
+    """A stable key identifying the source of this instruction block, or `None` if it has none.
+
+    The framework assigns one to each block it can name, so that a consumer reading
+    [`ModelRequestParameters.instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts]
+    can persist configuration (e.g. replacement text) against a key that survives reordering and rewording:
+
+    There is one rule, in two halves. A **source key** addresses everything that source contributes:
+
+    - `'agent'` — the agent's own literal instructions
+    - `'toolset:<toolset id>'` — a toolset with an [`id`][pydantic_ai.toolsets.AbstractToolset.id]
+    - `'capability:<capability id>'` — a capability with an [`id`][pydantic_ai.capabilities.AbstractCapability.id]
+
+    Appending a segment addresses **one declared block** within that source:
+
+    - `'agent:<declared id>'` — an [`@agent.instructions`][pydantic_ai.agent.Agent.instructions] function
+      that declares an `id`
+    - `'capability:<capability id>:<declared id>'` — a
+      [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions] function that declares one
+
+    A source key is what everything else is built from, so it keeps its meaning permanently: adding
+    declared ids to more sources later can only add keys, never change what an existing one addresses.
+
+    Where a source contributes several blocks and none of them declare an id, they all carry the source
+    key, so addressing it covers all of them — computed blocks included. `'agent'` is the deliberate
+    exception: it covers only the literal instructions the agent was built with, so taking over the base
+    prompt doesn't silently swallow an `@agent.instructions` function that injects the date or the user's
+    name.
+
+    Blocks with no key at all are left unidentified — they take part in the prompt as usual, but there is
+    nothing to address them by: an `@agent.instructions` function that declares no `id`, a callable passed
+    to `Agent(instructions=...)`, anything from `agent.run(instructions=...)`, and anything from a toolset
+    or capability that has no `id` of its own.
+    """
+
     part_kind: Literal['instruction'] = 'instruction'
     """Part type identifier, used as a discriminator for deserialization."""
 

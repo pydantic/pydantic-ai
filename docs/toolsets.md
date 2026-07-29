@@ -862,6 +862,8 @@ To define a fully custom toolset with its own logic to list available tools and 
 
 You can also override the [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] method to provide a description of how to use the toolset's tools. This will be injected into the agent's instructions and is useful for helping the model understand how to effectively use your toolset's tools.
 
+If the toolset has an [`id`][pydantic_ai.toolsets.AbstractToolset.id], its instructions reach the model as [instruction blocks](agent.md#instruction-blocks) identified by `'toolset:<toolset id>'`, so an application can address them by a key that outlives their wording. Every block the toolset returns carries that one key; if you want a block to be addressable on its own, return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with an `id` that qualifies your toolset's key (`'toolset:weather:limits'`) rather than a bare name of your own — the framework leaves an id you set alone.
+
 !!! tip
     If your toolset also needs to provide model settings or hooks, consider building a [custom capability](capabilities/custom.md) instead.
 

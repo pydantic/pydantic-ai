@@ -7,6 +7,7 @@ from typing import Any
 
 from typing_extensions import Self
 
+from .._instructions import normalize_toolset_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
 from ..exceptions import UserError
@@ -106,13 +107,11 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     ) -> AbstractToolset[AgentDepsT]:
         return replace(self, toolsets=[toolset.visit_and_replace(visitor) for toolset in self.toolsets])
 
-    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[str | InstructionPart] | None:
+    async def get_instructions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         results = await gather(*(ts.get_instructions(ctx) for ts in self.toolsets))
-        parts: list[str | InstructionPart] = []
-        for r in results:
-            if r is not None:
-                if isinstance(r, (str, InstructionPart)):
-                    parts.append(r)
-                else:
-                    parts.extend(r)
+        parts: list[InstructionPart] = []
+        for toolset, result in zip(self.toolsets, results):
+            parts.extend(normalize_toolset_instructions(result, toolset.id))
         return parts or None
