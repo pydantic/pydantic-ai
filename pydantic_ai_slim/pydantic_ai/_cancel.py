@@ -26,8 +26,59 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import sys
+import threading
 
-__all__ = ('RunCancellation',)
+__all__ = 'CancellationToken', 'RunCancellation'
+
+
+class CancellationToken:
+    """A thread-safe handle for cancelling one or more agent runs.
+
+    A token is permanently cancelled after [`cancel`][pydantic_ai.CancellationToken.cancel] is
+    called. The same token may be passed to multiple concurrent runs, in which case all of them
+    are cancelled.
+    """
+
+    def __init__(self) -> None:
+        self._cancelled = False
+        self._registrations: set[RunCancellation] = set()
+        self._lock = threading.Lock()
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether cancellation has been requested."""
+        with self._lock:
+            return self._cancelled
+
+    def cancel(self) -> None:
+        """Cancel every live run registered with this token.
+
+        This method is idempotent and may be called from any thread.
+        """
+        with self._lock:
+            if self._cancelled:
+                return
+            self._cancelled = True
+            registrations = tuple(self._registrations)
+
+        # `RunCancellation.cancel()` is itself thread-safe: it delivers synchronously when called
+        # on the run's own loop and marshals via `call_soon_threadsafe` otherwise.
+        for cancellation in registrations:
+            cancellation.cancel()
+
+    def _register(self, cancellation: RunCancellation) -> None:
+        with self._lock:
+            if self._cancelled:
+                should_cancel = True
+            else:
+                self._registrations.add(cancellation)
+                should_cancel = False
+        if should_cancel:
+            cancellation.cancel()
+
+    def _unregister(self, cancellation: RunCancellation) -> None:
+        with self._lock:
+            self._registrations.discard(cancellation)
 
 
 class RunCancellation:
@@ -40,14 +91,18 @@ class RunCancellation:
 
     def __init__(self) -> None:
         self._owner: asyncio.Task[object] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._issued: dict[asyncio.Task[object], int] = {}
         self._requested = False
         self._finished = False
+        self._lock = threading.RLock()
+        self._tokens: list[CancellationToken] = []
 
     @property
     def cancel_requested(self) -> bool:
         """Whether a first-party cancellation has been requested. Sticky for the life of the run."""
-        return self._requested
+        with self._lock:
+            return self._requested
 
     def bind(self, task: asyncio.Task[object] | None = None) -> None:
         """Bind the task that is currently driving the run.
@@ -66,31 +121,66 @@ class RunCancellation:
                 return
         if task is None:  # pragma: no cover — agent runs always execute inside a task
             return
-        self._owner = task
-        if sys.version_info >= (3, 11) and task in self._issued:
-            self._issued[task] = min(self._issued[task], task.cancelling())
-            if self._issued[task] == 0:
-                del self._issued[task]
-        if self._requested and not self._finished and task not in self._issued:
-            # Deliver a request that arrived before this task was bound, or was previously
-            # delivered to a different driving task.
-            self._issue(task)
+        with self._lock:
+            self._owner = task
+            self._loop = task.get_loop()
+            if sys.version_info >= (3, 11) and task in self._issued:
+                self._issued[task] = min(self._issued[task], task.cancelling())
+                if self._issued[task] == 0:
+                    del self._issued[task]
+            if self._requested and not self._finished and task not in self._issued:
+                # Deliver a request that arrived before this task was bound, or was previously
+                # delivered to a different driving task.
+                self._issue(task)
 
     def cancel(self) -> None:
-        """Request cancellation of the run. Idempotent; a no-op once the run has finished."""
-        if self._finished or self._requested:
-            return
-        self._requested = True
-        if self._owner is not None and not self._owner.done():
-            self._issue(self._owner)
+        """Request cancellation of the run from any thread.
+
+        Idempotent; a no-op once the run has finished.
+        """
+        with self._lock:
+            if self._finished or self._requested:
+                return
+            self._requested = True
+            owner = self._owner
+            loop = self._loop
+            if owner is None or loop is None or owner.done():
+                return
+
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        if running_loop is loop:
+            self._deliver()
+        else:
+            loop.call_soon_threadsafe(self._deliver)
+
+    def _deliver(self) -> None:
+        with self._lock:
+            owner = self._owner
+            if self._finished or owner is None or owner.done() or owner in self._issued:
+                return
+            self._issue(owner)
 
     def _issue(self, task: asyncio.Task[object]) -> None:
         self._issued[task] = self._issued.get(task, 0) + 1
         task.cancel()
 
+    def attach_token(self, token: CancellationToken) -> None:
+        """Register this run with a cancellation token until the run finishes."""
+        with self._lock:
+            self._tokens.append(token)
+        token._register(self)  # pyright: ignore[reportPrivateUsage]
+
     def finish(self) -> None:
         """Mark the run as finished: later `cancel()` calls become no-ops."""
-        self._finished = True
+        with self._lock:
+            self._finished = True
+            tokens = tuple(self._tokens)
+            self._tokens.clear()
+        for token in tokens:
+            token._unregister(self)  # pyright: ignore[reportPrivateUsage]
 
     def resolve(self) -> bool:
         """Resolve a caught `CancelledError` at the run's outer edge: is it ours to translate?

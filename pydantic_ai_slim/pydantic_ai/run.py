@@ -504,10 +504,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Unlike [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel], which
         only stops the current model response and lets the run continue, this ends the run itself.
 
-        Safe to call from another task (e.g. a TUI's key handler while the run is awaited
-        elsewhere), but not from another thread — marshal onto the run's event loop first
-        (e.g. `loop.call_soon_threadsafe(agent_run.cancel)`). Idempotent; a no-op once the run
-        has finished. Externally cancelling the task running the agent (`asyncio.Task.cancel()`)
+        Safe to call from another task or thread (e.g. a TUI's key handler while the run is
+        awaited elsewhere). Idempotent; a no-op once the run has finished. Externally cancelling
+        the task running the agent (`asyncio.Task.cancel()`)
         remains supported and keeps raising `asyncio.CancelledError` instead; when both happen,
         the external cancellation wins.
         """

@@ -581,7 +581,49 @@ _(This example is complete, it can be run "as is")_
 
 ### Cancelling a Run
 
-A run in flight can be cancelled entirely -- e.g. when a user hits a "stop" button. Most applications cancel a plain [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] with standard asyncio cancellation. The [`CancelledError`][asyncio.CancelledError] remains unchanged, while [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] provides the completed message history and usage so you can persist and resume the conversation:
+A run in flight can be cancelled entirely -- e.g. when a user hits a "stop" button. Create a [`CancellationToken`][pydantic_ai.CancellationToken], pass it to the run, and call `cancel()` from the stop handler. Cancellation raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] with the completed message history and usage so you can persist and resume the conversation:
+
+```python {title="run_cancel.py"}
+import asyncio
+
+from pydantic_ai import Agent, CancellationToken, RunCancelled
+
+agent = Agent('test')
+tool_started = asyncio.Event()
+
+
+@agent.tool_plain
+async def slow_lookup() -> str:
+    tool_started.set()
+    await asyncio.sleep(10)
+    return 'result'
+
+
+async def main():
+    token = CancellationToken()
+    run = asyncio.create_task(
+        agent.run('Look something up', cancellation_token=token)
+    )
+    await tool_started.wait()
+    token.cancel()  # (1)!
+
+    try:
+        await run
+    except RunCancelled as exc:
+        messages = exc.all_messages()
+        print(f'Cancelled after {len(messages)} messages')
+        #> Cancelled after 2 messages
+        await agent.run(message_history=messages)  # (2)!
+```
+
+1. `cancel()` is idempotent and thread-safe. One token may govern multiple concurrent runs, cancelling all of them.
+2. [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] contains everything completed before cancellation, including completed tool results. Any dangling tool call is [repaired automatically](message-history.md#making-histories-provider-valid) when the history is resumed.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+[`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] accepts the same token. Calling `token.cancel()` from another thread is the only way to interrupt a synchronous run while it is blocked.
+
+When the surrounding environment cancels the run -- for example through `asyncio.timeout()`, a [`TaskGroup`][asyncio.TaskGroup], or application shutdown -- the [`CancelledError`][asyncio.CancelledError] remains unchanged. [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] provides the attached run state:
 
 ```python {title="run_external_cancel.py"}
 import asyncio
@@ -615,7 +657,7 @@ async def main():
         await agent.run(message_history=messages)  # (3)!
 ```
 
-1. Typically wired to a "stop" gesture such as a button or key handler.
+1. This demonstrates cancellation imposed by the surrounding asyncio environment. For application stop gestures, prefer a `CancellationToken`.
 2. External cancellation is never converted: `asyncio.timeout()`, [`TaskGroup`][asyncio.TaskGroup], and [Temporal](durable_execution/temporal.md) cancellation semantics are preserved. The run state rides along on the original `CancelledError`.
 3. [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] contains everything completed before cancellation, including completed tool results. Any dangling tool call is [repaired automatically](message-history.md#making-histories-provider-valid) when the history is resumed.
 

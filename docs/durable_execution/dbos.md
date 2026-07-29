@@ -186,6 +186,8 @@ A per-run handler passed to `Agent.run(event_stream_handler=...)` also runs work
 
 Because the model stream is consumed inside the step, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
 
+[`CancellationToken`][pydantic_ai.CancellationToken] and [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run] are same-process cancellation handles and cannot cross the DBOS durable boundary; cancel the DBOS workflow instead.
+
 [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for workflow code: it requires no running event loop and wraps `run_stream()`. Under [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a workflow, an agent with `DBOSDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `DBOSAgent` forbids `run_stream` inside workflows — use `run` + event stream handler there.)
 
 ### Suspended Turns and Background Mode

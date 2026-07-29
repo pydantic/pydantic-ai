@@ -1,5 +1,6 @@
 from importlib.metadata import version as _metadata_version
 
+from ._cancel import CancellationToken
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -173,6 +174,7 @@ __all__ = (
     '__version__',
     # agent
     'Agent',
+    'CancellationToken',
     'AgentModelSettings',
     'AgentRetries',
     'AgentSpec',

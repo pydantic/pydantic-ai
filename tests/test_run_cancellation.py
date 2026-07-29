@@ -22,6 +22,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import pickle
 import sys
+import threading
 from collections.abc import AsyncIterable
 from datetime import timezone
 from typing import Any
@@ -30,7 +31,7 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, RunCancelled, UserError, capture_run_messages
+from pydantic_ai import Agent, CancellationToken, RunCancelled, UserError, capture_run_messages
 from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.capabilities import AbstractCapability
@@ -148,6 +149,131 @@ async def test_consumed_cancellation_is_not_a_false_positive():
 
 
 # --- First-party cancellation: `AgentRun.cancel()` / `RunContext.cancel_run()` ---
+
+
+async def test_cancellation_token_from_sibling_task():
+    started = asyncio.Event()
+
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError
+
+    token = CancellationToken()
+    task = asyncio.create_task(Agent(FunctionModel(model_function)).run('hello', cancellation_token=token))
+    await started.wait()
+    token.cancel()
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await task
+    assert [type(message).__name__ for message in exc_info.value.all_messages()] == ['ModelRequest']
+    assert token.cancelled
+
+
+async def test_pre_cancelled_token_does_not_start_run():
+    called = False
+
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal called
+        called = True
+        raise AssertionError
+
+    token = CancellationToken()
+    token.cancel()
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await Agent(FunctionModel(model_function)).run('hello', cancellation_token=token)
+    assert exc_info.value.all_messages() == []
+    assert not called
+
+
+async def test_one_token_cancels_two_runs():
+    started = 0
+    both_started = asyncio.Event()
+
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal started
+        started += 1
+        if started == 2:
+            both_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError
+
+    token = CancellationToken()
+    agent = Agent(FunctionModel(model_function))
+    tasks = [asyncio.create_task(agent.run(str(index), cancellation_token=token)) for index in range(2)]
+    await both_started.wait()
+    token.cancel()
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    assert all(isinstance(result, RunCancelled) for result in results)
+
+
+async def test_late_token_cancel_does_not_affect_finished_task():
+    token = CancellationToken()
+    result = await Agent(TestModel()).run('hello', cancellation_token=token)
+    assert result.output
+
+    token.cancel()
+    await asyncio.sleep(0)
+    assert await asyncio.sleep(0, result='unrelated') == 'unrelated'
+
+
+async def test_token_accepted_by_iter_and_stream_surfaces():
+    for run_method in ('iter', 'run_stream', 'run_stream_events'):
+        token = CancellationToken()
+        token.cancel()
+        agent = Agent(TestModel())
+        context = getattr(agent, run_method)('hello', cancellation_token=token)
+        with pytest.raises(RunCancelled):
+            async with context as value:
+                if run_method == 'run_stream_events':
+                    async for _ in value:
+                        pass
+
+
+async def test_token_and_agent_run_cancel_are_idempotent():
+    token = CancellationToken()
+    agent = Agent(TestModel())
+
+    with pytest.raises(RunCancelled):
+        async with agent.iter('hello', cancellation_token=token) as agent_run:
+            agent_run.cancel()
+            token.cancel()
+            token.cancel()
+            async for _ in agent_run:
+                pass
+
+
+async def test_sync_tool_can_cancel_run_from_worker_thread():
+    agent = Agent(TestModel(call_tools=['stop']))
+
+    @agent.tool
+    def stop(ctx: RunContext) -> str:
+        ctx.cancel_run()
+        return 'stopped'
+
+    with pytest.raises(RunCancelled):
+        await agent.run('hello')
+
+
+async def test_run_sync_token_cancel_from_another_thread():
+    started = threading.Event()
+
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError
+
+    token = CancellationToken()
+    run_thread = asyncio.create_task(
+        asyncio.to_thread(Agent(FunctionModel(model_function)).run_sync, 'hello', cancellation_token=token)
+    )
+    await asyncio.to_thread(started.wait)
+    token.cancel()
+
+    with pytest.raises(RunCancelled):
+        await run_thread
 
 
 def test_run_cancelled_result_surface():
