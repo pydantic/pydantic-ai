@@ -9,6 +9,10 @@ live API with `--record-mode=rewrite`, then replayed offline forever.
 
 from __future__ import annotations as _annotations
 
+import asyncio
+import importlib
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +21,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -33,7 +38,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeModelProfile, TurnCompleteEvent
+from pydantic_ai.realtime import OutputSpeechEndEvent, RealtimeModelProfile, TurnCompleteEvent
 from pydantic_ai.realtime._base import SessionErrorEvent
 from pydantic_ai.usage import RunUsage
 
@@ -42,8 +47,9 @@ from .ws_cassettes import RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 # A complete WebRTC SDP offer (audio + data-channel sections) that the realtime `/realtime/calls`
-# endpoint accepts. Media never actually flows in a test — this is only enough for the provider to
-# create the call and return a `call_id` for the sideband control connection to attach to.
+# endpoint accepts. Media never actually flows from it — this is only enough for the provider to create
+# the call and return a `call_id` for the sideband control connection to attach to. A recording that
+# needs the provider to report playback needs real media, and uses `_webrtc_media_peer` instead.
 SAMPLE_WEBRTC_SDP_OFFER = """v=0
 o=- 3984138995 3984138995 IN IP4 192.0.2.10
 s=-
@@ -81,10 +87,82 @@ with try_import() as imports_successful:
         OpenAIRealtimeModelSettings,
     )
 
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
+
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
 ]
+
+# Applies the provider's WebRTC answer to the media peer, connecting the audio path.
+MediaConnect = Callable[[str], Awaitable[None]]
+
+
+async def _no_media_to_connect(answer_sdp: str) -> None:
+    """Replay's `MediaConnect`: the recorded control frames already carry the playback boundaries."""
+
+
+@asynccontextmanager
+async def _live_webrtc_media_peer() -> AsyncGenerator[tuple[str, MediaConnect]]:  # pragma: no cover
+    """Negotiate a real WebRTC call with `aiortc`, standing in for the browser that owns the media.
+
+    Recording only — see `_webrtc_media_peer`. `aiortc` is not a project dependency (it pulls in a
+    media stack no offline test needs), so it's imported dynamically and installed ad hoc when
+    recording: `uv run --with aiortc --env-file .env pytest ... --record-mode=rewrite`.
+    """
+    aiortc = importlib.import_module('aiortc')
+    mediastreams = importlib.import_module('aiortc.mediastreams')
+
+    # No STUN server: a server-reflexive candidate would put the recorder's own public address in the
+    # cassette, and OpenAI's ICE-lite endpoint is reachable from the host candidates alone.
+    pc = aiortc.RTCPeerConnection(aiortc.RTCConfiguration(iceServers=[]))
+    pc.addTrack(mediastreams.AudioStreamTrack())
+
+    @pc.on('track')
+    def _drain_inbound_audio(track: Any) -> None:
+        # The provider stops filling its output buffer if nobody reads the track, which would cut the
+        # playback window this recording exists to capture.
+        async def pump() -> None:
+            while True:
+                try:
+                    await track.recv()
+                except Exception:
+                    return
+
+        asyncio.ensure_future(pump())
+
+    await pc.setLocalDescription(await pc.createOffer())
+    while pc.iceGatheringState != 'complete':
+        await anyio.sleep(0.1)
+
+    async def connect(answer_sdp: str) -> None:
+        await pc.setRemoteDescription(aiortc.RTCSessionDescription(sdp=answer_sdp, type='answer'))
+
+    try:
+        yield pc.localDescription.sdp, connect
+    finally:
+        await pc.close()
+
+
+@asynccontextmanager
+async def _webrtc_media_peer(*, recording: bool) -> AsyncGenerator[tuple[str, MediaConnect]]:
+    """The browser side of a WebRTC call, as `(offer_sdp, connect)`.
+
+    The provider reports playback boundaries (`output_audio_buffer.*`, and so the `OutputSpeech*`
+    events) only while media is actually flowing: it answers a canned offer that never completes ICE
+    quite happily, but then never sends a single playback frame. So a recording that is to contain
+    them needs a real peer, which `aiortc` negotiates headlessly.
+
+    Replay needs no peer at all — the cassette holds the frames, and dialling a recorded answer's
+    long-dead ICE candidates would put real UDP traffic in an offline test — so it reuses the canned
+    offer and connects nothing. The recorded offer is never matched on, so the two are interchangeable.
+    """
+    if recording:  # pragma: no cover
+        async with _live_webrtc_media_peer() as peer:
+            yield peer
+        return
+    yield SAMPLE_WEBRTC_SDP_OFFER, _no_media_to_connect
 
 
 async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
@@ -495,3 +573,106 @@ async def test_webrtc_sideband_text_turn(
     assert isinstance(reply, ModelResponse)
     assert reply.model_name == 'gpt-realtime'
     assert isinstance(reply.parts[0], TextPart)
+
+
+def _span_tree(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Render exported spans as nested `{name, msg, children}` dicts, ordered by start time.
+
+    Spans are keyed by both their OTel name and their `logfire.msg` — the latter is what a user
+    actually reads in Logfire (a `chat {model}` span displays as `response {model}`), so a rename of
+    either can't slip through unnoticed.
+    """
+    by_id = {span['context']['span_id']: span for span in spans}
+    children: dict[int | None, list[dict[str, Any]]] = {}
+    for span in spans:
+        parent = span['parent']
+        parent_id = parent['span_id'] if parent is not None and parent['span_id'] in by_id else None
+        children.setdefault(parent_id, []).append(span)
+
+    def render(span: dict[str, Any]) -> dict[str, Any]:
+        kids = sorted(children.get(span['context']['span_id'], []), key=lambda child: child['start_time'])
+        return {
+            'name': span['name'],
+            'msg': span['attributes'].get('logfire.msg'),
+            'children': [render(kid) for kid in kids],
+        }
+
+    return [render(root) for root in sorted(children.get(None, []), key=lambda span: span['start_time'])]
+
+
+@pytest.mark.vcr
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_webrtc_sideband_audio_turn(
+    openai_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+    request: pytest.FixtureRequest,
+    capfire: CaptureLogfire,
+) -> None:
+    """A sideband session in the default audio modality, where the provider reports playback.
+
+    The sideband never sees an audio byte — the browser holds the media — so the only thing that tells
+    the session when the model is *audible* is the provider's `output_audio_buffer.*` frames. This is
+    the one recording that contains them (a canned offer that never completes ICE yields none, which is
+    how a barge-in bug on this path went unnoticed), pinning that they arrive at all, that they bracket
+    the turn as `OutputSpeechStartEvent` / `OutputSpeechEndEvent`, and that speech outlasts generation:
+    the end event lands *after* `TurnCompleteEvent`, which is exactly the gap the `speak` span measures
+    and the reason it can't be derived from the turn spans.
+    """
+    provider, _ = openai_ws_sideband_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    # Default `InstrumentationSettings`, so the trace is the one a user gets from `logfire.configure()`.
+    agent = Agent(instructions='Answer in two words.', capabilities=[Instrumentation()])
+
+    recording = request.config.getoption('record_mode') == 'rewrite'
+    async with _webrtc_media_peer(recording=recording) as (offer_sdp, connect_media):
+        answer = await model.answer_webrtc_offer(offer_sdp, instructions='Answer in two words.')
+        await connect_media(answer.sdp)
+
+        events: list[Any] = []
+        async with agent.realtime(model).session(provider_session=answer.session) as session:
+            await session.send('Say hello.')
+            with anyio.fail_after(60):
+                async for event in session:  # pragma: no branch - the loop always breaks on the end event
+                    events.append(event)
+                    if isinstance(event, OutputSpeechEndEvent):
+                        break
+
+    assert [event for event in events if isinstance(event, SessionErrorEvent)] == []
+    assert collapse_event_types(events) == snapshot(
+        [
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'OutputSpeechStartEvent',
+            'PartEndEvent',
+            'TurnCompleteEvent',
+            'OutputSpeechEndEvent',
+        ]
+    )
+
+    # The turn lands in history as a spoken assistant turn with a transcript — and only a transcript,
+    # since no audio bytes reach a sideband session.
+    messages = session.all_messages()
+    assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
+    assert messages[0] == ModelRequest(parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())])
+    reply = messages[1]
+    assert isinstance(reply, ModelResponse)
+    assert reply.model_name == 'gpt-realtime'
+    part = reply.parts[0]
+    assert isinstance(part, SpeechPart)
+    assert part.speaker == 'assistant'
+    assert part.transcript == snapshot('Hello there.')
+    assert part.audio is None
+
+    # The `speak` span hangs off the session span, alongside the turn's own spans.
+    assert _span_tree(capfire.exporter.exported_spans_as_dict()) == snapshot(
+        [
+            {
+                'name': 'invoke_agent agent',
+                'msg': 'agent realtime',
+                'children': [
+                    {'name': 'chat gpt-realtime', 'msg': 'response gpt-realtime', 'children': []},
+                    {'name': 'speak gpt-realtime', 'msg': 'speak gpt-realtime', 'children': []},
+                    {'name': 'turn complete', 'msg': 'turn complete', 'children': []},
+                ],
+            }
+        ]
+    )

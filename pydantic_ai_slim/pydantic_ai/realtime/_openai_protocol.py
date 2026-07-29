@@ -83,13 +83,13 @@ from ._base import (
     InputSpeechEndEvent,
     InputSpeechStartEvent,
     InputTranscript,
-    InputTranscriptionFailedEvent,
+    InputTranscriptionErrorEvent,
+    OutputTranscript,
     RealtimeCodecEvent,
     RealtimeError,
     RealtimeModelProfile,
     SessionErrorEvent,
     ToolCall,
-    Transcript,
     TurnCompleteEvent,
     TurnDetection,
     seed_pcm_audio,
@@ -548,19 +548,19 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
     if event_type in _AUDIO_TRANSCRIPT_DELTA_TYPES:
         event = ResponseAudioTranscriptDeltaEvent.construct(**data)
-        return Transcript(text=event.delta or '', is_final=False, item_id=event.item_id or None)
+        return OutputTranscript(text=event.delta or '', is_final=False, item_id=event.item_id or None)
 
     if event_type in _AUDIO_TRANSCRIPT_DONE_TYPES:
         event = ResponseAudioTranscriptDoneEvent.construct(**data)
-        return Transcript(text=event.transcript or '', is_final=True, item_id=event.item_id or None)
+        return OutputTranscript(text=event.transcript or '', is_final=True, item_id=event.item_id or None)
 
     if event_type == 'response.output_text.delta':
         event = ResponseTextDeltaEvent.construct(**data)
-        return Transcript(text=event.delta or '', is_final=False, output_text=True)
+        return OutputTranscript(text=event.delta or '', is_final=False, output_text=True)
 
     if event_type == 'response.output_text.done':
         event = ResponseTextDoneEvent.construct(**data)
-        return Transcript(text=event.text or '', is_final=True, output_text=True)
+        return OutputTranscript(text=event.text or '', is_final=True, output_text=True)
 
     if event_type in _INPUT_TRANSCRIPTION_TYPES:
         return _map_input_transcription_event(data, event_type)
@@ -605,7 +605,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
 def _map_input_transcription_event(
     data: dict[str, Any], event_type: str
-) -> InputTranscript | InputTranscriptionFailedEvent | None:
+) -> InputTranscript | InputTranscriptionErrorEvent | None:
     """Map input transcription progress and failure events."""
     if event_type == 'conversation.item.input_audio_transcription.delta':
         event = ConversationItemInputAudioTranscriptionDeltaEvent.construct(**data)
@@ -626,7 +626,7 @@ def _map_input_transcription_event(
     code = event.error.code or None
     if code == _MISSING_TRANSCRIPTION_DEPLOYMENT_CODE:
         message = f'{message} {_MISSING_TRANSCRIPTION_DEPLOYMENT_HELP}'.strip()
-    return InputTranscriptionFailedEvent(
+    return InputTranscriptionErrorEvent(
         message=message,
         type=event.error.type or None,
         code=code,

@@ -21,13 +21,13 @@ from ._base import (
     ConversationItemCreated,
     CreateResponse,
     InputTranscript,
+    OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
-    Transcript,
     TruncateOutput,
     merge_realtime_profile,
 )
@@ -39,7 +39,7 @@ __all__ = (
     'RealtimeInput',
     # Codec events a connection yields.
     'AudioDelta',
-    'Transcript',
+    'OutputTranscript',
     'InputTranscript',
     'ToolCall',
     'ToolResult',

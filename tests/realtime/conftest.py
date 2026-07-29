@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+import re
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -106,17 +107,40 @@ def _scrub_ephemeral_secret(response: dict[str, Any]) -> dict[str, Any]:
     return response
 
 
+# The address fields of an SDP offer: the `c=` connection line and the address in an ICE candidate
+# (`a=candidate:<foundation> <component> <transport> <priority> <address> <port> ...`).
+_SDP_ADDRESS_RE = re.compile(rb'^(?P<prefix>c=IN IP[46] |a=candidate:\S+ \d+ \S+ \d+ )(?P<address>\S+)', re.MULTILINE)
+
+
+def _zero_sdp_addresses(request: Any) -> Any:
+    """Zero out the network addresses in a recorded SDP offer.
+
+    A cassette recorded against a *live* WebRTC peer (see `_webrtc_media_peer` — the only way to get
+    the provider to report playback) otherwise commits the recorder's own machine addresses. Nothing
+    replays or matches on a recorded request body, so blanking them costs nothing, and it keeps
+    hand-zeroing them (as `REAL_SDP_OFFER` above was) from being a step someone has to remember.
+    """
+    body = request.body
+    if isinstance(body, bytes) and b'a=candidate:' in body:
+        request.body = _SDP_ADDRESS_RE.sub(
+            lambda match: match['prefix'] + (b'0.0.0.0' if b'.' in match['address'] else b'::'), body
+        )
+    return request
+
+
 @pytest.fixture(scope='module')
 def vcr_config() -> dict[str, Any]:
     """VCR config for realtime HTTP (WebRTC signaling) cassettes.
 
     Extends the repo default with Azure's `api-key` header (the WebSocket cassettes never record HTTP,
-    so the default set omits it) and scrubs the minted ephemeral client secret from response bodies.
+    so the default set omits it), scrubs the minted ephemeral client secret from response bodies, and
+    zeroes the network addresses in a recorded SDP offer.
     """
     return {
         'ignore_localhost': True,
         'filter_headers': ['authorization', 'x-api-key', 'api-key', 'cookie'],
         'decode_compressed_response': True,
+        'before_record_request': _zero_sdp_addresses,
         'before_record_response': _scrub_ephemeral_secret,
     }
 
@@ -269,20 +293,16 @@ def gateway_gemini_ws_cassette(
 ) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
     """A Gemini Live provider that routes through the gateway's Vertex upstream, cassette-backed.
 
-    Skips (rather than errors) when the cassette is missing offline: a full session can't be recorded
-    yet because the gateway's realtime relay only matches the OpenAI-shaped `/proxy/<route>/realtime`
-    upgrade path, while the `google-genai` SDK dials the native Vertex Bidi path
-    (`/proxy/<route>/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent`), so the
-    upgrade isn't routed to the relay. (The Live model ids are also unpriced in genai-prices, which
-    would reject the upgrade on cost data even once routed.) Record with `--record-mode=rewrite` once
-    the gateway accepts the Vertex Bidi upgrade path.
+    The `google-genai` SDK dials the native Vertex Bidi path
+    (`/proxy/<route>/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent`) rather than
+    the OpenAI-shaped `/proxy/<route>/realtime` upgrade the other gateway route uses, so this fixture
+    covers the second protocol the gateway relays.
     """
     if not imports_successful():  # pragma: no cover
         pytest.skip('google-genai / websockets not installed')
     provider = _gateway_realtime_provider('google', gateway_api_key)
-    with _ws_cassette(request, 'gemini', skip_if_missing=True) as cassette:
-        # No cassette to replay until the gateway routes Bidi.
-        yield provider, cassette  # pragma: no cover
+    with _ws_cassette(request, 'gemini') as cassette:
+        yield provider, cassette
 
 
 @pytest.fixture(scope='session')

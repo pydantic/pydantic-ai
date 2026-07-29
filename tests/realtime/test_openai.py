@@ -50,11 +50,13 @@ from pydantic_ai.realtime import (
     AudioInput,
     InputSpeechEndEvent,
     InputSpeechStartEvent,
-    InputTranscriptionFailedEvent,
+    InputTranscriptionErrorEvent,
+    OutputSpeechEndEvent,
+    OutputSpeechStartEvent,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
-    ReconnectedEvent,
+    SessionReconnectEvent,
     SessionUsageEvent,
     TurnCompleteEvent,
     TurnDetection,
@@ -73,9 +75,9 @@ from pydantic_ai.realtime.codec import (
     CommitAudio,
     CreateResponse,
     InputTranscript,
+    OutputTranscript,
     ToolCall,
     ToolResult,
-    Transcript,
     TruncateOutput,
 )
 from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
@@ -243,11 +245,11 @@ def test_map_audio_delta_non_string_delta() -> None:
 
 def test_map_transcript_delta_and_done() -> None:
     for event_type in ('response.output_audio_transcript.delta', 'response.audio_transcript.delta'):
-        assert map_event({'type': event_type, 'delta': 'hel', 'item_id': 'item-a'}) == Transcript(
+        assert map_event({'type': event_type, 'delta': 'hel', 'item_id': 'item-a'}) == OutputTranscript(
             text='hel', is_final=False, item_id='item-a'
         )
     for event_type in ('response.output_audio_transcript.done', 'response.audio_transcript.done'):
-        assert map_event({'type': event_type, 'transcript': 'hello', 'item_id': 'item-a'}) == Transcript(
+        assert map_event({'type': event_type, 'transcript': 'hello', 'item_id': 'item-a'}) == OutputTranscript(
             text='hello', is_final=True, item_id='item-a'
         )
 
@@ -255,16 +257,16 @@ def test_map_transcript_delta_and_done() -> None:
 def test_map_text_output_delta_and_done() -> None:
     # `output_text=True` distinguishes plain text output from an audio transcript, so the session
     # persists it as a `TextPart` rather than a `SpeechPart`.
-    assert map_event({'type': 'response.output_text.delta', 'delta': 'hel'}) == Transcript(
+    assert map_event({'type': 'response.output_text.delta', 'delta': 'hel'}) == OutputTranscript(
         text='hel', is_final=False, output_text=True
     )
-    assert map_event({'type': 'response.output_text.done', 'text': 'hello'}) == Transcript(
+    assert map_event({'type': 'response.output_text.done', 'text': 'hello'}) == OutputTranscript(
         text='hello', is_final=True, output_text=True
     )
 
 
 def test_map_transcript_missing_field_defaults_to_empty() -> None:
-    assert map_event({'type': 'response.output_audio_transcript.delta'}) == Transcript(text='', is_final=False)
+    assert map_event({'type': 'response.output_audio_transcript.delta'}) == OutputTranscript(text='', is_final=False)
 
 
 @pytest.mark.parametrize('status', ['completed', None])
@@ -495,22 +497,22 @@ def test_map_unhandled_event_returns_none() -> None:
         ({'type': 'response.audio.delta', 'delta': 'AQI=', 'item_id': 'a'}, AudioDelta(b'\x01\x02', 'a')),
         (
             {'type': 'response.output_audio_transcript.delta', 'delta': 'hel', 'item_id': 'a'},
-            Transcript('hel', is_final=False, item_id='a'),
+            OutputTranscript('hel', is_final=False, item_id='a'),
         ),
         (
             {'type': 'response.audio_transcript.delta', 'delta': 'hel', 'item_id': 'a'},
-            Transcript('hel', is_final=False, item_id='a'),
+            OutputTranscript('hel', is_final=False, item_id='a'),
         ),
         (
             {'type': 'response.output_audio_transcript.done', 'transcript': 'hello', 'item_id': 'a'},
-            Transcript('hello', is_final=True, item_id='a'),
+            OutputTranscript('hello', is_final=True, item_id='a'),
         ),
         (
             {'type': 'response.audio_transcript.done', 'transcript': 'hello', 'item_id': 'a'},
-            Transcript('hello', is_final=True, item_id='a'),
+            OutputTranscript('hello', is_final=True, item_id='a'),
         ),
-        ({'type': 'response.output_text.delta', 'delta': 'hel'}, Transcript('hel', False, output_text=True)),
-        ({'type': 'response.output_text.done', 'text': 'hello'}, Transcript('hello', True, output_text=True)),
+        ({'type': 'response.output_text.delta', 'delta': 'hel'}, OutputTranscript('hel', False, output_text=True)),
+        ({'type': 'response.output_text.done', 'text': 'hello'}, OutputTranscript('hello', True, output_text=True)),
         (
             {'type': 'conversation.item.input_audio_transcription.delta', 'delta': 'hel', 'item_id': 'u'},
             InputTranscript('hel', is_final=False, item_id='u'),
@@ -541,7 +543,7 @@ def test_map_unhandled_event_returns_none() -> None:
         ({'type': 'error', 'error': {'message': 'bad'}}, SessionErrorEvent('bad')),
         (
             {'type': 'conversation.item.input_audio_transcription.failed', 'error': {'message': 'bad'}},
-            InputTranscriptionFailedEvent(message='bad'),
+            InputTranscriptionErrorEvent(message='bad'),
         ),
         (
             {
@@ -550,7 +552,7 @@ def test_map_unhandled_event_returns_none() -> None:
                 'item_id': 'u',
                 'content_index': 2,
             },
-            InputTranscriptionFailedEvent(
+            InputTranscriptionErrorEvent(
                 message='bad',
                 type='transcription_error',
                 code='audio_unintelligible',
@@ -564,7 +566,7 @@ def test_map_unhandled_event_returns_none() -> None:
                 'type': 'conversation.item.input_audio_transcription.failed',
                 'error': {'message': 'x', 'type': 'server_error', 'code': 'DeploymentNotFound'},
             },
-            InputTranscriptionFailedEvent(
+            InputTranscriptionErrorEvent(
                 message=(
                     'x The transcription model is not deployed on this Azure OpenAI resource. Deploy one and '
                     'set `input_transcription_model` to its deployment name, or set it to `None` to disable '
@@ -580,7 +582,7 @@ def test_map_unhandled_event_returns_none() -> None:
                 'type': 'conversation.item.input_audio_transcription.failed',
                 'error': {'code': 'DeploymentNotFound'},
             },
-            InputTranscriptionFailedEvent(
+            InputTranscriptionErrorEvent(
                 message=(
                     'The transcription model is not deployed on this Azure OpenAI resource. Deploy one and '
                     'set `input_transcription_model` to its deployment name, or set it to `None` to disable '
@@ -672,7 +674,7 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
     async with _connect(model, 'Be nice', tools=tools) as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [Transcript(text='hi', is_final=True)]
+    assert events == [OutputTranscript(text='hi', is_final=True)]
     assert fake_connect.url == 'wss://api.openai.com/v1/realtime?model=gpt-realtime'
     assert fake_connect.headers == {'Authorization': 'Bearer k'}
 
@@ -728,7 +730,7 @@ async def test_connect_webrtc_sideband_handshake(monkeypatch: pytest.MonkeyPatch
     assert first['session']['instructions'] == 'Be nice'
     # The served model is captured from `session.updated` (not `session.created`).
     assert conn.model_name == 'gpt-realtime-2.1'
-    assert events == [Transcript(text='hi', is_final=True)]
+    assert events == [OutputTranscript(text='hi', is_final=True)]
 
 
 @pytest.mark.anyio
@@ -2269,7 +2271,7 @@ async def test_clean_close_reconnects_when_a_policy_is_configured() -> None:
         reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
     )
     events = await collect_codec_events(conn)
-    assert events == [ReconnectedEvent(state_restored=False), Transcript(text='still here', is_final=True)]
+    assert events == [SessionReconnectEvent(state_restored=False), OutputTranscript(text='still here', is_final=True)]
 
 
 @pytest.mark.anyio
@@ -2312,7 +2314,7 @@ async def test_reconnects_on_drop_and_resumes() -> None:
         reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
     )
     events = await collect_codec_events(conn)
-    assert events == [ReconnectedEvent(state_restored=False), Transcript(text='hi', is_final=True)]
+    assert events == [SessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
 
 
 class _DropAfterHandshake(FakeWebSocket):
@@ -2362,7 +2364,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [ReconnectedEvent(state_restored=False), Transcript(text='hi', is_final=True)]
+    assert events == [SessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
 
 
@@ -2385,7 +2387,7 @@ async def test_connect_webrtc_sideband_reconnect_closes_previous_connection(monk
     ) as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [ReconnectedEvent(state_restored=False), Transcript(text='hi', is_final=True)]
+    assert events == [SessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
 
 
@@ -2629,12 +2631,13 @@ async def test_sideband_cancel_does_not_clear_when_playback_already_ended(ended_
 
 
 @pytest.mark.anyio
-async def test_playback_boundary_is_tracked_even_when_the_frame_is_suppressed() -> None:
-    """Playback state lands even when the straggler filter drops the frame that carries it.
+async def test_playback_boundary_survives_the_straggler_filter() -> None:
+    """A playback boundary outlives the response it belongs to, so the filter must not drop it.
 
     A cancelled response's buffered audio can start playing after the cancel, and that
-    `output_audio_buffer.started` carries the cancelled `response_id` — so it is suppressed from the
-    event stream. Tracking it after the filter would leave the connection unable to stop the audio.
+    `output_audio_buffer.started` carries the cancelled `response_id`. Whether the browser is being
+    spoken to is connection state, not that response's content: dropping it would both mislead a
+    'speaking' indicator and leave the audio unstoppable.
     """
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
@@ -2642,9 +2645,56 @@ async def test_playback_boundary_is_tracked_even_when_the_frame_is_suppressed() 
     await conn.send(CancelResponse())
     ws.sent.clear()
 
-    assert await conn._decode_frame(_playback('output_audio_buffer.started')) == []  # pyright: ignore[reportPrivateUsage]
+    assert await conn._decode_frame(_playback('output_audio_buffer.started')) == [  # pyright: ignore[reportPrivateUsage]
+        OutputSpeechStartEvent()
+    ]
     await conn.send(CancelResponse())
     assert [json.loads(frame)['type'] for frame in ws.sent] == ['output_audio_buffer.clear']
+
+
+@pytest.mark.anyio
+async def test_sideband_reports_the_playback_boundary_once_per_utterance() -> None:
+    """The pair brackets audibility, and a redundant `stopped`/`cleared` doesn't repeat the stop."""
+    ws = FakeWebSocket(
+        [
+            _playback('output_audio_buffer.started'),
+            _playback('output_audio_buffer.stopped'),
+            _playback('output_audio_buffer.cleared'),
+        ]
+    )
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    assert await collect_codec_events(conn) == [
+        OutputSpeechStartEvent(),
+        OutputSpeechEndEvent(),
+    ]
+
+
+@pytest.mark.anyio
+async def test_interrupt_still_reports_that_speech_ended() -> None:
+    """A barge-in ends the utterance, so the end event must still fire — or the indicator sticks on.
+
+    The clear we send is acknowledged with `output_audio_buffer.cleared`. Treating our own request as
+    the end of playback would swallow that frame's event, leaving a caller believing the model is
+    still talking after it interrupted it.
+    """
+    ws = FakeWebSocket([_playback('output_audio_buffer.started')])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    assert await collect_codec_events(conn) == [OutputSpeechStartEvent()]
+
+    await conn.send(CancelResponse())
+    # A second interrupt doesn't re-send the clear while the first is still unacknowledged.
+    await conn.send(CancelResponse())
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['output_audio_buffer.clear']
+
+    assert await conn._decode_frame(_playback('output_audio_buffer.cleared')) == [OutputSpeechEndEvent()]  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_websocket_session_reports_no_playback_boundary() -> None:
+    """An ordinary session owns the audio and knows when it plays it, so the provider's buffer is noise."""
+    ws = FakeWebSocket([_playback('output_audio_buffer.started'), _playback('output_audio_buffer.stopped')])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    assert await collect_codec_events(conn) == []
 
 
 @pytest.mark.anyio

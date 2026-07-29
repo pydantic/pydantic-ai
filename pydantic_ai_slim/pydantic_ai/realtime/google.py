@@ -95,6 +95,7 @@ from ._base import (
     ImageInput,
     InputSpeechStartEvent,
     InputTranscript,
+    OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeError,
@@ -102,15 +103,14 @@ from ._base import (
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
-    ReconnectedEvent,
     ReconnectPolicy,
     SessionErrorEvent,
+    SessionReconnectEvent,
     SessionUsageEvent,
     TextInput,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
-    Transcript,
     TurnCompleteEvent,
     TurnDetection,
     inject_trace_context,
@@ -154,7 +154,9 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Whether to transcribe input audio. Defaults to `True`.
 
     When `False`, user turns are recorded as retained audio when available, or as content-less
-    placeholders otherwise.
+    placeholders otherwise. Takes precedence over the shared
+    [`input_transcription_model`][pydantic_ai.realtime.RealtimeModelSettings.input_transcription_model],
+    whose `None` also turns transcription off here.
     """
     google_output_transcription: bool
     """Whether to transcribe output audio. Defaults to `True`.
@@ -717,6 +719,22 @@ class GoogleRealtimeModel(RealtimeModel):
             return False
         return True
 
+    def _input_transcription(self, settings: GoogleRealtimeModelSettings) -> bool:
+        """Whether to transcribe the user's audio.
+
+        Gemini has no separate transcription model to point at, so a *pinned* `input_transcription_model`
+        can't be honored — but `None` ("don't transcribe") can be, and must be: it's the setting someone
+        reaches for to keep the user's words out of history, and silently transcribing anyway would defeat
+        the one thing it exists to do. The provider-specific `google_input_transcription` still wins where
+        both are given.
+        """
+        if (enabled := settings.get('google_input_transcription')) is not None:
+            return enabled
+        # Absent and `None` are different here: only an explicit `None` asks for transcription off.
+        if 'input_transcription_model' in settings and settings['input_transcription_model'] is None:
+            return False
+        return True
+
     def _realtime_input_config(
         self, model_settings: GoogleRealtimeModelSettings
     ) -> genai_types.RealtimeInputConfig | None:
@@ -809,7 +827,7 @@ class GoogleRealtimeModel(RealtimeModel):
             config.system_instruction = instructions
         config.speech_config = self._speech_config(settings)
         transcription_language_codes = settings.get('google_transcription_language_codes')
-        if settings.get('google_input_transcription', True):
+        if self._input_transcription(settings):
             config.input_audio_transcription = genai_types.AudioTranscriptionConfig(
                 language_codes=transcription_language_codes
             )
@@ -928,7 +946,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 raise RealtimeError(model_name=self.model, message=f'Could not reach the realtime API: {e}') from e
             # Seed prior conversation once, after the initial connect, as inactive context turns (no
             # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
-            # resumption restores server state, and a `ReconnectedEvent` starts a fresh turn.
+            # resumption restores server state, and a `SessionReconnectEvent` starts a fresh turn.
             if turns := await _seed_turns(messages, profile=self.profile, provider_name=self.system):
                 await session.send_client_content(turns=turns, turn_complete=False)
             yield GoogleRealtimeConnection(
@@ -937,7 +955,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 provider_name=self._provider.name,
                 dial=dial if reconnectable else None,
                 reconnect=self.reconnect if reconnectable else None,
-                input_transcription_enabled=settings.get('google_input_transcription', True),
+                input_transcription_enabled=self._input_transcription(settings),
                 async_tool_calls=self._async_tool_calls(settings),
             )
         finally:
@@ -1073,7 +1091,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     yield SessionErrorEvent(message=f'{self._provider_label} connection closed: {e}', recoverable=False)
                     return
                 if await self._try_reconnect():
-                    yield ReconnectedEvent(state_restored=True)
+                    yield SessionReconnectEvent(state_restored=True)
                     continue
                 yield SessionErrorEvent(
                     message=f'{self._provider_label} connection closed; reconnect failed: {e}', recoverable=False
@@ -1136,7 +1154,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     # model-turn text part is the model's plain text output (`response_modality='text'`),
                     # distinct from the spoken-audio transcription in `output_transcription` below, so it
                     # becomes a `TextPart` rather than a `SpeechPart`.
-                    events.append(Transcript(text=part.text, is_final=False, output_text=True))
+                    events.append(OutputTranscript(text=part.text, is_final=False, output_text=True))
         if content.input_transcription is not None and content.input_transcription.text:
             events.append(
                 InputTranscript(
@@ -1145,7 +1163,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
             )
         if content.output_transcription is not None and content.output_transcription.text:
             events.append(
-                Transcript(text=content.output_transcription.text, is_final=bool(content.output_transcription.finished))
+                OutputTranscript(
+                    text=content.output_transcription.text, is_final=bool(content.output_transcription.finished)
+                )
             )
         if content.interrupted:
             self._turn_interrupted = True

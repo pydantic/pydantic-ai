@@ -47,7 +47,8 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..models import AbstractModel, ModelRequestParameters, download_item
+from ..models import ModelRequestParameters, download_item
+from ..models._abstract import AbstractModel
 from ..native_tools import AbstractNativeTool
 from ..settings import ThinkingLevel, ToolChoice
 from ..usage import RequestUsage
@@ -155,8 +156,11 @@ class RealtimeModelSettings(TypedDict, total=False):
 
     `'auto'` (the default) uses the provider's recommended realtime transcription model; pass a
     specific id (e.g. `'gpt-4o-transcribe'`) to pin one, or `None` to disable transcription (see
-    `audio_retention` to retain the raw audio instead). Gemini transcribes natively and ignores
-    this; use `google_input_transcription`.
+    `audio_retention` to retain the raw audio instead).
+
+    `None` turns transcription off on every provider. A *pinned* id applies only to the providers that
+    transcribe with a separate model — Gemini transcribes natively, with no model to point at, and
+    ignores it (`google_input_transcription` configures Gemini's own transcription).
     """
 
     output_modality: Literal['audio', 'text']
@@ -204,7 +208,9 @@ class AudioInput:
     """A chunk of audio data to stream to the model."""
 
     data: bytes
-    """Raw PCM audio bytes. The expected sample rate is provider-specific."""
+    """Raw mono PCM16 audio bytes, at the model's
+    [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeModelProfile.audio_input_sample_rate]
+    (read it from [`RealtimeSession.profile`][pydantic_ai.realtime.RealtimeSession.profile])."""
 
 
 @dataclass
@@ -340,7 +346,7 @@ class AudioDelta:
 
 
 @dataclass
-class Transcript:
+class OutputTranscript:
     """The model's textual output (partial or final): an audio transcript, or plain text output."""
 
     text: str
@@ -369,6 +375,16 @@ class InputTranscript:
     """Whether this is the final transcript for the user's turn."""
     item_id: str | None = None
     """Provider item ID for the user's turn, when available."""
+    cumulative: bool = False
+    """Whether `text` is the whole transcript so far rather than an incremental piece.
+
+    Speech recognition is revisable, and a provider that streams cumulative snapshots may correct
+    what it already transcribed instead of only extending it. Setting this lets the session adopt
+    each snapshot as authoritative rather than guessing from prefixes whether the text appends;
+    it surfaces the difference to callers as a
+    [`SpeechPartDelta.transcript`][pydantic_ai.messages.SpeechPartDelta.transcript] carrying the
+    corrected whole. Leave `False` for incremental deltas.
+    """
 
 
 @dataclass
@@ -444,13 +460,19 @@ class TranscriptUpdate:
     """Who is speaking."""
 
     delta: str
-    """The new text, to append to what you already rendered for this `index`."""
+    """The text this update added, when it added any.
+
+    Empty when the provider *revised* the turn instead of extending it — speech recognition is
+    revisable, and a correction can't be expressed as an addition. Render `transcript` and this never
+    matters.
+    """
 
     transcript: str
-    """The full transcript of this turn so far, including `delta`.
+    """The full transcript of this turn so far.
 
-    Provided so a renderer can replace rather than append, which avoids having to accumulate
-    correctly (and to recover if an update was dropped because the consumer fell behind).
+    Render this, keyed on `index`, and captions are correct whatever the provider does: no
+    accumulating, no special case for a revision, and a dropped update (if a consumer fell behind)
+    self-corrects on the next one.
     """
 
 
@@ -488,7 +510,40 @@ class InputSpeechEndEvent:
 
 
 @dataclass
-class InputTranscriptionFailedEvent:
+class OutputSpeechStartEvent:
+    """The provider started playing the model's audio to the listener.
+
+    Only reported where the provider, rather than your code, holds the audio on its way to the
+    listener: on a [WebRTC sideband](../realtime/index.md#browser-webrtc) the media flows
+    browser ↔ provider, so the session never sees audio and this is its only signal that the model has
+    become audible. An ordinary session owns the audio and knows when it starts playing it, so no
+    provider reports this there.
+
+    This is about *playback*, not generation: the provider produces audio faster than it plays it, so
+    this can arrive well after the audio itself was generated.
+    """
+
+    event_kind: Literal['output_speech_start'] = 'output_speech_start'
+    """Event type identifier, used as a discriminator."""
+
+
+@dataclass
+class OutputSpeechEndEvent:
+    """The provider stopped playing the model's audio to the listener.
+
+    The counterpart to
+    [`OutputSpeechStartEvent`][pydantic_ai.realtime.OutputSpeechStartEvent], and the
+    honest end of a spoken turn: because the provider generates audio far ahead of playing it, it is
+    still talking long after [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] reports the
+    response finished. Drive a "speaking" indicator from this pair rather than from turn completion.
+    """
+
+    event_kind: Literal['output_speech_end'] = 'output_speech_end'
+    """Event type identifier, used as a discriminator."""
+
+
+@dataclass
+class InputTranscriptionErrorEvent:
     """The provider failed to transcribe a user audio input turn, but the session continues.
 
     This is recoverable; `item_id` and `content_index` locate the affected user turn.
@@ -505,7 +560,7 @@ class InputTranscriptionFailedEvent:
     content_index: int | None = None
     """Content index within the affected user turn, when available."""
 
-    event_kind: Literal['input_transcription_failed'] = 'input_transcription_failed'
+    event_kind: Literal['input_transcription_error'] = 'input_transcription_error'
     """Event type identifier, used as a discriminator."""
 
 
@@ -536,7 +591,7 @@ class SessionUsageEvent:
 
 
 @dataclass
-class ReconnectedEvent:
+class SessionReconnectEvent:
     """The connection dropped and was automatically re-established; inspect `state_restored` for continuity.
 
     Session configuration (instructions, tools, voice, ...) is restored on every reconnect. OpenAI
@@ -552,7 +607,7 @@ class ReconnectedEvent:
     session resumption is active) means prior turns were restored.
     """
 
-    event_kind: Literal['reconnected'] = 'reconnected'
+    event_kind: Literal['session_reconnect'] = 'session_reconnect'
     """Event type identifier, used as a discriminator."""
 
 
@@ -605,16 +660,18 @@ class SessionErrorEvent:
 RealtimeCodecEvent = TypeAliasType(
     'RealtimeCodecEvent',
     AudioDelta
-    | Transcript
+    | OutputTranscript
     | InputTranscript
     | ToolCall
     | ToolCallCancelled
     | TurnCompleteEvent
     | InputSpeechStartEvent
     | InputSpeechEndEvent
-    | InputTranscriptionFailedEvent
+    | OutputSpeechStartEvent
+    | OutputSpeechEndEvent
+    | InputTranscriptionErrorEvent
     | SessionUsageEvent
-    | ReconnectedEvent
+    | SessionReconnectEvent
     | ConversationCreated
     | ConversationItemCreated
     | PartStartEvent
@@ -633,7 +690,7 @@ This is the provider-facing vocabulary: providers translate their wire protocol 
 # Session-level events (yielded by `RealtimeSession.__aiter__`).
 #
 # A session translates the low-level codec events into the shared message/part event vocabulary from
-# `pydantic_ai.messages`: `AudioDelta`/`Transcript`/`InputTranscript` become `PartStartEvent` /
+# `pydantic_ai.messages`: `AudioDelta`/`OutputTranscript`/`InputTranscript` become `PartStartEvent` /
 # `PartDeltaEvent` / `PartEndEvent` for `SpeechPart`s, and `ToolCall` becomes a
 # `ToolCallPart` part (start/end) plus `FunctionToolCallEvent` / `FunctionToolResultEvent` around its
 # execution. The remaining control-plane events pass through unchanged.
@@ -651,8 +708,10 @@ RealtimeEvent = TypeAliasType(
     | TurnCompleteEvent
     | InputSpeechStartEvent
     | InputSpeechEndEvent
-    | InputTranscriptionFailedEvent
-    | ReconnectedEvent
+    | OutputSpeechStartEvent
+    | OutputSpeechEndEvent
+    | InputTranscriptionErrorEvent
+    | SessionReconnectEvent
     | SessionErrorEvent,
 )
 """Union of events yielded by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession].
@@ -1058,7 +1117,7 @@ class ReconnectPolicy:
     """How to recover when a realtime connection drops mid-session.
 
     On a dropped connection the session is re-dialed and its configuration (instructions, tools,
-    voice, ...) re-applied, emitting a [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] event. What
+    voice, ...) re-applied, emitting a [`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] event. What
     server-side state survives depends on the provider: OpenAI Realtime and Azure OpenAI start a
     fresh turn (the audio buffer and prior turns are lost), while Gemini Live and xAI restore prior
     turns. Gemini requires `google_enable_session_resumption=True`; xAI enables native resumption

@@ -54,11 +54,12 @@ from ..tools import ToolDefinition
 from ._base import (
     ConversationCreated,
     ConversationItemCreated,
+    InputTranscript,
     RealtimeCodecEvent,
     RealtimeModel,
     RealtimeModelSettings,
-    ReconnectedEvent,
     ReconnectPolicy,
+    SessionReconnectEvent,
     ToolCall,
     inject_trace_context,
 )
@@ -107,16 +108,25 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     xAI clones the OpenAI Realtime protocol, so most events map identically via the OpenAI codec.
     The first exception is input audio transcription: xAI emits cumulative
     `conversation.item.input_audio_transcription.updated` snapshots (which may retroactively *correct*
-    earlier text) plus cumulative `.completed` snapshots, rather than OpenAI's incremental `.delta`.
-    This mapper drops `.updated` partials because the session's transcript accumulator can't undo a
-    retroactive correction, while the shared codec drops interim `.completed` snapshots. This keeps the
-    finalized user transcript correct at the cost of live partial input transcripts.
+    earlier text — `'Hello?'` becomes `'Hello, my name is'`) plus cumulative `.completed` snapshots,
+    rather than OpenAI's incremental `.delta`. The partials are surfaced as cumulative
+    [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript]s so a live transcript can render
+    the user's words as they are spoken; the session adopts each snapshot wholesale, appending when it
+    merely extends and replacing when xAI revises itself. The shared codec still drops interim
+    `.completed` snapshots.
     The other exception is xAI's conversation lifecycle events, which are surfaced as codec control
     events so the connection can capture `conversation.id` and the session can suppress resume replay.
     """
     event_type = data.get('type')
     if event_type == 'conversation.item.input_audio_transcription.updated':
-        return None
+        # xAI-only frame with no SDK model behind it, so it is read straight off the wire shape.
+        transcript = data.get('transcript')
+        item_id = data.get('item_id')
+        return InputTranscript(
+            text=transcript if isinstance(transcript, str) else '',
+            cumulative=True,
+            item_id=item_id if isinstance(item_id, str) else None,
+        )
     if event_type in ('conversation.created', 'conversation.item.added', 'conversation.item.created'):
         return map_conversation_event(data)
     event = _map_openai_event(data)
@@ -124,6 +134,11 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         item_id = ResponseFunctionCallArgumentsDoneEvent.construct(**data).item_id
         if item_id:
             event = replace(event, item_id=item_id)
+    elif isinstance(event, InputTranscript):
+        # xAI's final `.completed` is a whole snapshot like its `.updated` partials, so it too must
+        # replace the accumulated text. Read as an increment it would be *appended* to the snapshots it
+        # supersedes, and a revised turn would end up saying everything twice.
+        event = replace(event, cumulative=True)
     return event
 
 
@@ -176,7 +191,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         async for event in super().__aiter__():
             yield event
-            if isinstance(event, ReconnectedEvent):
+            if isinstance(event, SessionReconnectEvent):
                 replayed_items = self._replayed_items[:]
                 self._replayed_items.clear()
                 for replayed_item in replayed_items:

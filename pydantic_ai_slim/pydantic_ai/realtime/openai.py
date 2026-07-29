@@ -73,6 +73,8 @@ from ._base import (
     CreateResponse,
     ImageInput,
     InputTranscript,
+    OutputSpeechEndEvent,
+    OutputSpeechStartEvent,
     RealtimeClientSecret,
     RealtimeCodecEvent,
     RealtimeConnection,
@@ -80,9 +82,9 @@ from ._base import (
     RealtimeModel,
     RealtimeModelSettings,
     RealtimeProviderSession,
-    ReconnectedEvent,
     ReconnectPolicy,
     SessionErrorEvent,
+    SessionReconnectEvent,
     SessionUsageEvent,
     TextInput,
     ToolResult,
@@ -122,8 +124,8 @@ _AUTO_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper'
 # WebRTC-only playback boundaries: over a WebRTC call the audio reaches the browser on the media track
 # rather than as deltas, so these frames are the sideband's only signal of whether the model is still
 # being heard. `stopped` ends playback naturally; `cleared` acknowledges an `output_audio_buffer.clear`.
-_OUTPUT_AUDIO_PLAYBACK_STARTED = 'output_audio_buffer.started'
-_OUTPUT_AUDIO_PLAYBACK_ENDED = frozenset({'output_audio_buffer.stopped', 'output_audio_buffer.cleared'})
+_OUTPUT_SPEECH_START_FRAME = 'output_audio_buffer.started'
+_OUTPUT_SPEECH_END_FRAMES = frozenset({'output_audio_buffer.stopped', 'output_audio_buffer.cleared'})
 
 __all__ = (
     'OpenAIRealtimeModel',
@@ -359,6 +361,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # Whether the provider is still streaming audio to the browser, tracked from the WebRTC-only
         # playback-boundary events. A sideband sees no output-audio deltas, so this is its only signal.
         self._output_audio_playing = False
+        # Whether an `output_audio_buffer.clear` is already in flight for the current utterance.
+        self._output_speech_clear_sent = False
 
     @property
     def model_name(self) -> str | None:
@@ -460,9 +464,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # and it applies even once the response is over, which is why it hangs off playback state
             # rather than `_response_active`. A WebSocket session has no such buffer (the caller holds
             # the audio) and the provider rejects the event there, so this is sideband-only.
-            if not self._observes_output_audio and self._output_audio_playing:
+            # Playback state stays the provider's to report: clearing it here would swallow the
+            # `cleared` frame's `OutputSpeechEndEvent` and leave a "speaking" indicator stuck on
+            # through a barge-in. A separate flag keeps a repeated interrupt from re-sending the clear.
+            if not self._observes_output_audio and self._output_audio_playing and not self._output_speech_clear_sent:
                 await self._send_event({'type': 'output_audio_buffer.clear'})
-                self._output_audio_playing = False
+                self._output_speech_clear_sent = True
         elif isinstance(content, TruncateOutput):
             # No current output item (e.g. the model wasn't speaking) → nothing to truncate.
             if self._current_item_id is not None:
@@ -537,7 +544,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 )
                 return
             if await self._try_reconnect():
-                yield ReconnectedEvent(state_restored=self._restores_state_on_reconnect)
+                yield SessionReconnectEvent(state_restored=self._restores_state_on_reconnect)
                 continue
             yield SessionErrorEvent(
                 message=f'{self._provider_label} connection closed; reconnect failed: {closed}', recoverable=False
@@ -571,10 +578,17 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # Playback state belongs to the connection, not to any one response, so track it before the
         # straggler filter: the `cleared`/`stopped` frames of a response we just cancelled carry its
         # `response_id` and would be dropped, leaving us believing the browser is still being spoken to.
-        if event_type == _OUTPUT_AUDIO_PLAYBACK_STARTED:
+        if event_type == _OUTPUT_SPEECH_START_FRAME:
             self._output_audio_playing = True
-        elif event_type in _OUTPUT_AUDIO_PLAYBACK_ENDED:
-            self._output_audio_playing = False
+            # Surfaced only on a sideband: an ordinary session owns the audio and already knows when it
+            # starts playing, so reporting the provider's buffer there would be noise.
+            return [] if self._observes_output_audio else [OutputSpeechStartEvent()]
+        elif event_type in _OUTPUT_SPEECH_END_FRAMES:
+            was_playing, self._output_audio_playing = self._output_audio_playing, False
+            self._output_speech_clear_sent = False
+            # A `cleared` we asked for still ends playback, so it reports the end like a natural stop;
+            # `was_playing` keeps a second end frame for the same utterance from reporting it twice.
+            return [] if self._observes_output_audio or not was_playing else [OutputSpeechEndEvent()]
         # Drop trailing frames from a response we cancelled on barge-in (its audio/transcript deltas,
         # output-item events, etc.); its own `response.done` still passes through below to close the
         # response, emit usage, and clear the suppression.
@@ -1083,7 +1097,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             with map_connect_errors(self.model):
                 ws = await dial()
                 # Seed prior conversation once, after the initial handshake. Reconnects deliberately don't
-                # re-seed: server state is lost on drop and a `ReconnectedEvent` starts a fresh turn.
+                # re-seed: server state is lost on drop and a `SessionReconnectEvent` starts a fresh turn.
                 for item in seed:
                     await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             yield self._connection_class(settings)(

@@ -10,6 +10,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import replace
 from threading import Lock as ThreadLock
+from time import time_ns
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
 
@@ -77,7 +78,10 @@ from ._base import (
     InputSpeechEndEvent,
     InputSpeechStartEvent,
     InputTranscript,
-    InputTranscriptionFailedEvent,
+    InputTranscriptionErrorEvent,
+    OutputSpeechEndEvent,
+    OutputSpeechStartEvent,
+    OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeError,
@@ -86,14 +90,13 @@ from ._base import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSessionInput,
-    ReconnectedEvent,
     SessionErrorEvent,
+    SessionReconnectEvent,
     SessionUsageEvent,
     TextInput,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
-    Transcript,
     TranscriptUpdate,
     TruncateOutput,
     TurnCompleteEvent,
@@ -152,13 +155,15 @@ def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> None:
 # (where the residual no longer fits this alias) or the `assert_never` flags it.
 _TranslatableEvent: TypeAlias = (
     AudioDelta
-    | Transcript
+    | OutputTranscript
     | InputTranscript
     | TurnCompleteEvent
     | InputSpeechStartEvent
     | InputSpeechEndEvent
-    | InputTranscriptionFailedEvent
-    | ReconnectedEvent
+    | OutputSpeechStartEvent
+    | OutputSpeechEndEvent
+    | InputTranscriptionErrorEvent
+    | SessionReconnectEvent
     | PartStartEvent
     | PartEndEvent
     | SessionErrorEvent
@@ -207,6 +212,35 @@ def _accumulate_transcript(accumulated: str, text: str) -> tuple[str, str]:
     return accumulated + text, text
 
 
+def _user_transcript_update(previous: str, text: str, *, cumulative: bool) -> tuple[str, SpeechPartDelta | None]:
+    """Fold a user transcript event into the running text, returning it with the delta to emit.
+
+    An incremental piece is accumulated by [`_accumulate_transcript`][pydantic_ai.realtime._session._accumulate_transcript]
+    and surfaced as an appended delta. A cumulative snapshot is adopted wholesale, because a provider
+    that sends snapshots may revise earlier words rather than only extend them: when it merely extends,
+    the new suffix is still an appended delta (what a live transcript wants), but a revision can't be
+    expressed by appending, so it goes out as a replacement instead. `None` when nothing changed.
+    """
+
+    def delta(transcript: str, added: str) -> SpeechPartDelta:
+        return SpeechPartDelta(speaker='user', transcript_delta=added, transcript=transcript)
+
+    if not cumulative:
+        transcript, appended = _accumulate_transcript(previous, text)
+        return transcript, delta(transcript, appended) if appended else None
+    if text == previous:
+        return previous, None
+    if previous and text.startswith(previous):
+        return text, delta(text, text[len(previous) :])
+    stripped = previous.strip()
+    if stripped and (stripped_text := text.strip()).startswith(stripped):
+        return text, delta(text, stripped_text[len(stripped) :])
+    if not previous:
+        return text, delta(text, text)
+    # A revision: nothing was *added*, so only the corrected whole is reported.
+    return text, delta(text, '')
+
+
 def _parse_tool_args(raw: str) -> tuple[dict[str, Any] | None, str | None]:
     """Parse a tool call's raw JSON arguments.
 
@@ -231,6 +265,13 @@ def _is_tool_result_request(message: ModelMessage) -> bool:
     return isinstance(message.parts[0], (ToolReturnPart, RetryPromptPart)) and all(
         isinstance(part, (ToolReturnPart, RetryPromptPart, UserPromptPart)) for part in message.parts
     )
+
+
+def _is_user_speech_request(message: ModelMessage) -> bool:
+    """Whether a history request is a transcribed (or audio-only) user speech turn."""
+    if not isinstance(message, ModelRequest) or not message.parts:
+        return False
+    return all(isinstance(part, SpeechPart) and part.speaker == 'user' for part in message.parts)
 
 
 def _pending_message_text(pending: PendingMessage) -> str:
@@ -414,6 +455,13 @@ class RealtimeSession:
         self._native_tool_parts: list[ModelResponsePart] = []
         # The `chat {model}` span for the response currently being assembled (see `_ensure_chat_span`).
         self._chat_span: Span | None = None
+        # The `speak {model}` span covering how long the model is actually audible (see
+        # `_start_playback_span`). Only a sideband reports playback, so it stays `None` elsewhere.
+        self._playback_span: Span | None = None
+        # When the provider's VAD reported the user's current speech segment starting, in OTel's
+        # nanosecond clock, so the `user speech` span can be backdated to it (see
+        # `_record_user_speech_span`). `None` while nobody is speaking.
+        self._user_speech_started_at: int | None = None
         self._pending_response_usage = RequestUsage()
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
@@ -447,6 +495,12 @@ class RealtimeSession:
         self._user_item_order: deque[str] = deque()
         self._finalized_users_by_id: dict[str, SpeechPart] = {}
         self._finalized_user_item_ids: set[str] = set()
+        # Where in history each user turn belongs, remembered when the turn *starts* — see
+        # `_open_user_turn_anchor`. `_pending_user_turn_anchor` holds the anchor of a turn that has begun
+        # but whose transcript hasn't identified it yet; `_user_turn_anchors` keys them by item id (`None`
+        # for id-less providers) once it has.
+        self._pending_user_turn_anchor: tuple[ModelMessage | None] | None = None
+        self._user_turn_anchors: dict[str | None, ModelMessage | None] = {}
         # Retained input audio (`audio_retention='input_audio'`/`'all'`). `_input_audio` is the rolling buffer
         # of audio sent since the last turn boundary; on providers that report a per-item speech-stopped
         # boundary, each segment is cut into `_input_audio_by_id` keyed by its input item id, so overlapping
@@ -575,6 +629,28 @@ class RealtimeSession:
 
         return self
 
+    def _record_user_speech_span(self) -> None:
+        """Record the segment the user just spoke, as a `user speech` span with a real duration.
+
+        Emitted on the *end* of speech, backdated to the onset, so the span only exists when the
+        provider reported both boundaries. Gemini Live reports onset but never the end, so it records
+        no span rather than one whose length was inferred from something else — a duration nobody
+        measured is worse than no duration at all.
+        """
+        settings = self._instrumentation
+        started_at, self._user_speech_started_at = self._user_speech_started_at, None
+        if settings is None or started_at is None:
+            return
+        context = self._session_span_context
+        assert context is not None
+        settings.tracer.start_span(
+            'user speech',
+            context=context,
+            start_time=started_at,
+            attributes={'pydantic_ai.realtime': True, 'logfire.msg': 'user speech'},
+            kind=SpanKind.INTERNAL,
+        ).end()
+
     def _record_lifecycle_event(self, name: str, **attributes: Any) -> None:
         """Record a realtime lifecycle moment (barge-in, turn boundary) as a zero-duration child span.
 
@@ -627,6 +703,12 @@ class RealtimeSession:
                 self._record_span_error(self._chat_span, error)
             self._chat_span.end()
             self._chat_span = None
+        # Closing mid-utterance is normal (the caller stopped listening), so the `speak` span is closed
+        # rather than left open; it isn't an error even when the session ended on one.
+        self._end_playback_span()
+        # A session closed mid-sentence never learns how long that sentence was, so the pending onset
+        # is dropped rather than turned into a span ending at teardown.
+        self._user_speech_started_at = None
 
         settings = self._instrumentation
         span = self._session_span
@@ -645,6 +727,20 @@ class RealtimeSession:
     def closed(self) -> bool:
         """Whether the session has been closed."""
         return self._closed
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        """What the connected model supports, as [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile].
+
+        Available here because the session is what a call actually holds: `agent.realtime()` accepts a
+        model *name* and builds the model itself, leaving nothing else to read the profile from. The field
+        most code needs is
+        [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeModelProfile.audio_input_sample_rate] —
+        the rate to resample the microphone to before
+        [`send_audio`][pydantic_ai.realtime.RealtimeSession.send_audio], since sending audio at the wrong
+        rate is heard as a chipmunk rather than reported as an error.
+        """
+        return self._profile
 
     async def stream_audio(self) -> AsyncIterator[bytes]:
         """Stream model audio chunks ready for playback.
@@ -848,9 +944,18 @@ class RealtimeSession:
                     return
 
     async def send_audio(self, data: bytes) -> None:
-        """Stream a chunk of audio to the model."""
+        """Stream a chunk of mono PCM16 audio to the model.
+
+        Resample it to [`profile`][pydantic_ai.realtime.RealtimeSession.profile]'s
+        `audio_input_sample_rate` first (24 kHz on the OpenAI-protocol providers, 16 kHz on Gemini):
+        raw bytes carry no rate, so the wrong one is heard as a chipmunk rather than reported.
+        """
         self._require_media_ownership('send_audio')
         user_turn_was_active = self._user_turn_active
+        if not user_turn_was_active:
+            # Audio starting is the earliest sign of a user turn, and the only one on a provider that
+            # reports no speech boundaries, so it's where the turn's place in history is reserved.
+            self._open_user_turn_anchor()
         self._user_turn_active = True
         previous_length: int | None = None
         if self._retain_input:
@@ -1040,7 +1145,9 @@ class RealtimeSession:
             delta: SpeechPartDelta | TextPartDelta = TextPartDelta(content_delta=appended)
         else:
             self._active_assistant = replace(active, transcript=self._assistant_transcript)
-            delta = SpeechPartDelta(speaker='assistant', transcript_delta=appended)
+            delta = SpeechPartDelta(
+                speaker='assistant', transcript_delta=appended, transcript=self._assistant_transcript
+            )
         if appended:
             events.append(PartDeltaEvent(index=self._active_assistant_index, delta=delta))
         return events
@@ -1251,6 +1358,35 @@ class RealtimeSession:
             kind=SpanKind.CLIENT,
         )
 
+    def _start_playback_span(self) -> None:
+        """Open a `speak {model}` span covering how long the model is actually audible.
+
+        Distinct from the `chat`/`turn complete` spans, which measure *generation*: the provider produces
+        audio far faster than it plays, so a response can be complete while the listener still has many
+        seconds of speech to hear. That gap is what makes a barge-in feel broken, so it's worth its own
+        span. Only opened where the provider reports playback (a WebRTC sideband), so an ordinary
+        session's trace is unchanged.
+        """
+        settings = self._instrumentation
+        if settings is None or self._playback_span is not None:
+            return
+        context = self._session_span_context
+        assert context is not None
+        self._playback_span = settings.tracer.start_span(
+            f'speak {self._model_name}' if self._model_name else 'speak',
+            context=context,
+            attributes={
+                'pydantic_ai.realtime': True,
+                'logfire.msg': f'speak {self._model_name}' if self._model_name else 'speak',
+            },
+        )
+
+    def _end_playback_span(self) -> None:
+        """Close the `speak` span when the model stops being audible."""
+        if (span := self._playback_span) is not None:
+            self._playback_span = None
+            span.end()
+
     def _end_chat_span(self, input_messages: list[ModelMessage], response: ModelResponse | None) -> None:
         """Close the current `chat` span, attaching the response's messages, usage, and state."""
         settings = self._instrumentation
@@ -1389,7 +1525,9 @@ class RealtimeSession:
             # invariant fallback: keep the history complete rather than dropping the tool result.
             self._history.append(request)
 
-    def _handle_input_transcript(self, text: str, is_final: bool, *, item_id: str | None = None) -> list[RealtimeEvent]:
+    def _handle_input_transcript(
+        self, text: str, is_final: bool, *, item_id: str | None = None, cumulative: bool = False
+    ) -> list[RealtimeEvent]:
         if item_id is not None:
             # Once an item is closed (finalized or its transcription failed), ignore any stray later event
             # for it — re-creating it would duplicate the turn or resurrect a discarded failed one.
@@ -1407,18 +1545,16 @@ class RealtimeSession:
                 self._active_users_by_id[item_id] = part
                 self._user_transcripts_by_id[item_id] = ''
                 self._user_item_order.append(item_id)
+                self._claim_user_turn_anchor(item_id)
                 self._user_indexes_by_id[item_id] = self._take_part_index()
                 events.append(PartStartEvent(index=self._user_indexes_by_id[item_id], part=part))
-            transcript, appended = _accumulate_transcript(self._user_transcripts_by_id[item_id], text)
+            transcript, delta = _user_transcript_update(
+                self._user_transcripts_by_id[item_id], text, cumulative=cumulative
+            )
             self._user_transcripts_by_id[item_id] = transcript
             self._active_users_by_id[item_id] = replace(self._active_users_by_id[item_id], transcript=transcript)
-            if appended:
-                events.append(
-                    PartDeltaEvent(
-                        index=self._user_indexes_by_id[item_id],
-                        delta=SpeechPartDelta(speaker='user', transcript_delta=appended),
-                    )
-                )
+            if delta is not None:
+                events.append(PartDeltaEvent(index=self._user_indexes_by_id[item_id], delta=delta))
             if is_final:
                 events.extend(self._finalize_user(item_id=item_id))
             return events
@@ -1430,16 +1566,13 @@ class RealtimeSession:
             self._active_user = part
             self._user_transcript = ''
             self._active_user_index = self._take_part_index()
+            self._claim_user_turn_anchor(None)
             events.append(PartStartEvent(index=self._active_user_index, part=part))
-        self._user_transcript, appended = _accumulate_transcript(self._user_transcript, text)
+        self._user_transcript, delta = _user_transcript_update(self._user_transcript, text, cumulative=cumulative)
         assert self._active_user is not None
         self._active_user = replace(self._active_user, transcript=self._user_transcript)
-        if appended:
-            events.append(
-                PartDeltaEvent(
-                    index=self._active_user_index, delta=SpeechPartDelta(speaker='user', transcript_delta=appended)
-                )
-            )
+        if delta is not None:
+            events.append(PartDeltaEvent(index=self._active_user_index, delta=delta))
         if is_final:
             events.extend(self._finalize_user())
         return events
@@ -1481,14 +1614,58 @@ class RealtimeSession:
                     audio=BinaryContent(data=_pcm_to_wav(segment, sample_rate), media_type=_WAV_MEDIA_TYPE),
                 )
         if item_id is None:
-            self._history.append(ModelRequest(parts=[part], conversation_id=self._conversation_id))
+            self._record_user_request(None, ModelRequest(parts=[part], conversation_id=self._conversation_id))
         else:
             self._finalized_users_by_id[item_id] = part
             self._flush_finalized_user_prefix()
         return [PartEndEvent(index=index, part=part)]
 
+    def _open_user_turn_anchor(self) -> None:
+        """Remember where a starting user turn belongs in history, before its transcript arrives.
+
+        Input transcription is asynchronous, and its final event can land after the response the speech
+        prompted has already been recorded — Azure and Gemini Live do that routinely, OpenAI and xAI under
+        load. Appending on finalize would then file the user's words *after* the answer they caused, and
+        after the tool call and return in between; replaying that history reads as the model calling a tool
+        unprompted. So the turn's position is taken when it starts (audio begins flowing, or the provider
+        reports speech started), and `_record_user_request` inserts there however late the transcript is.
+        """
+        self._pending_user_turn_anchor = (self._history[-1] if self._history else None,)
+
+    def _claim_user_turn_anchor(self, item_id: str | None) -> None:
+        """Attach the starting turn's remembered position to the item the transcript identified it as."""
+        anchor, self._pending_user_turn_anchor = self._pending_user_turn_anchor, None
+        # No anchor when the first thing we ever hear about the turn is its transcript (text-only sessions
+        # seeded with audio, or a provider that reports nothing before it); the turn starts here instead.
+        self._user_turn_anchors[item_id] = anchor[0] if anchor is not None else (self._history[-1] if self._history else None)
+
+    def _record_user_request(self, item_id: str | None, request: ModelRequest) -> None:
+        """Record a finalized user turn at the position it held when it started."""
+        if item_id not in self._user_turn_anchors:  # pragma: no cover - every turn anchors when it opens
+            self._history.append(request)
+            return
+        anchor = self._user_turn_anchors.pop(item_id)
+        insert_at = 0
+        if anchor is not None:
+            for index in range(len(self._history) - 1, -1, -1):
+                if self._history[index] is anchor:
+                    insert_at = index + 1
+                    break
+            else:  # pragma: no cover
+                # An invariant fallback, like `_insert_tool_return`'s: nothing withdraws a message a user
+                # turn has already anchored to, but keep history complete rather than losing the turn.
+                self._history.append(request)
+                return
+        # Step over what already sits in the anchor's slot: an earlier response's tool returns, which must
+        # stay adjacent to their call, and user turns that started at the same point, which were spoken first.
+        while insert_at < len(self._history) and (
+            _is_tool_result_request(self._history[insert_at]) or _is_user_speech_request(self._history[insert_at])
+        ):
+            insert_at += 1
+        self._history.insert(insert_at, request)
+
     def _flush_finalized_user_prefix(self) -> None:
-        """Append finalized user items in provider order, up to the first item still awaiting its final.
+        """Record finalized user items in provider order, up to the first item still awaiting its final.
 
         Item-ID transcripts finalize in any order, but history must keep provider order (call/return
         adjacency etc.), so a finalized item waits in `_finalized_users_by_id` until every earlier item
@@ -1497,7 +1674,9 @@ class RealtimeSession:
         while self._user_item_order and self._user_item_order[0] in self._finalized_users_by_id:
             finalized_id = self._user_item_order.popleft()
             finalized = self._finalized_users_by_id.pop(finalized_id)
-            self._history.append(ModelRequest(parts=[finalized], conversation_id=self._conversation_id))
+            self._record_user_request(
+                finalized_id, ModelRequest(parts=[finalized], conversation_id=self._conversation_id)
+            )
 
     def _segment_input_audio(self, item_id: str | None) -> None:
         """Cut the rolling input-audio buffer into `item_id`'s own segment at its speech-stopped boundary.
@@ -1532,6 +1711,9 @@ class RealtimeSession:
             self._finalized_users_by_id.pop(item_id, None)
             if item_id not in self._user_item_order:
                 self._user_item_order.append(item_id)
+            if item_id not in self._user_turn_anchors:
+                # The failure is the first we hear of this item, so its turn is only placed now.
+                self._claim_user_turn_anchor(item_id)
             self._finalized_user_item_ids.add(item_id)
 
         if self._retain_input:
@@ -1550,7 +1732,7 @@ class RealtimeSession:
 
         self._user_turn_active = False
         if item_id is None:
-            self._history.append(ModelRequest(parts=[part], conversation_id=self._conversation_id))
+            self._record_user_request(None, ModelRequest(parts=[part], conversation_id=self._conversation_id))
         else:
             self._finalized_users_by_id[item_id] = part
             self._flush_finalized_user_prefix()
@@ -1568,10 +1750,14 @@ class RealtimeSession:
             item_id = self._user_item_order.popleft()
             part = self._finalized_users_by_id.pop(item_id, None)
             if part is not None:
-                self._history.append(ModelRequest(parts=[part], conversation_id=self._conversation_id))
+                self._record_user_request(
+                    item_id, ModelRequest(parts=[part], conversation_id=self._conversation_id)
+                )
         self._active_users_by_id.clear()
         self._user_transcripts_by_id.clear()
         self._finalized_users_by_id.clear()
+        self._user_turn_anchors.clear()
+        self._pending_user_turn_anchor = None
         # Drop any input-audio segments whose transcript never arrived, so they can't leak across a
         # long-lived session (finalized items already popped their own segment above).
         self._input_audio_by_id.clear()
@@ -1616,7 +1802,7 @@ class RealtimeSession:
         """Return `False` for an xAI item that belongs to the resumption replay burst."""
         return not self._is_replayed_item(item_id, tool_call_id)
 
-    def _handle_reconnected(self, event: ReconnectedEvent) -> list[RealtimeEvent]:
+    def _handle_reconnected(self, event: SessionReconnectEvent) -> list[RealtimeEvent]:
         """Close state the provider lost before starting the reconnected turn."""
         if event.state_restored:
             return [event]
@@ -1643,11 +1829,24 @@ class RealtimeSession:
             self._finalize_response(interrupted=True)
         return [*events, event]
 
-    def _handle_control_event(self, event: InputSpeechStartEvent | ReconnectedEvent) -> list[RealtimeEvent]:
-        if isinstance(event, ReconnectedEvent):
+    def _handle_control_event(
+        self,
+        event: InputSpeechStartEvent | SessionReconnectEvent | OutputSpeechStartEvent | OutputSpeechEndEvent,
+    ) -> list[RealtimeEvent]:
+        if isinstance(event, SessionReconnectEvent):
             return self._handle_reconnected(event)
+        # The playback boundary brackets the `speak` span and is otherwise passed straight through.
+        if isinstance(event, OutputSpeechStartEvent):
+            self._start_playback_span()
+            return [event]
+        if isinstance(event, OutputSpeechEndEvent):
+            self._end_playback_span()
+            return [event]
+        # A reported speech start is a turn boundary even mid-stream, so it re-anchors: with a continuously
+        # open microphone the previous turn may not have finalized yet, leaving `_user_turn_active` set.
+        self._open_user_turn_anchor()
         self._user_turn_active = True
-        self._record_lifecycle_event('user speech started')
+        self._user_speech_started_at = time_ns()
         return [event]
 
     def _handle_conversation_item(self, event: ConversationItemCreated) -> None:
@@ -1669,7 +1868,7 @@ class RealtimeSession:
             if not self._accept_item(event.item_id):
                 return []
             return self._handle_assistant_audio(event.data, item_id=event.item_id)
-        if isinstance(event, Transcript):
+        if isinstance(event, OutputTranscript):
             if not self._accept_item(event.item_id):
                 return []
             # `is_final` doesn't end the part — the turn ends on `TurnCompleteEvent`; a final transcript just
@@ -1679,13 +1878,16 @@ class RealtimeSession:
         if isinstance(event, InputTranscript):
             if not self._accept_item(event.item_id):
                 return []
-            return self._handle_input_transcript(event.text, event.is_final, item_id=event.item_id)
+            return self._handle_input_transcript(
+                event.text, event.is_final, item_id=event.item_id, cumulative=event.cumulative
+            )
         if isinstance(event, InputSpeechEndEvent):
             # The user's speech segment ended (server VAD). With transcription enabled and input audio
             # retained, cut the rolling buffer into this item's own segment so a later out-of-order
             # transcript still attaches its own audio; with transcription off there's no lagging transcript,
             # so `_finalize_untranscribed_user` consumes the rolling buffer synchronously here instead.
             self._segment_input_audio(event.item_id)
+            self._record_user_speech_span()
             return [*self._finalize_untranscribed_user(), event]
         if isinstance(event, TurnCompleteEvent):
             return self._handle_turn_complete(event)
@@ -1697,13 +1899,18 @@ class RealtimeSession:
             return [event]
         if isinstance(event, PartEndEvent):
             return [event]
-        if isinstance(event, InputTranscriptionFailedEvent):
+        if isinstance(event, InputTranscriptionErrorEvent):
             return [*self._finalize_failed_user_item(event.item_id), event]
         # The remaining control-plane events pass through unchanged. `assert_never` makes pyright flag
         # any new non-pump `RealtimeEvent` variant that isn't handled here.
         if isinstance(
             event,
-            (InputSpeechStartEvent, ReconnectedEvent),
+            (
+                InputSpeechStartEvent,
+                SessionReconnectEvent,
+                OutputSpeechStartEvent,
+                OutputSpeechEndEvent,
+            ),
         ):
             return self._handle_control_event(event)
         if isinstance(event, SessionErrorEvent):
@@ -2088,15 +2295,15 @@ class RealtimeSession:
             if delta.audio_chunk:
                 for queue in self._audio_taps:
                     _put_tap(queue, delta.audio_chunk)
-            if delta.transcript_delta and delta.speaker is not None:
-                transcript = self._transcript_so_far.get(event.index, '') + delta.transcript_delta
+            if delta.transcript is not None and delta.speaker is not None:
+                # Keyed on the running transcript, not on the added text: a revision adds nothing, and
+                # gating on that would drop the very correction a caption UI needs.
+                text = delta.transcript_delta or ''
+                transcript = delta.transcript or self._transcript_so_far.get(event.index, '') + text
                 self._transcript_so_far[event.index] = transcript
                 if self._transcript_delta_taps:
                     update = TranscriptUpdate(
-                        index=event.index,
-                        speaker=delta.speaker,
-                        delta=delta.transcript_delta,
-                        transcript=transcript,
+                        index=event.index, speaker=delta.speaker, delta=text, transcript=transcript
                     )
                     for queue in self._transcript_delta_taps:
                         _put_tap(queue, update)

@@ -38,6 +38,7 @@ from ..conftest import try_import
 from .conftest import (
     REAL_SDP_OFFER,
     _scrub_ephemeral_secret,  # pyright: ignore[reportPrivateUsage]
+    _zero_sdp_addresses,  # pyright: ignore[reportPrivateUsage]
 )
 
 with try_import() as imports_successful:
@@ -211,6 +212,38 @@ def test_scrub_ephemeral_secret_redacts_client_secret() -> None:
     assert _scrub_ephemeral_secret({'body': {'string': b''}})['body']['string'] == b''
     assert _scrub_ephemeral_secret({'body': {'string': b'not json'}})['body']['string'] == b'not json'
     assert _scrub_ephemeral_secret({'body': {'string': b'[1, 2]'}})['body']['string'] == b'[1, 2]'
+
+
+def test_zero_sdp_addresses_blanks_offer_addresses() -> None:
+    """The VCR `before_record_request` hook keeps the recorder's own addresses out of a cassette.
+
+    A unit test for the same reason as the one above: the hook only runs while recording. It matters
+    for the sideband audio cassette, whose offer comes from a live `aiortc` peer rather than the
+    hand-zeroed constants, so every recording of it would otherwise commit the recorder's machine
+    addresses.
+    """
+
+    class _Request:
+        def __init__(self, body: Any) -> None:
+            self.body = body
+
+    offer = (
+        b'--boundary\r\nContent-Type: application/sdp\r\n\r\n'
+        b'v=0\r\nc=IN IP4 192.168.1.5\r\n'
+        b'a=candidate:1 1 udp 2130706431 192.168.1.5 46294 typ host\r\n'
+        b'a=candidate:2 1 udp 2130706431 fd7a:115c:a1e0::1 57945 typ host\r\n'
+        b'c=IN IP6 fd7a:115c:a1e0::1\r\na=ice-ufrag:creB\r\n'
+    )
+    assert _zero_sdp_addresses(_Request(offer)).body == (
+        b'--boundary\r\nContent-Type: application/sdp\r\n\r\n'
+        b'v=0\r\nc=IN IP4 0.0.0.0\r\n'
+        b'a=candidate:1 1 udp 2130706431 0.0.0.0 46294 typ host\r\n'
+        b'a=candidate:2 1 udp 2130706431 :: 57945 typ host\r\n'
+        b'c=IN IP6 ::\r\na=ice-ufrag:creB\r\n'
+    )
+    # Bodies without ICE candidates — every other recorded request — are passed through untouched.
+    assert _zero_sdp_addresses(_Request(b'{"model": "gpt-realtime"}')).body == b'{"model": "gpt-realtime"}'
+    assert _zero_sdp_addresses(_Request(None)).body is None
 
 
 # --- client secret minting --------------------------------------------------------------------------
