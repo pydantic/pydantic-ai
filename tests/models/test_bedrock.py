@@ -776,10 +776,10 @@ def test_bedrock_map_inference_config_top_p_zero():
     Unit test because the cassette matchers are not sensitive to the inference-config payload,
     so a VCR test would not catch this regression.
     """
-    assert BedrockConverseModel._map_inference_config({'top_p': 0.0}) == {'topP': 0.0}
-    assert BedrockConverseModel._map_inference_config({'top_p': 0.9}) == {'topP': 0.9}
-    assert 'topP' not in BedrockConverseModel._map_inference_config({})
-    assert 'topP' not in BedrockConverseModel._map_inference_config({'top_p': None})
+    assert BedrockConverseModel._map_inference_config(ModelSettings(top_p=0.0)) == {'topP': 0.0}  # pyright: ignore[reportPrivateUsage]
+    assert BedrockConverseModel._map_inference_config(ModelSettings(top_p=0.9)) == {'topP': 0.9}  # pyright: ignore[reportPrivateUsage]
+    assert 'topP' not in BedrockConverseModel._map_inference_config(ModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert 'topP' not in BedrockConverseModel._map_inference_config(cast(ModelSettings, {'top_p': None}))  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_bedrock_model_performance_config(allow_model_requests: None, bedrock_provider: BedrockProvider):
