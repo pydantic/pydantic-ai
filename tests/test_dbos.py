@@ -3370,7 +3370,7 @@ async def test_dbos_durability_allows_per_run_capabilities_outside_workflow(dbos
 
 
 class _CustomLeafToolset(AbstractToolset[Any]):
-    """A custom leaf toolset that performs its own (here: pretend) I/O in `call_tool`."""
+    """A custom leaf toolset standing in for one that does I/O; its tool reports where it ran."""
 
     def __init__(self, *, id: str | None = 'custom_leaf'):
         self._id = id
