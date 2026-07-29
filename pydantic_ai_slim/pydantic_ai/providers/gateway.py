@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import os
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
@@ -164,14 +165,22 @@ def gateway_provider(
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
 
+    remove_google_api_key = canonical == 'google-cloud'
+
+    def _configure_http_client(client: httpx.AsyncClient) -> httpx.AsyncClient:
+        _add_request_hook(
+            client,
+            base_url,
+            api_key=api_key,
+            remove_google_api_key=remove_google_api_key,
+        )
+        return client
+
     own_http_client = http_client is None
-    http_client = http_client or create_async_http_client()
-    _add_request_hook(http_client, _GatewayRequestHook(api_key))
+    http_client = _configure_http_client(http_client or create_async_http_client())
 
     def _http_client_factory() -> httpx.AsyncClient:
-        client = create_async_http_client()
-        _add_request_hook(client, _GatewayRequestHook(api_key))
-        return client
+        return _configure_http_client(create_async_http_client())
 
     def _with_http_client(provider: Provider[Any]) -> Provider[Any]:
         if own_http_client:
@@ -208,38 +217,82 @@ def gateway_provider(
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
 
 
+@dataclass(frozen=True)
+class _GatewayAuth:
+    api_key: str
+    remove_google_api_key: bool
+
+
+_GatewayScope = tuple[str, str, int | None, str]
+
+
 class _GatewayRequestHook:
     """Request hook for the gateway provider.
 
-    It adds the `"traceparent"` and `"Authorization"` headers to the request. Implemented as a
-    typed callable class (rather than a closure with a marker attribute) so that `_add_request_hook`
-    can dedupe the gateway's own hook via `isinstance` on repeated calls with the same client.
+    A single dispatcher is shared by all Gateway providers using the same HTTP client. Each provider
+    registers its route so credentials are only applied to matching Gateway requests.
     """
 
-    def __init__(self, api_key: str) -> None:
-        self._api_key = api_key
+    def __init__(self) -> None:
+        self._routes: dict[_GatewayScope, _GatewayAuth] = {}
+
+    def register(self, base_url: str, *, api_key: str, remove_google_api_key: bool) -> None:
+        url = httpx.URL(base_url)
+        path = url.path.rstrip('/') or '/'
+        scope = (url.scheme, url.host, url.port, path)
+        self._routes[scope] = _GatewayAuth(api_key, remove_google_api_key)
 
     async def __call__(self, request: httpx.Request) -> httpx.Request:
         from opentelemetry.propagate import inject
+
+        matched_auth: _GatewayAuth | None = None
+        matched_path_length = -1
+        for (scheme, host, port, path), auth in tuple(self._routes.items()):
+            same_origin = (request.url.scheme, request.url.host, request.url.port) == (scheme, host, port)
+            path_matches = path == '/' or request.url.path == path or request.url.path.startswith(f'{path}/')
+            if same_origin and path_matches and len(path) > matched_path_length:
+                matched_auth = auth
+                matched_path_length = len(path)
+
+        if matched_auth is None:
+            return request
 
         headers: dict[str, Any] = {}
         inject(headers)
         request.headers.update(headers)
 
-        if 'Authorization' not in request.headers:
-            request.headers['Authorization'] = f'Bearer {self._api_key}'
+        if matched_auth.remove_google_api_key:
+            # The Gateway key authenticates with the Gateway, not Google. google-genai
+            # treats the same value as an upstream API key and adds this header.
+            request.headers.pop('X-Goog-Api-Key', None)
+        request.headers['Authorization'] = f'Bearer {matched_auth.api_key}'
 
         return request
 
 
-def _add_request_hook(http_client: httpx.AsyncClient, hook: _GatewayRequestHook) -> None:
-    """Add a request hook without replacing caller-provided HTTPX hooks."""
-    request_hooks = [
-        existing_hook
-        for existing_hook in http_client.event_hooks.get('request', [])
-        if not isinstance(existing_hook, _GatewayRequestHook)
-    ]
-    request_hooks.append(hook)
+def _add_request_hook(
+    http_client: httpx.AsyncClient,
+    base_url: str,
+    *,
+    api_key: str,
+    remove_google_api_key: bool,
+) -> None:
+    """Register Gateway route authentication without replacing caller-provided HTTPX hooks."""
+    existing_hooks = http_client.event_hooks.get('request', [])
+    gateway_hook = next(
+        (existing_hook for existing_hook in existing_hooks if isinstance(existing_hook, _GatewayRequestHook)),
+        None,
+    )
+    if gateway_hook is None:
+        gateway_hook = _GatewayRequestHook()
+
+    gateway_hook.register(
+        base_url,
+        api_key=api_key,
+        remove_google_api_key=remove_google_api_key,
+    )
+    request_hooks = [hook for hook in existing_hooks if not isinstance(hook, _GatewayRequestHook)]
+    request_hooks.append(gateway_hook)
     http_client.event_hooks['request'] = request_hooks
 
 
