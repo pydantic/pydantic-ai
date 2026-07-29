@@ -19,6 +19,8 @@ print(result.output)
 ```
 
 For OpenAI web search, use the Responses API model prefix (`openai-responses:`), not `openai:`.
+Set `external_web_access=False` on `WebSearch` or `WebSearchTool` to restrict OpenAI Responses web search to cached
+or indexed content.
 
 ## Native Tool Defaults
 
@@ -31,6 +33,7 @@ Reach for these when the provider supports them:
 - `MemoryTool`
 - `MCPServerTool`
 - `FileSearchTool`
+- `AdvisorTool` (Anthropic, OpenRouter; lets a faster executor model consult a stronger advisor model mid-generation)
 
 ## Dynamic Native Tool Configuration
 

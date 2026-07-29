@@ -63,12 +63,31 @@ safe-outputs:
   create-issue:
     max: 1
     title-prefix: "[stale-finder] "
+    labels: [stale-issues]
     close-older-key: "[stale-finder]"
     close-older-issues: false
     expires: 7d
     # Note: elastic uses 2d with twice-weekly schedule. Adjust 'expires'
     # and the schedule together if you change run frequency.
+  threat-detection:
+    # Detection's separate AWF config does not inherit the model pricing below.
+    max-ai-credits: -1
 timeout-minutes: 60
+# MiniMax pricing for AI-credit enforcement and run-cost reporting, in dollars
+# per 1M tokens. AWF v0.27.42 uses the default for models absent from its
+# catalog; the provider entry retains exact model and cache pricing.
+models:
+  default-ai-credits-pricing:
+    input: 0.6
+    output: 2.4
+  providers:
+    anthropic:
+      models:
+        MiniMax-M3:
+          cost:
+            input: 0.6
+            output: 2.4
+            cache_read: 0.12
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
@@ -80,7 +99,7 @@ pre-steps:
   # which also drops the bundled AWF firewall binary install. Re-run gh-aw's
   # own installer (the same call it makes for non-custom-command jobs).
   - name: Install AWF firewall binary (skipped by custom engine.command)
-    run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.25.46
+    run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
 
 pre-agent-steps:
   # Stage the committed launcher script at gh-aw's exec-able

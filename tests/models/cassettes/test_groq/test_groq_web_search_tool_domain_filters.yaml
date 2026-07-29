@@ -1,0 +1,672 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '236'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the latest stable version of Python?
+        role: user
+      model: compound-beta
+      n: 1
+      search_settings:
+        exclude_domains:
+        - w3schools.com
+        include_domains:
+        - python.org
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '46761'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "**Answer:** The latest stable release of the Python programming language is **Python 3.14.0** (released
+            October 7 2025).\n\n**How I arrived at this answer**\n\n1. **Initial web‐search**  \n   - The first result (a
+            discussion on discuss.python.org) mentioned Python 3.11.2 as the newest stable release at the time of that post.
+            \ \n   - Subsequent search results listed newer major releases:\n     * **Python 3.13.0** - marked as the \"stable
+            release\" with a release date of October 7 2024.  \n     * **Python 3.14.0** - described as the \"stable release\"
+            with a release date of October 7 2025.\n\n2. **Verification on the official site**  \n   - Visiting the official
+            download page (https://www.python.org/downloads/) shows a list of *Active Python releases* but does not directly
+            label the newest version.  \n   - The page includes links to the release schedules for Python 3.13, 3.14, and
+            3.15, confirming that 3.14 has already been released (the schedule for 3.15 is still future‐oriented).\n\n3. **Conclusion**
+            \ \n   - Since Python 3.14.0 has an official release date (Oct 7 2025) and is described as a stable release, it
+            supersedes the earlier 3.13.0 release.  \n   - No newer stable version (e.g., 3.15) is listed as released, so
+            **Python 3.14.0** is the current latest stable version.\n\n---\n\n**Quick reference**\n\n| Version | Release date
+            | Stability |\n|---------|--------------|-----------|\n| 3.14.0  | 7 Oct 2025   | Stable (latest) |\n| 3.13.0
+            \ | 7 Oct 2024   | Stable (previous) |\n| 3.12.0  | 2 Oct 2023   | Stable (older) |\n\nIf you need to download
+            it, you can find the installers and source tarballs on the Python download page under the \"Python 3.14.0\" section."
+          executed_tools:
+          - arguments: '{"query": "latest stable version of Python"}'
+            index: 0
+            output: "Title: Python latest stable version? - Python Help - Discussions on Python.org\nURL: https://discuss.python.org/t/python-latest-stable-version/24563\nContent:
+              # Python latest stable version?\n\nHi All,  \nwe are planning to upgrade our python version from 3.6 to latest
+              stable version for our project , Need help to confirm which is the latest python stable version 3.11.2 or 3.10.10
+              , someone please help me to get the details . we are going to upgrade the python version in our windows server
+              , so i have to be very clear about the stable version .\n\nSee here. Both have stable releases.  \nIf you intend
+              to use some of the new features of 3.11, then use that one. [...] Anything without an 'a' (for alpha), 'b' (beta),
+              or 'rc' (release candidate) suffix is a stable release. 3.11.2 is the latest. A reason to use 3.10 instead would
+              be if a 3rd party module you wan to use will not work on 3.11 but will on 3.10. I believe that most of the widely
+              used packages have been updated for 3.11.\n\nThank you so much\n\nPowered by Discourse, best viewed with JavaScript
+              enabled\nScore: 0.9049\n\nTitle: What's new in Python 3.14 -- Python 3.14.6 documentation\nURL: https://docs.python.org/3/whatsnew/3.14.html\nContent:
+              Summary - Release highlights¶. Python 3.14 is the latest stable release of the Python programming language,
+              with a mix of changes to the language,\nScore: 0.8580\n\nTitle: Python 3.13.0 (final) has been released - Core
+              Development - Discussions on Python.org\nURL: https://discuss.python.org/t/python-3-13-0-final-has-been-released/66972\nContent:
+              # Python 3.13.0 (final) has been released\n\nAfter all the shenanigans two weeks ago - everyone discovering
+              nasty little problems in release candidate 2 - the last week was suspiciously quiet, and therefore I can finally
+              say:\n\n# Python 3.13.0 is now available\n\n### Python Release Python 3.13.0\n\nThe official home of the Python
+              Programming Language\n\n# This is the stable release of Python 3.13.0\n\nPython 3.13.0 is the newest major release
+              of the Python programming language, and it contains many new features and optimizations compared to Python 3.12.
+              (Compared to the last release candidate, 3.13.0rc3, 3.13.0 contains two small bug fixes and some documentation
+              and testing changes.)\n\n# Major new features of the 3.13 series, compared to 3.12 [...] Yes. If it isn't working,
+              please report an issue. There was a problem in b3 that the history was not preserved: Python 3.13.0b3 REPL empties
+              ~/.python\\_history · Issue #121245 · python/cpython · GitHub - but it was fixed in b4.\n\nFor me, the history
+              is preserved with the final release (Fedora build):\n\n`$ python3.13\nPython 3.13.0 (main, Oct 8 2024, 00:00:00)
+              [GCC 13.3.1 20240913 (Red Hat 13.3.1-3)] on linux\nType \"help\", \"copyright\", \"credits\" or \"license\"
+              for more information.\n>>> \"Hi, discuss.python.org\"\n'Hi, discuss.python.org'\n>>>\n$ python3.13\nPython 3.13.0
+              (main, Oct 8 2024, 00:00:00) [GCC 13.3.1 20240913 (Red Hat 13.3.1-3)] on linux\nType \"help\", \"copyright\",
+              \"credits\" or \"license\" for more information.\n>>> \"Hi, discuss.python.org\"` [...] # Major new features
+              of the 3.13 series, compared to 3.12\n\nSome of the new major new features and changes in Python 3.13 are:\n\n##
+              New features\n\n`locals()`\n\n## Typing\n\n`typing.TypeIs`\n\n## Removals and new deprecations\n\n`aifc`\n`audioop`\n`chunk`\n`cgi`\n`cgitb`\n`crypt`\n`imghdr`\n`mailcap`\n`msilib`\n`nis`\n`nntplib`\n`ossaudiodev`\n`pipes`\n`sndhdr`\n`spwd`\n`sunau`\n`telnetlib`\n`uu`\n`xdrlib`\n`lib2to3`\n\nFor
+              more details on the changes to Python 3.13, see What's new in Python 3.13.\n\n# More resources\n\n# We hope
+              you enjoy the new releases!\n\nThanks to all of the many volunteers who help make Python Development and these
+              releases possible! Please consider supporting our efforts by volunteering yourself or through organization contributions
+              to the Python Software Foundation .\nScore: 0.7185\n\nTitle: Python Release Python 3.12.0 | Python.org\nURL:
+              https://www.python.org/downloads/release/python-3120\nContent: Notice: This page displays a fallback because
+              interactive scripts did not run. Possible causes include disabled JavaScript or failure to load scripts or stylesheets.\n\npythonTM\n\n#
+              Python 3.12.0\n\nRelease date: Oct. 2, 2023\n\n## This is the stable release of Python 3.12.0\n\nPython 3.12.0
+              is the newest major release of the Python programming language, and it contains many new features and optimizations.\n\n#
+              Major new features of the 3.12 series, compared to 3.11\n\n## New features\n\n`perf`\n\n## Type annotations\n\n##
+              Deprecations\n\n`wstr`\n`wstr_length`\n`unittest`\n`smtpd`\n`distutils`\n`setuptools`\n`distutils`\n`SyntaxWarning`\n`DeprecationWarning`\n\nFor
+              more details on the changes to Python 3.12, see What's new in Python 3.12.\n\n# More resources\n\n# And now
+              for something completely different [...] | Version | Operating system | Description | File size | Sigstore |
+              | GPG | MD5 checksum |\n ---  ---  ---  --- |\n| Gzipped source tarball | Source release |  | 25.9 MB | .sigstore
+              | | SIG | `d6eda3e1399cef5dfde7c4f319b0596c` |\n| XZ compressed source tarball | Source release |  | 19.6 MB
+              | .sigstore | | SIG | `f6f4616584b23254d165f4db90c247d6` |\n| macOS 64-bit universal2 installer | macOS | for
+              macOS 10.9 and later | 43.3 MB | .sigstore | | SIG | `eddf6f35a3cbab94f2f83b2875c5fc27` |\n| Windows installer
+              (64-bit) | Windows | Recommended | 25.3 MB | .sigstore | | SIG | `32ab6a1058dfbde76951b7aa7c2335a6` |\n| Windows
+              installer (32-bit) | Windows |  | 24.0 MB | .sigstore | | SIG | `de59862985bf7afa639f2e4f9e2a722c` | [...] |
+              Windows installer (ARM64) | Windows | Experimental | 24.5 MB | .sigstore | | SIG | `230c703e3b8b3d92765d118afa7b2f78`
+              |\n| Windows embeddable package (64-bit) | Windows |  | 10.5 MB | .sigstore | | SIG | `8e24d2b26a8dbf1da0694b9da1a08b2c`
+              |\n| Windows embeddable package (32-bit) | Windows |  | 9.4 MB | .sigstore | | SIG | `c2047dc270c4936f9c64619bb193b721`
+              |\n| Windows embeddable package (ARM64) | Windows |  | 9.8 MB | .sigstore | | SIG | `3da91ef1a86a8a210a32ea99c709dd93`
+              |\nScore: 0.7145\n\nTitle: Python Release Python 3.13.0 | Python.org\nURL: https://www.python.org/downloads/release/python-3130\nContent:
+              Notice: This page displays a fallback because interactive scripts did not run. Possible causes include disabled
+              JavaScript or failure to load scripts or stylesheets.\n\npythonTM\n\n# Python 3.13.0\n\nRelease date: Oct. 7,
+              2024\n\n# This is the stable release of Python 3.13.0\n\nPython 3.13.0 is the newest major release of the Python
+              programming language, and it contains many new features and optimizations compared to Python 3.12. (Compared
+              to the last release candidate, 3.13.0rc3, 3.13.0 contains two small bug fixes and some documentation and testing
+              changes.)\n\n# Major new features of the 3.13 series, compared to 3.12\n\nSome of the new major new features
+              and changes in Python 3.13 are:\n\n## New features\n\n`locals()`\n\n## Typing\n\n`typing.TypeIs`\n\n## Removals
+              and new deprecations [...] | Version | Operating system | Description | File size | Sigstore | | SBOM | GPG
+              | MD5 checksum |\n ---  ---  ---  --- \n| Gzipped source tarball | Source release |  | 27.8 MB | .sigstore |
+              | SPDX | SIG | `c29f37220520ec6075fc37d4c62e178b` |\n| XZ compressed source tarball | Source release |  | 21.5
+              MB | .sigstore | | SPDX | SIG | `726e5b829fcf352326874c1ae599abaa` |\n| macOS 64-bit universal2 installer |
+              macOS | for macOS 10.13 and later | 67.0 MB | .sigstore | |  | SIG | `170c20233ddb620f277dc0cb1240d767` |\n|
+              Windows installer (64-bit) | Windows | Recommended | 26.9 MB | .sigstore | | SPDX | SIG | `f5e5d48ba86586d4bef67bcb3790d339`
+              |\n| Windows installer (32-bit) | Windows |  | 25.6 MB | .sigstore | | SPDX | SIG | `8e96d6243623ff7acc61c9dc7cd3638f`
+              | [...] | Windows installer (ARM64) | Windows | Experimental | 26.1 MB | .sigstore | | SPDX | SIG | `291f811b17b4943de92cffdce6f2014f`
+              |\n| Windows embeddable package (64-bit) | Windows |  | 11.9 MB | .sigstore | | SPDX | SIG | `9d2a0301c2bba8df05c8815c954a2fc0`
+              |\n| Windows embeddable package (32-bit) | Windows |  | 10.4 MB | .sigstore | | SPDX | SIG | `65fbed4b562d77ae5e3b4fc9395bffda`
+              |\n| Windows embeddable package (ARM64) | Windows |  | 11.0 MB | .sigstore | | SPDX | SIG | `85bd800fc3b0808193c5e1e622a48ad2`
+              |\nScore: 0.7128\n\nTitle: Python Release Python 3.14.0 | Python.org\nURL: https://www.python.org/downloads/release/python-3140\nContent:
+              Notice: This page displays a fallback because interactive scripts did not run. Possible causes include disabled
+              JavaScript or failure to load scripts or stylesheets.\n\npythonTM\n\n# Python 3.14.0\n\nRelease date: Oct. 7,
+              2025\n\nTwo snakes enjoying a pie with 3.14 on the top and π crimping\n\nTwo snakes enjoying a pie with 3.14
+              on the top and π crimping\n\n# This is the stable release of Python 3.14.0\n\nPython 3.14.0 is the newest major
+              release of the Python programming language, and it contains many new features and optimisations compared to
+              Python 3.13.\n\n# Major new features of the 3.14 series, compared to 3.13\n\nSome of the major new features
+              and changes in Python 3.14 are:\n\n## New features\n\n`compression.zstd`\n`except`\n`except`\n`uuid`\n`return`\n`break`\n`continue`\n`finally`
+              [...] | Windows installer (64-bit) | Windows | Recommended | 28.5 MB | .sigstore | | SPDX | `cf642108b97545a30ac055b94657a0e6`
+              |\n| Windows installer (32-bit) | Windows |  | 27.1 MB | .sigstore | | SPDX | `4b4a8f4e6f47a430df110868b3872762`
+              |\n| Windows installer (ARM64) | Windows | Experimental | 27.8 MB | .sigstore | | SPDX | `1d308e03a711d99ad7c5df4032daf8a9`
+              |\n| Windows embeddable package (64-bit) | Windows |  | 11.4 MB | .sigstore | | SPDX | `7c5d8d8e3213a11bd0e36f8b8eb03431`
+              |\n| Windows embeddable package (32-bit) | Windows |  | 10.1 MB | .sigstore | | SPDX | `c21d08efbf4d7adb64505577c197bd08`
+              |\n| Windows embeddable package (ARM64) | Windows |  | 10.8 MB | .sigstore | | SPDX | `e207670ef0d54dca3681c9e4137a4774`
+              | [...] Perfectly, the intellect remembers: the ghostly fires, a glittering ember.  \n    Inflamed by lightning's
+              outbursts, windows cast penumbras upon this floor.  \nSorrowful, as one mistreated, unhappy thoughts I heeded:
+              \ \n    That inimitable lesson in elegance - Lenore -  \n        Is delighting, exciting...nevermore.\n\nPerfectly,
+              the intellect remembers: the ghostly fires, a glittering ember.  \n    Inflamed by lightning's outbursts, windows
+              cast penumbras upon this floor.  \nSorrowful, as one mistreated, unhappy thoughts I heeded:  \n    That inimitable
+              lesson in elegance - Lenore -  \n        Is delighting, exciting...nevermore.\n\n# Enjoy the new release\nScore:
+              0.7004\n\n"
+            search_results:
+              results:
+              - content: "# Python latest stable version?\n\nHi All,  \nwe are planning to upgrade our python version from
+                  3.6 to latest stable version for our project , Need help to confirm which is the latest python stable version
+                  3.11.2 or 3.10.10 , someone please help me to get the details . we are going to upgrade the python version
+                  in our windows server , so i have to be very clear about the stable version .\n\nSee here. Both have stable
+                  releases.  \nIf you intend to use some of the new features of 3.11, then use that one. [...] Anything without
+                  an 'a' (for alpha), 'b' (beta), or 'rc' (release candidate) suffix is a stable release. 3.11.2 is the latest.
+                  A reason to use 3.10 instead would be if a 3rd party module you wan to use will not work on 3.11 but will
+                  on 3.10. I believe that most of the widely used packages have been updated for 3.11.\n\nThank you so much\n\nPowered
+                  by Discourse, best viewed with JavaScript enabled"
+                score: 0.9049283
+                title: Python latest stable version? - Python Help - Discussions on Python.org
+                url: https://discuss.python.org/t/python-latest-stable-version/24563
+              - content: Summary - Release highlights¶. Python 3.14 is the latest stable release of the Python programming
+                  language, with a mix of changes to the language,
+                score: 0.85797083
+                title: What's new in Python 3.14 -- Python 3.14.6 documentation
+                url: https://docs.python.org/3/whatsnew/3.14.html
+              - content: |-
+                  # Python 3.13.0 (final) has been released
+
+                  After all the shenanigans two weeks ago - everyone discovering nasty little problems in release candidate 2 - the last week was suspiciously quiet, and therefore I can finally say:
+
+                  # Python 3.13.0 is now available
+
+                  ### Python Release Python 3.13.0
+
+                  The official home of the Python Programming Language
+
+                  # This is the stable release of Python 3.13.0
+
+                  Python 3.13.0 is the newest major release of the Python programming language, and it contains many new features and optimizations compared to Python 3.12. (Compared to the last release candidate, 3.13.0rc3, 3.13.0 contains two small bug fixes and some documentation and testing changes.)
+
+                  # Major new features of the 3.13 series, compared to 3.12 [...] Yes. If it isn't working, please report an issue. There was a problem in b3 that the history was not preserved: Python 3.13.0b3 REPL empties ~/.python\_history · Issue #121245 · python/cpython · GitHub - but it was fixed in b4.
+
+                  For me, the history is preserved with the final release (Fedora build):
+
+                  `$ python3.13
+                  Python 3.13.0 (main, Oct 8 2024, 00:00:00) [GCC 13.3.1 20240913 (Red Hat 13.3.1-3)] on linux
+                  Type "help", "copyright", "credits" or "license" for more information.
+                  >>> "Hi, discuss.python.org"
+                  'Hi, discuss.python.org'
+                  >>>
+                  $ python3.13
+                  Python 3.13.0 (main, Oct 8 2024, 00:00:00) [GCC 13.3.1 20240913 (Red Hat 13.3.1-3)] on linux
+                  Type "help", "copyright", "credits" or "license" for more information.
+                  >>> "Hi, discuss.python.org"` [...] # Major new features of the 3.13 series, compared to 3.12
+
+                  Some of the new major new features and changes in Python 3.13 are:
+
+                  ## New features
+
+                  `locals()`
+
+                  ## Typing
+
+                  `typing.TypeIs`
+
+                  ## Removals and new deprecations
+
+                  `aifc`
+                  `audioop`
+                  `chunk`
+                  `cgi`
+                  `cgitb`
+                  `crypt`
+                  `imghdr`
+                  `mailcap`
+                  `msilib`
+                  `nis`
+                  `nntplib`
+                  `ossaudiodev`
+                  `pipes`
+                  `sndhdr`
+                  `spwd`
+                  `sunau`
+                  `telnetlib`
+                  `uu`
+                  `xdrlib`
+                  `lib2to3`
+
+                  For more details on the changes to Python 3.13, see What's new in Python 3.13.
+
+                  # More resources
+
+                  # We hope you enjoy the new releases!
+
+                  Thanks to all of the many volunteers who help make Python Development and these releases possible! Please consider supporting our efforts by volunteering yourself or through organization contributions to the Python Software Foundation .
+                score: 0.7185356
+                title: Python 3.13.0 (final) has been released - Core Development - Discussions on Python.org
+                url: https://discuss.python.org/t/python-3-13-0-final-has-been-released/66972
+              - content: |-
+                  Notice: This page displays a fallback because interactive scripts did not run. Possible causes include disabled JavaScript or failure to load scripts or stylesheets.
+
+                  pythonTM
+
+                  # Python 3.12.0
+
+                  Release date: Oct. 2, 2023
+
+                  ## This is the stable release of Python 3.12.0
+
+                  Python 3.12.0 is the newest major release of the Python programming language, and it contains many new features and optimizations.
+
+                  # Major new features of the 3.12 series, compared to 3.11
+
+                  ## New features
+
+                  `perf`
+
+                  ## Type annotations
+
+                  ## Deprecations
+
+                  `wstr`
+                  `wstr_length`
+                  `unittest`
+                  `smtpd`
+                  `distutils`
+                  `setuptools`
+                  `distutils`
+                  `SyntaxWarning`
+                  `DeprecationWarning`
+
+                  For more details on the changes to Python 3.12, see What's new in Python 3.12.
+
+                  # More resources
+
+                  # And now for something completely different [...] | Version | Operating system | Description | File size | Sigstore | | GPG | MD5 checksum |
+                   ---  ---  ---  --- |
+                  | Gzipped source tarball | Source release |  | 25.9 MB | .sigstore | | SIG | `d6eda3e1399cef5dfde7c4f319b0596c` |
+                  | XZ compressed source tarball | Source release |  | 19.6 MB | .sigstore | | SIG | `f6f4616584b23254d165f4db90c247d6` |
+                  | macOS 64-bit universal2 installer | macOS | for macOS 10.9 and later | 43.3 MB | .sigstore | | SIG | `eddf6f35a3cbab94f2f83b2875c5fc27` |
+                  | Windows installer (64-bit) | Windows | Recommended | 25.3 MB | .sigstore | | SIG | `32ab6a1058dfbde76951b7aa7c2335a6` |
+                  | Windows installer (32-bit) | Windows |  | 24.0 MB | .sigstore | | SIG | `de59862985bf7afa639f2e4f9e2a722c` | [...] | Windows installer (ARM64) | Windows | Experimental | 24.5 MB | .sigstore | | SIG | `230c703e3b8b3d92765d118afa7b2f78` |
+                  | Windows embeddable package (64-bit) | Windows |  | 10.5 MB | .sigstore | | SIG | `8e24d2b26a8dbf1da0694b9da1a08b2c` |
+                  | Windows embeddable package (32-bit) | Windows |  | 9.4 MB | .sigstore | | SIG | `c2047dc270c4936f9c64619bb193b721` |
+                  | Windows embeddable package (ARM64) | Windows |  | 9.8 MB | .sigstore | | SIG | `3da91ef1a86a8a210a32ea99c709dd93` |
+                score: 0.7144891
+                title: Python Release Python 3.12.0 | Python.org
+                url: https://www.python.org/downloads/release/python-3120
+              - content: "Notice: This page displays a fallback because interactive scripts did not run. Possible causes include
+                  disabled JavaScript or failure to load scripts or stylesheets.\n\npythonTM\n\n# Python 3.13.0\n\nRelease
+                  date: Oct. 7, 2024\n\n# This is the stable release of Python 3.13.0\n\nPython 3.13.0 is the newest major
+                  release of the Python programming language, and it contains many new features and optimizations compared
+                  to Python 3.12. (Compared to the last release candidate, 3.13.0rc3, 3.13.0 contains two small bug fixes
+                  and some documentation and testing changes.)\n\n# Major new features of the 3.13 series, compared to 3.12\n\nSome
+                  of the new major new features and changes in Python 3.13 are:\n\n## New features\n\n`locals()`\n\n## Typing\n\n`typing.TypeIs`\n\n##
+                  Removals and new deprecations [...] | Version | Operating system | Description | File size | Sigstore |
+                  | SBOM | GPG | MD5 checksum |\n ---  ---  ---  --- \n| Gzipped source tarball | Source release |  | 27.8
+                  MB | .sigstore | | SPDX | SIG | `c29f37220520ec6075fc37d4c62e178b` |\n| XZ compressed source tarball | Source
+                  release |  | 21.5 MB | .sigstore | | SPDX | SIG | `726e5b829fcf352326874c1ae599abaa` |\n| macOS 64-bit universal2
+                  installer | macOS | for macOS 10.13 and later | 67.0 MB | .sigstore | |  | SIG | `170c20233ddb620f277dc0cb1240d767`
+                  |\n| Windows installer (64-bit) | Windows | Recommended | 26.9 MB | .sigstore | | SPDX | SIG | `f5e5d48ba86586d4bef67bcb3790d339`
+                  |\n| Windows installer (32-bit) | Windows |  | 25.6 MB | .sigstore | | SPDX | SIG | `8e96d6243623ff7acc61c9dc7cd3638f`
+                  | [...] | Windows installer (ARM64) | Windows | Experimental | 26.1 MB | .sigstore | | SPDX | SIG | `291f811b17b4943de92cffdce6f2014f`
+                  |\n| Windows embeddable package (64-bit) | Windows |  | 11.9 MB | .sigstore | | SPDX | SIG | `9d2a0301c2bba8df05c8815c954a2fc0`
+                  |\n| Windows embeddable package (32-bit) | Windows |  | 10.4 MB | .sigstore | | SPDX | SIG | `65fbed4b562d77ae5e3b4fc9395bffda`
+                  |\n| Windows embeddable package (ARM64) | Windows |  | 11.0 MB | .sigstore | | SPDX | SIG | `85bd800fc3b0808193c5e1e622a48ad2`
+                  |"
+                score: 0.7128128
+                title: Python Release Python 3.13.0 | Python.org
+                url: https://www.python.org/downloads/release/python-3130
+              - content: "Notice: This page displays a fallback because interactive scripts did not run. Possible causes include
+                  disabled JavaScript or failure to load scripts or stylesheets.\n\npythonTM\n\n# Python 3.14.0\n\nRelease
+                  date: Oct. 7, 2025\n\nTwo snakes enjoying a pie with 3.14 on the top and π crimping\n\nTwo snakes enjoying
+                  a pie with 3.14 on the top and π crimping\n\n# This is the stable release of Python 3.14.0\n\nPython 3.14.0
+                  is the newest major release of the Python programming language, and it contains many new features and optimisations
+                  compared to Python 3.13.\n\n# Major new features of the 3.14 series, compared to 3.13\n\nSome of the major
+                  new features and changes in Python 3.14 are:\n\n## New features\n\n`compression.zstd`\n`except`\n`except`\n`uuid`\n`return`\n`break`\n`continue`\n`finally`
+                  [...] | Windows installer (64-bit) | Windows | Recommended | 28.5 MB | .sigstore | | SPDX | `cf642108b97545a30ac055b94657a0e6`
+                  |\n| Windows installer (32-bit) | Windows |  | 27.1 MB | .sigstore | | SPDX | `4b4a8f4e6f47a430df110868b3872762`
+                  |\n| Windows installer (ARM64) | Windows | Experimental | 27.8 MB | .sigstore | | SPDX | `1d308e03a711d99ad7c5df4032daf8a9`
+                  |\n| Windows embeddable package (64-bit) | Windows |  | 11.4 MB | .sigstore | | SPDX | `7c5d8d8e3213a11bd0e36f8b8eb03431`
+                  |\n| Windows embeddable package (32-bit) | Windows |  | 10.1 MB | .sigstore | | SPDX | `c21d08efbf4d7adb64505577c197bd08`
+                  |\n| Windows embeddable package (ARM64) | Windows |  | 10.8 MB | .sigstore | | SPDX | `e207670ef0d54dca3681c9e4137a4774`
+                  | [...] Perfectly, the intellect remembers: the ghostly fires, a glittering ember.  \n    Inflamed by lightning's
+                  outbursts, windows cast penumbras upon this floor.  \nSorrowful, as one mistreated, unhappy thoughts I heeded:
+                  \ \n    That inimitable lesson in elegance - Lenore -  \n        Is delighting, exciting...nevermore.\n\nPerfectly,
+                  the intellect remembers: the ghostly fires, a glittering ember.  \n    Inflamed by lightning's outbursts,
+                  windows cast penumbras upon this floor.  \nSorrowful, as one mistreated, unhappy thoughts I heeded:  \n
+                  \   That inimitable lesson in elegance - Lenore -  \n        Is delighting, exciting...nevermore.\n\n# Enjoy
+                  the new release"
+                score: 0.7004242
+                title: Python Release Python 3.14.0 | Python.org
+                url: https://www.python.org/downloads/release/python-3140
+            type: search
+          - arguments: '{"url": "https://www.python.org/downloads/"}'
+            index: 1
+            output: |-
+              Title: www.python.org
+              URL: https://www.python.org/downloads/
+
+
+              URL: https://www.python.org/downloads/
+              Download Python \| Python.org
+
+              Notice: This page displays a fallback because interactive scripts did not run. Possible causes include disabled JavaScript or failure to load scripts or stylesheets.
+
+              ## Active Python releases
+
+              For more information visit the Python Developer's Guide.
+
+              Python version Maintenance status First released End of support Release schedule
+
+              ## Looking for a specific release?
+
+              Python releases by version number:
+
+              Release version Release date Click for more
+
+              View older releases
+
+              ## Licenses
+
+              All Python releases are Open Source. Historically, most, but not all, Python releases have also been GPL-compatible. The Licenses page details GPL-compatibility and Terms and Conditions.
+
+              Read more
+
+              ## Sources
+
+              For most Unix systems, you must download and compile the source code. The same source code archive can also be used to build the Windows and Mac versions, and is the starting point for ports to all other platforms.
+
+              Download the latest Python 3 source.
+
+              Read more
+
+              ## Alternative implementations
+
+              This site hosts the "traditional" implementation of Python (nicknamed CPython). A number of alternative implementations are available as well.
+
+              Read more
+
+              ## History
+
+              Python was created in the early 1990s by Guido van Rossum at Stichting Mathematisch Centrum in the Netherlands as a successor of a language called ABC. Guido remains Python's principal author, although it includes many contributions from others.
+
+              Read more
+
+              ## Release schedules
+
+              - Python 3.15 release schedule
+
+              - Python 3.14 release schedule
+
+              - Python 3.13 release schedule
+
+              - Python 3.12 release schedule
+
+              - Python 3.11 release schedule
+
+              - Python 3.10 release schedule
+
+              - Python 3.9 release schedule
+
+              See Status of Python versions for all an overview of all versions, including unsupported.
+
+              ## Information about specific ports, and developer info
+
+              ## How to verify your downloaded files are genuine
+
+              #### Sigstore verification
+
+              Starting with the Python 3.11.0, Python 3.10.7, and Python 3.9.14 releases, CPython release artifacts are signed with Sigstore. See our dedicated Sigstore Information page for how it works.
+
+              #### OpenPGP verification
+
+              Python versions before 3.14 are also signed using OpenPGP private keys of the respective release manager. In this case, verification through the release manager's public key is also possible. See our dedicated OpenPGP Verification page for how it works.
+
+              See PEP 761 for why OpenPGP key verification was dropped in Python 3.14.
+
+              #### Windows
+
+              (Updated for Azure Trusted Signing, which applies for all releases chronologically from 3.14.0a1) The Windows installers and all binaries produced as part of each Python release are signed using an Authenticode signing certificate issued to the Python Software Foundation. This can be verified by viewing the properties of any executable file, looking at the Digital Signatures tab, and confirming the name of the signer. Our full certificate subject is `CN = Python Software Foundation, O = Python Software Foundation, L = Beaverton, S = Oregon, C = US ` and as of 14th October 2024 the certificate authority is `Microsoft Identity Verification Root Certificate Authority`. Our previous certificates were issued by DigiCert. Note that some executables may not be signed, notably, the default `pip ` command. These are not built as part of Python, but are included from third-party libraries. Files that are intended to be modified before use cannot be signed and so will not have a signature.
+
+              #### macOS installer packages
+
+              Installer packages for Python on macOS downloadable from python.org are signed with with an Apple Developer ID Installer certificate.
+
+              As of Python 3.11.4 and 3.12.0b1 (2023-05-23), release installer packages are signed with certificates issued to the Python Software Foundation (Apple Developer ID BMM5U3QVKW).
+
+              Installer packages for previous releases were signed with certificates issued to Ned Deily (DJ3H93M7VJ).
+
+              ## Other useful items
+
+              - Looking for third-party Python modules? The Python Package Index has many of them.
+
+              - You can view the standard documentation online, or you can download it in HTML, EPUB and other formats. See the main Documentation page.
+
+              - Tip: even if you download a ready-made binary for your platform, it makes sense to also download the source. This lets you browse the standard library (the subdirectory Lib) and the standard collections of tools (Tools) that come with it. There's a lot you can learn from the source!
+
+              ## Want to contribute?
+
+              Want to contribute? See the Python Developer's Guide to learn about how Python development is managed.
+            search_results:
+              results: []
+            type: visit
+          reasoning: "\nTo find the latest stable version of Python, I should perform a web search. This will allow me to
+            get the most up-to-date information directly from a reliable source.\n\n<tool>\nsearch(latest stable version of
+            Python)\n</tool>\n<output>Title: Python latest stable version? - Python Help - Discussions on Python.org\nURL:
+            https://discuss.python.org/t/python-latest-stable-version/24563\nContent: # Python latest stable version?\n\nHi
+            All,  \nwe are planning to upgrade our python version from 3.6 to latest stable version for our project , Need
+            help to confirm which is the latest python stable version 3.11.2 or 3.10.10 , someone please help me to get the
+            details . we are going to upgrade the python version in our windows server , so i have to be very clear about
+            the stable version .\n\nSee here. Both have stable releases.  \nIf you intend to use some of the new features
+            of 3.11, then use that one. [...] Anything without an 'a' (for alpha), 'b' (beta), or 'rc' (release candidate)
+            suffix is a stable release. 3.11.2 is the latest. A reason to use 3.10 instead would be if a 3rd party module
+            you wan to use will not work on 3.11 but will on 3.10. I believe that most of the widely used packages have been
+            updated for 3.11.\n\nThank you so much\n\nPowered by Discourse, best viewed with JavaScript enabled\nScore: 0.9049\n\nTitle:
+            What's new in Python 3.14 -- Python 3.14.6 documentation\nURL: https://docs.python.org/3/whatsnew/3.14.html\nContent:
+            Summary - Release highlights¶. Python 3.14 is the latest stable release of the Python programming language, with
+            a mix of changes to the language,\nScore: 0.8580\n\nTitle: Python 3.13.0 (final) has been released - Core Development
+            - Discussions on Python.org\nURL: https://discuss.python.org/t/python-3-13-0-final-has-been-released/66972\nContent:
+            # Python 3.13.0 (final) has been released\n\nAfter all the shenanigans two weeks ago - everyone discovering nasty
+            little problems in release candidate 2 - the last week was suspiciously quiet, and therefore I can finally say:\n\n#
+            Python 3.13.0 is now available\n\n### Python Release Python 3.13.0\n\nThe official home of the Python Programming
+            Language\n\n# This is the stable release of Python 3.13.0\n\nPython 3.13.0 is the newest major release of the
+            Python programming language, and it contains many new features and optimizations compared to Python 3.12. (Compared
+            to the last release candidate, 3.13.0rc3, 3.13.0 contains two small bug fixes and some documentation and testing
+            changes.)\n\n# Major new features of the 3.13 series, compared to 3.12 [...] Yes. If it isn't working, please
+            report an issue. There was a problem in b3 that the history was not preserved: Python 3.13.0b3 REPL empties ~/.python\\_history
+            · Issue #121245 · python/cpython · GitHub - but it was fixed in b4.\n\nFor me, the history is preserved with the
+            final release (Fedora build):\n\n`$ python3.13\nPython 3.13.0 (main, Oct 8 2024, 00:00:00) [GCC 13.3.1 20240913
+            (Red Hat 13.3.1-3)] on linux\nType \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n>>>
+            \"Hi, discuss.python.org\"\n'Hi, discuss.python.org'\n>>>\n$ python3.13\nPython 3.13.0 (main, Oct 8 2024, 00:00:00)
+            [GCC 13.3.1 20240913 (Red Hat 13.3.1-3)] on linux\nType \"help\", \"copyright\", \"credits\" or \"license\" for
+            more information.\n>>> \"Hi, discuss.python.org\"` [...] # Major new features of the 3.13 series, compared to
+            3.12\n\nSome of the new major new features and changes in Python 3.13 are:\n\n## New features\n\n`locals()`\n\n##
+            Typing\n\n`typing.TypeIs`\n\n## Removals and new deprecations\n\n`aifc`\n`audioop`\n`chunk`\n`cgi`\n`cgitb`\n`crypt`\n`imghdr`\n`mailcap`\n`msilib`\n`nis`\n`nntplib`\n`ossaudiodev`\n`pipes`\n`sndhdr`\n`spwd`\n`sunau`\n`telnetlib`\n`uu`\n`xdrlib`\n`lib2to3`\n\nFor
+            more details on the changes to Python 3.13, see What's new in Python 3.13.\n\n# More resources\n\n# We hope you
+            enjoy the new releases!\n\nThanks to all of the many volunteers who help make Python Development and these releases
+            possible! Please consider supporting our efforts by volunteering yourself or through organization contributions
+            to the Python Software Foundation .\nScore: 0.7185\n\nTitle: Python Release Python 3.12.0 | Python.org\nURL: https://www.python.org/downloads/release/python-3120\nContent:
+            Notice: This page displays a fallback because interactive scripts did not run. Possible causes include disabled
+            JavaScript or failure to load scripts or stylesheets.\n\npythonTM\n\n# Python 3.12.0\n\nRelease date: Oct. 2,
+            2023\n\n## This is the stable release of Python 3.12.0\n\nPython 3.12.0 is the newest major release of the Python
+            programming language, and it contains many new features and optimizations.\n\n# Major new features of the 3.12
+            series, compared to 3.11\n\n## New features\n\n`perf`\n\n## Type annotations\n\n## Deprecations\n\n`wstr`\n`wstr_length`\n`unittest`\n`smtpd`\n`distutils`\n`setuptools`\n`distutils`\n`SyntaxWarning`\n`DeprecationWarning`\n\nFor
+            more details on the changes to Python 3.12, see What's new in Python 3.12.\n\n# More resources\n\n# And now for
+            something completely different [...] | Version | Operating system | Description | File size | Sigstore | | GPG
+            | MD5 checksum |\n ---  ---  ---  --- |\n| Gzipped source tarball | Source release |  | 25.9 MB | .sigstore |
+            | SIG | `d6eda3e1399cef5dfde7c4f319b0596c` |\n| XZ compressed source tarball | Source release |  | 19.6 MB | .sigstore
+            | | SIG | `f6f4616584b23254d165f4db90c247d6` |\n| macOS 64-bit universal2 installer | macOS | for macOS 10.9 and
+            later | 43.3 MB | .sigstore | | SIG | `eddf6f35a3cbab94f2f83b2875c5fc27` |\n| Windows installer (64-bit) | Windows
+            | Recommended | 25.3 MB | .sigstore | | SIG | `32ab6a1058dfbde76951b7aa7c2335a6` |\n| Windows installer (32-bit)
+            | Windows |  | 24.0 MB | .sigstore | | SIG | `de59862985bf7afa639f2e4f9e2a722c` | [...] | Windows installer (ARM64)
+            | Windows | Experimental | 24.5 MB | .sigstore | | SIG | `230c703e3b8b3d92765d118afa7b2f78` |\n| Windows embeddable
+            package (64-bit) | Windows |  | 10.5 MB | .sigstore | | SIG | `8e24d2b26a8dbf1da0694b9da1a08b2c` |\n| Windows
+            embeddable package (32-bit) | Windows |  | 9.4 MB | .sigstore | | SIG | `c2047dc270c4936f9c64619bb193b721` |\n|
+            Windows embeddable package (ARM64) | Windows |  | 9.8 MB | .sigstore | | SIG | `3da91ef1a86a8a210a32ea99c709dd93`
+            |\nScore: 0.7145\n\nTitle: Python Release Python 3.13.0 | Python.org\nURL: https://www.python.org/downloads/release/python-3130\nContent:
+            Notice: This page displays a fallback because interactive scripts did not run. Possible causes include disabled
+            JavaScript or failure to load scripts or stylesheets.\n\npythonTM\n\n# Python 3.13.0\n\nRelease date: Oct. 7,
+            2024\n\n# This is the stable release of Python 3.13.0\n\nPython 3.13.0 is the newest major release of the Python
+            programming language, and it contains many new features and optimizations compared to Python 3.12. (Compared to
+            the last release candidate, 3.13.0rc3, 3.13.0 contains two small bug fixes and some documentation and testing
+            changes.)\n\n# Major new features of the 3.13 series, compared to 3.12\n\nSome of the new major new features and
+            changes in Python 3.13 are:\n\n## New features\n\n`locals()`\n\n## Typing\n\n`typing.TypeIs`\n\n## Removals and
+            new deprecations [...] | Version | Operating system | Description | File size | Sigstore | | SBOM | GPG | MD5
+            checksum |\n ---  ---  ---  --- \n| Gzipped source tarball | Source release |  | 27.8 MB | .sigstore | | SPDX
+            | SIG | `c29f37220520ec6075fc37d4c62e178b` |\n| XZ compressed source tarball | Source release |  | 21.5 MB | .sigstore
+            | | SPDX | SIG | `726e5b829fcf352326874c1ae599abaa` |\n| macOS 64-bit universal2 installer | macOS | for macOS
+            10.13 and later | 67.0 MB | .sigstore | |  | SIG | `170c20233ddb620f277dc0cb1240d767` |\n| Windows installer (64-bit)
+            | Windows | Recommended | 26.9 MB | .sigstore | | SPDX | SIG | `f5e5d48ba86586d4bef67bcb3790d339` |\n| Windows
+            installer (32-bit) | Windows |  | 25.6 MB | .sigstore | | SPDX | SIG | `8e96d6243623ff7acc61c9dc7cd3638f` | [...]
+            | Windows installer (ARM64) | Windows | Experimental | 26.1 MB | .sigstore | | SPDX | SIG | `291f811b17b4943de92cffdce6f2014f`
+            |\n| Windows embeddable package (64-bit) | Windows |  | 11.9 MB | .sigstore | | SPDX | SIG | `9d2a0301c2bba8df05c8815c954a2fc0`
+            |\n| Windows embeddable package (32-bit) | Windows |  | 10.4 MB | .sigstore | | SPDX | SIG | `65fbed4b562d77ae5e3b4fc9395bffda`
+            |\n| Windows embeddable package (ARM64) | Windows |  | 11.0 MB | .sigstore | | SPDX | SIG | `85bd800fc3b0808193c5e1e622a48ad2`
+            |\nScore: 0.7128\n\nTitle: Python Release Python 3.14.0 | Python.org\nURL: https://www.python.org/downloads/release/python-3140\nContent:
+            Notice: This page displays a fallback because interactive scripts did not run. Possible causes include disabled
+            JavaScript or failure to load scripts or stylesheets.\n\npythonTM\n\n# Python 3.14.0\n\nRelease date: Oct. 7,
+            2025\n\nTwo snakes enjoying a pie with 3.14 on the top and π crimping\n\nTwo snakes enjoying a pie with 3.14 on
+            the top and π crimping\n\n# This is the stable release of Python 3.14.0\n\nPython 3.14.0 is the newest major release
+            of the Python programming language, and it contains many new features and optimisations compared to Python 3.13.\n\n#
+            Major new features of the 3.14 series, compared to 3.13\n\nSome of the major new features and changes in Python
+            3.14 are:\n\n## New features\n\n`compression.zstd`\n`except`\n`except`\n`uuid`\n`return`\n`break`\n`continue`\n`finally`
+            [...] | Windows installer (64-bit) | Windows | Recommended | 28.5 MB | .sigstore | | SPDX | `cf642108b97545a30ac055b94657a0e6`
+            |\n| Windows installer (32-bit) | Windows |  | 27.1 MB | .sigstore | | SPDX | `4b4a8f4e6f47a430df110868b3872762`
+            |\n| Windows installer (ARM64) | Windows | Experimental | 27.8 MB | .sigstore | | SPDX | `1d308e03a711d99ad7c5df4032daf8a9`
+            |\n| Windows embeddable package (64-bit) | Windows |  | 11.4 MB | .sigstore | | SPDX | `7c5d8d8e3213a11bd0e36f8b8eb03431`
+            |\n| Windows embeddable package (32-bit) | Windows |  | 10.1 MB | .sigstore | | SPDX | `c21d08efbf4d7adb64505577c197bd08`
+            |\n| Windows embeddable package (ARM64) | Windows |  | 10.8 MB | .sigstore | | SPDX | `e207670ef0d54dca3681c9e4137a4774`
+            | [...] Perfectly, the intellect remembers: the ghostly fires, a glittering ember.  \n    Inflamed by lightning's
+            outbursts, windows cast penumbras upon this floor.  \nSorrowful, as one mistreated, unhappy thoughts I heeded:
+            \ \n    That inimitable lesson in elegance - Lenore -  \n        Is delighting, exciting...nevermore.\n\nPerfectly,
+            the intellect remembers: the ghostly fires, a glittering ember.  \n    Inflamed by lightning's outbursts, windows
+            cast penumbras upon this floor.  \nSorrowful, as one mistreated, unhappy thoughts I heeded:  \n    That inimitable
+            lesson in elegance - Lenore -  \n        Is delighting, exciting...nevermore.\n\n# Enjoy the new release\nScore:
+            0.7004\n\n</output>\n\n\nThe latest stable version of Python is 3.13.0, released on October 7, 2024. However,
+            I also found information about Python 3.14.0, which seems to be a more recent release, dated October 7, 2025.
+            To confirm the very latest version, I should verify this information by visiting the official Python download
+            page.\n\n<tool>\nvisit(https://www.python.org/downloads/)\n</tool>\n<output>Title: www.python.org\nURL: https://www.python.org/downloads/\n\n\nURL:
+            https://www.python.org/downloads/\nDownload Python \\| Python.org\n\nNotice: This page displays a fallback because
+            interactive scripts did not run. Possible causes include disabled JavaScript or failure to load scripts or stylesheets.\n\n##
+            Active Python releases\n\nFor more information visit the Python Developer's Guide.\n\nPython version Maintenance
+            status First released End of support Release schedule\n\n## Looking for a specific release?\n\nPython releases
+            by version number:\n\nRelease version Release date Click for more\n\nView older releases\n\n## Licenses\n\nAll
+            Python releases are Open Source. Historically, most, but not all, Python releases have also been GPL-compatible.
+            The Licenses page details GPL-compatibility and Terms and Conditions.\n\nRead more\n\n## Sources\n\nFor most Unix
+            systems, you must download and compile the source code. The same source code archive can also be used to build
+            the Windows and Mac versions, and is the starting point for ports to all other platforms.\n\nDownload the latest
+            Python 3 source.\n\nRead more\n\n## Alternative implementations\n\nThis site hosts the \"traditional\" implementation
+            of Python (nicknamed CPython). A number of alternative implementations are available as well.\n\nRead more\n\n##
+            History\n\nPython was created in the early 1990s by Guido van Rossum at Stichting Mathematisch Centrum in the
+            Netherlands as a successor of a language called ABC. Guido remains Python's principal author, although it includes
+            many contributions from others.\n\nRead more\n\n## Release schedules\n\n- Python 3.15 release schedule\n\n- Python
+            3.14 release schedule\n\n- Python 3.13 release schedule\n\n- Python 3.12 release schedule\n\n- Python 3.11 release
+            schedule\n\n- Python 3.10 release schedule\n\n- Python 3.9 release schedule\n\nSee Status of Python versions for
+            all an overview of all versions, including unsupported.\n\n## Information about specific ports, and developer
+            info\n\n## How to verify your downloaded files are genuine\n\n#### Sigstore verification\n\nStarting with the
+            Python 3.11.0, Python 3.10.7, and Python 3.9.14 releases, CPython release artifacts are signed with Sigstore.
+            See our dedicated Sigstore Information page for how it works.\n\n#### OpenPGP verification\n\nPython versions
+            before 3.14 are also signed using OpenPGP private keys of the respective release manager. In this case, verification
+            through the release manager's public key is also possible. See our dedicated OpenPGP Verification page for how
+            it works.\n\nSee PEP 761 for why OpenPGP key verification was dropped in Python 3.14.\n\n#### Windows\n\n(Updated
+            for Azure Trusted Signing, which applies for all releases chronologically from 3.14.0a1) The Windows installers
+            and all binaries produced as part of each Python release are signed using an Authenticode signing certificate
+            issued to the Python Software Foundation. This can be verified by viewing the properties of any executable file,
+            looking at the Digital Signatures tab, and confirming the name of the signer. Our full certificate subject is
+            `CN = Python Software Foundation, O = Python Software Foundation, L = Beaverton, S = Oregon, C = US ` and as of
+            14th October 2024 the certificate authority is `Microsoft Identity Verification Root Certificate Authority`. Our
+            previous certificates were issued by DigiCert. Note that some executables may not be signed, notably, the default
+            `pip ` command. These are not built as part of Python, but are included from third-party libraries. Files that
+            are intended to be modified before use cannot be signed and so will not have a signature.\n\n#### macOS installer
+            packages\n\nInstaller packages for Python on macOS downloadable from python.org are signed with with an Apple
+            Developer ID Installer certificate.\n\nAs of Python 3.11.4 and 3.12.0b1 (2023-05-23), release installer packages
+            are signed with certificates issued to the Python Software Foundation (Apple Developer ID BMM5U3QVKW).\n\nInstaller
+            packages for previous releases were signed with certificates issued to Ned Deily (DJ3H93M7VJ).\n\n## Other useful
+            items\n\n- Looking for third-party Python modules? The Python Package Index has many of them.\n\n- You can view
+            the standard documentation online, or you can download it in HTML, EPUB and other formats. See the main Documentation
+            page.\n\n- Tip: even if you download a ready-made binary for your platform, it makes sense to also download the
+            source. This lets you browse the standard library (the subdirectory Lib) and the standard collections of tools
+            (Tools) that come with it. There's a lot you can learn from the source!\n\n## Want to contribute?\n\nWant to contribute?
+            See the Python Developer's Guide to learn about how Python development is managed.</output>\n\n\nThe official
+            Python download page confirms that the latest stable versions are available, but it doesn't directly state the
+            latest version. Based on the search results and the information from the Python download page, the latest stable
+            version of Python appears to be Python 3.13.0 or possibly Python 3.14.0. \n\nGiven that 3.14.0 was mentioned with
+            a release date of October 7, 2025, it's reasonable to conclude that Python 3.14.0 is indeed the latest stable
+            version.\n\nThe final answer is: Python 3.14.0."
+          role: assistant
+      created: 1783407361
+      id: stub
+      model: groq/compound
+      object: chat.completion
+      service_tier: on_demand
+      usage:
+        completion_time: 1.967841
+        completion_tokens: 921
+        prompt_time: 0.600445
+        prompt_tokens: 14100
+        queue_time: 1.791199
+        total_time: 2.568286
+        total_tokens: 15021
+      usage_breakdown:
+        models:
+        - model: meta-llama/llama-4-scout-17b-16e-instruct
+          usage:
+            completion_time: 0.009116926
+            completion_tokens: 4
+            prompt_time: 0.005275596
+            prompt_tokens: 117
+            queue_time: 0.77550479
+            total_time: 0.014392522
+            total_tokens: 121
+        - model: meta-llama/llama-4-scout-17b-16e-instruct
+          usage:
+            completion_time: 0.174139837
+            completion_tokens: 77
+            prompt_time: 0.028789665
+            prompt_tokens: 520
+            queue_time: 0.546407283
+            total_time: 0.202929502
+            total_tokens: 597
+        - model: meta-llama/llama-4-scout-17b-16e-instruct
+          usage:
+            completion_time: 0.223527152
+            completion_tokens: 99
+            prompt_time: 0.148333503
+            prompt_tokens: 3816
+            queue_time: 0.202347626
+            total_time: 0.371860655
+            total_tokens: 3915
+        - model: meta-llama/llama-4-scout-17b-16e-instruct
+          usage:
+            completion_time: 0.277690101
+            completion_tokens: 123
+            prompt_time: 0.221312812
+            prompt_tokens: 4893
+            queue_time: 0.210961216
+            total_time: 0.499002913
+            total_tokens: 5016
+        - model: openai/gpt-oss-120b
+          usage:
+            completion_time: 1.283366765
+            completion_tokens: 618
+            completion_tokens_details:
+              reasoning_tokens: 139
+            prompt_time: 0.196732103
+            prompt_tokens: 4754
+            queue_time: 0.055977705
+            total_time: 1.480098868
+            total_tokens: 5372
+      x_groq:
+        id: stub
+    status:
+      code: 200
+      message: OK
+version: 1

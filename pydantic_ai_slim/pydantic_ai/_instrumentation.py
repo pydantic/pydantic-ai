@@ -4,15 +4,17 @@ import itertools
 import json
 import warnings
 from collections.abc import Callable, Generator, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
+from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
 from opentelemetry.trace import INVALID_SPAN, SpanKind, get_current_span
 from opentelemetry.util.types import AttributeValue
-from pydantic import TypeAdapter
+from pydantic import ConfigDict, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
@@ -23,6 +25,7 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage, ModelResponse
     from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
+    from pydantic_ai.settings import ModelSettings
 
 DEFAULT_INSTRUMENTATION_VERSION = 5
 """Default instrumentation version for `InstrumentationSettings`."""
@@ -55,10 +58,64 @@ MODEL_SETTING_ATTRIBUTES: tuple[
 )
 
 ANY_ADAPTER = TypeAdapter[Any](Any)
+_BASE64_ANY_ADAPTER = TypeAdapter[Any](Any, config=ConfigDict(ser_json_bytes='base64'))
 
 # These are in the spec:
 # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
 TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
+
+# These are advised by the spec (the metric is "Development" stability, so this may change):
+# https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-metrics.md#metric-gen_aiclientoperationtime_to_first_chunk
+# Like any bucket advisory it's only advice: users can override it by configuring a View for this
+# instrument on their MeterProvider, and SDKs configured for exponential-bucket histogram
+# aggregation (e.g. logfire) ignore it entirely.
+TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
+    0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
+)  # fmt: skip
+
+time_to_first_chunk_ctx: ContextVar[float | None] = ContextVar('time_to_first_chunk', default=None)
+"""Carries streaming TTFT (in seconds) from the agent graph's streaming request handler to the
+`Instrumentation` capability, which reads it after `await handler(...)` returns — the handler runs
+in the same task, so its `set` is visible there. The agent graph spawns a fresh task per streaming
+request and only that handler ever sets the variable, so a value can't outlive its request;
+non-streaming requests read the `None` default.
+
+This is a context variable rather than a field on `ModelRequestContext` because that object is
+public and holds only the *inputs* to `Model.request[_stream]`.
+"""
+
+
+@dataclass(slots=True)
+class CachedMessageJson:
+    """A `MessageJsonCache` entry: one input message's serialized OTel JSON fragment."""
+
+    message: ModelMessage
+    """The cached message itself. Never read — held so the message stays alive while the entry
+    exists, which pins its `id`: a cache hit is therefore guaranteed to be for this very object,
+    never for a new message that recycled a garbage-collected message's address (e.g. a
+    `dataclasses.replace`d sibling sharing the same `parts` list)."""
+    parts: object
+    """The message's `parts` list at serialization time, compared by identity: a message whose
+    `parts` list is reassigned (e.g. dynamic system prompt re-evaluation) is re-serialized rather
+    than served stale."""
+    fragment: bytes
+    """The serialized fragment (see `message_json_fragment`)."""
+
+
+MessageJsonCache: TypeAlias = dict[int, CachedMessageJson]
+"""Per-run cache of input messages' serialized OTel JSON fragments, keyed by `id(message)`.
+
+Created fresh per agent run and discarded when the run ends, so it never outlives the run whose
+messages it caches. Entries for messages no longer in the input history are evicted on each
+request, so the cache (and the messages it keeps alive) stays bounded by the current history even
+when a history processor prunes or rebuilds messages.
+
+This caching is what makes the per-request `gen_ai.input.messages` attribute O(new messages)
+instead of O(history). It relies on an invariant that framework code must uphold: never mutate a
+history message's fields in place after it may have been serialized for a span — build new
+message/part objects or reassign `.parts` instead. User code mutating history in place mid-run is
+unsupported (see `MessageHistoryMutatedWarning`).
+"""
 
 
 class CostCalculationFailedWarning(Warning):
@@ -82,7 +139,10 @@ def get_agent_run_baggage_attributes() -> dict[str, Any]:
 
 def serialize_any(value: Any) -> str:
     try:
-        return ANY_ADAPTER.dump_python(value, mode='json')
+        try:
+            return ANY_ADAPTER.dump_python(value, mode='json')
+        except UnicodeDecodeError:
+            return _BASE64_ANY_ADAPTER.dump_python(value, mode='json')
     except Exception:
         try:
             return str(value)
@@ -101,6 +161,44 @@ def safe_to_json(value: object) -> bytes:
         return to_json(value)
     except PydanticSerializationError:
         return json.dumps(value, separators=(',', ':')).encode()
+
+
+def message_json_fragment(settings: InstrumentationSettings, message: ModelMessage) -> bytes:
+    """Serialize one message to its OTel JSON fragment: comma-joined objects without enclosing brackets.
+
+    A single `ModelMessage` can map to multiple OTel `ChatMessage`s (a `ModelRequest` splits into
+    system/user messages) or to none (an empty request), so the fragment is the whole serialized
+    array with the outer `[` and `]` stripped — fragments then concatenate into a single array.
+    """
+    return safe_to_json(settings.messages_to_otel_messages([message]))[1:-1]
+
+
+def has_stale_message_json(
+    settings: InstrumentationSettings, messages: Sequence[ModelMessage], cache: MessageJsonCache
+) -> bool:
+    """Detect whether in-place mutation made any cached message fragment stale.
+
+    Re-serializes each message that still has a valid cache entry (same `parts` list) and compares
+    bytes — an O(history) pass meant to run once per run, at the end. Entries whose `parts` token no
+    longer matches are skipped: reassigning `.parts` is the supported mutation style and the next
+    serialization would have refreshed them, so they can't have produced a stale span.
+
+    Detection is deliberately best-effort, covering messages still present at the end of the run: a
+    message that was mutated in place and *then* dropped or rebuilt by a history processor may have
+    produced a stale span without a warning. Closing that gap would require either re-checking
+    cached fragments on every request (the O(history-squared) cost this cache exists to remove) or
+    re-serializing entries as they're evicted (which doubles the serialization cost for processors
+    that rebuild history each request — the workload the cache can't help to begin with).
+    """
+    for message in messages:
+        entry = cache.get(id(message))
+        if (
+            entry is not None
+            and entry.parts is message.parts
+            and entry.fragment != message_json_fragment(settings, message)
+        ):
+            return True
+    return False
 
 
 def model_attributes(model: Model) -> dict[str, AttributeValue]:
@@ -127,6 +225,16 @@ def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters,
 ) -> dict[str, AttributeValue]:
     return {'model_request_parameters': safe_to_json(serialize_any(model_request_parameters)).decode()}
+
+
+def model_settings_attributes(model_settings: ModelSettings | None) -> dict[str, AttributeValue]:
+    """Map the OTel-spec model settings (`max_tokens`, `temperature`, ...) to `gen_ai.request.*` attributes."""
+    attributes: dict[str, AttributeValue] = {}
+    if model_settings:
+        for key in MODEL_SETTING_ATTRIBUTES:
+            if isinstance(value := model_settings.get(key), float | int):
+                attributes[f'gen_ai.request.{key}'] = value
+    return attributes
 
 
 def annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:
@@ -176,11 +284,23 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
     return tool_definitions
 
 
+class _FinishModelRequestSpan(Protocol):
+    """The `finish` callback yielded by `open_model_request_span`.
+
+    `time_to_first_chunk` is the streaming-only TTFT in seconds; non-streaming
+    callers omit it.
+    """
+
+    def __call__(self, response: ModelResponse, time_to_first_chunk: float | None = None) -> None: ...
+
+
 @contextmanager
 def open_model_request_span(
     settings: InstrumentationSettings,
     request_context: ModelRequestContext,
-) -> Generator[tuple[Callable[[ModelResponse], None], ModelRequestContext]]:
+    *,
+    message_json_cache: MessageJsonCache | None = None,
+) -> Generator[tuple[_FinishModelRequestSpan, ModelRequestContext]]:
     """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
 
     Shared between `Instrumentation.wrap_model_request` (agent flow) and
@@ -190,6 +310,9 @@ def open_model_request_span(
     response with OTel tool-call metadata and records outcome attributes. Token/cost metrics are
     recorded *after* the span closes so backends that aggregate from span attributes don't
     double-count.
+
+    `message_json_cache` is a per-run cache reused across requests so the growing input history
+    isn't re-serialized in full each time; the agent flow passes one, one-off requests pass `None`.
     """
     # TODO Missing attributes:
     #  - error.type: unclear if we should do something here or just always rely on span exceptions
@@ -206,24 +329,19 @@ def open_model_request_span(
     attributes: dict[str, AttributeValue] = {
         'gen_ai.operation.name': operation,
         **model_attributes(model),
-        **model_request_parameters_attributes(prepared_parameters),
         **get_agent_run_baggage_attributes(),
-        'logfire.json_schema': to_json(
-            {
-                'type': 'object',
-                'properties': {'model_request_parameters': {'type': 'object'}},
-            }
-        ).decode(),
     }
+    json_schema_properties: dict[str, dict[str, str]] = {}
+    if settings.include_model_request_parameters:
+        attributes.update(model_request_parameters_attributes(prepared_parameters))
+        json_schema_properties['model_request_parameters'] = {'type': 'object'}
+    attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
 
     tool_definitions = build_tool_definitions(prepared_parameters)
     if tool_definitions:
         attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
 
-    if prepared_settings:
-        for key in MODEL_SETTING_ATTRIBUTES:
-            if isinstance(value := prepared_settings.get(key), float | int):
-                attributes[f'gen_ai.request.{key}'] = value
+    attributes.update(model_settings_attributes(prepared_settings))
 
     record_metrics: Callable[[], None] | None = None
     try:
@@ -233,7 +351,7 @@ def open_model_request_span(
             # captured `record_metrics` in the outer `finally` AFTER the span closes,
             # so observability backends that aggregate metrics from span attributes
             # don't double-count.
-            def finish(response: ModelResponse) -> None:
+            def finish(response: ModelResponse, time_to_first_chunk: float | None = None) -> None:
                 nonlocal record_metrics
 
                 annotate_tool_call_otel_metadata(response, prepared_parameters)
@@ -254,7 +372,7 @@ def open_model_request_span(
                         'gen_ai.request.model': request_model,
                         'gen_ai.response.model': response_model,
                     }
-                    settings.record_metrics(response, price_calculation, metric_attributes)
+                    settings.record_metrics(response, price_calculation, metric_attributes, time_to_first_chunk)
 
                 record_metrics = _record_metrics
 
@@ -273,7 +391,13 @@ def open_model_request_span(
                 if not span.is_recording():
                     return
 
-                settings.handle_messages(prepared_request_context.messages, response, span, prepared_parameters)
+                settings.handle_messages(
+                    prepared_request_context.messages,
+                    response,
+                    span,
+                    prepared_parameters,
+                    message_json_cache=message_json_cache,
+                )
 
                 attributes_to_set: dict[str, Any] = {
                     **response.usage.opentelemetry_attributes(),
@@ -285,6 +409,8 @@ def open_model_request_span(
                     attributes_to_set['gen_ai.response.id'] = response.provider_response_id
                 if response.finish_reason is not None:
                     attributes_to_set['gen_ai.response.finish_reasons'] = [response.finish_reason]
+                if time_to_first_chunk is not None:
+                    attributes_to_set['gen_ai.client.operation.time_to_first_chunk'] = time_to_first_chunk
                 span.set_attributes(attributes_to_set)
                 span.update_name(f'{operation} {request_model}')
 
@@ -292,6 +418,39 @@ def open_model_request_span(
     finally:
         if record_metrics:
             record_metrics()
+
+
+def capture_current_context() -> Callable[[], AbstractContextManager[None]]:
+    """Snapshot the current OTel context so it can be re-attached in another task.
+
+    The streaming continuation composite opens each segment's `request_stream` lazily,
+    in the *consumer* task that iterates the stream, whereas the `chat` span is opened
+    by `wrap_model_request` in a separate task. Those tasks don't share an OTel context,
+    so without re-attaching, span updates driven by `get_current_span()` (e.g.
+    `FallbackModel` recording the resolved inner model) would land on the wrong span.
+
+    Returns a factory that yields a context manager re-attaching the captured context;
+    the composite enters it around each segment without depending on OpenTelemetry itself.
+    """
+    captured = otel_context.get_current()
+
+    @contextmanager
+    def attach_captured_context() -> Generator[None]:
+        # Restore the previous context by re-`attach`ing it rather than `detach`ing the token: this CM is
+        # held across the `yield` in `_ContinuationStreamedResponse._get_event_iterator`, so when a streamed
+        # run is interrupted mid-segment the async generator is finalized (`GeneratorExit`) in a different
+        # contextvars `Context`, where `otel_context.detach(token)` -> `ContextVar.reset` raises
+        # `ValueError: ... created in a different Context`. OTel swallows it but logs a noisy
+        # 'Failed to detach context' (surfaced verbatim in the Pyodide output panel). `attach()` is a plain
+        # `set`, which never fails cross-context, so it restores `previous` silently. See #6569.
+        previous = otel_context.get_current()
+        otel_context.attach(captured)
+        try:
+            yield
+        finally:
+            otel_context.attach(previous)
+
+    return attach_captured_context
 
 
 def get_instructions(

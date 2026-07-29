@@ -123,6 +123,8 @@ Output functions are similar to [function tools](tools.md), but the model is for
 
 As with tool functions, output function arguments provided by the model are validated using Pydantic (with optional [validation context](#validation-context)), can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
+Output functions do not support [`ToolFailed`][pydantic_ai.exceptions.ToolFailed], which is reserved for [function-tool failures](tools-advanced.md#tool-failed). Here, `ToolFailed` is treated like any ordinary exception: an [`on_output_process_error` hook](hooks.md#error-hooks) can recover from it, otherwise it aborts the run.
+
 To specify output functions, you set the agent's `output_type` to either a single function (or bound instance method), or a list of functions. The list can also contain other output types like simple scalars or entire Pydantic models.
 You typically do not want to also register your output function as a tool (using the `@agent.tool` decorator or `tools` argument), as this could confuse the model about which it should be calling.
 
@@ -360,40 +362,9 @@ print(repr(result.output))
 
 _(This example is complete, it can be run "as is")_
 
-##### Parallel Output Tool Calls
-
-An [output tool](#tool-output) call is what ends a run and produces its final result. When a model emits one in the *same* response as other tool calls, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] decides what happens to the rest. Most agents never need to think about this, since most responses don't mix an output tool with other tools — but when one does, `end_strategy` controls how those calls run and which one becomes the final result.
-
-!!! warning "Priority of output and deferred tools in streaming methods"
-    The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
-
-    This means that if the model calls deferred tools before output tools when using these methods, the deferred tool calls determine the agent run's final output, while the other [run methods](agent.md#running-agents) would have prioritized the tool output. Regardless of `end_strategy`, these methods commit the first matching output the instant it streams, so they behave like `'early'`: that result is locked in, and the [retry-after-tool-failure](#retrying-after-a-tool-failure) behavior below does not apply.
-
-| Strategy | Output tools | Function tools — output succeeded | Function tools — every output failed |
-|---|---|---|---|
-| `'graceful'` (default) | Run in emission order; first success is the final result, later output tools skipped | Run, in parallel where possible, in emission order | Run; the run continues |
-| `'early'` | Run in emission order; the run ends at the first success | Skipped | Run; the run continues |
-| `'exhaustive'` | All run, in parallel; first valid result by emission order wins | Run, in parallel | Run; the run continues |
-
-`'graceful'` is the default and the right choice for most agents: function tools the model requested alongside an output tool still run, so their side effects happen and their results are available to the model if the run continues. Only the first successful output tool is used; later output tools are skipped so their side effects don't fire more than once.
-
-Choose `'early'` to end the run the instant an output tool succeeds — function tools requested in the same response are then skipped entirely. This is the fastest option when you never need those function tools to run once you have a result.
-
-Choose `'exhaustive'` to run every tool, including additional output tools whose results won't be used. This gives the model full visibility that each tool ran, at the cost of executing output-tool side effects that are ultimately discarded.
-
-When *every* output tool fails, function tools run and the run continues under all three strategies: there is no result to end on, so the output failures go back to the model as retries and the function tools the model also asked for are run, letting it react to both on the next round.
-
-##### Retrying after a tool failure
-
-Under the `'graceful'` and `'exhaustive'` [end strategies](#parallel-output-tool-calls), function tools requested alongside an output tool still run. If one of them raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (or its arguments fail validation) in the same response as a successful output tool, the output result is **not** used as the final result. Instead, the retry is sent back to the model so it can correct the problem, since the output may have been based on the failed tool call. This does not apply under `'early'`, where function tools don't run once an output succeeds, nor when [streaming](#parallel-output-tool-calls), where the first matching output is committed immediately.
-
-##### Controlling output tool parallelism
-
-Like function tools, [output tools](#tool-output) run concurrently. Under the `'exhaustive'` [end strategy](#parallel-output-tool-calls), where multiple output tools can run in parallel, you can make an output tool a barrier with [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] — useful when you want all of a response's function tools to finish before the output tool runs. This is the output-tool counterpart of the `sequential=True` flag for function tools; see [Parallel tool calls & concurrency](tools-advanced.md#parallel-tool-calls-concurrency) for how the barrier behaves and how to run an entire run's tools serially.
-
 #### Native Output
 
-Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, Gemini cannot use tools at the same time as structured output, and attempting to do so will result in an error.
+Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools.
 
 To use this mode, you can wrap the output type(s) in the [`NativeOutput`][pydantic_ai.output.NativeOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient.
 
@@ -469,6 +440,44 @@ print(repr(result.output))
 1. This could also have been a union: `output_type=Vehicle | Device`. However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
+
+#### Tool calls alongside a final result {#parallel-output-tool-calls}
+
+A run ends when the model produces a final result. That result usually comes from an [output tool](#tool-output) call, but it can also come from [Native Output](#native-output), [Prompted Output](#prompted-output), plain text, or [image output](#image-output). When the model emits *other* tool calls in the same response, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] decides what happens to them. Most agents never need to think about this, since most responses don't mix a final result with other tool calls — but when one does, `end_strategy` controls how those calls run and which one becomes the final result.
+
+!!! warning "Priority of output and deferred tools in streaming methods"
+    The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
+
+    This means that if the model calls deferred tools before output tools when using these methods, the deferred tool calls determine the agent run's final output, while the other [run methods](agent.md#running-agents) would have prioritized the tool output. Regardless of `end_strategy`, these methods commit the first matching output the instant it streams, so they behave like `'early'`: that result is locked in, and the [retry-after-tool-failure](#retrying-after-a-tool-failure) behavior below does not apply.
+
+| Strategy | Output tools | Function tools — output succeeded | Function tools — every output failed |
+|---|---|---|---|
+| `'graceful'` (default) | Run in emission order; first success is the final result, later output tools skipped | Run, in parallel where possible, in emission order | Run; the run continues |
+| `'early'` | Run in emission order; the run ends at the first success | Skipped | Run; the run continues |
+| `'exhaustive'` | All run, in parallel; first valid result by emission order wins | Run, in parallel | Run; the run continues |
+
+`'graceful'` is the default and the right choice for most agents: function tools the model requested alongside an output tool still run, so their side effects happen and their results are available to the model if the run continues. Only the first successful output tool is used; later output tools are skipped so their side effects don't fire more than once.
+
+Choose `'early'` to end the run the instant an output tool succeeds — function tools requested in the same response are then skipped entirely. This is the fastest option when you never need those function tools to run once you have a result.
+
+Choose `'exhaustive'` to run every tool, including additional output tools whose results won't be used. This gives the model full visibility that each tool ran, at the cost of executing output-tool side effects that are ultimately discarded.
+
+When *every* output tool fails, function tools run and the run continues under all three strategies: there is no result to end on, so the output failures go back to the model as retries and the function tools the model also asked for are run, letting it react to both on the next round.
+
+!!! note "Native, prompted, and image output alongside tool calls"
+    When your `output_type` uses [Native Output](#native-output), [Prompted Output](#prompted-output), or [image output](#image-output), the final result comes from the text or image the model returns rather than an output tool call. Because the model is asked to produce that output directly, it usually returns it on its own — but some models occasionally return it *and* a [function tool](tools.md#function-tools) call in the same response. Under `'early'`, a *valid* output ends the run and the co-emitted function tools are skipped, just like a successful output tool; output that fails validation falls through to normal tool execution instead. Under `'graceful'` and `'exhaustive'`, the function tools run and (outside [streaming](#parallel-output-tool-calls)) the run continues, so their results can inform the model's eventual output.
+
+    This applies only to *function* tools. If the response also contains an [output tool](#tool-output) call or a [deferred tool](deferred-tools.md) call, that call takes precedence: the output tool still produces the final result, and a deferred call is still surfaced as `DeferredToolRequests`.
+
+    **Plain text output is treated differently.** With `output_type=str` or [`TextOutput`](#text-output) — including a `str` fallback in a larger output type — the model is *not* told that its text will be treated as the final result, so text it emits alongside a tool call is usually narration before it acts ("Let me look that up…"), not a finished answer. Ending the run on it would silently skip the tool, so plain text never preempts a co-emitted function tool: the tool runs under `'early'` exactly as it would under `'graceful'`. (The [streaming methods](#parallel-output-tool-calls) still commit the first text as it streams, as noted above.)
+
+##### Retrying after a tool failure
+
+Under the `'graceful'` and `'exhaustive'` [end strategies](#parallel-output-tool-calls), function tools requested alongside an output tool still run. If one of them raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (or its arguments fail validation) in the same response as a successful output tool, the output result is **not** used as the final result. Instead, the retry is sent back to the model so it can correct the problem, since the output may have been based on the failed tool call. This does not apply under `'early'`, where function tools don't run once an output succeeds, nor when [streaming](#parallel-output-tool-calls), where the first matching output is committed immediately.
+
+##### Controlling output tool parallelism
+
+Like function tools, [output tools](#tool-output) run concurrently. Under the `'exhaustive'` [end strategy](#parallel-output-tool-calls), where multiple output tools can run in parallel, you can make an output tool a barrier with [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] — useful when you want all of a response's function tools to finish before the output tool runs. This is the output-tool counterpart of the `sequential=True` flag for function tools; see [Parallel tool calls & concurrency](tools-advanced.md#parallel-tool-calls-concurrency) for how the barrier behaves and how to run an entire run's tools serially.
 
 ### Custom JSON schema {#structured-dict}
 
@@ -562,6 +571,8 @@ _(This example is complete, it can be run "as is")_
 Some validation is inconvenient or impossible to do in Pydantic validators, in particular when the validation requires IO and is asynchronous. Pydantic AI provides a way to add validation functions via the [`agent.output_validator`][pydantic_ai.agent.Agent.output_validator] decorator.
 
 Each [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] raised here consumes one unit of the run's output retry budget. The budget defaults to `1` and can be set on the agent with [`AgentRetries`][pydantic_ai.agent.AgentRetries] via `Agent(retries={'output': N})`, on a single run via `agent.run(retries={'output': N})`, or per output tool via [`ToolOutput(max_retries=N)`](#tool-output). Inside the validator, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects the limit that will actually stop you (the global budget on the text path, or the per-tool limit on the tool path) and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is the global retry counter, so it stays consistent across output-tool switches within a single run. See [How output retries are enforced](agent.md#how-output-retries-are-enforced) for the full enforcement model.
+
+Output validators do not support [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]. Raise `ModelRetry` to ask the model for another output. Here, `ToolFailed` is treated like any ordinary exception: an [`on_output_process_error` hook](hooks.md#error-hooks) can recover from it, otherwise it aborts the run.
 
 If you want to implement separate validation logic for different output types, it's recommended to use [output functions](#output-functions) instead, to save you from having to do `isinstance` checks inside the output validator.
 If you want the model to output plain text, do your own processing or validation, and then have the agent's final output be the result of your function, it's recommended to use an [output function](#output-functions) with the [`TextOutput` marker class](#text-output).
@@ -693,9 +704,9 @@ Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip
 
 ## Optional output (allowing `None`) {#optional-output}
 
-Some agents perform their work entirely through tool calls and don't need to produce a final output — for example, an agent that updates a record via a tool and then stops. Certain models (notably [Anthropic](models/anthropic.md)) will return an empty response in this case, which by default causes Pydantic AI to retry until the model produces content.
+Some agents perform their work entirely through tool calls and don't need to produce a final output — for example, an agent that updates a record via a tool and then stops. But with `str` in the `output_type` — including the default — the model is required to end its final turn with text. If it considers its work finished and has nothing left to say, it will return an empty response, or one containing only [thinking](capabilities/thinking.md) content (as [Anthropic](models/anthropic.md) models notably do), and Pydantic AI will ask it to produce text anyway.
 
-To instead treat an empty response as a successful run, include `None` in the `output_type`:
+Include `None` in the `output_type` when finishing without a final message is a valid outcome for your agent, and you'd rather receive `None` than have the model say something for the sake of saying it:
 
 ```python {title="optional_output.py"}
 from pydantic_ai import Agent
@@ -716,18 +727,18 @@ print(result.output)
 
 When the model returns an empty response and `None` is an allowed output type, the agent will return `None` instead of retrying. [Output validator functions](#output-validator-functions) still run with `None` as the argument, so you can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject it if needed.
 
-`output_type=str | None` is the canonical case: it's handled as regular text output, and the **only** way the model signals `None` is by returning an empty response — there's no output tool or structured schema involved. This mirrors how plain `str` is already treated specially as free-form text output rather than a structured tool call.
+`output_type=str | None` is the canonical case: it's handled as regular text output, and the **only** way the model signals `None` is by returning a response with no text output — either an empty response, or one containing only [thinking](capabilities/thinking.md) content, which some reasoning models emit after completing their work through a tool call. There's no output tool or structured schema involved. This mirrors how plain `str` is already treated specially as free-form text output rather than a structured tool call.
 
 `None` is also supported in the other output modes, with an extra structured commit path in addition to (or in place of) the empty-response fallback:
 
-- **Bare unions including `None` that use tool mode** — e.g. `output_type=int | None`, `output_type=[int, float, None]`, or `output_type=[ToolOutput(Foo), None]`: a dedicated `final_result_NoneType` output tool is exposed alongside the other output tools, so the model can commit to `None` through a tool call. An empty model response is still also treated as `None`, as with `str | None`.
+- **Bare unions including `None` that use tool mode** — e.g. `output_type=int | None`, `output_type=[int, float, None]`, or `output_type=[ToolOutput(Foo), None]`: a dedicated `final_result_NoneType` output tool is exposed alongside the other output tools, so the model can commit to `None` through a tool call. An empty or thinking-only model response is still also treated as `None`, as with `str | None`.
 - **Explicit output mode markers** — e.g. `output_type=ToolOutput(int | None)`, `output_type=NativeOutput([int, None])`, or `output_type=PromptedOutput([int, None])`: `None` is included as a branch of the structured schema the wrapper generates. The model commits by calling the tool with `null` (for `ToolOutput`) or by selecting the `NoneType` branch of the discriminated schema (for `NativeOutput`/`PromptedOutput`). An empty response is **not** accepted — once you've opted into an explicit structured output mode, the model is expected to commit through the schema.
 
 !!! note
     `output_type=None` on its own is not valid — at least one other output type must be provided alongside `None`.
 
 !!! note
-    When using [`agent.run_stream()`][pydantic_ai.Agent.run_stream] with an optional output type, an empty model response has no intermediate values to yield, so [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] produces an empty iterator in this case. Use [`get_output()`][pydantic_ai.result.StreamedRunResult.get_output] to retrieve the final `None` value instead.
+    When using [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] with an optional output type, an empty model response has no intermediate values to yield, so [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] produces an empty iterator in this case. Use [`get_output()`][pydantic_ai.result.StreamedRunResult.get_output] to retrieve the final `None` value instead.
 
 ## Streamed Results
 
@@ -845,7 +856,66 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-As setting an `output_type` uses the [Tool Output](#tool-output) mode by default, this will only work if the model supports streaming tool arguments. For models that don't, like Gemini, try [Native Output](#native-output) or [Prompted Output](#prompted-output) instead.
+#### Making structured responses appear faster
+
+If a structured response takes a long time to appear in your application, make sure you stream validated partial output rather than waiting for the full run to finish. [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] yields the accumulated output as the model produces it, with partial validation applied to each snapshot and full validation applied to the final output.
+
+When you also need events from intermediate model requests and tool calls, use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter]. Iterate over each `AgentStream` until the model starts producing the final result, then switch to `stream_output()` for validated partial output:
+
+```python {title="stream_structured_output_and_events.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, AgentStreamEvent, FinalResultEvent
+
+
+class Client(BaseModel):
+    id: int
+    name: str
+
+
+agent = Agent(
+    'openai:gpt-5.2',
+    output_type=list[str | Client],
+    instructions='Find the requested clients and explain each match.',
+)
+
+
+def record_event(event: AgentStreamEvent) -> None:
+    ...
+
+
+def render_output(output: list[str | Client]) -> None:
+    ...
+
+
+async def main():
+    async with agent.iter('Find clients named Jane') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    final_result_started = False
+                    async for event in stream:
+                        record_event(event)
+                        if isinstance(event, FinalResultEvent):
+                            final_result_started = True
+                            break
+
+                    if final_result_started:
+                        async for output in stream.stream_output():
+                            render_output(output)
+            elif Agent.is_call_tools_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        record_event(event)
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+Each value from `stream_output()` is an accumulated snapshot, not a delta. An incomplete field or list item may be absent until enough data has arrived for it to pass partial validation, so update the rendered value from each snapshot rather than appending every yield.
+
+`AgentStream` is a single iterator. Once you switch to `stream_output()`, it consumes the remaining final-output events while validating them, so those raw events are not also yielded to the preceding loop. If you need to retain every raw event, use [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] and reconstruct and validate the output yourself.
+
+As setting an `output_type` uses the [Tool Output](#tool-output) mode by default, this will only work if the model supports streaming tool arguments. For models that don't, try [Native Output](#native-output) or [Prompted Output](#prompted-output) instead. With Gemini 3, use Native Output; with earlier Gemini models that also use function tools, use Prompted Output.
 
 ### Streaming Model Responses
 
@@ -963,7 +1033,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 If you `break` out of `stream_text()` and then leave the surrounding `async with` block, the stream is cleaned up as the context exits. Use `cancel()` when you want to stop generation immediately instead of only stopping local consumption.
 
 !!! warning "Interrupted tool calls"
-    Cancelling or breaking out of a model response stream can leave the final [`ModelResponse`][pydantic_ai.messages.ModelResponse] with incomplete tool-call arguments. Pydantic AI records the response with `state='interrupted'`, but it does not filter incomplete tool calls, synthesize tool returns, or otherwise define run-resumption behavior for those partial responses. If you are controlling the graph with [`agent.iter()`][pydantic_ai.agent.Agent.iter], stop the outer run loop as well, or check `response.state == 'interrupted'` before allowing the run to continue into tool execution.
+    Cancelling or breaking out of a model response stream can leave the final [`ModelResponse`][pydantic_ai.messages.ModelResponse] with incomplete tool-call arguments. Pydantic AI records the response with `state='interrupted'`, and when the history is reused in another run the partial tool calls are [repaired automatically](message-history.md#making-histories-provider-valid). If you are controlling the graph with [`agent.iter()`][pydantic_ai.agent.Agent.iter], stop the outer run loop as well, or check `response.state == 'interrupted'` before allowing the run to continue into tool execution.
 
 #### Cancelling with `iter`
 
@@ -1016,8 +1086,8 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
-!!! warning "Reusing interrupted history"
-    Pydantic AI does not clean up incomplete tool calls in interrupted responses. Passing interrupted history directly into another run can therefore fail or lead to retries if the model was in the middle of emitting a tool call when cancellation happened. For now, applications that reuse interrupted history should inspect `state='interrupted'` responses and apply their own policy.
+!!! note "Reusing interrupted history"
+    Interrupted history can be passed directly into another run. Before the next model request, Pydantic AI [repairs the transcript](message-history.md#making-histories-provider-valid): any tool call that never received a result — including one whose arguments were cut off mid-stream — is answered with a synthesized [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] telling the model it was interrupted.
 
 !!! info "Usage tracking for cancelled streams"
     Token usage reported by `usage` after cancellation is partial and provider-dependent. Pydantic AI stops pulling from the stream immediately, so final usage events may never arrive; some provider SDKs may also continue generation server-side after the local stream is closed. Do not rely on cancelled-stream usage for cost-critical accounting.

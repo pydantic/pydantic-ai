@@ -838,7 +838,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
     async def my_task(inputs: TaskInput) -> TaskOutput:
         with logfire.span(
             'my chat span',
-            **{  # type: ignore
+            **{  # pyright: ignore[reportArgumentType]
                 'gen_ai.operation.name': 'chat',
                 'gen_ai.request.model': 'gpt-5-mini',
                 'gen_ai.usage.input_tokens': 1,
@@ -1613,7 +1613,7 @@ def test_add_invalid_evaluator():
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](name='invalid_evaluator', cases=[])
 
     with pytest.raises(ValueError) as exc_info:
-        dataset.model_json_schema_with_evaluators((NotAnEvaluator,))  # type: ignore
+        dataset.model_json_schema_with_evaluators((NotAnEvaluator,))  # pyright: ignore[reportArgumentType]
     assert str(exc_info.value).startswith('All custom evaluator classes must be subclasses of Evaluator')
 
     with pytest.raises(ValueError) as exc_info:
@@ -2093,7 +2093,7 @@ def test_invalid_report_evaluator_type():
     with pytest.raises(ValueError, match='must be subclasses of ReportEvaluator'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
             {'cases': []},
-            custom_report_evaluator_types=(NotAReportEvaluator,),  # type: ignore
+            custom_report_evaluator_types=(NotAReportEvaluator,),  # pyright: ignore[reportArgumentType]
         )
 
     class NotADataclass(ReportEvaluator):

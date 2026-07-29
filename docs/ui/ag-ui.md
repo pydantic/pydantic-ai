@@ -375,7 +375,13 @@ uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 
 ### Trust model
 
-AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), and unresolved tool calls.
+AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), and unresolved tool calls. Those defaults don't make client-submitted history authentic — see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history).
+
+### Preserving failed tool outcomes
+
+AG-UI's [`ToolCallResultEvent`](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/sdk/python/core/events.mdx#L284-L304) has no error or outcome field. Although [encrypted reasoning continuity](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/concepts/reasoning.mdx#L6-L29) is the intended use of [`ReasoningEncryptedValueEvent`](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/sdk/python/core/events.mdx#L555-L577), it is also AG-UI's standard event for attaching `encrypted_value` to a message or tool call. Pydantic AI uses that attachment mechanism with a namespaced payload to preserve `outcome='failed'` from [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] when using `ag-ui-protocol >= 0.1.13`.
+
+If the client sends those messages back on a later run, the adapter restores the failed outcome. This is a history-continuity mechanism: it does not set [`ToolMessage.error`](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/concepts/messages.mdx#L143-L163) or guarantee that a frontend visually renders the result as an error. Event streams produced with earlier protocol versions have no metadata carrier for the outcome, so reloading them reconstructs the tool result as `outcome='success'`.
 
 ### Preserving files across round-trips
 

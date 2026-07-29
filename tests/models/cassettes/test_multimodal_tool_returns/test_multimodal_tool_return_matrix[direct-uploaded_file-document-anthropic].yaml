@@ -4,7 +4,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -38,30 +38,33 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '638'
+      - '664'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-b5b8443acb69f07557dcea0f187fb6de-667748a1cd0cbfba-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: I'll retrieve the document file for you.
+      - text: I'll retrieve the document file for you now.
         type: text
       - caller:
           type: direct
-        id: toolu_01AxGWRphgS3hyvLovTfpghj
+        id: toolu_01FThbNViZrZ6SBDCdM9oS8M
         input: {}
         name: get_file
         type: tool_use
-      id: msg_01WUmhzDAnCuJZiVJYTRz7pc
+      id: msg_011Ccn6sCPxkTDtNgYHt5sNu
       model: claude-sonnet-4-5-20250929
       role: assistant
+      stop_details: null
       stop_reason: tool_use
       stop_sequence: null
       type: message
@@ -73,7 +76,7 @@ interactions:
         cache_read_input_tokens: 0
         inference_geo: not_available
         input_tokens: 558
-        output_tokens: 46
+        output_tokens: 47
         service_tier: standard
     status:
       code: 200
@@ -83,11 +86,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '831'
+      - '835'
       content-type:
       - application/json
       host:
@@ -101,9 +104,9 @@ interactions:
           type: text
         role: user
       - content:
-        - text: I'll retrieve the document file for you.
+        - text: I'll retrieve the document file for you now.
           type: text
-        - id: toolu_01AxGWRphgS3hyvLovTfpghj
+        - id: toolu_01FThbNViZrZ6SBDCdM9oS8M
           input: {}
           name: get_file
           type: tool_use
@@ -111,11 +114,11 @@ interactions:
       - content:
         - content:
           - source:
-              file_id: file_011CYiV4psfMwLCihcy8Ba6m
+              file_id: file_011Ccn6h59825RrtpAAPmrBv
               type: file
             type: document
           is_error: false
-          tool_use_id: toolu_01AxGWRphgS3hyvLovTfpghj
+          tool_use_id: toolu_01FThbNViZrZ6SBDCdM9oS8M
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -135,25 +138,46 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '293'
+      - '1168'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-bff9c26e6128504db428c364a7176089-bb063d9e181ebb95-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
-      error:
-        message: 'messages.2.content.0.tool_result.content.0.document.source: Input tag ''file'' found using ''type'' does
-          not match any of the expected tags: ''base64'', ''content'', ''text'', ''url'''
-        type: invalid_request_error
-      request_id: req_011CYigKmqHtrr2p2vQY7y4v
-      type: error
+      content:
+      - text: "I received a PDF document file. Here's what I can describe about it:\n\n**Document Type:** PDF (application/pdf)\n\n**Content:**
+          This is a simple, single-page PDF document with minimal content. The page contains only a heading that reads \"Dummy
+          PDF file\" positioned in the upper left portion of the page. The rest of the page appears to be blank/white space.\n\n**Structure:**
+          \n- Single page (page 1)\n- Simple text-based content\n- No complex formatting, images, tables, or other elements\n-
+          Appears to be a test or placeholder PDF file\n\nThis seems to be a sample or test PDF document used for demonstration
+          purposes rather than a document with substantive content."
+        type: text
+      id: msg_011Ccn6sPauiMXjTjsCsSWdr
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 2218
+        output_tokens: 155
+        service_tier: standard
     status:
-      code: 400
-      message: Bad Request
+      code: 200
+      message: OK
 version: 1

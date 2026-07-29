@@ -1,0 +1,232 @@
+interactions:
+- request:
+    body: "--7b51ebdb9f9704dab31d90e3f5eda002\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nassistants\r\n--7b51ebdb9f9704dab31d90e3f5eda002\r\nContent-Disposition:
+      form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type: text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--7b51ebdb9f9704dab31d90e3f5eda002--\r\n"
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '296'
+      content-type:
+      - multipart/form-data; boundary=7b51ebdb9f9704dab31d90e3f5eda002
+      host:
+      - api.openai.com
+    method: POST
+    uri: https://api.openai.com/v1/files
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '210'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '233'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      bytes: 30
+      created_at: 1782404523
+      expires_at: null
+      filename: data.csv
+      id: file-MDLqXZjNjNeLwwaRACNDNf
+      object: file
+      purpose: assistants
+      status: processed
+      status_details: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '362'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use the code execution tool to read the uploaded CSV file and report the sum of the `value` column.
+        role: user
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - container:
+          file_ids:
+          - file-MDLqXZjNjNeLwwaRACNDNf
+          type: auto
+        type: code_interpreter
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '5958'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '15098'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1782404539
+      created_at: 1782404525
+      error: null
+      frequency_penalty: 0.0
+      id: resp_073d403c1ff1554a006a3d55ad216881a0ae3ed0e37cef1595
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqPVW8rALHNgT2ncw_sYxNn6H1LVdSIBRueqvAF4w5enp2ugnI3XF6g5AjB_4asZ9s96Xo_6t0zKrw0kLBZkvavIl9j8wP4laRM1xOewqiR66eKN4CoWXyGuHqp0AQjM6hVvIlHOXjmsoAEBuxqOY4OrA3vqj27qiaWZoPZK21dH-s44KePi13bSAIwKR3RA8-U1mOS7M99XkWyrUlNdrAxol7UWFyMPsjDJltEOoW4gr389FxopD36d2w_2Ra35ZGwboHniHOi-V9RnPsGzlT6iOBWSB1B3CdOeF3hSX8ZfNbFbt8L02nnbr38LHmpJyJ3s32PmSH39ciBuA-wv5hfxUqnG17Mf8HTOojLi4dtEVreWNX1FI7qMrAhnWdnCnZUmfNAcY8xEAK1e8mk9Y3Flz-Z1XdfYh3QHuJEsJ6dXzZdPWXjQRy3pSouAKMJH-RQ_jtDwRu-gJCeI5dnVG-4vgbNdOpXYSKD3F9sbMzQdBP7R3u_gFge1U4JZBD6gLezzNMM1-P63BJ7m2gMjzPVEQAjxUX04IFTO84c6WHvoMObb4ng1mD95jsKEt-XxJCHlyl_sFH9MwL-UkIEI-WXaCVdUe_U6kjDcQ3OaTYX3EAidCybHTz0-GMk9MIqcpCG2dx-5LRGWkvSbNlRmqddwg3-T2gllmbz4DjU33wF2Yoy6Pur2iQByhSHCG6N5JSfI7EJGHMDlrCCGwDU3ZnAPKiIrJAqoKIASh0cxREbMluY0gjIT4Cl6XlK3KLLPyF0KjlSw5cxfMciCgvHVYVLVpZmE1GtQ0s_jQI6TVRF4zaIKjC8rxAuw3uJZkuK2PyJ9j7sl7W-C8tSCeeqLPiwrBj7-YivoNb2tlQaMMFiacqKxJNrLbQgziRKvmK5ItFoqRXWYzrgt6e9uQMMh8Ga2MvYHRU07wEt2KstZvWbLHVaEFTbHrtl0B1pxSIl8L_a1Ofl86RJ62rcwP1o8M1mc8jvSeso3_DZ0mlJxNnZniCHD7wwMQlwgH7p_trRNTvSeIPx5y8AtBkfmfXnR_kKF2BiwRGnL3Wab08Ec80jC8XReJTfP0k1lFgAuUMSFywiVRZnTCruTpwwu6Y6K1V45_REK54v4W49aqeBiyZ-2TLyfPrNHphHeQoBmDoI202U9dIdn18ok01Atm7ezEEfN2edyOi1fVDy92WLMwlG_EVSyZvT_AY3otmeoG_UtXCDfNG14bqxW_jDeb_qu-RibBs_WgxrzT-m31Z9aNlgkglif66q2F3jvds9MBj0mCvdrcfu7pj1A6GQnoOJdNBWrguwd_3FHRVN3hDwzzGStBljpArRLrGRaV_sytc3pXindHgFUJYhxuc-xI2hO4rBLRsJyEUfWEWqD7cNtTwYJKc15MjHHa957x56aO6p8Mk4_jUHVhUTQ05S5hVO181Oy2Nq34WUCQXKY_Efl5TaE3f9GennTyFuSlr5slIR_izriS3ntlZjSR__4ErPLS1VzWrjrVoZc-h-201ReZo1HEoG6VGpHO8DqZSbvB3JMk-hDCH1p89tcz3I_fiXwa1GFH5Qmt7D5yDmB9HTheMVWkaR6ELPXvsPbPrj7NQZ-n1hK2YBgACwSSWrjfCoBpVK-nptpZL6AZz8GxDG_l_JU0BhhtjML6KjdR2I-ZTutTHjOdCDlA3LBPWGC8kRLRBi1Z9FM9l_OUxgs0wbJXv_JuG9_3n2XCsbuwJ44HkOynfJ85yX4sVCZ28lPN45CIm7BJJyGI2C2skYY4Um_Itt7wkBEVSJ8Clu4krouHzlG7BlQtUUdpTVZTU3CcAX9hWp9KUK4NP8AlgXoxm3WxRnPOqNNV05jgOBOGyprJ2l_PpJ86_vQoNkYiqMDsHm1V1s3yuvNV75hfCbJY2UkzoXPDUi5oTqJ3xXOd9vNp5aGRxvVzM-9vQHnTL8uy6WBH1Maca5Q4SwfoJh_VMehvOwex-M8CJTZ1AzAd-ctvFd02U-D77IBEtAMbqpZNzq8slefuT4avY7FesBdf8-0_HV2gqmdProQJwAk4fzMc35IcA0JCGnb0mDWyiV-AhXNg34E609I9XWJlYmsYrPzsBzbZv4BVWiHWAmezaV33ML0k2xtfKn6jqJEK5-dlShuefAt1qeju41OrufkZ8S7VAi1eckXaNCn_EktOA8P-bwgcvq__Mk08aSSa6QRlK48fu0GRcD6rYmjoaEHRuVl39FiuClpLUgkMNacsyDwVOMrlYWgBjkst0Qg3AqeMgXIvS0aLhpRaCtvSaiOrXfGml-TZtACA5zSQbOdMZrZCySNs1dlYBymKHN4lTmHEyU9aGVkHNrTi9AwleEzy4zBTwOCTjUToMnnCrRbBPBng2QEJzdNpz0i6OraP_AxCpgVLCB7d92G75mVA0zzU6K_PyoZX6Ef_eIeLsBLkIlfI13zs4NMYoxyxSork_wo5pNNxUYabV-FhsAsUYLaPmZUFTrptHVihxsG_nxdfFCZNab5nDWVIjIo9-jIWLjBzfy0uzNyahJszA3iSZjqaYdkG488ZUeBYKCIyUDhLiDx4A75ZoLIrJ6uy1QM14joOo5eJRkgzZ5Th8Ojud1Ql9lpRgRfwww_wRW7ATpwJ4xdzeUMSmMhKmjmwCjJQpQ2kfNrlpbvBRPDBsR_OVb0vqxTTcUzWKlIjRT1-5wQQunE4E-IEgInhnfcrI2_AKWZ6ZbWWx_ZNfopj3pgh_j77CPB_xjA7ICAD_2baLw_rps8qZUcpSy1rh9Du-Pg1wdocaVACFjoY1QpVEHZuh2wwSfE0sEyM0t1GeT9lv3aLNAa_SLFEneBNxKN0dKKEA9Ilm9Rm56ykLH6CGHFDteFZcQHfdfIQkC8cSV103ACgEiFZ_VzJTjz-Mfu8lIx_-gEvNC2Hn1Ak0KAqE7CoTwJvyOoPG4ZeG1f-eKSrCBeDFP97rL0oWaFYMFs7r_gsVGhOqOZSy3_CTYtTkayMiPzzxB0aEyV9IJQhp9ch6RRz3eIeFfiaOo6aYZ-eekb4qP5_Gmpw05i4bGwPkNmaHiIf9Nh9Xjn4Dtpbv4E6OFfpAaaWHgSPiLAx8mbKffLpDteY7_bkPYaFeC1N5DtP8ySL0u8i9anmpZn4l9hir0z1KcJk629icZSBi2PbsfOWfErD-HNGO6SgqxztvzvUyoh-5p_XaBW8JGOKrsYvhjotbCaMvaextw0o6lrj5dyY8TZBW1shcz8py5faw2h92DfQM65TMVBcTbtYWkgiRbKYBAToNEtousmlkHWCs8sVI7xSNVmBghVnjNFiLUIC_NxXISygRvO6F5oBkJa9_Gb-9E-39gnT8nIBJLauaQUAxca7YKuQgIo_zRdxVXnEgruYQFUqXBwE-alp2NWJshwJGTYb9uZStiODbliMywLaxd_UUMOuz7GXgKWmeRxU3WFLmAl5pkOBP4NonYckBAyF8WLtuurYeFUbL9SB7OULWh1uWN-DhZe7IwmBBc0owV5cgiWdMqAwm62k=
+        id: rs_073d403c1ff1554a006a3d55b0a04881a0b3634b492ce760f4
+        summary: []
+        type: reasoning
+      - code: "import pandas as pd\r\n\r\n# Path to the uploaded CSV file\r\npath = \"/mnt/data/file-MDLqXZjNjNeLwwaRACNDNf-data.csv\"\r\n\r\n#
+          Read the CSV\r\ndf = pd.read_csv(path)\r\n\r\n# Try to locate the 'value' column (case and whitespace insensitive)\r\ncol_map
+          = {c.strip().lower(): c for c in df.columns}\r\nif 'value' not in col_map:\r\n    raise KeyError(f\"'value' column
+          not found. Available columns: {list(df.columns)}\")\r\ncolname = col_map['value']\r\n\r\n# Coerce to numeric and
+          compute the sum, ignoring non-numeric/missing entries\r\ntotal = pd.to_numeric(df[colname], errors='coerce').sum(skipna=True)\r\n\r\nprint(total)"
+        container_id: cntr_6a3d55ae040c8191a9b06f7e22737f2c0badcf6f6b25e173
+        id: ci_073d403c1ff1554a006a3d55b6aa2c81a0b3f945befbf39a4a
+        outputs: null
+        status: completed
+        type: code_interpreter_call
+      - content:
+        - annotations: []
+          logprobs: []
+          text: The sum of the value column is 100.
+          type: output_text
+        id: msg_073d403c1ff1554a006a3d55bb590c81a0aae90fc9f1df4c93
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: current_turn
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - container:
+          file_ids:
+          - file-MDLqXZjNjNeLwwaRACNDNf
+          type: auto
+        type: code_interpreter
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 1348
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 624
+        output_tokens_details:
+          reasoning_tokens: 384
+        total_tokens: 1972
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: DELETE
+    uri: https://api.openai.com/v1/files/file-MDLqXZjNjNeLwwaRACNDNf
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '72'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '872'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      deleted: true
+      id: file-MDLqXZjNjNeLwwaRACNDNf
+      object: file
+    status:
+      code: 200
+      message: OK
+version: 1
