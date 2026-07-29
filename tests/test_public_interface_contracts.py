@@ -33,6 +33,7 @@ def test_public_all_is_sorted_and_pinned():
         [
             'AbstractConcurrencyLimiter',
             'AbstractToolset',
+            'AdvisorTool',
             'Agent',
             'AgentCapability',
             'AgentModelSettings',
@@ -69,7 +70,9 @@ def test_public_all_is_sorted_and_pinned():
             'DEFAULT_PROFILE',
             'DeferredLoadingToolset',
             'DeferredToolRequests',
+            'DeferredToolRequestsEvent',
             'DeferredToolResults',
+            'DeferredToolResultsEvent',
             'DocumentFormat',
             'DocumentMediaType',
             'DocumentUrl',
@@ -78,6 +81,7 @@ def test_public_all_is_sorted_and_pinned():
             'EmbeddingResult',
             'EmbeddingSettings',
             'EndStrategy',
+            'EnqueuedMessagesEvent',
             'ExternalToolset',
             'FallbackExceptionGroup',
             'FilePart',
@@ -102,6 +106,7 @@ def test_public_all_is_sorted_and_pinned():
             'JsonSchemaTransformer',
             'MCPServerTool',
             'MemoryTool',
+            'MessageHistoryMutatedWarning',
             'ModelAPIError',
             'ModelHTTPError',
             'ModelMessage',
@@ -113,12 +118,14 @@ def test_public_all_is_sorted_and_pinned():
             'ModelRequestNode',
             'ModelRequestPart',
             'ModelRequestState',
+            'ModelResolutionContext',
             'ModelResponse',
             'ModelResponsePart',
             'ModelResponsePartDelta',
             'ModelResponseState',
             'ModelResponseStreamEvent',
             'ModelRetry',
+            'ModelSelectionContext',
             'ModelSettings',
             'MultiModalContent',
             'NativeOutput',
@@ -132,6 +139,7 @@ def test_public_all_is_sorted_and_pinned():
             'PrefixedToolset',
             'PreparedToolset',
             'PromptedOutput',
+            'PydanticAIDeprecationWarning',
             'RenamedToolset',
             'RequestUsage',
             'RetryPromptPart',
@@ -158,6 +166,7 @@ def test_public_all_is_sorted_and_pinned():
             'ToolChoice',
             'ToolDefinition',
             'ToolDenied',
+            'ToolFailed',
             'ToolOrOutput',
             'ToolOutput',
             'ToolResultEvent',
@@ -200,39 +209,26 @@ def test_public_all_entries_are_importable():
     assert missing == []
 
 
-# Frozen snapshot of public dataclasses that predate the keyword-only convention and take two or
-# more positional (non-`kw_only`) `__init__` fields. It grandfathers today's offenders so the test
+# Frozen snapshot of public dataclasses that predate the keyword-only convention and whose
+# constructor takes two or more positional fields. It grandfathers today's offenders so the test
 # below only gates NEW public dataclasses: a new one must use `_: KW_ONLY` (or `kw_only=True`) so
-# adding fields later can't break positional callers. Do NOT add existing dataclasses here to make
-# them positional, and do NOT add a new entry without maintainer sign-off — a new entry means a new
-# public dataclass is shipping with a fragile positional signature on purpose.
+# adding fields later can't break positional callers. Classes that hand-write a keyword-only
+# `__init__` under `@dataclass(init=False)` are already safe and are deliberately absent. Do NOT add
+# existing dataclasses here to make them positional, and do NOT add a new entry without maintainer
+# sign-off — a new entry means a new public dataclass is shipping with a fragile positional
+# signature on purpose.
 _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
     {
-        'pydantic_ai.agent.Agent',
         'pydantic_ai.capabilities.abstract.CapabilityOrdering',
-        'pydantic_ai.capabilities.image_generation.ImageGeneration',
-        'pydantic_ai.capabilities.mcp.MCP',
-        'pydantic_ai.capabilities.native_or_local.NativeOrLocalTool',
         'pydantic_ai.capabilities.prefix_tools.PrefixTools',
-        'pydantic_ai.capabilities.web_fetch.WebFetch',
-        'pydantic_ai.capabilities.web_search.WebSearch',
-        'pydantic_ai.capabilities.x_search.XSearch',
         'pydantic_ai.common_tools.exa.ExaFindSimilarTool',
         'pydantic_ai.common_tools.exa.ExaSearchTool',
         'pydantic_ai.concurrency.ConcurrencyLimit',
-        'pydantic_ai.embeddings.bedrock.BedrockEmbeddingModel',
-        'pydantic_ai.embeddings.cohere.CohereEmbeddingModel',
-        'pydantic_ai.embeddings.google.GoogleEmbeddingModel',
         'pydantic_ai.embeddings.instrumented.InstrumentedEmbeddingModel',
-        'pydantic_ai.embeddings.openai.OpenAIEmbeddingModel',
-        'pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel',
-        'pydantic_ai.embeddings.test.TestEmbeddingModel',
-        'pydantic_ai.embeddings.voyageai.VoyageAIEmbeddingModel',
         'pydantic_ai.function_signature.GenericTypeExpr',
         'pydantic_ai.function_signature.LiteralTypeExpr',
         'pydantic_ai.function_signature.SimpleTypeExpr',
         'pydantic_ai.function_signature.UnionTypeExpr',
-        'pydantic_ai.mcp.MCPToolset',
         'pydantic_ai.messages.BaseToolCallPart',
         'pydantic_ai.messages.BaseToolReturnPart',
         'pydantic_ai.messages.CachePoint',
@@ -244,51 +240,29 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
         'pydantic_ai.messages.ToolCallPart',
         'pydantic_ai.messages.ToolReturnPart',
         'pydantic_ai.messages.UploadedFile',
-        'pydantic_ai.models.anthropic.AnthropicModel',
         'pydantic_ai.models.anthropic.AnthropicStreamedResponse',
-        'pydantic_ai.models.bedrock.BedrockConverseModel',
         'pydantic_ai.models.bedrock.BedrockStreamedResponse',
-        'pydantic_ai.models.cerebras.CerebrasModel',
-        'pydantic_ai.models.cohere.CohereModel',
         'pydantic_ai.models.concurrency.ConcurrencyLimitedModel',
-        'pydantic_ai.models.fallback.FallbackModel',
         'pydantic_ai.models.function.DeltaToolCall',
-        'pydantic_ai.models.function.FunctionModel',
         'pydantic_ai.models.function.FunctionStreamedResponse',
         'pydantic_ai.models.google.GeminiStreamedResponse',
-        'pydantic_ai.models.google.GoogleModel',
-        'pydantic_ai.models.groq.GroqModel',
         'pydantic_ai.models.groq.GroqStreamedResponse',
-        'pydantic_ai.models.huggingface.HuggingFaceModel',
         'pydantic_ai.models.huggingface.HuggingFaceStreamedResponse',
-        'pydantic_ai.models.instrumented.InstrumentationSettings',
         'pydantic_ai.models.instrumented.InstrumentedModel',
-        'pydantic_ai.models.mistral.MistralModel',
         'pydantic_ai.models.mistral.MistralStreamedResponse',
-        'pydantic_ai.models.ollama.OllamaModel',
-        'pydantic_ai.models.openai.OpenAIChatModel',
-        'pydantic_ai.models.openai.OpenAIResponsesModel',
         'pydantic_ai.models.openai.OpenAIResponsesStreamedResponse',
         'pydantic_ai.models.openai.OpenAIStreamedResponse',
-        'pydantic_ai.models.openrouter.OpenRouterModel',
         'pydantic_ai.models.openrouter.OpenRouterStreamedResponse',
-        'pydantic_ai.models.test.TestModel',
         'pydantic_ai.models.test.TestStreamedResponse',
         'pydantic_ai.models.xai.XaiStreamedResponse',
-        'pydantic_ai.models.zai.ZaiModel',
-        'pydantic_ai.output.NativeOutput',
         'pydantic_ai.output.OutputContext',
         'pydantic_ai.output.OutputObjectDefinition',
-        'pydantic_ai.output.PromptedOutput',
-        'pydantic_ai.output.ToolOutput',
         'pydantic_ai.result.FinalResult',
         'pydantic_ai.result.StreamedRunResult',
         'pydantic_ai.run.AgentRunResult',
         'pydantic_ai.tool_manager.ToolManager',
         'pydantic_ai.tool_manager.ValidatedToolCall',
-        'pydantic_ai.tools.Tool',
         'pydantic_ai.toolsets.approval_required.ApprovalRequiredToolset',
-        'pydantic_ai.toolsets.deferred_loading.DeferredLoadingToolset',
         'pydantic_ai.toolsets.filtered.FilteredToolset',
         'pydantic_ai.toolsets.prefixed.PrefixedToolset',
         'pydantic_ai.toolsets.prepared.PreparedToolset',
@@ -306,6 +280,7 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
 _KW_ONLY_WALKER_SCRIPT = """
 import dataclasses
 import importlib
+import inspect
 import json
 import pkgutil
 
@@ -322,8 +297,17 @@ for module_info in pkgutil.walk_packages(pydantic_ai.__path__, 'pydantic_ai.'):
             name = f'{obj.__module__}.{obj.__qualname__}'
             if any(part.startswith('_') for part in name.split('.')):
                 continue
-            positional_init_fields = [f for f in dataclasses.fields(obj) if f.init and not f.kw_only]
-            if len(positional_init_fields) >= 2:
+            if obj.__dataclass_params__.init:
+                positional_count = len([f for f in dataclasses.fields(obj) if f.init and not f.kw_only])
+            else:
+                # Under `@dataclass(init=False)` the per-field `init`/`kw_only` flags describe a
+                # constructor that was never generated, so read the hand-written `__init__` instead.
+                try:
+                    parameters = inspect.signature(obj).parameters.values()
+                except (TypeError, ValueError):
+                    continue
+                positional_count = len([p for p in parameters if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD])
+            if positional_count >= 2:
                 offenders.add(name)
 
 print(json.dumps(sorted(offenders)))
