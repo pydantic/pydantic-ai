@@ -1,0 +1,102 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '713'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Record this person: Ada Lovelace, who lives at 12 Baker Street in London.'
+          type: text
+        role: user
+      model: claude-haiku-4-5
+      stream: false
+      tool_choice:
+        type: any
+      tools:
+      - description: The final response which ends this conversation
+        input_schema:
+          properties:
+            address:
+              default: null
+              description: 'pyai-ref-sibling-sentinel: primary mailing address'
+              properties:
+                city:
+                  type: string
+                street:
+                  type: string
+              required:
+              - street
+              - city
+              type: object
+            name:
+              description: The person full name
+              type: string
+          required:
+          - name
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '675'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-9306bba727ca472e0b9b7190ce9c006c-d5b457b6321e5096-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - caller:
+          type: direct
+        id: toolu_01YRXEAHWdD9UjE2HH6QGAUY
+        input:
+          address:
+            city: London
+            street: 12 Baker Street
+          name: Ada Lovelace
+        name: final_result
+        type: tool_use
+      id: msg_011CdHDjLQcnnX9X3bmBBTqF
+      model: claude-haiku-4-5-20251001
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 746
+        output_tokens: 73
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -859,6 +859,7 @@ async def test_fallback_model_structured_output():
                         description='The final response which ends this conversation',
                         kind='output',
                         defer_loading=False,
+                        toolset_id='<output>',
                     )
                 ],
                 allow_text_output=False,
@@ -1569,13 +1570,13 @@ async def test_async_response_handler() -> None:
 def test_fallback_on_invalid_type() -> None:
     """Test that invalid fallback_on types raise AssertionError via assert_never."""
     with pytest.raises(AssertionError, match='Expected code to be unreachable'):
-        FallbackModel(success_model, failure_model, fallback_on='invalid')  # type: ignore
+        FallbackModel(success_model, failure_model, fallback_on='invalid')  # pyright: ignore[reportArgumentType]
 
 
 def test_fallback_on_invalid_list_item() -> None:
     """Test that invalid items in fallback_on list raise AssertionError via assert_never."""
     with pytest.raises(AssertionError, match='Expected code to be unreachable'):
-        FallbackModel(success_model, failure_model, fallback_on=['invalid'])  # type: ignore
+        FallbackModel(success_model, failure_model, fallback_on=['invalid'])  # pyright: ignore[reportArgumentType]
 
 
 def test_response_handler_only_exception_propagates() -> None:
@@ -2971,7 +2972,8 @@ def test_fallback_continuation_delay_without_pin_polls_inner_models() -> None:
     model; only the one owning the background job returns a delay (gated on the response's `background`
     marker), so the fallback surfaces it — and returns `None` when no model claims it."""
 
-    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover - never called
+    # Never called.
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
         return ModelResponse(parts=[TextPart('x')])
 
     class _DelayModel(FunctionModel):

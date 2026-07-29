@@ -81,7 +81,7 @@ class MockAsyncClientV2:
     completions: MockChatResponse | Sequence[MockChatResponse] | None = None
     index = 0
     chat_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
-    _client_wrapper: MockClientWrapper = None  # type: ignore
+    _client_wrapper: MockClientWrapper = None  # pyright: ignore[reportAssignmentType]
 
     def __post_init__(self):
         self._client_wrapper = MockClientWrapper()
@@ -129,7 +129,7 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.usage == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
-    mock_client.index = 0  # type: ignore
+    mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
@@ -586,13 +586,19 @@ def test_model_status_error(allow_model_requests: None) -> None:
         ApiError(
             status_code=500,
             body={'error': 'test error'},
+            headers={'retry-after': '60', 'x-request-id': 'rid-1'},
         )
     )
     m = CohereModel('command-r', provider=CohereProvider(cohere_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
-    assert str(exc_info.value) == snapshot("status_code: 500, model_name: command-r, body: {'error': 'test error'}")
+    exc = exc_info.value
+    assert str(exc) == snapshot("status_code: 500, model_name: command-r, body: {'error': 'test error'}")
+    # ApiError.headers is a plain dict — verify it reaches ModelHTTPError.headers unchanged.
+    assert exc.headers is not None
+    assert exc.headers.get('retry-after') == '60'
+    assert exc.headers.get('x-request-id') == 'rid-1'
 
 
 def test_model_non_http_error(allow_model_requests: None) -> None:

@@ -19,7 +19,7 @@ from ..messages import (
     UserContent,
     VideoUrl,
 )
-from ..native_tools import AbstractNativeTool, WebSearchTool
+from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
@@ -523,6 +523,18 @@ class _OpenRouterCostDetails:
     upstream_inference_completions_cost: float | None = None
 
 
+@dataclass
+class _OpenRouterServerToolUseDetails:
+    """Counts of OpenRouter server-side tool calls (e.g. the advisor tool).
+
+    OpenRouter reports these aggregate counts in usage, including when individual server-tool
+    calls are not exposed as message parts in the Chat Completions response.
+    """
+
+    tool_calls_requested: int | None = None
+    tool_calls_executed: int | None = None
+
+
 class _OpenRouterPromptTokenDetails(completion_usage.PromptTokensDetails):
     """Wraps OpenAI completion token details with OpenRouter specific attributes."""
 
@@ -545,6 +557,8 @@ class _OpenRouterUsage(completion_usage.CompletionUsage):
     cost_details: _OpenRouterCostDetails | None = None
 
     is_byok: bool | None = None
+
+    server_tool_use_details: _OpenRouterServerToolUseDetails | None = None
 
     prompt_tokens_details: _OpenRouterPromptTokenDetails | None = None  # type: ignore[reportIncompatibleVariableOverride]
 
@@ -613,6 +627,12 @@ def _map_openrouter_provider_details(
         if (is_byok := usage.is_byok) is not None:
             provider_details['is_byok'] = is_byok
 
+        if server_tool_use := usage.server_tool_use_details:
+            provider_details['server_tool_use'] = {
+                'tool_calls_requested': server_tool_use.tool_calls_requested,
+                'tool_calls_executed': server_tool_use.tool_calls_executed,
+            }
+
     return provider_details
 
 
@@ -643,7 +663,11 @@ def _openrouter_settings_to_openai_settings(
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
     """
-    extra_body = cast(dict[str, Any], model_settings.get('extra_body', {}))
+    # Copy so the `openrouter_` pops and `extra_body` mutations never mutate the caller's dict:
+    # `merge_model_settings` can return the model's own `settings` by identity, so popping in place
+    # would drop the keys on the next request and accumulate duplicate plugin entries.
+    model_settings = model_settings.copy()
+    extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
 
     if models := model_settings.pop('openrouter_models', None):
         extra_body['models'] = models
@@ -674,7 +698,9 @@ def _openrouter_settings_to_openai_settings(
 
     for native_tool in model_request_parameters.native_tools:
         if isinstance(native_tool, WebSearchTool):
-            extra_body.setdefault('plugins', []).append({'id': 'web'})
+            # Rebuild rather than append: `dict(...)` above is shallow, so an `extra_body['plugins']`
+            # the caller passed in is still their list object.
+            extra_body['plugins'] = [*extra_body.get('plugins', []), {'id': 'web'}]
             extra_body['web_search_options'] = {'search_context_size': native_tool.search_context_size}
 
     model_settings['extra_body'] = extra_body
@@ -873,7 +899,7 @@ class OpenRouterModel(OpenAIChatModel):
 
         OpenRouter supports web search via its plugins system.
         """
-        return frozenset({WebSearchTool})
+        return frozenset({WebSearchTool, AdvisorTool})
 
     @override
     def prepare_request(
@@ -917,6 +943,19 @@ class OpenRouterModel(OpenAIChatModel):
         ):
             last_tool = cast(dict[str, Any], tools[-1])
             last_tool['cache_control'] = self._build_cache_control(cache_tool_defs)
+
+        # Appended after the cache block so the tool-definitions cache breakpoint stays on the
+        # last function tool; the advisor entry is a small stable dict after the breakpoint.
+        advisor = next((t for t in model_request_parameters.native_tools if isinstance(t, AdvisorTool)), None)
+        if advisor is not None:
+            parameters: dict[str, Any] = {
+                'model': advisor.model,
+                # TODO: Allow provider-specific native tool parameters so users can opt into forwarding the transcript.
+                # https://github.com/pydantic/pydantic-ai/pull/6605#discussion_r3640554790
+                'forward_transcript': False,
+                **({'max_completion_tokens': advisor.max_tokens} if advisor.max_tokens is not None else {}),
+            }
+            tools.append(cast(chat.ChatCompletionToolParam, {'type': 'openrouter:advisor', 'parameters': parameters}))
 
         return tools, tool_choice
 

@@ -362,6 +362,11 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         return result
 
     def averages(self) -> ReportCaseAggregate | None:
+        """Aggregate scores, labels, and metrics averaged across the report's cases.
+
+        For multi-run reports, per-group summaries are averaged instead; returns `None` when there
+        is nothing to aggregate.
+        """
         groups = self.case_groups()
         if groups is not None:
             non_empty_summaries = [g.summary for g in groups if g.runs]

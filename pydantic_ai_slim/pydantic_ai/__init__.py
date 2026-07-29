@@ -1,6 +1,5 @@
 from importlib.metadata import version as _metadata_version
 
-from ._template import TemplateStr
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -33,12 +32,15 @@ from .exceptions import (
     ConcurrencyLimitExceeded,
     FallbackExceptionGroup,
     IncompleteToolCall,
+    MessageHistoryMutatedWarning,
     ModelAPIError,
     ModelHTTPError,
     ModelRetry,
+    PydanticAIDeprecationWarning,
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    ToolFailed,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -114,6 +116,7 @@ from .messages import (
 from .models import ModelRequestContext, ModelResolutionContext, ModelSelectionContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
+    AdvisorTool,
     CodeExecutionTool,
     FileSearchTool,
     ImageGenerationTool,
@@ -134,6 +137,7 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
+from .template import TemplateStr
 from .tools import (
     AgentNativeTool,
     DeferredToolRequests,
@@ -195,10 +199,13 @@ __all__ = (
     'ApprovalRequired',
     'ConcurrencyLimitExceeded',
     'ModelRetry',
+    'ToolFailed',
     'ModelAPIError',
     'ModelHTTPError',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
+    'MessageHistoryMutatedWarning',
+    'PydanticAIDeprecationWarning',
     'SkipModelRequest',
     'SkipToolExecution',
     'SkipToolValidation',
@@ -304,6 +311,7 @@ __all__ = (
     'ToolsetTool',
     'WrapperToolset',
     # builtin_tools
+    'AdvisorTool',
     'CodeExecutionTool',
     'FileSearchTool',
     'ImageGenerationTool',

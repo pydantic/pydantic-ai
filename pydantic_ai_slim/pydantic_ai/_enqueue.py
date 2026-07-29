@@ -113,8 +113,7 @@ class PendingMessage:
 
     Enqueued via [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] or
     [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] and automatically drained
-    at the appropriate time during the agent run by
-    [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+    at the appropriate time during the agent run by the internal `PendingMessageDrainCapability`.
     """
 
     messages: list[ModelMessage]

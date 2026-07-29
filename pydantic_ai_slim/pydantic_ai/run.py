@@ -215,6 +215,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         except BaseException as exc:
             self._node_error = exc
             raise
+        # The completed step's messages are already recorded on `state.message_history`,
+        # so if it absorbed an external cancellation, re-assert it before advancing.
+        _utils.raise_if_cancelling()
         node = self._task_to_node(task)
         if isinstance(node, End) and self._graph_run.state.pending_messages:
             # `asap` messages drain in `before_model_request` (which fires either way), but
@@ -297,6 +300,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             # on_node_run_error recovered by returning a result.
             # The graph runner is in ErrorMarker state; update it to match.
             self._sync_graph_state(result)
+        # If the step (or a hook wrapping it) absorbed an external cancellation, re-assert it
+        # before `after_node_run` fires; the step's messages are already recorded.
+        _utils.raise_if_cancelling()
         pre_hook_result = result
         result = await cap.after_node_run(run_context, node=node, result=result)
 
@@ -305,6 +311,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         if result is not pre_hook_result:
             self._sync_graph_state(result)
 
+        _utils.raise_if_cancelling()
         return result
 
     async def _run_node_with_hooks(
@@ -323,6 +330,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         run_context = _agent_graph.build_run_context(self.ctx)
         cap = self.ctx.deps.root_capability
         node = await cap.before_node_run(run_context, node=node)
+        # A `before_node_run` hook that absorbed an external cancellation must not
+        # let the node itself start.
+        _utils.raise_if_cancelling()
         return await self._wrap_and_advance(run_context, node, step_fn)
 
     async def next(
@@ -423,7 +433,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     @property
     def pending_messages(self) -> list[PendingMessage]:
-        """Internal: live view of the queue mutated by `enqueue` and drained by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+        """Internal: live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
 
         Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages.
         """
@@ -444,7 +454,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         atomic against concurrent appends from a different thread.
 
         Args:
-            *content: One or more [`EnqueueContent`][pydantic_ai._enqueue.EnqueueContent] items.
+            *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
                 Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
                 content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]) is gathered into one
                 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], and each

@@ -178,6 +178,12 @@ def _effective_ordering(leaves: list[AbstractCapability[Any]]) -> CapabilityOrde
     )
 
 
+def is_innermost(cap: AbstractCapability[Any]) -> bool:
+    """Whether a capability (merging the orderings of its nested leaves) is in the `innermost` tier."""
+    ordering = _effective_ordering(collect_leaves(cap))
+    return ordering is not None and ordering.position == 'innermost'
+
+
 def collect_leaves(cap: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:
     """Collect all leaf capabilities using the `apply` visitor pattern."""
     leaves: list[AbstractCapability[Any]] = []

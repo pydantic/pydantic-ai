@@ -167,6 +167,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .bedrock import BedrockProvider
 
         return BedrockProvider
+    elif provider == 'bedrock-mantle':
+        from .bedrock_mantle import BedrockMantleProvider
+
+        return BedrockMantleProvider
     elif provider == 'groq':
         from .groq import GroqProvider
 
