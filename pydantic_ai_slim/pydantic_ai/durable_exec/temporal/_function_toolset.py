@@ -37,8 +37,15 @@ def temporalize_function_toolset(
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
         ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
         try:
-            tool = (await toolset.get_tools(ctx))[params.name]
-        except KeyError as exc:  # pragma: no cover
+            if params.tool_def is not None:
+                # Rebuild the tool from the definition the workflow prepared, so a tool's `prepare`
+                # function isn't run a second time here against the activity's limited run context.
+                tool = toolset.tool_for_tool_def(params.tool_def)
+            else:
+                # Only reachable for an activity scheduled by a worker predating `tool_def` on these
+                # params; re-prepare so in-flight executions still complete across the upgrade.
+                tool = (await toolset.get_tools(ctx))[params.name]
+        except KeyError as exc:
             raise UserError(
                 f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
                 'Removing or renaming tools during an agent run is not supported with Temporal.'
@@ -83,7 +90,7 @@ def temporalize_function_toolset(
                     name=name,
                     tool_args=tool_args,
                     serialized_run_context=run_context_type.serialize_run_context(ctx),
-                    tool_def=None,
+                    tool_def=tool.tool_def,
                 ),
                 ctx.deps,
             ],

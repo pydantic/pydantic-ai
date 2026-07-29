@@ -9,7 +9,7 @@ import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -50,6 +50,7 @@ from pydantic_ai import (
     TextContent,
     TextPart,
     TextPartDelta,
+    Tool,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturn,
@@ -149,11 +150,15 @@ try:
         _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._dynamic_toolset import temporalize_dynamic_toolset
-    from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
+    from pydantic_ai.durable_exec.temporal._function_toolset import (
+        TemporalFunctionToolset,
+        temporalize_function_toolset,
+    )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
     from pydantic_ai.durable_exec.temporal._toolset import (
+        CallToolParams,
         TemporalWrapperToolset,
         resolve_tool_activity_config,
         toolset_temporal_activities,
@@ -8912,3 +8917,188 @@ async def test_heartbeating_body_error_wins_over_beat_crash(monkeypatch: pytest.
         async with _heartbeating():
             await asyncio.sleep(0.01)
             raise ValueError('request failed')
+
+
+# --- A static toolset's `prepare` function runs only in workflow code ---
+#
+# The tool-call activity rebuilds the tool from the `ToolDefinition` the workflow prepared (like
+# the MCP path does) instead of listing the toolset's tools again, so `prepare` never runs a
+# second time against the activity's limited `RunContext`, and the definition the model saw is
+# the one the activity enforces. These tests use `UnsandboxedWorkflowRunner` so workflow-side
+# and activity-side calls land on the same module state.
+
+_prepare_run_steps: list[int] = []
+_prepared_descriptions: list[str | None] = []
+
+
+async def _prepare_sleepy_tool(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
+    """Set a timeout on the first call only, so a second call would change the tool's behavior."""
+    _prepare_run_steps.append(ctx.run_step)
+    return replace(
+        tool_def,
+        description=f'prepared {len(_prepare_run_steps)}',
+        timeout=0.01 if len(_prepare_run_steps) == 1 else None,
+    )
+
+
+async def _sleepy_tool() -> str:
+    await asyncio.sleep(0.5)
+    return 'slept'  # pragma: no cover
+
+
+def _prepare_tool_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    _prepared_descriptions.append(info.function_tools[0].description)
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('sleepy_tool', {})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+_prepare_agent = Agent(
+    FunctionModel(_prepare_tool_model),
+    name='durability_prepare_agent',
+    toolsets=[
+        FunctionToolset[object](
+            tools=[Tool(_sleepy_tool, name='sleepy_tool', prepare=_prepare_sleepy_tool)], id='prepare_ts'
+        )
+    ],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityPrepareWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[ModelMessage]:
+        return (await _prepare_agent.run(prompt)).all_messages()
+
+
+async def test_durability_static_tool_prepare_runs_only_in_workflow(client: Client):
+    """`prepare` runs once per model step in workflow code, and the activity honours its `tool_def`.
+
+    Only the first `prepare` call sets `timeout=0.01`, so re-preparing inside the activity would
+    silently drop the timeout that the tool definition the model saw carried.
+    """
+    _prepare_run_steps.clear()
+    _prepared_descriptions.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityPrepareWorkflow],
+        plugins=[AgentPlugin(_prepare_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        messages = await client.execute_workflow(
+            DurabilityPrepareWorkflow.run,
+            args=['go'],
+            id=f'{DurabilityPrepareWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    # One call per model step, both in workflow code; none inside the tool-call activity.
+    assert _prepare_run_steps == snapshot([1, 2])
+    assert _prepared_descriptions == snapshot(['prepared 1', 'prepared 2'])
+    # The `timeout=0.01` from the workflow-side call is what the activity enforced.
+    retry_prompts = [
+        part.content for message in messages for part in message.parts if isinstance(part, RetryPromptPart)
+    ]
+    assert retry_prompts == snapshot(['Timed out after 0.01 seconds.'])
+
+
+async def victim_tool() -> str:
+    return 'victim'  # pragma: no cover
+
+
+_removal_toolset = FunctionToolset[object]([victim_tool], id='removal_ts')
+
+
+def _removal_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # Runs inside the model activity, after the workflow listed this step's tools: dropping the
+    # tool now leaves the workflow calling a tool the activity can no longer resolve.
+    _removal_toolset.tools.pop('victim_tool')
+    return ModelResponse(parts=[ToolCallPart('victim_tool', {})])
+
+
+_removal_agent = Agent(
+    FunctionModel(_removal_model),
+    name='durability_removal_agent',
+    toolsets=[_removal_toolset],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityRemovedToolWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _removal_agent.run(prompt)).output  # pragma: no cover
+
+
+async def test_durability_removed_tool_still_raises_user_error(client: Client):
+    """A tool that's really gone from the toolset still fails with the tool-removal error."""
+    try:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[DurabilityRemovedToolWorkflow],
+            plugins=[AgentPlugin(_removal_agent)],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            with pytest.raises(WorkflowFailureError) as exc_info:
+                await client.execute_workflow(
+                    DurabilityRemovedToolWorkflow.run,
+                    args=['go'],
+                    id=f'{DurabilityRemovedToolWorkflow.__name__}-{uuid.uuid4()}',
+                    task_queue=TASK_QUEUE,
+                )
+    finally:
+        _removal_toolset.add_function(victim_tool)
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == UserError.__name__
+    assert cause.message == snapshot(
+        "Tool 'victim_tool' not found in toolset 'removal_ts'. "
+        'Removing or renaming tools during an agent run is not supported with Temporal.'
+    )
+
+
+async def test_durability_call_tool_activity_without_tool_def_re_prepares_tool():
+    """A tool-call activity scheduled without a `tool_def` still runs, by preparing the tool itself.
+
+    Unit test: the workflow side always sends the prepared `tool_def` now, so only an activity
+    scheduled by a worker predating that field can arrive without one — no workflow run can
+    produce this payload, but a rolling upgrade can.
+    """
+    prepare_run_steps: list[int] = []
+
+    async def prepare_legacy_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        prepare_run_steps.append(ctx.run_step)
+        return tool_def
+
+    async def legacy_tool() -> str:
+        return 'legacy'
+
+    toolset = FunctionToolset[None](
+        tools=[Tool(legacy_tool, name='legacy_tool', prepare=prepare_legacy_tool)], id='legacy_ts'
+    )
+    durable_toolset = temporalize_function_toolset(
+        toolset,
+        activity_name_prefix='test__legacy_call_tool_params',
+        activity_config=BASE_ACTIVITY_CONFIG,
+        tool_activity_config={},
+        deps_type=type(None),
+    )
+    (call_tool_activity,) = durable_toolset.durable_registrations
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123', run_step=3)
+    result = await call_tool_activity(
+        CallToolParams(
+            name='legacy_tool',
+            tool_args={},
+            serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+            tool_def=None,
+        ),
+        None,
+    )
+
+    assert unwrap_tool_call_result(result) == 'legacy'
+    assert prepare_run_steps == [3]
