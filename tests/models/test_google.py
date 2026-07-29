@@ -3827,6 +3827,50 @@ def test_google_gemini_api_sets_include_server_side_tool_invocations(
     assert tool_config.get('include_server_side_tool_invocations') is True
 
 
+def test_google_allowed_function_names_sorted(google_provider: GoogleProvider) -> None:
+    """`allowed_function_names` must be sorted for deterministic request ordering.
+
+    `resolve_tool_choice` returns a `set[str]`, whose iteration order varies by
+    `PYTHONHASHSEED`; materialising it as `list(...)` produced non-deterministic
+    ordering. Regression guard for the sort fix.
+    """
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    function_tools = [
+        ToolDefinition(name='zebra_tool'),
+        ToolDefinition(name='alpha_tool'),
+        ToolDefinition(name='mango_tool'),
+        ToolDefinition(name='extra_tool'),
+    ]
+    params = ModelRequestParameters(
+        function_tools=function_tools,
+        allow_text_output=True,
+    )
+    settings = GoogleModelSettings(tool_choice=['zebra_tool', 'alpha_tool', 'mango_tool'])
+    _tools, tool_config, _image_config = model._get_tool_config(params, settings)  # pyright: ignore[reportPrivateUsage]
+    assert tool_config is not None
+    fcc = tool_config['function_calling_config']
+    assert fcc['allowed_function_names'] == ['alpha_tool', 'mango_tool', 'zebra_tool']
+
+
+def test_google_allowed_function_names_filters_unavailable(google_provider: GoogleProvider) -> None:
+    """Unavailable tool names in `tool_choice` must not reach `allowed_function_names`.
+
+    `_check_invalid_tools` warns that unavailable tools "will be ignored"; the
+    `else`/`required` branch previously passed them through unfiltered.
+    """
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='real_tool')],
+        allow_text_output=True,
+    )
+    settings = GoogleModelSettings(tool_choice=['real_tool', 'typo_tool'])
+    with pytest.warns(UserWarning, match='will be ignored'):
+        _tools, tool_config, _image_config = model._get_tool_config(params, settings)  # pyright: ignore[reportPrivateUsage]
+    assert tool_config is not None
+    fcc = tool_config['function_calling_config']
+    assert fcc['allowed_function_names'] == ['real_tool']
+
+
 @pytest.mark.vcr()
 async def test_google_vertex_tool_combination_omits_include_server_side_tool_invocations(
     allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette
