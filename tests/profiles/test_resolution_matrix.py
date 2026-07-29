@@ -1680,6 +1680,21 @@ def test_heroku_returns_openai_transformer():
     )
 
 
+def test_heroku_qwen3_coder_official_spelling():
+    """The official `qwen3-coder` spelling resolves to the coder profile, with its tool-flag opt-outs."""
+    from pydantic_ai.providers.heroku import HerokuProvider
+
+    profile = HerokuProvider.model_profile('qwen3-coder-480b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_supports_tool_choice_required': False,
+            'openai_supports_strict_tool_definition': False,
+            'ignore_streamed_leading_whitespace': True,
+        }
+    )
+
+
 # =============================================================================
 # Nebius — multi-lab routing
 # =============================================================================
