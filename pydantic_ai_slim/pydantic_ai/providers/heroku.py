@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import re
 from typing import overload
 
 import httpx
@@ -20,6 +21,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -29,6 +31,13 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the Heroku provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+
+_HEROKU_GLM_MINOR_VERSION_RE = re.compile(r'^glm-(\d+)-(\d+)')
+"""Heroku hyphenates GLM minor versions (`glm-4-7`), while `zai_model_profile` matches Z.AI's own
+dotted ids (`glm-4.7`). Restore the dot before delegating. Only GLM needs this: Heroku's Claude ids
+are already hyphenated upstream (`claude-4-5-sonnet`), Nova and Qwen carry no minor version, and
+`moonshotai_model_profile` accepts either separator for Kimi itself."""
 
 
 class HerokuProvider(Provider[AsyncOpenAI]):
@@ -59,7 +68,9 @@ class HerokuProvider(Provider[AsyncOpenAI]):
             'qwen': qwen_model_profile,
             'deepseek': deepseek_model_profile,
             'kimi': moonshotai_model_profile,
-            'glm': moonshotai_model_profile,
+            # GLM is Z.AI (Zhipu), not Moonshot — `zai_model_profile` is the profile that knows
+            # which GLM releases think.
+            'glm': zai_model_profile,
             'mistral': mistral_model_profile,
             'nova': amazon_model_profile,
             'llama': meta_model_profile,
@@ -70,7 +81,7 @@ class HerokuProvider(Provider[AsyncOpenAI]):
         lower_model_name = model_name.lower()
         for prefix, profile_func in prefix_to_profile.items():
             if lower_model_name.startswith(prefix):
-                profile = profile_func(model_name)
+                profile = profile_func(_HEROKU_GLM_MINOR_VERSION_RE.sub(r'glm-\1.\2', lower_model_name))
                 break
 
         # As the Heroku API is OpenAI-compatible, we keep the OpenAIJsonSchemaTransformer as the base
