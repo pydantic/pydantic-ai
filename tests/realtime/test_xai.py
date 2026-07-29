@@ -39,8 +39,8 @@ from pydantic_ai.realtime._base import ConversationCreated, ConversationItemCrea
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     InputTranscript,
+    OutputTranscript,
     ToolCall,
-    Transcript,
 )
 from pydantic_ai.tools import ToolDefinition
 
@@ -157,7 +157,7 @@ def test_map_input_transcription_completed_respects_status() -> None:
 def test_map_delegates_audio_and_transcript_and_tool_calls() -> None:
     payload = base64.b64encode(b'\x01\x02').decode('ascii')
     assert map_event({'type': 'response.output_audio.delta', 'delta': payload}) == AudioDelta(data=b'\x01\x02')
-    assert map_event({'type': 'response.output_audio_transcript.delta', 'delta': 'hel'}) == Transcript(
+    assert map_event({'type': 'response.output_audio_transcript.delta', 'delta': 'hel'}) == OutputTranscript(
         text='hel', is_final=False
     )
     assert map_event(
@@ -197,7 +197,7 @@ def test_connection_map_event_override_matches_module() -> None:
     assert conn._map_event(  # pyright: ignore[reportPrivateUsage]
         {'type': 'conversation.item.input_audio_transcription.updated', 'transcript': 'x'}
     ) == InputTranscript(text='x', cumulative=True)
-    assert conn._map_event({'type': 'response.output_audio_transcript.delta', 'delta': 'hi'}) == Transcript(  # pyright: ignore[reportPrivateUsage]
+    assert conn._map_event({'type': 'response.output_audio_transcript.delta', 'delta': 'hi'}) == OutputTranscript(  # pyright: ignore[reportPrivateUsage]
         text='hi', is_final=False
     )
 
@@ -477,7 +477,7 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
 
     assert events == [
         InputTranscript(text='partial', cumulative=True),
-        Transcript(text='hi', is_final=True),
+        OutputTranscript(text='hi', is_final=True),
     ]
     assert fake_connect.url == 'wss://api.x.ai/v1/realtime?model=grok-voice-latest'
     assert fake_connect.headers == {'Authorization': 'Bearer k'}
@@ -615,7 +615,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [SessionReconnectEvent(state_restored=True), Transcript(text='hi', is_final=True)]
+    assert events == [SessionReconnectEvent(state_restored=True), OutputTranscript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]  # both the dropped and the current socket are closed
     # The last URL is the re-dial attempted after `good` hung up, which the stand-in refuses.
     assert connect.urls == [

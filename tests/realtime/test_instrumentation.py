@@ -62,11 +62,11 @@ from pydantic_ai.realtime import (
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     InputTranscript,
+    OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
     ToolCall,
-    Transcript,
 )
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -192,7 +192,7 @@ async def _ok_runner(name: str, args: dict[str, Any], call_id: str) -> str:
 async def test_owner_error_marks_active_chat_and_session_spans() -> None:
     settings, exporter = _settings()
     session = RealtimeSession(
-        _Connection([Transcript(text='partial')]),
+        _Connection([OutputTranscript(text='partial')]),
         _ok_runner,
         instrumentation=settings,
         model_name='gpt-realtime',
@@ -410,7 +410,7 @@ async def test_session_span_records_lifecycle_spans() -> None:
     conn = _Connection(
         [
             InputSpeechStartEvent(),
-            Transcript(text='wait', is_final=True),
+            OutputTranscript(text='wait', is_final=True),
             TurnCompleteEvent(interrupted=True),
         ]
     )
@@ -432,7 +432,7 @@ async def test_session_span_turn_complete_omits_interrupted_when_false() -> None
     # A clean (uninterrupted) turn records the `turn complete` span with no `interrupted` attribute,
     # rather than a null one.
     settings, exporter = _settings()
-    conn = _Connection([Transcript(text='hi', is_final=True), TurnCompleteEvent()])
+    conn = _Connection([OutputTranscript(text='hi', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
 
@@ -461,7 +461,7 @@ async def test_chat_span_records_interrupted_response_state() -> None:
     # can see *which* response was cut off rather than only that an interruption happened somewhere.
     # A response that ends normally carries no state attribute.
     settings, exporter = _settings()
-    conn = _Connection([Transcript(text='hello there', is_final=False), TurnCompleteEvent(interrupted=True)])
+    conn = _Connection([OutputTranscript(text='hello there', is_final=False), TurnCompleteEvent(interrupted=True)])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
 
@@ -470,7 +470,7 @@ async def test_chat_span_records_interrupted_response_state() -> None:
     assert chat.attributes['pydantic_ai.response.state'] == 'interrupted'
 
     settings, exporter = _settings()
-    conn = _Connection([Transcript(text='hello there', is_final=False), TurnCompleteEvent()])
+    conn = _Connection([OutputTranscript(text='hello there', is_final=False), TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = await collect_events(session)
 
@@ -517,7 +517,7 @@ async def test_unnamed_agent_session_span_defaults_agent_name() -> None:
     settings, exporter = _settings()
     agent: Agent[None, str] = Agent()
     agent.instrument = settings
-    conn = _Connection([Transcript(text='hi', is_final=True), TurnCompleteEvent()])
+    conn = _Connection([OutputTranscript(text='hi', is_final=True), TurnCompleteEvent()])
 
     async with agent.realtime(_Model(conn)).session() as session:
         _ = [event async for event in session]
@@ -535,7 +535,7 @@ async def test_output_type_reflects_text_modality() -> None:
     settings, exporter = _settings()
     agent = _weather_agent(name='assistant')
     agent.instrument = settings
-    conn = _Connection([Transcript(text='hi', is_final=True), TurnCompleteEvent()])
+    conn = _Connection([OutputTranscript(text='hi', is_final=True), TurnCompleteEvent()])
     async with agent.realtime(
         _Model(conn), model_settings=RealtimeModelSettings(output_modality='text')
     ).session() as session:
@@ -575,9 +575,9 @@ async def test_chat_spans_split_on_tool_call_are_session_children() -> None:
     conn = _Connection(
         [
             InputTranscript(text='weather in Paris?', is_final=True),
-            Transcript(text='let me check'),
+            OutputTranscript(text='let me check'),
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
-            Transcript(text='it is sunny'),
+            OutputTranscript(text='it is sunny'),
             SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
             TurnCompleteEvent(),
         ]
@@ -635,13 +635,13 @@ async def test_conversation_span_tree() -> None:
     conn = _Connection(
         [
             InputTranscript(text='weather in Paris?', is_final=True),
-            Transcript(text='let me check'),
+            OutputTranscript(text='let me check'),
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
-            Transcript(text='it is sunny'),
+            OutputTranscript(text='it is sunny'),
             SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
             TurnCompleteEvent(),
             InputTranscript(text='and tomorrow?', is_final=True),
-            Transcript(text='also sunny'),
+            OutputTranscript(text='also sunny'),
             TurnCompleteEvent(),
         ]
     )
@@ -751,7 +751,7 @@ async def test_session_captures_transcript_messages() -> None:
     conn = _Connection(
         [
             InputTranscript(text='hello there', is_final=True),
-            Transcript(text='hi, how can I help?', is_final=True),
+            OutputTranscript(text='hi, how can I help?', is_final=True),
             TurnCompleteEvent(),
         ]
     )
@@ -786,7 +786,7 @@ async def test_session_span_includes_resolved_run_attributes() -> None:
         instructions='Keep answers concise.',
     )
     agent.instrument = settings
-    conn = _Connection([Transcript(text='hello', is_final=True), TurnCompleteEvent()])
+    conn = _Connection([OutputTranscript(text='hello', is_final=True), TurnCompleteEvent()])
 
     async with agent.realtime(_Model(conn), metadata={'tier': 'gold'}).session() as session:
         _ = [event async for event in session]
@@ -838,7 +838,7 @@ async def test_include_content_false_redacts_transcript_messages() -> None:
     conn = _Connection(
         [
             InputTranscript(text='secret', is_final=True),
-            Transcript(text='secret reply', is_final=True),
+            OutputTranscript(text='secret reply', is_final=True),
             TurnCompleteEvent(),
         ]
     )
@@ -914,7 +914,7 @@ async def test_non_recording_spans_skip_events_but_still_record_metrics() -> Non
         meter_provider=MeterProvider(metric_readers=[metric_reader]),
     )
     session = RealtimeSession(
-        _Connection([Transcript(text='hello'), TurnCompleteEvent()]),
+        _Connection([OutputTranscript(text='hello'), TurnCompleteEvent()]),
         _ok_runner,
         instrumentation=settings,
         model_name='gpt-realtime',
@@ -966,7 +966,7 @@ async def test_session_usage_without_aggregated_attribute_names() -> None:
     conn = _Connection(
         [
             InputTranscript(text='hi', is_final=True),
-            Transcript(text='hello'),
+            OutputTranscript(text='hello'),
             SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
             TurnCompleteEvent(),
         ]
@@ -991,7 +991,7 @@ async def test_chat_span_matches_instrumented_model_shape() -> None:
     conn = _Connection(
         [
             InputTranscript(text='hello there', is_final=True),
-            Transcript(text='hi, how can I help?'),
+            OutputTranscript(text='hi, how can I help?'),
             SessionUsageEvent(
                 usage=RequestUsage(input_tokens=10, output_tokens=4),
                 provider_response_id='resp-1',
@@ -1051,11 +1051,11 @@ async def test_per_response_token_metrics_match_classic_dimensions() -> None:
     conn = _Connection(
         [
             InputTranscript(text='first', is_final=True),
-            Transcript(text='one'),
+            OutputTranscript(text='one'),
             SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
             TurnCompleteEvent(),
             InputTranscript(text='second', is_final=True),
-            Transcript(text='two'),
+            OutputTranscript(text='two'),
             SessionUsageEvent(usage=RequestUsage(input_tokens=7, output_tokens=3)),
             TurnCompleteEvent(),
         ]
@@ -1129,7 +1129,7 @@ async def test_include_content_false_redacts_chat_span_messages() -> None:
     conn = _Connection(
         [
             InputTranscript(text='my secret', is_final=True),
-            Transcript(text='secret answer'),
+            OutputTranscript(text='secret answer'),
             TurnCompleteEvent(),
         ]
     )
@@ -1157,9 +1157,9 @@ async def test_direct_session_runs_tool_via_runner() -> None:
     conn = _Connection(
         [
             InputTranscript(text='weather in Paris?', is_final=True),
-            Transcript(text='let me check'),
+            OutputTranscript(text='let me check'),
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
-            Transcript(text='it is sunny'),
+            OutputTranscript(text='it is sunny'),
             TurnCompleteEvent(),
         ]
     )
@@ -1196,7 +1196,7 @@ async def test_direct_session_runs_tool_via_runner() -> None:
 async def test_chat_span_without_model_name() -> None:
     """Without a model name, the `chat` span is named just `chat` and omits `gen_ai.request.model`."""
     settings, exporter = _settings()
-    conn = _Connection([Transcript(text='hello'), TurnCompleteEvent()])
+    conn = _Connection([OutputTranscript(text='hello'), TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings)  # no model_name
     _ = await collect_events(session)
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat')

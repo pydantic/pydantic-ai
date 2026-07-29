@@ -95,6 +95,7 @@ from ._base import (
     ImageInput,
     InputSpeechStartEvent,
     InputTranscript,
+    OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeError,
@@ -110,7 +111,6 @@ from ._base import (
     ToolCall,
     ToolCallCancelled,
     ToolResult,
-    Transcript,
     TurnCompleteEvent,
     TurnDetection,
     inject_trace_context,
@@ -1136,7 +1136,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     # model-turn text part is the model's plain text output (`response_modality='text'`),
                     # distinct from the spoken-audio transcription in `output_transcription` below, so it
                     # becomes a `TextPart` rather than a `SpeechPart`.
-                    events.append(Transcript(text=part.text, is_final=False, output_text=True))
+                    events.append(OutputTranscript(text=part.text, is_final=False, output_text=True))
         if content.input_transcription is not None and content.input_transcription.text:
             events.append(
                 InputTranscript(
@@ -1145,7 +1145,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
             )
         if content.output_transcription is not None and content.output_transcription.text:
             events.append(
-                Transcript(text=content.output_transcription.text, is_final=bool(content.output_transcription.finished))
+                OutputTranscript(
+                    text=content.output_transcription.text, is_final=bool(content.output_transcription.finished)
+                )
             )
         if content.interrupted:
             self._turn_interrupted = True

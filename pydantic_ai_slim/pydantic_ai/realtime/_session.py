@@ -78,6 +78,7 @@ from ._base import (
     InputSpeechStartEvent,
     InputTranscript,
     InputTranscriptionErrorEvent,
+    OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeError,
@@ -93,7 +94,6 @@ from ._base import (
     ToolCall,
     ToolCallCancelled,
     ToolResult,
-    Transcript,
     TranscriptUpdate,
     TruncateOutput,
     TurnCompleteEvent,
@@ -152,7 +152,7 @@ def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> None:
 # (where the residual no longer fits this alias) or the `assert_never` flags it.
 _TranslatableEvent: TypeAlias = (
     AudioDelta
-    | Transcript
+    | OutputTranscript
     | InputTranscript
     | TurnCompleteEvent
     | InputSpeechStartEvent
@@ -1670,7 +1670,7 @@ class RealtimeSession:
             if not self._accept_item(event.item_id):
                 return []
             return self._handle_assistant_audio(event.data, item_id=event.item_id)
-        if isinstance(event, Transcript):
+        if isinstance(event, OutputTranscript):
             if not self._accept_item(event.item_id):
                 return []
             # `is_final` doesn't end the part — the turn ends on `TurnCompleteEvent`; a final transcript just

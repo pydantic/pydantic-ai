@@ -56,10 +56,10 @@ from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     InputTranscript,
+    OutputTranscript,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
-    Transcript,
 )
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -694,13 +694,13 @@ def test_map_audio_and_text_parts() -> None:
     )
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
         AudioDelta(data=b'\x01'),
-        Transcript(text='partial', is_final=False, output_text=True),
+        OutputTranscript(text='partial', is_final=False, output_text=True),
     ]
 
 
 def test_map_skips_thought_parts() -> None:
     # Native-audio models stream their reasoning as `thought` text next to the spoken answer; it must
-    # not leak into the transcript (only the real spoken text becomes a `Transcript`). Kept as a unit
+    # not leak into the transcript (only the real spoken text becomes a `OutputTranscript`). Kept as a unit
     # test because a cassette can't reliably force a model to think.
     conn = _conn(_RecordingSession())
     message = genai_types.LiveServerMessage(
@@ -714,7 +714,7 @@ def test_map_skips_thought_parts() -> None:
         )
     )
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
-        Transcript(text='Hello there.', is_final=False, output_text=True)
+        OutputTranscript(text='Hello there.', is_final=False, output_text=True)
     ]
 
 
@@ -730,7 +730,7 @@ def test_map_transcriptions_interrupt_and_turn_complete() -> None:
     )
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
         InputTranscript(text='weather?', is_final=True),
-        Transcript(text='Sunny', is_final=False),
+        OutputTranscript(text='Sunny', is_final=False),
         InputSpeechStartEvent(),
         TurnCompleteEvent(interrupted=True),
     ]
@@ -880,7 +880,7 @@ def test_map_code_execution_to_native_tool_parts() -> None:
     # `NativeToolReturnPart` pair byte-identical to the classic `GoogleModel`'s (tool_name
     # `code_execution`, `args`/`content` from the SDK models' JSON dump), sharing a single `tool_call_id`
     # so the return pairs with its call, and stream as part start/end events. The spoken transcript still
-    # comes through as its own `Transcript`. Kept as a unit test because
+    # comes through as its own `OutputTranscript`. Kept as a unit test because
     # a cassette can't reliably force the model to run code and the recording key only exposes audio-out.
     conn = _conn(_RecordingSession())
     message = genai_types.LiveServerMessage(
@@ -918,7 +918,7 @@ def test_map_code_execution_to_native_tool_parts() -> None:
         ),
     ]
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
-        Transcript(text='The answer is 2.', is_final=False, output_text=True),
+        OutputTranscript(text='The answer is 2.', is_final=False, output_text=True),
         *[
             event
             for index, part in enumerate(parts)
@@ -1023,9 +1023,9 @@ async def test_connect_streams_events() -> None:
     # Both turns stream, then the server closes the socket; without a reconnect policy that surfaces a
     # non-recoverable `SessionErrorEvent` before the stream ends (see `test_iter_ends_on_api_error_close`).
     assert events[:4] == [
-        Transcript(text='hi', is_final=True),
+        OutputTranscript(text='hi', is_final=True),
         TurnCompleteEvent(interrupted=False),
-        Transcript(text='bye', is_final=True),
+        OutputTranscript(text='bye', is_final=True),
         TurnCompleteEvent(interrupted=False),
     ]
     assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
@@ -1139,7 +1139,7 @@ async def test_connect_continues_after_empty_server_turn() -> None:
 
     events = [event async for event in _conn(session)]
 
-    assert events[:2] == [Transcript(text='hi', is_final=True), TurnCompleteEvent(interrupted=False)]
+    assert events[:2] == [OutputTranscript(text='hi', is_final=True), TurnCompleteEvent(interrupted=False)]
     assert isinstance(events[-1], SessionErrorEvent)
 
 
@@ -1315,7 +1315,7 @@ async def test_iter_ends_on_api_error_close() -> None:
     # dropped connection from a completed turn (mirroring the OpenAI provider).
     session = _RecordingSession([[_turn('hi')]], close_exc=genai_errors.APIError(1011, {'message': 'go away'}))
     events = [e async for e in _conn(session)]
-    assert events[:2] == [Transcript(text='hi', is_final=True), TurnCompleteEvent(interrupted=False)]
+    assert events[:2] == [OutputTranscript(text='hi', is_final=True), TurnCompleteEvent(interrupted=False)]
     assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
 
 
@@ -1547,7 +1547,7 @@ async def test_reconnect_resumes_then_gives_up() -> None:
     events = [e async for e in conn]
     assert events[:3] == [
         SessionReconnectEvent(state_restored=True),
-        Transcript(text='back', is_final=True),
+        OutputTranscript(text='back', is_final=True),
         TurnCompleteEvent(interrupted=False),
     ]
     assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
@@ -1628,7 +1628,7 @@ async def test_connect_reconnect_closes_previous_session() -> None:
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
     assert events[0] == SessionReconnectEvent(state_restored=True)
-    assert events[1:3] == [Transcript(text='back', is_final=True), TurnCompleteEvent(interrupted=False)]
+    assert events[1:3] == [OutputTranscript(text='back', is_final=True), TurnCompleteEvent(interrupted=False)]
     assert isinstance(events[-1], SessionErrorEvent)
     # cm0 closed when reconnecting into cm1; cm1 closed when the next reconnect runs out of sessions.
     assert closed == [0, 1]

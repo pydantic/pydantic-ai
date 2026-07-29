@@ -339,7 +339,7 @@ class AudioDelta:
 
 
 @dataclass
-class Transcript:
+class OutputTranscript:
     """The model's textual output (partial or final): an audio transcript, or plain text output."""
 
     text: str
@@ -624,7 +624,7 @@ class SessionErrorEvent:
 RealtimeCodecEvent = TypeAliasType(
     'RealtimeCodecEvent',
     AudioDelta
-    | Transcript
+    | OutputTranscript
     | InputTranscript
     | ToolCall
     | ToolCallCancelled
@@ -652,7 +652,7 @@ This is the provider-facing vocabulary: providers translate their wire protocol 
 # Session-level events (yielded by `RealtimeSession.__aiter__`).
 #
 # A session translates the low-level codec events into the shared message/part event vocabulary from
-# `pydantic_ai.messages`: `AudioDelta`/`Transcript`/`InputTranscript` become `PartStartEvent` /
+# `pydantic_ai.messages`: `AudioDelta`/`OutputTranscript`/`InputTranscript` become `PartStartEvent` /
 # `PartDeltaEvent` / `PartEndEvent` for `SpeechPart`s, and `ToolCall` becomes a
 # `ToolCallPart` part (start/end) plus `FunctionToolCallEvent` / `FunctionToolResultEvent` around its
 # execution. The remaining control-plane events pass through unchanged.
