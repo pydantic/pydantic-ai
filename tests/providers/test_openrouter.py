@@ -257,6 +257,16 @@ def test_openrouter_model_profile_cache_capabilities(model_name: str, expected_f
     assert actual == expected_flags
 
 
+def test_openrouter_model_profile_missing_prefix() -> None:
+    """An unprefixed model name raises a helpful `UserError`, not a bare `ValueError`."""
+    provider = OpenRouterProvider(api_key='api-key')
+    with pytest.raises(
+        UserError,
+        match=re.escape('OpenRouter model names must include a provider prefix, e.g. "openai/gpt-4o", got \'gpt-4o\''),
+    ):
+        provider.model_profile('gpt-4o')
+
+
 def test_openrouter_google_json_schema_transformer():
     """Test _OpenRouterGoogleJsonSchemaTransformer covers all transformation cases."""
     schema = {

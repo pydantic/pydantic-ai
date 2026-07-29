@@ -148,6 +148,10 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
         # alias marker before using the provider prefix for profile selection.
+        if '/' not in model_name:
+            raise UserError(
+                f'OpenRouter model names must include a provider prefix, e.g. "openai/gpt-4o", got {model_name!r}'
+            )
         provider, model_name = model_name.removeprefix('~').split('/', 1)
         if provider in provider_to_profile:
             model_name, *_ = model_name.split(':', 1)  # drop tags
