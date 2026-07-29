@@ -800,6 +800,38 @@ async def test_run_stream_response_error():
     )
 
 
+async def test_run_stream_cancelled_run_closes_tools_as_interrupted():
+    """A cancelled run closes its pending tool calls with `outcome='interrupted'`, not `'failed'`:
+    a failed closeout would tell the model on reload that the tool errored, while interrupted
+    matches how cancellation records tool calls in message history."""
+    agent = Agent(model=TestModel())
+
+    @agent.tool
+    async def tool(ctx: RunContext, query: str) -> str:
+        ctx.cancel_run()
+        return 'never reached'  # pragma: no cover
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream()]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            "<tool-call name='tool'>{'query': 'a'}",
+            "</tool-call name='tool'>",
+            '</response>',
+            '<request>',
+            "<function-tool-call name='tool'>{'query': 'a'}</function-tool-call>",
+            "<function-tool-result name='tool'>Tool execution was interrupted by cancellation.</function-tool-result>",
+            "<error type='RunCancelled'>The agent run was cancelled.</error>",
+            '</request>',
+            '</stream>',
+        ]
+    )
+
+
 async def test_run_stream_request_error():
     agent = Agent(model=TestModel())
 

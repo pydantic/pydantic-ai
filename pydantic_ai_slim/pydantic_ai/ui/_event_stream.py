@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from pydantic_ai import _utils
 
+from ..exceptions import RunCancelled
 from ..messages import (
     AgentStreamEvent,
     CompactionPart,
@@ -251,14 +252,20 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 self._pending_tool_calls[tool_call_id] = _PendingToolCall('output', tool_name)
 
             # Pending tool calls
+            # A cancelled run's pending calls were interrupted, not failed: `'interrupted'` keeps
+            # the closeout honest on reload (a `'failed'` closeout would tell the model the tool
+            # errored) and matches how cancellation records tool calls in message history.
+            cancelled = RunCancelled.from_cancellation(exc) is not None
             for tool_call_id, (kind, tool_name) in self._pending_tool_calls.items():
                 async for e in self._turn_to('request'):
                     yield e
                 error_part = ToolReturnPart(
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
-                    content='Tool execution was interrupted by an error.',
-                    outcome='failed',
+                    content='Tool execution was interrupted by cancellation.'
+                    if cancelled
+                    else 'Tool execution was interrupted by an error.',
+                    outcome='interrupted' if cancelled else 'failed',
                 )
                 if kind == 'output':
                     async for e in self.handle_output_tool_result(OutputToolResultEvent(error_part)):

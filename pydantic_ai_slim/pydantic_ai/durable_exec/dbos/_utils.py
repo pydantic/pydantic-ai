@@ -1,7 +1,7 @@
 from dbos import DBOS
 from typing_extensions import TypedDict
 
-from pydantic_ai.durable_exec._toolset import guard_run_context_enqueue
+from pydantic_ai.durable_exec._toolset import guard_run_context
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 
@@ -23,4 +23,4 @@ def guard_enqueue_in_workflow(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDe
     """
     if DBOS.workflow_id is None:
         return ctx
-    return guard_run_context_enqueue(ctx, unit_noun='step', container_noun='workflow')
+    return guard_run_context(ctx, unit_noun='step', container_noun='workflow')

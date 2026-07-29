@@ -56,6 +56,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    RunCancelled,
     ToolFailed,
     UsageLimitExceeded,
     UserError,
@@ -2702,6 +2703,32 @@ async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
 
     # Outside a flow the tool runs inline and enqueueing keeps working.
     await agent.run('run')
+
+
+async def test_prefect_task_wrapped_tool_rejects_cancel_run() -> None:
+    """`ctx.cancel_run()` inside a task-wrapped tool raises instead of replay-diverging.
+
+    A cache hit replays the recorded task output without re-executing the tool, so an in-task
+    cancellation would silently not happen again. Outside a flow the tool runs inline and
+    cancellation keeps working.
+    """
+
+    async def cancel(ctx: RunContext[object]) -> str:
+        ctx.cancel_run()
+        return 'never reached'  # pragma: no cover
+
+    durability: PrefectDurability[object] = PrefectDurability()
+    agent = Agent(TestModel(), deps_type=object, name='prefect_cancel_run', tools=[cancel], capabilities=[durability])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='cancellation would silently not happen again'):
+        await run_agent()
+
+    with pytest.raises(RunCancelled):
+        await agent.run('run')
 
 
 async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:

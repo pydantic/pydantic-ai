@@ -48,6 +48,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    RunCancelled,
     ToolFailed,
     UsageLimitExceeded,
     UserError,
@@ -2419,6 +2420,62 @@ async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None
         await run_workflow()
 
     await agent.run('run')
+
+
+async def test_dbos_step_wrapped_tool_rejects_cancel_run_in_workflow(dbos: DBOS) -> None:
+    """`ctx.cancel_run()` inside a step-wrapped (dynamic) tool raises instead of replay-diverging.
+
+    Recovery replays the recorded step output without re-executing the tool, so an in-step
+    cancellation would silently not happen again. Outside a workflow the step degrades to a
+    plain call and cancellation keeps working.
+    """
+
+    async def cancel(ctx: RunContext[object]) -> str:
+        ctx.cancel_run()
+        return 'never reached'  # pragma: no cover
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_cancel_run_dynamic',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([cancel]), id='cancel_dynamic')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='cancellation would silently not happen again'):
+        await run_workflow()
+
+    with pytest.raises(RunCancelled):
+        await agent.run('run')
+
+
+async def test_dbos_plain_tool_cancel_run_works_in_workflow(dbos: DBOS) -> None:
+    """A plain function tool is NOT step-wrapped under DBOS: it runs at workflow level, where
+    `cancel_run()` is live and replay-consistent (workflow-level code re-executes on recovery),
+    so cancellation works and surfaces as an ordinary `RunCancelled` application outcome."""
+
+    async def cancel(ctx: RunContext[object]) -> str:
+        ctx.cancel_run()
+        return 'never reached'  # pragma: no cover
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_cancel_run_plain',
+        tools=[cancel],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with pytest.raises(RunCancelled):
+        await run_workflow()
 
 
 async def test_dbos_durability_parallel_mode_applies_inside_run(dbos: DBOS) -> None:

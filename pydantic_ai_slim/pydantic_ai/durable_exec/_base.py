@@ -24,7 +24,7 @@ from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._runtime_toolsets import RuntimeToolsetKind, reject_unsupported_runtime_toolsets
-from ._toolset import guard_run_context_enqueue
+from ._toolset import guard_run_context
 from ._utils import unwrap_model
 
 _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
@@ -279,7 +279,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         there; Temporal reconstructs its context across the activity boundary and installs the
         same guard in `deserialize_run_context`.
         """
-        return guard_run_context_enqueue(
+        return guard_run_context(
             ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun
         )
 
