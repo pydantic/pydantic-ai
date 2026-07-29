@@ -9030,7 +9030,7 @@ _removal_agent = Agent(
 class DurabilityRemovedToolWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        return (await _removal_agent.run(prompt)).output  # pragma: no cover
+        return (await _removal_agent.run(prompt)).output
 
 
 async def test_durability_removed_tool_still_raises_user_error(client: Client):
