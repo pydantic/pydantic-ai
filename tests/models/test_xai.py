@@ -1403,7 +1403,9 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
             )
 
 
-def _text_chunk_with_proto_finish_reason(text: str, proto_reason: int) -> tuple[chat_types.Response, chat_types.Chunk]:
+def _text_chunk_with_proto_finish_reason(
+    text: str, proto_reason: sample_pb2.FinishReason
+) -> tuple[chat_types.Response, chat_types.Chunk]:
     """Like `get_grok_text_chunk`, but sets the raw proto finish reason rather than a pydantic-ai one.
 
     The helpers in `mock_xai` take a pydantic-ai `FinishReason` and translate it, which can't express
@@ -1448,7 +1450,7 @@ def _text_chunk_with_proto_finish_reason(text: str, proto_reason: int) -> tuple[
     ],
 )
 async def test_xai_stream_finish_reason_covers_every_proto_reason(
-    allow_model_requests: None, proto_reason: int, expected: FinishReason | None
+    allow_model_requests: None, proto_reason: sample_pb2.FinishReason, expected: FinishReason | None
 ):
     """The streamed finish reason must come from the proto enum, not `Response.finish_reason`.
 
