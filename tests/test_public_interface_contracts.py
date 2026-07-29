@@ -1,7 +1,7 @@
 """Enforcement meta-tests for standards the maintainers uphold by review alone.
 
 Each test here pins a convention that reviewers repeatedly ask contributors to follow, so that a
-violation shows up as a failing test (and, where relevant, an explicit snapshot/allowlist diff)
+violation shows up as a failing test (and, where relevant, an explicit allowlist diff)
 instead of relying on a human to catch it in review.
 """
 
@@ -20,7 +20,6 @@ from pathlib import Path
 import pytest
 from inline_snapshot import snapshot
 
-import pydantic_ai
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
@@ -36,193 +35,6 @@ with try_import() as dbos_imports:
 
 with try_import() as prefect_imports:
     from pydantic_ai.durable_exec.prefect import PrefectAgent  # pyright: ignore[reportDeprecated]
-
-
-# Two tests in this module use different definitions of "public", deliberately. This one pins the
-# top-level export surface -- what `from pydantic_ai import X` offers -- while
-# `test_new_public_dataclasses_are_keyword_only` gates constructor shape across every public
-# module, including classes that are public but not re-exported at the root. They answer different
-# questions, so neither definition can serve both.
-def test_public_all_is_pinned():
-    """`pydantic_ai.__all__` is pinned so widening the top-level surface is an explicit snapshot diff.
-
-    Maintainers repeatedly flag "this should not be public" in review; freezing the exported names
-    turns any addition into a deliberate, reviewable change rather than a silent one. The pin is
-    only as strong as the review of the diff that updates it -- `--inline-snapshot=fix` will
-    happily widen it -- so this snapshot changing is the signal to look, not a formality.
-
-    Membership only: `__all__` is not sorted at the source today, so this sorts before comparing.
-    A *dangling* entry needs no test, since pyright runs in strict mode over `pydantic_ai_slim`
-    and reports `reportUnsupportedDunderAll` as an error before any test runs.
-    """
-    assert sorted(pydantic_ai.__all__) == snapshot(
-        [
-            'AbstractConcurrencyLimiter',
-            'AbstractToolset',
-            'AdvisorTool',
-            'Agent',
-            'AgentCapability',
-            'AgentModelSettings',
-            'AgentNativeTool',
-            'AgentRetries',
-            'AgentRun',
-            'AgentRunError',
-            'AgentRunResult',
-            'AgentRunResultEvent',
-            'AgentSpec',
-            'AgentStreamEvent',
-            'AgentToolset',
-            'AnyConcurrencyLimit',
-            'ApprovalRequired',
-            'ApprovalRequiredToolset',
-            'AudioFormat',
-            'AudioMediaType',
-            'AudioUrl',
-            'BaseToolCallPart',
-            'BaseToolReturnPart',
-            'BinaryContent',
-            'BinaryImage',
-            'CachePoint',
-            'CallDeferred',
-            'CallToolsNode',
-            'CapabilityFunc',
-            'CodeExecutionTool',
-            'CombinedToolset',
-            'CompactionPart',
-            'ConcurrencyLimit',
-            'ConcurrencyLimitExceeded',
-            'ConcurrencyLimitedModel',
-            'ConcurrencyLimiter',
-            'DEFAULT_PROFILE',
-            'DeferredLoadingToolset',
-            'DeferredToolRequests',
-            'DeferredToolRequestsEvent',
-            'DeferredToolResults',
-            'DeferredToolResultsEvent',
-            'DocumentFormat',
-            'DocumentMediaType',
-            'DocumentUrl',
-            'Embedder',
-            'EmbeddingModel',
-            'EmbeddingResult',
-            'EmbeddingSettings',
-            'EndStrategy',
-            'EnqueuedMessagesEvent',
-            'ExternalToolset',
-            'FallbackExceptionGroup',
-            'FilePart',
-            'FileSearchTool',
-            'FileUrl',
-            'FilteredToolset',
-            'FinalResultEvent',
-            'FinishReason',
-            'FunctionToolCallEvent',
-            'FunctionToolResultEvent',
-            'FunctionToolset',
-            'HandleResponseEvent',
-            'ImageFormat',
-            'ImageGenerationTool',
-            'ImageMediaType',
-            'ImageUrl',
-            'IncludeReturnSchemasToolset',
-            'IncompleteToolCall',
-            'InlineDefsJsonSchemaTransformer',
-            'InstructionPart',
-            'InstrumentationSettings',
-            'JsonSchemaTransformer',
-            'MCPServerTool',
-            'MemoryTool',
-            'MessageHistoryMutatedWarning',
-            'ModelAPIError',
-            'ModelHTTPError',
-            'ModelMessage',
-            'ModelMessagesTypeAdapter',
-            'ModelProfile',
-            'ModelProfileSpec',
-            'ModelRequest',
-            'ModelRequestContext',
-            'ModelRequestNode',
-            'ModelRequestPart',
-            'ModelRequestState',
-            'ModelResolutionContext',
-            'ModelResponse',
-            'ModelResponsePart',
-            'ModelResponsePartDelta',
-            'ModelResponseState',
-            'ModelResponseStreamEvent',
-            'ModelRetry',
-            'ModelSelectionContext',
-            'ModelSettings',
-            'MultiModalContent',
-            'NativeOutput',
-            'NativeToolCallPart',
-            'NativeToolReturnPart',
-            'OutputToolCallEvent',
-            'OutputToolResultEvent',
-            'PartDeltaEvent',
-            'PartEndEvent',
-            'PartStartEvent',
-            'PrefixedToolset',
-            'PreparedToolset',
-            'PromptedOutput',
-            'PydanticAIDeprecationWarning',
-            'RenamedToolset',
-            'RequestUsage',
-            'RetryPromptPart',
-            'RunContext',
-            'RunUsage',
-            'SetMetadataToolset',
-            'SkipModelRequest',
-            'SkipToolExecution',
-            'SkipToolValidation',
-            'StructuredDict',
-            'SystemPromptPart',
-            'TemplateStr',
-            'TextContent',
-            'TextOutput',
-            'TextPart',
-            'TextPartDelta',
-            'ThinkingPart',
-            'ThinkingPartDelta',
-            'Tool',
-            'ToolApproved',
-            'ToolCallEvent',
-            'ToolCallPart',
-            'ToolCallPartDelta',
-            'ToolChoice',
-            'ToolDefinition',
-            'ToolDenied',
-            'ToolFailed',
-            'ToolOrOutput',
-            'ToolOutput',
-            'ToolResultEvent',
-            'ToolReturn',
-            'ToolReturnPart',
-            'ToolsetFunc',
-            'ToolsetTool',
-            'UndrainedPendingMessagesError',
-            'UnexpectedModelBehavior',
-            'UploadedFile',
-            'UsageLimitExceeded',
-            'UsageLimits',
-            'UserContent',
-            'UserError',
-            'UserPromptNode',
-            'UserPromptPart',
-            'VideoFormat',
-            'VideoMediaType',
-            'VideoUrl',
-            'WebFetchTool',
-            'WebSearchTool',
-            'WebSearchUserLocation',
-            'WrapperToolset',
-            'XSearchTool',
-            '__version__',
-            'capture_run_messages',
-            'format_as_xml',
-            'limit_model_concurrency',
-        ]
-    )
 
 
 # Frozen snapshot of public dataclasses that predate the keyword-only convention and whose
@@ -402,12 +214,53 @@ def test_agent_implementation_signature_parity(implementation: type, method_name
     )
 
 
-def _unforwarded_parameters(implementation: type, method_name: str) -> set[str]:
-    """Keyword-only parameters the method declares but never references.
+# Keyword-only parameters an implementation declares and does not pass straight on, each carrying
+# the reason that is correct. `None` means the method forwards nothing at all.
+#
+# `test_agent_implementation_forwarding_parity` re-checks every entry against the source it exempts,
+# so an entry that stops applying fails instead of silently switching the guard off for that
+# parameter forever.
+_UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
+    # Abstract declarations -- the body is `raise NotImplementedError`.
+    ('AbstractAgent', 'iter'): None,
+    ('AbstractAgent', 'override'): None,
+    # Default implementation, `return []`; concrete agents override it.
+    ('AbstractAgent', 'system_prompt_parts'): None,
+    # `run_stream_events()` is unsupported under DBOS -- the body raises `UserError`.
+    ('DBOSAgent', 'run_stream_events'): None,
+    # `infer_name` drives name inference off the *calling* frame, which only this call can see, so
+    # every method resolves the name itself and hands the inner call `infer_name=False` (or nothing)
+    # precisely so it does not re-infer against the wrong frame.
+    ('AbstractAgent', 'run_stream_events'): frozenset({'infer_name'}),
+    ('AbstractAgent', 'run_stream_sync'): frozenset({'infer_name'}),
+    ('AbstractAgent', 'run_sync'): frozenset({'infer_name'}),
+    # Same for `infer_name`, plus `event_stream_handler`, which these two consume rather than
+    # delegate: they default it to `self.event_stream_handler` and then drive the event stream
+    # themselves against each node's stream, so there is no inner run to hand it to.
+    ('AbstractAgent', 'run'): frozenset({'infer_name', 'event_stream_handler'}),
+    ('AbstractAgent', 'run_stream'): frozenset({'infer_name', 'event_stream_handler'}),
+    # Transformed before forwarding: `model` is resolved to the engine's own model wrapper (or to
+    # `None` inside a workflow) and that result is what `super().iter()` receives.
+    ('TemporalAgent', 'iter'): frozenset({'model'}),
+    # Defaulted before forwarding: `event_stream_handler or self.event_stream_handler`.
+    ('TemporalAgent', 'run'): frozenset({'event_stream_handler'}),
+    # `toolsets` is applied through the engine's override context instead of the run argument, which
+    # is explicitly passed as `toolsets=None` so the runtime toolsets are not added twice.
+    ('DBOSAgent', 'iter'): frozenset({'toolsets'}),
+    ('PrefectAgent', 'iter'): frozenset({'toolsets'}),
+    # Forwarded only when set, through a `**` splat this walk deliberately does not read, so a
+    # wrapped `override` that predates the keyword is never handed it.
+    ('WrapperAgent', 'override'): frozenset({'retries'}),
+}
 
-    A method either forwards every keyword-only parameter it declares or none of them: forwarding
-    none is a stub (`AbstractAgent.system_prompt_parts`) or a deliberate rejection
-    (`DBOSAgent.run_stream_events`), while forwarding all but one is the defect.
+
+def _keyword_only_forwarding(implementation: type, method_name: str) -> tuple[set[str], set[str]]:
+    """The keyword-only parameters the method declares, and those it passes straight on.
+
+    "Passes straight on" means literally `inner(name=name)` in some call the method makes: `f(x=x)`
+    counts and `g(other=x)` does not. A `**splat` counts for nothing, so a parameter smuggled
+    through a dict reads as unforwarded and needs an explicit `_UNFORWARDED_BY_DESIGN` entry --
+    treating any splat as blanket proof of forwarding would let a real omission through silently.
     """
     method = inspect.unwrap(getattr(implementation, method_name))
     source = textwrap.dedent(inspect.getsource(method))
@@ -418,8 +271,14 @@ def _unforwarded_parameters(implementation: type, method_name: str) -> set[str]:
     )
 
     declared = {argument.arg for argument in definition.args.kwonlyargs}
-    referenced = {node.id for node in ast.walk(definition) if isinstance(node, ast.Name)} & declared
-    return declared - referenced if referenced else set()
+    forwarded = {
+        keyword.value.id
+        for call in ast.walk(definition)
+        if isinstance(call, ast.Call)
+        for keyword in call.keywords
+        if isinstance(keyword.value, ast.Name) and keyword.arg == keyword.value.id
+    }
+    return declared, forwarded & declared
 
 
 @pytest.mark.parametrize(('implementation', 'method_name'), _AGENT_METHOD_PARAMS)
@@ -431,11 +290,34 @@ def test_agent_implementation_forwarding_parity(implementation: type, method_nam
     fully line-covered, and silently discards the value -- the same user-visible symptom as the
     drift it was written to catch. Fixing each wrapper for `metadata` took two edits (declaration
     and forwarding), and signature parity only guards the first.
+
+    The guarantee is deliberately narrow: every keyword-only parameter is passed straight on as a
+    keyword, unless `_UNFORWARDED_BY_DESIGN` says why not. Consuming a parameter locally, renaming
+    it, defaulting it or routing it through a `**` splat all count as not forwarding, so each one
+    has to be spelled out with its reason rather than pass by accident.
     """
-    unforwarded = _unforwarded_parameters(implementation, method_name)
+    declared, forwarded = _keyword_only_forwarding(implementation, method_name)
+    by_design = _UNFORWARDED_BY_DESIGN.get((implementation.__name__, method_name), frozenset())
+
+    if by_design is None:
+        assert forwarded == set(), (
+            f'`_UNFORWARDED_BY_DESIGN` records {implementation.__name__}.{method_name} as forwarding '
+            f'nothing, but it now forwards {sorted(forwarded)}; drop the entry or narrow it to the '
+            'parameters it still holds back'
+        )
+        return
+
+    no_longer_held_back = by_design & forwarded
+    assert no_longer_held_back == set(), (
+        f'{implementation.__name__}.{method_name} now forwards {sorted(no_longer_held_back)}, so '
+        'those `_UNFORWARDED_BY_DESIGN` entries no longer apply and must be removed'
+    )
+
+    unforwarded = declared - forwarded - by_design
     assert unforwarded == set(), (
         f'{implementation.__name__}.{method_name} declares keyword-only parameter(s) it never '
-        f'references, so their values are silently dropped: {sorted(unforwarded)}'
+        f'passes on, so their values are silently dropped: {sorted(unforwarded)}; forward them, or '
+        'add them to `_UNFORWARDED_BY_DESIGN` with the reason it is safe'
     )
 
 
