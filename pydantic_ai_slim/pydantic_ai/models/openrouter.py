@@ -1024,10 +1024,17 @@ class OpenRouterModel(OpenAIChatModel):
             try:
                 nested = _OpenRouterNestedProviderResponse.model_validate(response_dict)
             except ValidationError:
-                if response_dict.get('choices') is None and response_dict.get('error') is None:
-                    # A null-`choices` body with no error envelope at all is a transient
-                    # provider hiccup, not a malformed request: surface it as a retryable
-                    # upstream error rather than a bare ValidationError.
+                if (
+                    response_dict.get('choices') is None
+                    and response_dict.get('error') is None
+                    and not isinstance(response_dict.get('provider'), dict)
+                ):
+                    # A null-`choices` body with no error envelope and no nested-provider
+                    # payload is a transient provider hiccup, not a malformed request:
+                    # surface it as a retryable upstream error rather than a bare
+                    # ValidationError. A `provider` dict that failed to validate above is
+                    # excluded on purpose — that body tried to be a nested-provider
+                    # response and was malformed, which must stay fatal.
                     raise ModelHTTPError(
                         status_code=502,
                         model_name=response_dict.get('model') or self.model_name,
