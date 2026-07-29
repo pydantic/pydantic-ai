@@ -1278,6 +1278,85 @@ def test_xai_provider_grok_3_mini():
 
 
 # =============================================================================
+# Harmony (gpt-oss) — cross-provider consistency
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    ('provider_path', 'provider_cls', 'model_name'),
+    [
+        # Every provider that routes gpt-oss through `harmony_model_profile`, using the model IDs
+        # each one actually serves (Nebius keeps the `openai/` prefix; the others don't).
+        ('cerebras', 'CerebrasProvider', 'gpt-oss-120b'),
+        ('heroku', 'HerokuProvider', 'gpt-oss-120b'),
+        ('nebius', 'NebiusProvider', 'openai/gpt-oss-120b'),
+        ('ollama', 'OllamaProvider', 'gpt-oss:20b'),
+        ('ovhcloud', 'OVHcloudProvider', 'gpt-oss-120b'),
+    ],
+)
+def test_harmony_gpt_oss_reasoning_is_consistent_across_providers(
+    provider_path: str, provider_cls: str, model_name: str
+):
+    """Reasoning is intrinsic to Harmony, so every gpt-oss route must agree on the reasoning flags.
+
+    The reasoning level is set in the system message as low/medium/high with medium as the default
+    and no off switch (<https://cookbook.openai.com/articles/openai-harmony>), so gpt-oss is
+    always-on reasoning wherever it's served. `ignore_streamed_leading_whitespace` follows from the
+    same format: the `analysis` channel is emitted before the `final` content.
+
+    `Model.prepare_request` silently discards `ModelSettings(thinking=...)` when a profile advertises
+    neither `supports_thinking` nor `thinking_always_enabled`, so a provider disagreeing here loses
+    the setting with no error.
+    """
+    import importlib
+
+    provider = getattr(importlib.import_module(f'pydantic_ai.providers.{provider_path}'), provider_cls)
+
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_thinking', False) is True
+    assert profile.get('thinking_always_enabled', False) is True
+    assert profile.get('ignore_streamed_leading_whitespace', False) is True
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_gpt_oss_agrees_on_reasoning():
+    """Groq doesn't route through `harmony_model_profile` — `groq_model_profile` has its own
+    `'openai/gpt-oss'` entry — but it must reach the same reasoning verdict.
+
+    Groq's own profile is the reference here: it already documented gpt-oss as "graded
+    reasoning_effort (low/medium/high), always-on", which is what the Harmony spec says.
+    """
+    profile = GroqProvider.model_profile('openai/gpt-oss-120b')
+    assert profile is not None
+    assert profile.get('supports_thinking', False) is True
+    assert profile.get('thinking_always_enabled', False) is True
+
+
+@pytest.mark.parametrize(
+    ('provider_path', 'provider_cls', 'model_name'),
+    [
+        # Non-gpt-oss models on the same providers must be untouched by the Harmony flags.
+        ('cerebras', 'CerebrasProvider', 'llama-3.3-70b'),
+        ('heroku', 'HerokuProvider', 'nova-lite'),
+        ('nebius', 'NebiusProvider', 'meta-llama/Llama-3.3-70B-Instruct'),
+        ('ollama', 'OllamaProvider', 'llama3.2'),
+        ('ovhcloud', 'OVHcloudProvider', 'llama-3.3-70b-instruct'),
+    ],
+)
+def test_non_harmony_models_do_not_get_reasoning_flags(provider_path: str, provider_cls: str, model_name: str):
+    import importlib
+
+    provider = getattr(importlib.import_module(f'pydantic_ai.providers.{provider_path}'), provider_cls)
+
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_thinking', False) is False
+    assert profile.get('thinking_always_enabled', False) is False
+    assert profile.get('ignore_streamed_leading_whitespace', False) is False
+
+
+# =============================================================================
 # Ollama — three-layer merge with strict-mode override
 # =============================================================================
 
@@ -1292,6 +1371,8 @@ def test_ollama_gpt_oss():
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
             'ignore_streamed_leading_whitespace': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
