@@ -53,6 +53,7 @@ with try_import() as imports_successful:
         ChatCompletionOutput,
         ChatCompletionOutputComplete,
         ChatCompletionOutputFunctionDefinition,
+        ChatCompletionOutputLogprobs,
         ChatCompletionOutputMessage,
         ChatCompletionOutputToolCall,
         ChatCompletionOutputUsage,
@@ -61,6 +62,7 @@ with try_import() as imports_successful:
         ChatCompletionStreamOutputDelta,
         ChatCompletionStreamOutputDeltaToolCall,
         ChatCompletionStreamOutputFunction,
+        ChatCompletionStreamOutputLogprobs,
         ChatCompletionStreamOutputUsage,
     )
     from huggingface_hub.errors import HfHubHTTPError
@@ -1291,3 +1293,91 @@ async def test_huggingface_close_stream_only_suppresses_async_generator_race(err
             await response.close_stream()
     else:
         await response.close_stream()
+
+
+_LOGPROBS = [
+    {
+        'token': 'hello',
+        'logprob': -0.1,
+        'top_logprobs': [
+            {'token': 'hello', 'logprob': -0.1},
+            {'token': 'hi', 'logprob': -1.2},
+        ],
+    },
+    {
+        'token': ' world',
+        'logprob': -0.2,
+        'top_logprobs': [],
+    },
+]
+
+
+async def test_huggingface_logprobs_in_provider_details(allow_model_requests: None):
+    logprobs = ChatCompletionOutputLogprobs.parse_obj_as_instance({'content': _LOGPROBS})  # pyright: ignore[reportUnknownMemberType]
+    choice = ChatCompletionOutputComplete(
+        finish_reason='stop',
+        index=0,
+        message=ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
+            {'content': 'hello world', 'role': 'assistant'}
+        ),
+        logprobs=logprobs,
+    )
+    completion = ChatCompletionOutput.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
+        {
+            'id': '123',
+            'choices': [choice],
+            'created': 1704067200,  # 2024-01-01
+            'model': 'hf-model',
+            'object': 'chat.completion',
+            'usage': None,
+        }
+    )
+    mock_client = MockHuggingFace.create_mock(completion)
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(model)
+
+    result = await agent.run('hello')
+    response = result.all_messages()[1]
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'stop',
+            'timestamp': IsDatetime(),
+            'logprobs': _LOGPROBS,
+        }
+    )
+
+
+async def test_huggingface_stream_logprobs_in_provider_details(allow_model_requests: None):
+    logprobs = ChatCompletionStreamOutputLogprobs.parse_obj_as_instance({'content': _LOGPROBS})  # pyright: ignore[reportUnknownMemberType]
+    stream_chunk = ChatCompletionStreamOutput.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
+        {
+            'id': 'x',
+            'choices': [
+                ChatCompletionStreamOutputChoice(
+                    index=0,
+                    delta=ChatCompletionStreamOutputDelta(content='hello world', role='assistant'),
+                    finish_reason='stop',
+                    logprobs=logprobs,
+                )
+            ],
+            'created': 1704067200,  # 2024-01-01
+            'model': 'hf-model',
+            'object': 'chat.completion.chunk',
+            'usage': ChatCompletionStreamOutputUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
+        }
+    )
+    mock_client = MockHuggingFace.create_stream_mock([stream_chunk])
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(model)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello world'])
+
+    response = result.all_messages()[1]
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'stop',
+            'timestamp': IsDatetime(),
+            'logprobs': _LOGPROBS,
+        }
+    )
