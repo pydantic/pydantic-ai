@@ -2091,6 +2091,33 @@ async def test_extra_headers(allow_model_requests: None, openai_api_key: str):
     await agent.run('hello')
 
 
+async def test_extra_headers_not_mutated_in_place(allow_model_requests: None):
+    """The default `User-Agent` is added to a copy, not to the caller's `extra_headers` dict.
+
+    `extra_headers` is nested inside the settings dict, so the shallow merge in
+    `merge_model_settings` hands the model the caller's own object — a `setdefault` on it wrote
+    `pydantic-ai/<version>` back into the user's dict, where an app that reuses those headers for
+    its own requests would then ship a `User-Agent` it never set.
+
+    A unit test rather than a VCR one: the assertion is on a caller-side object after the request,
+    which no recorded interaction can express.
+    """
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    caller_headers = {'X-Tenant': 'acme'}
+    agent = Agent(m, model_settings=OpenAIChatModelSettings(extra_headers=caller_headers))
+    await agent.run('hello')
+
+    assert caller_headers == {'X-Tenant': 'acme'}
+    # The default still reaches the wire, it's just written to the copy.
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_headers'] == {
+        'X-Tenant': 'acme',
+        'User-Agent': IsStr(regex=r'pydantic-ai\/.*'),
+    }
+
+
 async def test_openai_store_false(allow_model_requests: None):
     """Test that openai_store=False is correctly passed to the OpenAI API."""
     c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))

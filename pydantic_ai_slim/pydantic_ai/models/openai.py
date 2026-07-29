@@ -1072,7 +1072,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         with _map_api_errors(self.model_name):
             try:
-                extra_headers = model_settings.get('extra_headers', {})
+                # Copied before `setdefault`: `extra_headers` is nested inside the settings dict, so the
+                # shallow merge in `merge_model_settings` hands us the caller's own object.
+                extra_headers = dict(model_settings.get('extra_headers', {}))
                 extra_headers.setdefault('User-Agent', get_user_agent())
 
                 # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors

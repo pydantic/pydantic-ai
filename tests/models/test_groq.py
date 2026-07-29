@@ -632,6 +632,31 @@ async def test_extra_headers(allow_model_requests: None, groq_api_key: str):
     await agent.run('hello')
 
 
+async def test_extra_headers_not_mutated_in_place(allow_model_requests: None):
+    """The default `User-Agent` is added to a copy, not to the caller's `extra_headers` dict.
+
+    `extra_headers` is nested inside the settings dict, so the shallow merge in
+    `merge_model_settings` hands the model the caller's own object — a `setdefault` on it wrote
+    `pydantic-ai/<version>` back into the user's dict, where an app that reuses those headers for
+    its own requests would then ship a `User-Agent` it never set.
+
+    Only the caller-side dict is asserted here, because `MockGroq` discards the outgoing kwargs.
+    That the default still reaches the wire is asserted in the parallel OpenAI test, whose mock
+    records them; the two providers build `extra_headers` with the same two lines.
+
+    A unit test rather than a VCR one: the assertion is on a caller-side object after the request,
+    which no recorded interaction can express.
+    """
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=MockGroq.create_mock(c)))
+
+    caller_headers = {'X-Tenant': 'acme'}
+    agent = Agent(m, model_settings=GroqModelSettings(extra_headers=caller_headers))
+    await agent.run('hello')
+
+    assert caller_headers == {'X-Tenant': 'acme'}
+
+
 async def test_map_text_content_input(allow_model_requests: None, groq_api_key: str):
     part = UserPromptPart(
         content=[
