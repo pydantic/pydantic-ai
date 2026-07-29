@@ -8,7 +8,7 @@ from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, assert_never, override
 
 from .. import usage
-from ..exceptions import ModelHTTPError, UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
     CachePoint,
@@ -1030,15 +1030,15 @@ class OpenRouterModel(OpenAIChatModel):
                     and not isinstance(response_dict.get('provider'), dict)
                 ):
                     # A null-`choices` body with no error envelope and no nested-provider
-                    # payload is a transient provider hiccup, not a malformed request:
-                    # surface it as a retryable upstream error rather than a bare
-                    # ValidationError. A `provider` dict that failed to validate above is
-                    # excluded on purpose — that body tried to be a nested-provider
-                    # response and was malformed, which must stay fatal.
-                    raise ModelHTTPError(
-                        status_code=502,
+                    # payload is a transient provider hiccup, not a malformed request.
+                    # `ModelAPIError` is `FallbackModel`'s default `fallback_on`, so this
+                    # reaches retry/fallback machinery that a bare `ValidationError` never
+                    # did. A `provider` dict that failed to validate above is excluded on
+                    # purpose — that body tried to be a nested-provider response and was
+                    # malformed, which must stay fatal.
+                    raise ModelAPIError(
                         model_name=response_dict.get('model') or self.model_name,
-                        body='OpenRouter returned a response with null `choices` and no error envelope',
+                        message='OpenRouter returned a response with null `choices` and no error envelope',
                     ) from exc
                 raise exc
 

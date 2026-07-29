@@ -12,6 +12,7 @@ from pydantic_ai import (
     Agent,
     BinaryContent,
     DocumentUrl,
+    ModelAPIError,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -1394,10 +1395,10 @@ def test_openrouter_null_choices_without_error_envelope_is_retryable() -> None:
         usage=None,
     )
 
-    with pytest.raises(ModelHTTPError) as exc_info:
+    with pytest.raises(ModelAPIError) as exc_info:
         model._process_response(completion)  # type: ignore[reportPrivateUsage]
 
-    assert exc_info.value.status_code == 502
+    assert not isinstance(exc_info.value, ModelHTTPError)  # not a faked HTTP status
     assert 'null `choices`' in str(exc_info.value)
 
 
