@@ -849,6 +849,25 @@ class TestBedrock:
             )
         )
 
+    @pytest.mark.parametrize('max_concurrency', [0, -1])
+    async def test_titan_v2_rejects_non_positive_max_concurrency(
+        self, bedrock_provider: BedrockProvider, max_concurrency: int
+    ):
+        """A non-positive `bedrock_max_concurrency` raises instead of hanging or leaking a `ValueError`.
+
+        `anyio.Semaphore(0)` constructs fine and then blocks forever on the first acquire, so `0` used
+        to deadlock the embed call with no request ever sent; a negative value surfaced anyio's bare
+        `ValueError`. `ConcurrencyLimiter` rejects the same range with a `UserError`.
+
+        No cassette: the error is raised before any request, and the single-text path isn't reached
+        because only multiple inputs go through `_embed_concurrent`.
+        """
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_max_concurrency=max_concurrency))
+
+        with pytest.raises(UserError, match=f'bedrock_max_concurrency must be >= 1, got {max_concurrency}'):
+            await embedder.embed_documents(['hello', 'world'])
+
     async def test_cohere_v3_minimal(self, bedrock_provider: BedrockProvider):
         """Test Cohere V3 with default settings (1024 dimensions, truncate=NONE)."""
         model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
