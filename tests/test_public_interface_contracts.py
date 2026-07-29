@@ -263,6 +263,11 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
         'pydantic_ai.messages.ToolReturnPart',
         'pydantic_ai.messages.UploadedFile',
         'pydantic_ai.models.concurrency.ConcurrencyLimitedModel',
+        # Variadic by design -- `FallbackModel(m1, m2, m3)` is the documented call. Everything after
+        # `*fallback_models` is already keyword-only, so no field can ever be inserted positionally
+        # and the hazard this gate exists for cannot reach it. Listed only because the walk used to
+        # be blind to `*args` and so never surfaced it.
+        'pydantic_ai.models.fallback.FallbackModel',
         'pydantic_ai.models.function.DeltaToolCall',
         'pydantic_ai.models.instrumented.InstrumentedModel',
         'pydantic_ai.output.OutputContext',

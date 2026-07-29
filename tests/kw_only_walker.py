@@ -27,8 +27,8 @@ import pydantic_ai
 from pydantic_ai.models import StreamedResponse
 
 
-def _positional_init_parameters(cls: type) -> int | None:
-    """Number of parameters a caller may pass positionally to `cls(...)`.
+def _takes_two_positional_arguments(cls: type) -> bool | None:
+    """Whether a caller may pass two or more arguments positionally to `cls(...)`, or `None` if unreadable.
 
     Reads the constructor signature rather than `dataclasses.fields`, so the generated and the
     hand-written `@dataclass(init=False)` cases are measured the same way, and so no CPython
@@ -38,7 +38,15 @@ def _positional_init_parameters(cls: type) -> int | None:
         parameters = inspect.signature(cls).parameters.values()
     except (TypeError, ValueError):
         return None
-    return len([p for p in parameters if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD])
+    positional = 0
+    for parameter in parameters:
+        # `*args` accepts arbitrarily many positional arguments, so a hand-written `__init__` that
+        # declares one is over the threshold however few named parameters precede it.
+        if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            return True
+        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            positional += 1
+    return positional >= 2
 
 
 def collect() -> dict[str, list[str]]:
@@ -73,10 +81,10 @@ def collect() -> dict[str, list[str]]:
             if issubclass(obj, StreamedResponse):
                 continue
 
-            positional_count = _positional_init_parameters(obj)
-            if positional_count is None:
+            takes_positional_pair = _takes_two_positional_arguments(obj)
+            if takes_positional_pair is None:
                 unreadable.append(name)
-            elif positional_count >= 2:
+            elif takes_positional_pair:
                 offenders.add(name)
 
     return {'offenders': sorted(offenders), 'skipped': sorted(skipped), 'unreadable': sorted(unreadable)}
