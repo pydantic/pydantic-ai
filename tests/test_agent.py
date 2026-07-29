@@ -104,6 +104,7 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.sambanova import SambaNovaProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
+    from pydantic_ai.providers.vllm import VLLMProvider
 else:
     try:
         from pydantic_ai.providers.alibaba import AlibabaProvider
@@ -122,12 +123,13 @@ else:
         from pydantic_ai.providers.sambanova import SambaNovaProvider
         from pydantic_ai.providers.together import TogetherProvider
         from pydantic_ai.providers.vercel import VercelProvider
+        from pydantic_ai.providers.vllm import VLLMProvider
     except ImportError:  # pragma: lax no cover
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None  # type: ignore
         FireworksProvider = GitHubProvider = HerokuProvider = None  # type: ignore
         MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None  # type: ignore
         OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None  # type: ignore
-        TogetherProvider = VercelProvider = None  # type: ignore
+        TogetherProvider = VercelProvider = VLLMProvider = None  # type: ignore
 
     try:
         from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -8649,6 +8651,7 @@ async def test_azure_provider_lifecycle_closes_client():
         pytest.param(lambda: TogetherProvider(api_key='t'), marks=[requires_openai], id='together'),
         pytest.param(lambda: VercelProvider(api_key='t'), marks=[requires_openai], id='vercel'),
         pytest.param(lambda: AlibabaProvider(api_key='t'), marks=[requires_openai], id='alibaba'),
+        pytest.param(lambda: VLLMProvider(base_url='http://localhost:8000/v1'), marks=[requires_openai], id='vllm'),
     ],
 )
 async def test_provider_reentry_recreates_http_client(provider_factory: Callable[[], Provider[Any]]):

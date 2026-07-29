@@ -1257,6 +1257,69 @@ def test_ollama_unknown_falls_back_to_overlay_only():
 
 
 # =============================================================================
+# vLLM — three-layer merge, Hugging Face repo IDs, single-system-message merge
+# =============================================================================
+
+
+def test_vllm_gpt_oss_hf_namespace():
+    from pydantic_ai.providers.vllm import VLLMProvider
+
+    profile = VLLMProvider.model_profile('openai/gpt-oss-20b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'openai_supports_tool_choice_required': False,
+            'ignore_streamed_leading_whitespace': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_multiple_system_messages': False,
+            'native_output_requires_schema_in_instructions': True,
+        }
+    )
+
+
+def test_vllm_qwen_hf_namespace():
+    from pydantic_ai.providers.vllm import VLLMProvider
+
+    profile = VLLMProvider.model_profile('Qwen/Qwen3-32B')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_multiple_system_messages': False,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'native_output_requires_schema_in_instructions': True,
+        }
+    )
+
+
+def test_vllm_unknown_falls_back_to_overlay_only():
+    from pydantic_ai.providers.vllm import VLLMProvider
+
+    profile = VLLMProvider.model_profile('some-unknown-model')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_multiple_system_messages': False,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'native_output_requires_schema_in_instructions': True,
+        }
+    )
+
+
+# =============================================================================
 # Cerebras — three-layer merge with reasoning detection
 # =============================================================================
 
