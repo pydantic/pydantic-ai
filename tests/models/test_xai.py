@@ -1438,19 +1438,19 @@ def _text_chunk_with_proto_finish_reason(
 
 
 @pytest.mark.parametrize(
-    ('proto_reason', 'expected'),
+    ('proto_reason_name', 'expected'),
     [
-        (sample_pb2.FinishReason.REASON_STOP, 'stop'),
-        (sample_pb2.FinishReason.REASON_MAX_LEN, 'length'),
-        (sample_pb2.FinishReason.REASON_MAX_CONTEXT, 'length'),
-        (sample_pb2.FinishReason.REASON_TOOL_CALLS, 'tool_call'),
-        (sample_pb2.FinishReason.REASON_TIME_LIMIT, 'error'),
+        ('REASON_STOP', 'stop'),
+        ('REASON_MAX_LEN', 'length'),
+        ('REASON_MAX_CONTEXT', 'length'),
+        ('REASON_TOOL_CALLS', 'tool_call'),
+        ('REASON_TIME_LIMIT', 'error'),
         # The proto default for "not set yet", which every chunk before the last one carries.
-        (sample_pb2.FinishReason.REASON_INVALID, None),
+        ('REASON_INVALID', None),
     ],
 )
 async def test_xai_stream_finish_reason_covers_every_proto_reason(
-    allow_model_requests: None, proto_reason: sample_pb2.FinishReason, expected: FinishReason | None
+    allow_model_requests: None, proto_reason_name: str, expected: FinishReason | None
 ):
     """The streamed finish reason must come from the proto enum, not `Response.finish_reason`.
 
@@ -1458,7 +1458,11 @@ async def test_xai_stream_finish_reason_covers_every_proto_reason(
     `'REASON_MAX_LEN'` / … — never the lowercase `'stop'` / `'length'` spellings. Reading it through a
     string map keyed on the lowercase names missed *every* reason and silently fell back to `'stop'`, so
     a truncated or tool-calling stream reported a clean finish.
+
+    Parametrized over enum *names* rather than values so the decorator doesn't touch `sample_pb2`, which
+    isn't importable in the runs where `xai-sdk` is absent and this module is skipped wholesale.
     """
+    proto_reason: sample_pb2.FinishReason = getattr(sample_pb2.FinishReason, proto_reason_name)
     stream = [_text_chunk_with_proto_finish_reason('hello', proto_reason)]
     mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
