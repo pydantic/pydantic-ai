@@ -1066,6 +1066,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
+        # Copy so the sampling-param drops never mutate the caller's dict: `merge_model_settings` can
+        # return the model's own `settings` by identity, so popping in place would drop the keys on the next request.
+        model_settings = model_settings.copy()
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
 
         _drop_unsupported_params(profile, model_settings)
@@ -2563,6 +2566,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
             profile,
         )
+        # Copy so the sampling-param drops never mutate the caller's dict: `merge_model_settings` can
+        # return the model's own `settings` by identity, so popping in place would drop the keys on the next request.
+        model_settings = model_settings.copy()
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
         _drop_unsupported_params(profile, model_settings)
         extra_headers, timeout = self._build_request_options(model_settings)
