@@ -118,6 +118,7 @@ def build_parent_context(span_reference: SpanReference | None) -> Context | None
         trace_id = int(span_reference.trace_id, 16)
         span_id = int(span_reference.span_id, 16)
     except ValueError:  # pragma: no cover
+        # Defensive against malformed hex strings.
         return None
     span_ctx = SpanContext(
         trace_id=trace_id,

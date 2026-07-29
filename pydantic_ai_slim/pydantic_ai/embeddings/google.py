@@ -331,6 +331,7 @@ def _map_usage(
     if response.embeddings:  # pragma: no branch
         for emb in response.embeddings:
             if emb.statistics and emb.statistics.token_count:
+                # Requires Vertex AI.
                 total_tokens += int(emb.statistics.token_count)  # pragma: lax no cover
 
     return RequestUsage(input_tokens=total_tokens)

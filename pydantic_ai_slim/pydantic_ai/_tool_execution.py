@@ -1085,6 +1085,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             for i in executable_indices:
                 if self.call_kinds[i] == 'output':
                     r = output_results.get(i)
+                    # Every output index is populated above.
                     if r is None:
                         continue  # pragma: no cover
                     is_winner = self.final_result is not None and r.call.tool_call_id == self.final_result.tool_call_id

@@ -282,6 +282,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # run with no result event, flushed by `on_error`.
         self._streamed_call_parts[part.tool_call_id] = part
         return
+        # Marks this an async generator.
         yield  # pragma: no cover
 
     def _tool_input_available_chunk(self, part: ToolCallPart) -> ToolInputAvailableChunk:

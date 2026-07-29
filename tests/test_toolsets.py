@@ -1004,6 +1004,7 @@ async def test_handle_call_raw_mode_propagates_tool_failed_from_hooks(hook_name:
         ) -> dict[str, Any]:
             if hook_name == 'execute':
                 raise ToolFailed('hook failed')
+            # Unreachable: the 'validate' hook fails before execute runs.
             return args  # pragma: no cover
 
         async def before_tool_validate(
@@ -1017,6 +1018,7 @@ async def test_handle_call_raw_mode_propagates_tool_failed_from_hooks(hook_name:
 
     @toolset.tool_plain
     def tool() -> str:
+        # Unreachable: a hook always fails before the tool body runs.
         return 'ok'  # pragma: no cover
 
     tool_manager = await ToolManager[None](toolset, root_capability=FailingCapability()).for_run_step(

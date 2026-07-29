@@ -688,6 +688,7 @@ def _wrap_async(
                         try:
                             span.set_attribute('return', result)
                         except Exception:  # pragma: no cover
+                            # Defensive.
                             pass
             except Exception as e:
                 _dispatch_on_error(e, sampled, inputs, get_eval_context_kwargs, span, target, config)
@@ -762,6 +763,7 @@ def _wrap_sync(
                         try:
                             span.set_attribute('return', result)
                         except Exception:  # pragma: no cover
+                            # Defensive.
                             pass
             except Exception as e:
                 _dispatch_on_error(e, sampled, inputs, get_eval_context_kwargs, span, target, config)

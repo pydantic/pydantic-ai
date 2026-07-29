@@ -51,6 +51,7 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
             _strip_system_prompts(messages)
         elif _has_system_prompt(messages):
             return request_context
+        # `ctx.agent` is always set during an agent run.
         if ctx.agent is None:
             return request_context  # pragma: no cover
         sys_parts = await ctx.agent.system_prompt_parts(

@@ -2232,13 +2232,13 @@ def test_extract_args_without_logfire_raises(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(online_module, '_LOGFIRE_INSTALLED', False)
 
     with pytest.raises(RuntimeError, match='logfire'):
-
+        # The decorator raises before the body runs.
         @online_module.evaluate(AlwaysTrue(), extract_args=True)
         async def f(x: int) -> int:  # pragma: no cover
             return x
 
     with pytest.raises(RuntimeError, match='logfire'):
-
+        # The decorator raises before the body runs.
         @online_module.evaluate(AlwaysTrue(), record_return=True)
         async def g(x: int) -> int:  # pragma: no cover
             return x
@@ -2248,7 +2248,7 @@ def test_extract_args_without_logfire_raises(monkeypatch: pytest.MonkeyPatch):
 def test_extract_args_unknown_parameter_raises():
     """Naming an unknown parameter in `extract_args` fails at decoration time."""
     with pytest.raises(ValueError, match='not in'):
-
+        # The decorator raises before the body runs.
         @evaluate(AlwaysTrue(), extract_args=['nonexistent'])
         async def f(x: int) -> int:  # pragma: no cover
             return x

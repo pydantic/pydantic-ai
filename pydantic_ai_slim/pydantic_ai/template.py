@@ -129,6 +129,7 @@ def _import_pydantic_handlebars() -> Any:
 
         return pydantic_handlebars
     except ImportError as e:  # pragma: no cover
+        # Optional dependency.
         raise ImportError(
             'pydantic-handlebars is required for TemplateStr support. '
             'Install it with: pip install "pydantic-ai-slim[spec]"'

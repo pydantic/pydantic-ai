@@ -3097,6 +3097,7 @@ def _finalize_streamed_tool_search_call_part(part: NativeToolSearchCallPart) -> 
         try:
             parsed: dict[str, Any] | None = cast(dict[str, Any], pydantic_core.from_json(part.args))
         except ValueError:  # pragma: no cover
+            # Malformed partial args.
             parsed = None
     else:
         parsed = None

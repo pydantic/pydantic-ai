@@ -6981,6 +6981,7 @@ class TestWrapNodeRunHook:
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                # A bare `async for` doesn't call this.
                 return await handler(node)  # pragma: no cover
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[NodeObserverCap()])
@@ -17104,6 +17105,7 @@ class TestBeforeOutputValidate:
                 output_context: OutputContext,
                 output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
+                # The uncovered body is the assertion: this hook must not fire for plain text.
                 log.append('validate')  # pragma: no cover
                 return output  # pragma: no cover
 
@@ -20735,6 +20737,7 @@ class TestImageOutputWithHooks:
             async def before_output_validate(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
+                # The uncovered body is the assertion: this hook must not fire for images.
                 log.append('validate')  # pragma: no cover
                 return output  # pragma: no cover
 
@@ -23232,6 +23235,7 @@ async def test_dynamic_capability_contributes_toolset_function() -> None:
 
     @toolset.tool_plain
     def func_tool() -> str:
+        # The tool listing is what's asserted.
         return 'from func'  # pragma: no cover
 
     @dataclass

@@ -134,6 +134,7 @@ _DEFAULT_PARAMETER_DESCRIPTION = (
 )
 
 
+# Schema source only, never invoked.
 def _search_tools_signature(
     queries: Annotated[list[str], Field(description=_DEFAULT_PARAMETER_DESCRIPTION)],
 ) -> ToolSearchReturnContent:  # pragma: no cover

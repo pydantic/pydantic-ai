@@ -89,6 +89,7 @@ class AgentSpec(BaseModel):
             try:
                 import yaml
             except ImportError:  # pragma: no cover
+                # Reaching this requires PyYAML to not be installed.
                 raise ImportError(
                     'PyYAML is required to load YAML agent specs. Install it with: pip install "pydantic-ai-slim[spec]"'
                 ) from None
@@ -147,6 +148,7 @@ class AgentSpec(BaseModel):
             try:
                 import yaml
             except ImportError:  # pragma: no cover
+                # Reaching this requires PyYAML to not be installed.
                 raise ImportError(
                     'PyYAML is required to save YAML agent specs. Install it with: pip install "pydantic-ai-slim[spec]"'
                 ) from None

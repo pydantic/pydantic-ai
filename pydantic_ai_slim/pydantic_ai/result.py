@@ -732,6 +732,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         """Whether the stream has been cancelled via `cancel()`."""
         if self._stream_response is not None:
             return self._stream_response.cancelled
+        # Only reachable via a `wrap_run` short-circuit, where there is no stream.
         return False  # pragma: no cover
 
 

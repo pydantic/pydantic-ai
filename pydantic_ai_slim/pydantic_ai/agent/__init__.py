@@ -1788,6 +1788,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             # Skip CancelledError: it's expected cancellation propagation,
                             # and setting __context__ on it causes hangs on Python 3.10.
                             if not isinstance(_wrap_exc, asyncio.CancelledError) and _wrap_exc is not _run_error:
+                                # Only fires for bugs in `wrap_run` implementations.
                                 _run_error.__context__ = _wrap_exc  # pragma: no cover
                     # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is always still pending here.
                     elif not _wrap_task.done():  # pragma: no branch
@@ -2924,6 +2925,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if isinstance(cap_ts, AbstractToolset):
                     toolsets.append(cap_ts)  # pyright: ignore[reportUnknownArgumentType]
                 else:  # pragma: no cover
+                    # `get_toolset()` always returns an `AbstractToolset`.
                     toolsets.append(DynamicToolset(cap_ts))
 
         return toolsets

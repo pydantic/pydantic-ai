@@ -2972,6 +2972,7 @@ def test_fallback_continuation_delay_without_pin_polls_inner_models() -> None:
     model; only the one owning the background job returns a delay (gated on the response's `background`
     marker), so the fallback surfaces it — and returns `None` when no model claims it."""
 
+    # Never called.
     def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
         return ModelResponse(parts=[TextPart('x')])
 
