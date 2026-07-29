@@ -577,10 +577,9 @@ class ModelResponsePartsManager:
             )
             if should_materialize and part_index in self._string_buffers:
                 materialized_part = self._materialize_and_cache_part(part_index)
-                if not isinstance(
-                    materialized_part, ToolCallPartDelta | ToolCallPart | NativeToolCallPart
-                ):  # pragma: no cover
-                    raise AssertionError(f'Expected a tool call, got {materialized_part!r}')
+                assert isinstance(materialized_part, ToolCallPartDelta | ToolCallPart | NativeToolCallPart), (
+                    f'Expected a tool call, got {materialized_part!r}'
+                )
                 existing_part = materialized_part
             return delta.apply(existing_part)
 
@@ -598,8 +597,9 @@ class ModelResponsePartsManager:
 
         if delta.tool_name_delta is not None:
             materialized_part = self._materialize_and_cache_part(part_index)
-            if not isinstance(materialized_part, ToolCallPartDelta):  # pragma: no cover
-                raise AssertionError(f'Expected an incomplete tool call, got {materialized_part!r}')
+            assert isinstance(materialized_part, ToolCallPartDelta), (
+                f'Expected an incomplete tool call, got {materialized_part!r}'
+            )
             return delta.apply(materialized_part)
 
         if not args and part_index not in self._string_buffers:
@@ -609,8 +609,9 @@ class ModelResponsePartsManager:
         if delta.tool_call_id or delta.provider_name or delta.provider_details:
             metadata_delta = replace(delta, args_delta=None)
             updated_part = metadata_delta.apply(existing_part)
-            if not isinstance(updated_part, ToolCallPartDelta):  # pragma: no cover
-                raise AssertionError(f'Expected an incomplete tool call, got {updated_part!r}')
+            assert isinstance(updated_part, ToolCallPartDelta), (
+                f'Expected an incomplete tool call, got {updated_part!r}'
+            )
         elif updated_part.provider_details is not None:
             updated_part = replace(updated_part, provider_details=updated_part.provider_details.copy())
         self._buffer_string_delta(part_index, current_args, args)
@@ -686,12 +687,12 @@ class ModelResponsePartsManager:
         if isinstance(part, TextPart | ThinkingPart):
             return replace(part, content=value)
         if isinstance(part, ToolCallPartDelta):
-            if isinstance(part.args_delta, dict):  # pragma: no cover
-                raise AssertionError('Cannot materialize string arguments onto dictionary arguments')
+            assert not isinstance(part.args_delta, dict), (
+                'Cannot materialize string arguments onto dictionary arguments'
+            )
             return replace(part, args_delta=value)
         if isinstance(part, ToolCallPart | NativeToolCallPart):
-            if isinstance(part.args, dict):  # pragma: no cover
-                raise AssertionError('Cannot materialize string arguments onto dictionary arguments')
+            assert not isinstance(part.args, dict), 'Cannot materialize string arguments onto dictionary arguments'
             materialized = replace(part, args=value)
             if isinstance(materialized, ToolCallPart):
                 materialized = self._typed_call_part(materialized)
