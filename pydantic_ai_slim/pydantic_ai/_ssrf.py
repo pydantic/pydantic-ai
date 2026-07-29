@@ -119,6 +119,40 @@ _DEFAULT_TIMEOUT = 30  # seconds
 _SENSITIVE_HEADERS = frozenset(('authorization', 'cookie', 'proxy-authorization'))
 
 
+def _origin(url: str) -> tuple[str, str, int]:
+    """Return the normalized origin (scheme, host, port) of a URL.
+
+    The host is lowercased and stripped of a trailing dot (FQDN root label), and
+    the port defaults to 443 for https and 80 for http, matching how `extract_host_and_port`
+    normalizes a host and how browsers/httpx compute an origin for cross-origin
+    redirect decisions.
+    """
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    hostname = (parsed.hostname or '').rstrip('.')
+    default_port = 443 if scheme == 'https' else 80
+    port = parsed.port or default_port
+    return scheme, hostname, port
+
+
+def _keeps_credentials(from_url: str, to_url: str) -> bool:
+    """Whether sensitive headers may be forwarded from `from_url` to `to_url`.
+
+    Matches httpx semantics: credentials are kept on a same-origin redirect
+    (scheme + host + port all match) and on an http→https upgrade on the same
+    host (from http:80 to https:443); they are stripped on every other redirect,
+    including port changes, https→http downgrades, and cross-host hops.
+    """
+    from_scheme, from_host, from_port = _origin(from_url)
+    to_scheme, to_host, to_port = _origin(to_url)
+    if (from_scheme, from_host, from_port) == (to_scheme, to_host, to_port):
+        return True
+    # http→https upgrade on the same host keeps credentials, matching httpx.
+    return (
+        from_scheme == 'http' and from_port == 80 and to_scheme == 'https' and to_port == 443 and from_host == to_host
+    )
+
+
 @dataclass
 class ResolvedUrl:
     """Result of URL validation and DNS resolution."""
@@ -475,7 +509,6 @@ async def safe_download(
     """
     current_url = url
     redirects_followed = 0
-    original_hostname = urlparse(url).hostname
     effective_headers: dict[str, str] = dict(headers) if headers else {}
 
     async with create_async_http_client(timeout=timeout) as client:
@@ -517,11 +550,16 @@ async def safe_download(
                 if not location:
                     raise ValueError('Redirect response missing Location header')
 
+                previous_url = current_url
                 current_url = resolve_redirect_url(current_url, location)
 
-                # Strip sensitive headers on cross-origin redirects (RFC 7235)
-                redirect_hostname = urlparse(current_url).hostname
-                if redirect_hostname != original_hostname:
+                # Strip sensitive headers on cross-origin redirects (RFC 7235).
+                # Compare full origins (scheme + host + port) against the previous
+                # hop, not just the first hostname, so credentials are stripped on
+                # port changes, https→http downgrades, and re-leaks in chained
+                # redirects (a→b→a). An http→https upgrade on the same host keeps
+                # credentials, matching httpx.
+                if not _keeps_credentials(previous_url, current_url):
                     effective_headers = {
                         k: v for k, v in effective_headers.items() if k.lower() not in _SENSITIVE_HEADERS
                     }
