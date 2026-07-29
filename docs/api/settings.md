@@ -6,3 +6,4 @@
       members:
         - ModelSettings
         - ToolOrOutput
+        - ServiceTier

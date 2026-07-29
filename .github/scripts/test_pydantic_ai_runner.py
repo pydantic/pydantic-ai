@@ -34,6 +34,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Tool callables, shared helpers, and the CLI live in distinct submodules;
 # tests import each from where it actually lives, not from a re-export.
 import pydantic_ai_gh_aw_shim as pkg
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData
 from pydantic_ai_gh_aw_shim import (
     cli as shim,
     shared,
@@ -719,6 +721,106 @@ def test_task_registered_via_build_claude_code_toolset():
 
 def test_subagent_request_limit_is_a_constant():
     assert shim.SUBAGENT_REQUEST_LIMIT == 75
+
+
+def test_attention_dynamic_workflow_is_bounded_to_specialists():
+    """Attention triage gets a tiny purpose-built crew, not recursive free-form delegation."""
+    from pydantic_ai.models.test import TestModel
+
+    workflow = shim.attention_dynamic_workflow(TestModel())
+    assert workflow.max_agent_calls == 2
+    assert workflow.max_retries == 1
+    # Wall-clock while awaiting the specialists' asyncio.gather: generous
+    # enough for two real model calls, still bounded well under the job timeout.
+    assert workflow.resource_limits == {'max_duration_secs': 300}
+    assert workflow.forward_usage is False
+    assert workflow.inherit_model is True
+    assert workflow.sub_agent_usage_limits is not None
+    assert workflow.sub_agent_usage_limits.request_limit == 2
+    assert {agent.name for agent in workflow.agents} == {'attention_classifier', 'false_positive_skeptic'}
+
+
+def test_attention_dynamic_workflow_runs_bounded_fanout():
+    """Exercise the actual Monty script path, including concurrent specialist calls."""
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+    from pydantic_ai.usage import UsageLimits
+
+    script = """
+import asyncio
+import json
+candidate = {"number": 1}
+results = await asyncio.gather(
+    attention_classifier(task=json.dumps(candidate)),
+    false_positive_skeptic(task=json.dumps(candidate)),
+)
+results
+"""
+    specialist_calls = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal specialist_calls
+        if 'run_workflow' not in {tool.name for tool in info.function_tools}:
+            specialist_calls += 1
+            return ModelResponse(parts=[TextPart('specialist evidence')])
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('run_workflow', {'code': script})])
+
+    model = FunctionModel(respond)
+    agent = Agent(model, capabilities=[shim.attention_dynamic_workflow(model)])
+    result = asyncio.run(agent.run('go', usage_limits=UsageLimits(request_limit=5)))
+
+    assert result.output == 'done'
+    assert specialist_calls == 2
+
+
+def test_dynamic_workflow_gate_env_toggles_run_workflow_tool(monkeypatch: pytest.MonkeyPatch):
+    """The attention crew is wired only when PYDANTIC_AI_DYNAMIC_WORKFLOW matches
+    the exact `attention-triage` literal. Both attention tests bypass this gate by
+    calling `attention_dynamic_workflow` directly, so a typo in the literal (here
+    or in the workflow .md) would silently drop the crew while CI stayed green.
+    Drive the real `run()` seam offline and assert the `run_workflow` tool appears
+    only when the env value matches, and pin the workflow .md's env line.
+    """
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
+
+    def _tools_seen_during_run() -> set[str]:
+        seen: set[str] = set()
+
+        def _respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.update(tool.name for tool in info.function_tools)
+            return ModelResponse(parts=[TextPart('done')])
+
+        async def _stream(messages: list[ModelMessage], info: AgentInfo):
+            seen.update(tool.name for tool in info.function_tools)
+            yield 'done'
+
+        asyncio.run(
+            shim.run(
+                prompt='classify the candidates',
+                model=FunctionModel(_respond, stream_function=_stream),
+                label='test-model',
+                claude_code_toolset=shim.select_claude_code_toolset(None, None, task=None),
+                mcp_servers=[],
+                session_id='sess',
+            )
+        )
+        return seen
+
+    monkeypatch.setenv('PYDANTIC_AI_DYNAMIC_WORKFLOW', 'attention-triage')
+    assert 'run_workflow' in _tools_seen_during_run()
+
+    monkeypatch.delenv('PYDANTIC_AI_DYNAMIC_WORKFLOW', raising=False)
+    assert 'run_workflow' not in _tools_seen_during_run()
+
+    workflow = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.md'
+    assert 'PYDANTIC_AI_DYNAMIC_WORKFLOW: attention-triage' in workflow.read_text(encoding='utf-8')
 
 
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pytest.MonkeyPatch):
@@ -1504,6 +1606,66 @@ def test_mcp_wrapped_in_filter_when_allowlist_present(tmp_path: Path):
     )
     assert len(servers) == 2
     assert {s.__class__.__name__ for s in servers} == {'FilteredToolset'}
+
+
+# --------------------------------------------------------------------------- #
+# MCP tool-error recovery (the empty-body-`APPROVE` crash: a bare `McpError`
+# from the gh-aw gateway escaped `MCPToolset` and killed the whole run).
+# --------------------------------------------------------------------------- #
+def _mcp_error(message: str) -> McpError:
+    return McpError(ErrorData(code=-32602, message=message))
+
+
+def _error_hook_ctx() -> RunContext[None]:
+    from pydantic_ai.usage import RunUsage
+
+    return RunContext(
+        deps=None,
+        model=cast(_Model[Any], None),
+        usage=RunUsage(),
+        prompt=None,
+        messages=[],
+        run_step=0,
+    )
+
+
+def test_mcp_protocol_error_message_recognizes_only_mcp_errors():
+    err = _mcp_error('review body is empty')
+    assert shim._mcp_protocol_error_message(err) == str(err)  # pyright: ignore[reportPrivateUsage]
+    # A non-MCP exception (e.g. a real bug in a tool) must not be swallowed as a tool result.
+    assert shim._mcp_protocol_error_message(RuntimeError('not mcp')) is None  # pyright: ignore[reportPrivateUsage]
+
+
+def test_recover_mcp_tool_errors_returns_error_string_instead_of_crashing():
+    from pydantic_ai.messages import ToolCallPart
+    from pydantic_ai.tools import ToolDefinition
+
+    cap = shim._RecoverMCPToolErrors()  # pyright: ignore[reportPrivateUsage]
+    call = ToolCallPart(tool_name='mcp__safeoutputs__submit_pull_request_review', args={}, tool_call_id='c1')
+    out = asyncio.run(
+        cap.on_tool_execute_error(
+            _error_hook_ctx(),
+            call=call,
+            tool_def=ToolDefinition(name=call.tool_name),
+            args={},
+            error=_mcp_error('review body is empty and no create_pull_request_review_comment calls were made'),
+        )
+    )
+    assert out.startswith('error:') and 'review body is empty' in out
+
+
+def test_recover_mcp_tool_errors_reraises_non_mcp_errors():
+    from pydantic_ai.messages import ToolCallPart
+    from pydantic_ai.tools import ToolDefinition
+
+    cap = shim._RecoverMCPToolErrors()  # pyright: ignore[reportPrivateUsage]
+    call = ToolCallPart(tool_name='Bash', args={}, tool_call_id='c2')
+    with pytest.raises(RuntimeError, match='boom'):
+        asyncio.run(
+            cap.on_tool_execute_error(
+                _error_hook_ctx(), call=call, tool_def=ToolDefinition(name='Bash'), args={}, error=RuntimeError('boom')
+            )
+        )
 
 
 def test_mcp_allow_predicate_server_wildcard_vs_specific():

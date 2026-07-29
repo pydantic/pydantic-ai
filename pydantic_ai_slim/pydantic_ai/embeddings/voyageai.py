@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -151,6 +152,7 @@ class VoyageAIEmbeddingModel(EmbeddingModel):
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None = None,
     ) -> EmbeddingResult:
+        check_allow_model_requests()
         inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(VoyageAIEmbeddingSettings, settings)
 

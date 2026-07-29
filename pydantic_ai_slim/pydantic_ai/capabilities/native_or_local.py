@@ -173,11 +173,14 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         if local is None or local is False or self._requires_native():
             return None
 
-        # local is Tool | AbstractToolset after __post_init__ resolution
+        # local is Tool | AbstractToolset after __post_init__ resolution.
+        # When wrapping a bare local callable, stamp the capability's `id` onto the toolset so it can
+        # be used with durable execution (which wraps leaf toolsets by `id`). An `AbstractToolset`
+        # passed as `local=` keeps its own id and is never overwritten.
         toolset: AbstractToolset[AgentDepsT] = (
             cast(AbstractToolset[AgentDepsT], local)
             if isinstance(local, AbstractToolset)
-            else FunctionToolset([cast(Tool[AgentDepsT], local)])
+            else FunctionToolset([cast(Tool[AgentDepsT], local)], id=self.id)
         )
 
         if self.native is not False:

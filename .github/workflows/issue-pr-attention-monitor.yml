@@ -1,0 +1,90 @@
+name: Issue and PR attention operations
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: issue-pr-attention-reconciliation
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    if: github.repository == 'pydantic/pydantic-ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      escalation_items: ${{ steps.reconcile.outputs.escalation_items }}
+      has_escalations: ${{ steps.reconcile.outputs.has_escalations }}
+      slack_payload: ${{ steps.reconcile.outputs.slack_payload }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Reconcile active attention items
+        id: reconcile
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python .github/scripts/issue_pr_attention_monitor.py reconcile
+
+  notify:
+    needs: reconcile
+    # not cancelled(): a reconcile run that failed on one item still queues
+    # escalations from its healthy items, and they must reach Slack.
+    if: ${{ !cancelled() && needs.reconcile.outputs.has_escalations == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: pydantic-ai-triage
+    permissions: {}
+    steps:
+      - name: Escalate unresolved items privately
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          errors: true
+          payload: ${{ needs.reconcile.outputs.slack_payload }}
+          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+
+  finalize:
+    needs: [reconcile, notify]
+    if: ${{ !cancelled() && needs.notify.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Finalize delivered escalations
+        env:
+          ATTENTION_ESCALATIONS: '{"items":${{ needs.reconcile.outputs.escalation_items }}}'
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python .github/scripts/issue_pr_attention_monitor.py finalize
+
+  alert:
+    needs: [reconcile, notify, finalize]
+    # A triage system that dies silently is worse than none: any failed job
+    # in the pipeline reports privately through the same Slack webhook.
+    if: ${{ !cancelled() && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: pydantic-ai-triage
+    permissions: {}
+    steps:
+      - name: Report attention operations failure privately
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          errors: true
+          payload: '{"text":":rotating_light: Issue and PR attention operations failed: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|inspect the run>"}'
+          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
