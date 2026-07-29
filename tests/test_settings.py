@@ -10,6 +10,9 @@ from pydantic_ai.settings import ModelSettings, merge_model_settings
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
 
+_MODEL_MODULE_NAMES = [module_info.name for module_info in pkgutil.iter_modules(models.__path__, f'{models.__name__}.')]
+
+
 def _discover_model_settings() -> tuple[dict[str, type], list[str]]:
     """Collect every `ModelSettings` subclass defined by a `pydantic_ai.models` submodule.
 
@@ -18,14 +21,14 @@ def _discover_model_settings() -> tuple[dict[str, type], list[str]]:
     """
     settings_classes: dict[str, type] = {}
     unimportable: list[str] = []
-    for module_info in pkgutil.iter_modules(models.__path__, f'{models.__name__}.'):
+    for module_name in _MODEL_MODULE_NAMES:
         try:
-            module = importlib.import_module(module_info.name)
+            module = importlib.import_module(module_name)
         except ImportError as e:  # pragma: lax no cover
-            unimportable.append(f'{module_info.name} ({e})')
+            unimportable.append(f'{module_name} ({e})')
             continue
         for name, obj in vars(module).items():
-            if not isinstance(obj, type) or obj.__module__ != module_info.name:
+            if not isinstance(obj, type) or obj.__module__ != module_name:
                 continue
             # `TypedDict` subclasses report `dict` as their only `__bases__`; `__orig_bases__` keeps the real chain.
             bases = list(getattr(obj, '__orig_bases__', ()))
@@ -58,13 +61,11 @@ def test_specific_prefix_settings(settings_cls: type):
 
 
 def test_model_settings_discovery():
-    # A loose floor: adding or removing a provider shouldn't churn this, but a discovery bug (moved
-    # package, changed base class, provider modules failing to import) can't quietly shrink the prefix
-    # check to nothing the way a hardcoded provider list could.
-    assert len(_MODEL_SETTINGS_CLASSES) >= 10, (
-        f'only discovered {sorted(_MODEL_SETTINGS_CLASSES)}, '
-        f'unimportable modules: {_UNIMPORTABLE_MODEL_MODULES or "none"}'
-    )
+    # The number of settings classes depends on which optional groups are installed, so the rot guard
+    # is on the module walk instead: if that quietly returns (almost) nothing because the package moved,
+    # every prefix check above silently disappears, which is what the hardcoded provider list did.
+    assert len(_MODEL_MODULE_NAMES) >= 15, f'only walked {_MODEL_MODULE_NAMES}'
+    assert _MODEL_SETTINGS_CLASSES, f'no settings classes found, unimportable modules: {_UNIMPORTABLE_MODEL_MODULES}'
 
 
 @pytest.mark.parametrize(
