@@ -104,16 +104,24 @@ _MODEL_SOURCES = {
 }
 
 
-def _supported_by(field_docstring: str) -> list[str] | None:
+def _supported_by(field_docstring: str) -> list[str]:
+    """The provider labels a field docstring's `Supported by:` list names.
+
+    Returns an empty list when the field has no such list, which the test below rejects: a general
+    setting whose provider support isn't documented anywhere is the same documentation gap this test
+    exists to catch.
+    """
     match = re.search(r'Supported by:\n\n(.*?)(?:\n\n|\Z)', field_docstring, re.DOTALL)
-    if match is None:
-        return None
     # Entries may carry a parenthesized caveat, e.g. `* OpenAI (some models, not o1)`.
-    return [
-        re.sub(r'\s*\(.*', '', line.strip().removeprefix('* '))
-        for line in match.group(1).splitlines()
-        if line.strip().startswith('* ')
-    ]
+    return (
+        [
+            re.sub(r'\s*\(.*', '', line.strip().removeprefix('* '))
+            for line in match.group(1).splitlines()
+            if line.strip().startswith('* ')
+        ]
+        if match
+        else []
+    )
 
 
 def _documented_support() -> dict[str, list[str]]:
@@ -124,14 +132,21 @@ def _documented_support() -> dict[str, list[str]]:
         for node in ast.parse(settings_source.read_text(encoding='utf-8')).body
         if isinstance(node, ast.ClassDef) and node.name == 'ModelSettings'
     )
-    documented: dict[str, list[str]] = {}
-    for annotation, following in zip(class_def.body, class_def.body[1:]):
-        if not (isinstance(annotation, ast.AnnAssign) and isinstance(annotation.target, ast.Name)):
-            continue
-        docstring = ast.literal_eval(following.value) if isinstance(following, ast.Expr) else ''
-        if isinstance(docstring, str) and (labels := _supported_by(docstring)) is not None:
-            documented[annotation.target.id] = labels
-    return documented
+    fields = [
+        node.target.id
+        for node in class_def.body
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+    ]
+    docstrings = {
+        annotation.target.id: ast.literal_eval(following.value)
+        for annotation, following in zip(class_def.body, class_def.body[1:])
+        if isinstance(annotation, ast.AnnAssign)
+        and isinstance(annotation.target, ast.Name)
+        and isinstance(following, ast.Expr)
+        and isinstance(following.value, ast.Constant)
+        and isinstance(following.value.value, str)
+    }
+    return {field: _supported_by(docstrings.get(field, '')) for field in fields}
 
 
 _DOCUMENTED_SUPPORT = _documented_support()
@@ -170,6 +185,8 @@ def test_supported_by_matches_implementation(field: str):
     interaction can express.
     """
     labels = _DOCUMENTED_SUPPORT[field]
+    assert labels, 'no `Supported by:` list, so there is nowhere for a user to look up this setting'
+
     unknown = set(labels) - _SUPPORTED_BY_LABELS.keys()
     assert not unknown, f'unrecognised provider name(s) {unknown}, add them to `_SUPPORTED_BY_LABELS`'
 
