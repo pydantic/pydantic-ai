@@ -1188,9 +1188,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 `tasks/result`. Only valid for tools whose `execution.taskSupport` is `'required'` or `'optional'`.
 
         Raises:
-            ModelRetry: If the tool errors and `tool_error_behavior='retry'` (the default).
-            fastmcp.exceptions.ToolError: If the tool errors and `tool_error_behavior='error'`.
-            ToolFailed: If the tool errors and `tool_error_behavior='failed'`.
+            ModelRetry: If a completed tool error occurs with `tool_error_behavior='retry'` (the default), or
+                if a protocol-level `McpError` occurs and `tool_error_behavior` is not `'error'`.
+            fastmcp.exceptions.ToolError or mcp.shared.exceptions.McpError: If an error occurs and
+                `tool_error_behavior='error'`.
+            ToolFailed: If a completed tool error occurs and `tool_error_behavior='failed'`.
         """
         async with self:
             try:
