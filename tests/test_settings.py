@@ -1,11 +1,18 @@
 import importlib
+import inspect
 import pkgutil
+import re
 
 import pytest
 
 from pydantic_ai import Agent, models
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings, merge_model_settings
+
+from .conftest import try_import
+
+with try_import() as xai_imports_successful:
+    from pydantic_ai.models.xai import _XAI_MODEL_SETTINGS_MAPPING  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
@@ -66,6 +73,46 @@ def test_model_settings_discovery():
     # every prefix check above silently disappears, which is what the hardcoded provider list did.
     assert len(_MODEL_MODULE_NAMES) >= 15, f'only walked {_MODEL_MODULE_NAMES}'
     assert _MODEL_SETTINGS_CLASSES, f'no settings classes found, unimportable modules: {_UNIMPORTABLE_MODEL_MODULES}'
+
+
+def _documented_supported_providers(field: str) -> set[str]:
+    """Read the `Supported by:` bullet list out of a `ModelSettings` field's docstring.
+
+    The lists are the only place a user can learn which providers honour a shared setting, and nothing
+    ties them to the code, so they can drift silently. Parsed from the source because a `TypedDict`
+    field's docstring isn't available at runtime.
+    """
+    source = inspect.getsource(ModelSettings)
+    match = re.search(rf'^    {field}: .*?\n    """(.*?)"""', source, re.DOTALL | re.MULTILINE)
+    assert match, f'no docstring found for `ModelSettings.{field}`'
+    supported = re.search(r'Supported by:\n\n((?:\s*\*.*\n)+)', match.group(1))
+    assert supported, f'`ModelSettings.{field}` has no `Supported by:` list'
+    # Bullets carry parenthesised caveats, e.g. `Gemini (numeric seconds only, ...)`.
+    return {re.sub(r'\(.*?\)', '', bullet).strip(' *') for bullet in supported.group(1).strip().split('\n')}
+
+
+# Shared settings xAI honours outside `_XAI_MODEL_SETTINGS_MAPPING`, because they need translating
+# rather than forwarding: `thinking` becomes the SDK's `reasoning_effort` and `tool_choice` is resolved
+# against the tools actually sent.
+_XAI_SETTINGS_HANDLED_SEPARATELY = frozenset({'thinking', 'tool_choice'})
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xai not installed')
+@pytest.mark.parametrize('field', sorted(ModelSettings.__annotations__))
+def test_xai_documented_settings_support(field: str):
+    """Every shared setting `ModelSettings` claims xAI supports must actually reach the SDK.
+
+    xAI is the one model whose shared-setting support is declarative (`_XAI_MODEL_SETTINGS_MAPPING`, plus
+    the two translated settings above), which makes the docs claim mechanically checkable: a setting in
+    neither place is dropped on the floor rather than forwarded, so documenting it sends users chasing a
+    silent no-op. A unit test rather than a VCR one because the defect is in prose — a recorded response
+    can't contradict a support claim the request never carried.
+    """
+    if 'xAI' not in _documented_supported_providers(field):
+        pytest.skip(f'`{field}` does not claim xAI support')
+    assert field in _XAI_MODEL_SETTINGS_MAPPING or field in _XAI_SETTINGS_HANDLED_SEPARATELY, (
+        f'`ModelSettings.{field}` documents xAI support but nothing in `models/xai.py` forwards it'
+    )
 
 
 @pytest.mark.parametrize(

@@ -92,9 +92,10 @@ class XaiProvider(Provider[AsyncClient]):
             api_key: The API key to use for authentication, if not provided, the `XAI_API_KEY` environment variable
                 will be used if available.
             api_host: The API host to use for the xAI SDK client.
-            timeout: The client-level default timeout for the xAI SDK client, in seconds, applied to all requests
-                made through it. This is distinct from `ModelSettings.timeout`, which overrides the timeout for an
-                individual request.
+            timeout: The default timeout for the xAI SDK client, in seconds, applied to all requests made through
+                it. The SDK bakes the timeout into the gRPC channel at client construction and exposes no
+                per-request override, so this is the only way to set a timeout for xAI;
+                [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] is not supported.
             xai_client: An existing `xai_sdk.AsyncClient` to use. This takes precedence over `api_key`, `api_host`,
                 and `timeout`.
         """

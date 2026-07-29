@@ -165,7 +165,6 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Groq
     * Mistral (numeric seconds only, not `httpx.Timeout`)
-    * xAI
     """
 
     parallel_tool_calls: bool
@@ -285,7 +284,6 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * Gemini
     * Groq
-    * xAI
     """
 
     thinking: ThinkingLevel
