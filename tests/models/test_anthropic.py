@@ -11244,6 +11244,53 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
     assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
 
 
+async def test_anthropic_count_tokens_keeps_defer_loading(allow_model_requests: None):
+    """`count_tokens` marks a deferred tool `defer_loading` exactly as the real request does.
+
+    The count path strips server tools from the params it builds the wire `tools` list from, and
+    `defer_loading` is gated on `ToolSearchTool` being present — so counting used to describe a
+    request we never send, with every deferred tool's full schema exposed. That isn't cosmetic: the
+    endpoint honors the flag rather than ignoring it, and a deferred tool whose schema stays hidden
+    counts as its name and description alone. Measured live on `claude-opus-4-8` with one 30-field
+    tool: 440 tokens with the flag, 1761 without.
+
+    The server-side `tool_search_tool_*` entry, the one thing `count_tokens` really does reject,
+    still has to be absent — so this pins both halves against each other.
+    """
+    c = completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='Look up an exchange rate.',
+                parameters_json_schema={'type': 'object'},
+                defer_loading=True,
+                with_native=ToolSearchTool.kind,
+            )
+        ],
+        native_tools=[ToolSearchTool()],
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='What is the USD to EUR rate?')])]
+
+    await m.count_tokens(messages, None, params)
+    await m.request(messages, None, params)
+
+    count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
+
+    def deferred_tool(kwargs: dict[str, Any]) -> dict[str, Any]:
+        [tool] = [tool for tool in kwargs['tools'] if tool.get('name') == 'get_exchange_rate']
+        return tool
+
+    assert deferred_tool(count_tokens_kwargs) == deferred_tool(create_kwargs)
+    assert deferred_tool(count_tokens_kwargs)['defer_loading'] is True
+
+    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in count_tokens_kwargs['tools'])
+    assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
+
+
 @pytest.mark.parametrize('capabilities', [None, [ToolSearch()]])
 async def test_anthropic_bare_tool_search_is_stripped_for_capability_only_corpus(
     allow_model_requests: None, capabilities: list[ToolSearch[None]] | None

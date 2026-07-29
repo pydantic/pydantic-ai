@@ -1001,23 +1001,30 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
             native_tools=[tool for tool in model_request_parameters.native_tools if isinstance(tool, MemoryTool)],
         )
-
-        # standalone function to make it easier to override
-        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, count_tokens_parameters)
-        tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
-
-        auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
-        # Map with params that keep `ToolSearchTool` but drop `AdvisorTool`. Keeping tool search
-        # leaves `tool_search_active` True so tool-search replay renders the same `tool_reference`
-        # wire shape as `/v1/messages` (those references point at `function_tools`, which aren't
-        # stripped here, so they stay valid). Dropping advisor makes `advisor_active` False so its
-        # call/result history blocks are stripped during replay — the advisor tool is a server tool
-        # that `count_tokens` rejects (and is absent from the wire `tools` above), and replaying
-        # advisor blocks without the tool definition would 400.
+        # Params that keep `ToolSearchTool` but drop `AdvisorTool`. Keeping tool search leaves
+        # `tool_search_active` True so tool-search replay renders the same `tool_reference` wire shape
+        # as `/v1/messages` (those references point at `function_tools`, which aren't stripped here, so
+        # they stay valid), and leaves the deferred tools carrying `defer_loading` for the same reason:
+        # both sides of the reveal read the same condition, so a count that dropped the flag would be
+        # describing a request we never send. The endpoint honors the flag rather than ignoring it —
+        # one deferred 30-field tool counts 440 tokens with it and 1761 without on `claude-opus-4-8` —
+        # so this is the difference between counting the prompt and counting the hidden schemas too.
+        # Dropping advisor makes `advisor_active` False so its call/result history blocks are stripped
+        # during replay — the advisor tool is a server tool that `count_tokens` rejects (and that
+        # `_add_native_tools` keeps off the wire below), and replaying advisor blocks without the tool
+        # definition would 400.
         map_parameters = replace(
             model_request_parameters,
             native_tools=[tool for tool in model_request_parameters.native_tools if not isinstance(tool, AdvisorTool)],
         )
+
+        # standalone function to make it easier to override
+        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, map_parameters)
+        # `count_tokens_parameters` here, not `map_parameters`: the server-side tool definitions are
+        # what the endpoint rejects, so they're the one thing that has to differ from the real request.
+        tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
+
+        auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
