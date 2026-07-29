@@ -54,7 +54,16 @@ def collect() -> dict[str, list[str]]:
     skipped: list[str] = []
     unreadable: list[str] = []
 
-    for module_info in pkgutil.walk_packages(pydantic_ai.__path__, 'pydantic_ai.'):
+    for module_info in pkgutil.walk_packages(
+        pydantic_ai.__path__,
+        'pydantic_ai.',
+        # Without `onerror`, a package whose `__init__` raises `ImportError` takes its whole subtree
+        # out of the walk silently: those modules reach neither `offenders` nor the `import_module`
+        # guard below, so the gate would pass on a walk that quietly shrank. The callback is handed
+        # the package name, not the exception -- the reason for that package's own failure is what
+        # the guard below records.
+        onerror=lambda name: skipped.append(f'{name}: package failed to import, subtree not walked'),
+    ):
         try:
             module = importlib.import_module(module_info.name)
         except ImportError as exc:
