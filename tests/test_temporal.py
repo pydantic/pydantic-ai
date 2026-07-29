@@ -8298,6 +8298,150 @@ async def test_durability_run_in_workflow_with_runtime_external_toolset(allow_mo
         )
 
 
+# --- Custom `AbstractToolset` leaves ---
+
+
+class _CustomLeafToolset(AbstractToolset[Any]):
+    """A custom leaf toolset that performs its own (here: pretend) I/O in `call_tool`."""
+
+    def __init__(self, *, id: str | None = 'custom_leaf'):
+        self._id = id
+
+    @property
+    def id(self) -> str | None:
+        return self._id
+
+    async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+        return {
+            'custom': ToolsetTool(
+                toolset=self,
+                tool_def=ToolDefinition(name='custom'),
+                max_retries=0,
+                args_validator=TOOL_SCHEMA_VALIDATOR,
+            )
+        }
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+    ) -> Any:
+        return 'activity' if activity.in_activity() else 'workflow'
+
+
+class _PureCustomLeafToolset(_CustomLeafToolset):
+    """The same toolset, declaring that it needs no durable wrapping."""
+
+    requires_durable_wrapping = False
+
+
+_CUSTOM_LEAF_MESSAGE = (
+    "_CustomLeafToolset 'custom_leaf' cannot be used with Temporal, which only knows how to checkpoint the "
+    'I/O of `FunctionToolset`, `MCPToolset`, and `DynamicToolset`. Its own `get_tools()` and `call_tool()` '
+    'would run inside the workflow instead of a durable activity, so any I/O they perform would re-execute '
+    'whenever the workflow does. Return it from a `DynamicToolset` (which resolves and calls its toolset '
+    'inside durable activities) or expose its tools on a `FunctionToolset`. If its tool listing and calling '
+    'perform no I/O and are deterministic given the run context, set `requires_durable_wrapping = False` on '
+    'its class to allow it as is.'
+)
+
+
+def test_durability_rejects_custom_leaf_toolset():
+    """A custom `AbstractToolset` leaf is rejected when the capability binds, not silently passed through.
+
+    Temporal only wraps the leaf types it recognizes, so a custom leaf's own `get_tools`/`call_tool`
+    used to run straight inside the workflow sandbox, with no error or warning.
+    """
+    with pytest.raises(UserError, match=re.escape(_CUSTOM_LEAF_MESSAGE)):
+        Agent(
+            _durability_fn_model,
+            name='durability_custom_leaf',
+            toolsets=[_CustomLeafToolset()],
+            capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+        )
+
+
+async def test_durability_rejects_custom_leaf_toolset_at_runtime():
+    """A custom leaf passed per-run gets the same error: it can't be durabilized either way.
+
+    Patching `in_workflow` is enough here: the rejection happens in run setup, before any
+    activity is dispatched, so no worker is needed.
+    """
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_custom_leaf_runtime',
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    with patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True):
+        with pytest.raises(UserError, match=re.escape(_CUSTOM_LEAF_MESSAGE)):
+            await agent.run('Hello', toolsets=[_CustomLeafToolset()])
+
+
+def test_durability_wraps_recognized_leaf_toolsets():
+    """The recognized leaf types still get wrapped, and `ExternalToolset` still passes through."""
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_leaf_kinds',
+        toolsets=[
+            FunctionToolset(id='fn'),
+            MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp'),
+            DynamicToolset(lambda _: FunctionToolset(), id='dyn'),
+            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='ext'),
+        ],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    assert sorted(durability._toolsets_by_id) == snapshot(['<agent>', 'dyn', 'fn', 'mcp'])  # pyright: ignore[reportPrivateUsage]
+
+
+def _durability_call_custom_tool(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(str(part.content))])
+    return ModelResponse(parts=[ToolCallPart('custom', {}, tool_call_id='call-1')])
+
+
+_durability_pure_leaf_agent = Agent(
+    FunctionModel(_durability_call_custom_tool),
+    name='durability_pure_leaf_agent',
+    toolsets=[_PureCustomLeafToolset()],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityPureCustomLeafToolsetWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _durability_pure_leaf_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_allows_opted_out_custom_leaf_toolset(allow_model_requests: None, client: Client):
+    """`requires_durable_wrapping = False` lets a deterministic custom leaf through, unwrapped.
+
+    The tool reports that it ran in workflow code rather than an activity, which is exactly
+    what the opt-out promises is safe — the toolset is left alone and contributes no activities.
+    """
+    durability = TemporalDurability.from_agent(_durability_pure_leaf_agent)
+    assert durability is not None
+    assert sorted(durability._toolsets_by_id) == snapshot(['<agent>'])  # pyright: ignore[reportPrivateUsage]
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityPureCustomLeafToolsetWorkflow],
+        plugins=[AgentPlugin(_durability_pure_leaf_agent)],
+    ):
+        output = await client.execute_workflow(
+            DurabilityPureCustomLeafToolsetWorkflow.run,
+            args=['Where does the tool run?'],
+            id=DurabilityPureCustomLeafToolsetWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'workflow'
+
+
 # --- Capability-contributed toolsets ---
 
 

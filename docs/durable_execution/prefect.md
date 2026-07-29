@@ -150,6 +150,12 @@ Each agent instance must have a unique `name` so Prefect can correctly identify 
 
 Toolsets that implement their own tool listing and calling (i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]) must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id] set, which is used to identify their tasks within the flow.
 
+A toolset of any other type that implements its own tool listing and calling — a [custom toolset](../toolsets.md#building-a-custom-toolset) subclassing [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] — cannot be turned into tasks, so attaching `PrefectDurability` to an agent that uses one raises a `UserError`. Return it from a `DynamicToolset` (whose tools are listed and called inside tasks), expose its tools on a `FunctionToolset`, or, if its tool listing and calling perform no I/O and are deterministic given the run context, set [`requires_durable_wrapping = False`][pydantic_ai.toolsets.AbstractToolset.requires_durable_wrapping] on the toolset class to have it left alone. See [Custom toolsets and durable execution](../toolsets.md#custom-toolsets-and-durable-execution).
+
+### Capabilities at Runtime
+
+All [capabilities](../capabilities/overview.md) must be attached when the agent is constructed, so `PrefectDurability.for_agent()` can register the tasks they need. Passing `agent.run(capabilities=[...])` inside a flow raises a `UserError`: the capability's hooks — and any toolset it contributes — would run in flow code rather than in a task, and re-run on every flow retry. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is exempt, since it only observes the run. Outside a flow the durability capability is transparent, so per-run capabilities are fine there.
+
 ### Model Selection at Runtime
 
 [`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. A model instance can't be serialized across the task boundary, so it's sent as its `model_id` string and rebuilt inside the task. That faithfully reproduces model-name strings and models with standard providers, but not an instance whose exact behavior depends on a custom provider, client, or settings — pre-register those by passing a `models` dict to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] and reference them by key (or pass the registered instance). The agent's own model, set at construction, is always available as the default.
@@ -226,7 +232,7 @@ When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs 
 
 ### Toolsets at Runtime
 
-Additional toolsets can be passed per run via `agent.run(toolsets=...)`, but only toolsets that don't need durable wrapping are supported: non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools all opt out of task wrapping with `metadata={'prefect': False}`. Other executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets must be set when constructing the agent so their tasks are registered before the flow runs; passing them at runtime raises a `UserError`.
+Additional toolsets can be passed per run via `agent.run(toolsets=...)`, but only toolsets that don't need durable wrapping are supported: non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools all opt out of task wrapping with `metadata={'prefect': False}`. Other executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets must be set when constructing the agent so their tasks are registered before the flow runs; passing them at runtime raises a `UserError`. A custom toolset that isn't one of these types is rejected at runtime for the same reason it is at construction time (see [Agent Requirements](#agent-requirements)) — it can't be turned into tasks at all.
 
 ## Task Configuration
 

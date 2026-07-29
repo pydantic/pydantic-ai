@@ -1,4 +1,4 @@
-"""Validation of per-run toolsets for durable execution engines.
+"""Leaf toolset classification for durable execution engines.
 
 Durable execution engines (DBOS, Prefect, Temporal) durably wrap the *executing* toolsets an agent is
 constructed with — function tools become steps/tasks/activities and MCP servers get their I/O
@@ -12,9 +12,9 @@ We therefore reject executing runtime toolsets, while still allowing non-executi
 
 Classification mirrors the engines' own wrapping: only the leaf types the wrappers durabilize
 (`FunctionToolset`, `MCPToolset`) plus `DynamicToolset` (whose contents can't be inspected up front)
-are rejected. A custom `AbstractToolset` leaf that executes I/O isn't recognized and passes through —
-the same blind spot the constructor-time `dbosify`/`prefectify`/`temporalize` wrapping already has for
-unknown leaf types.
+are recognized. Any other leaf can't be durabilized at all — neither at construction time nor per-run
+— and `BaseDurabilityCapability._reject_unwrappable_leaf` raises for it unless it declares
+`requires_durable_wrapping = False`.
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ _KIND_LABELS: dict[RuntimeToolsetKind, str] = {
 }
 
 
-def _runtime_toolset_kind(toolset: AbstractToolset[Any]) -> RuntimeToolsetKind | None:
-    """Classify a leaf toolset for durable-execution runtime support, or `None` if it needs no wrapping."""
+def durable_leaf_kind(toolset: AbstractToolset[Any]) -> RuntimeToolsetKind | None:
+    """Classify a leaf toolset the engines know how to durably wrap, or `None` if they don't recognize it."""
     from ..toolsets._dynamic import DynamicToolset
     from ..toolsets.function import FunctionToolset
 
@@ -78,7 +78,7 @@ def reject_unsupported_runtime_toolsets(
     found: set[RuntimeToolsetKind] = set()
 
     def collect(leaf: AbstractToolset[Any]) -> None:
-        kind = _runtime_toolset_kind(leaf)
+        kind = durable_leaf_kind(leaf)
         if kind == 'function' and tool_config_key is not None:
             from ..toolsets.function import FunctionToolset
 

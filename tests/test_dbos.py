@@ -3329,22 +3329,191 @@ def _per_run_dynamic_factory(ctx: RunContext[Any]) -> FunctionToolset[Any]:
     return FunctionToolset()  # pragma: no cover
 
 
-async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) -> None:
-    """An executing toolset contributed by a per-run capability is rejected like `run(toolsets=...)`.
+async def test_dbos_durability_rejects_per_run_capabilities(dbos: DBOS) -> None:
+    """Capabilities added per-run inside a workflow are rejected; `Instrumentation` is exempt.
 
-    Construction-time capability toolsets are wrapped by `for_agent` (see the
-    capability-contributed test above); a per-run capability's toolset arrives after that
-    wrapping has happened, so it would run un-checkpointed inside the workflow. A
-    `DynamicToolset` with a module-level factory keeps the workflow input serializable.
+    A capability's steps are registered when it's bound to the agent, so one attached per-run
+    arrives too late: its hooks — and any toolset it contributes — would run in workflow code
+    rather than in a step. `Instrumentation` only observes the run and sets `_safe_at_runtime`.
+    A `DynamicToolset` with a module-level factory keeps the workflow input serializable.
     """
     agent = Agent(_durability_fn_model, name='durability_per_run_cap_toolset', capabilities=[DBOSDurability()])
 
     @DBOS.workflow()
-    async def run_agent() -> None:
+    async def run_with_toolset_capability() -> None:
         await agent.run('Hello', capabilities=[Toolset(DynamicToolset(_per_run_dynamic_factory, id='per_run_dynamic'))])
 
-    with pytest.raises(UserError, match='DynamicToolset cannot be passed'):
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'Capabilities added per-run inside a DBOS workflow are not supported: Toolset. A capability is '
+            'registered for durable execution when it is bound to the agent, so one added per-run would run '
+            'its hooks in workflow code instead of durable steps, re-executing whenever the workflow does. '
+            'Attach all capabilities at agent construction time so `DBOSDurability.for_agent()` can register '
+            'their durable steps.'
+        ),
+    ):
+        await run_with_toolset_capability()
+
+    @DBOS.workflow()
+    async def run_with_instrumentation() -> str:
+        return (await agent.run('Hello', capabilities=[Instrumentation(InstrumentationSettings())])).output
+
+    assert await run_with_instrumentation() == snapshot('Echo: Hello')
+
+
+async def test_dbos_durability_allows_per_run_capabilities_outside_workflow(dbos: DBOS) -> None:
+    """Outside a workflow the capability is transparent, so per-run capabilities are fine."""
+    agent = Agent(_durability_fn_model, name='durability_per_run_cap_outside', capabilities=[DBOSDurability()])
+    result = await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
+    assert result.output == snapshot('Echo: Hello')
+
+
+class _CustomLeafToolset(AbstractToolset[Any]):
+    """A custom leaf toolset that performs its own (here: pretend) I/O in `call_tool`."""
+
+    def __init__(self, *, id: str | None = 'custom_leaf'):
+        self._id = id
+
+    @property
+    def id(self) -> str | None:
+        return self._id
+
+    async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+        return {
+            'custom': ToolsetTool(
+                toolset=self,
+                tool_def=ToolDefinition(name='custom'),
+                max_retries=0,
+                args_validator=TOOL_SCHEMA_VALIDATOR,
+            )
+        }
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+    ) -> Any:
+        return 'step' if DBOS.step_id is not None else 'workflow'
+
+
+class _PureCustomLeafToolset(_CustomLeafToolset):
+    """The same toolset, declaring that it needs no durable wrapping."""
+
+    requires_durable_wrapping = False
+
+
+def _echo_custom_tool_result(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(str(part.content))])
+    return ModelResponse(parts=[ToolCallPart('custom', {}, tool_call_id='call-1')])
+
+
+_CUSTOM_LEAF_MESSAGE = (
+    "_CustomLeafToolset 'custom_leaf' cannot be used with DBOS, which only knows how to checkpoint the I/O "
+    'of `FunctionToolset`, `MCPToolset`, and `DynamicToolset`. Its own `get_tools()` and `call_tool()` would '
+    'run inside the workflow instead of a durable step, so any I/O they perform would re-execute whenever '
+    'the workflow does. Return it from a `DynamicToolset` (which resolves and calls its toolset inside '
+    'durable steps) or expose its tools on a `FunctionToolset`. If its tool listing and calling perform no '
+    'I/O and are deterministic given the run context, set `requires_durable_wrapping = False` on its class '
+    'to allow it as is.'
+)
+
+
+def test_dbos_durability_rejects_custom_leaf_toolset() -> None:
+    """A custom `AbstractToolset` leaf is rejected when the capability binds, not silently passed through.
+
+    DBOS only wraps the leaf types it recognizes, so a custom leaf's own I/O used to run straight
+    in workflow code and re-execute whenever the workflow recovered, with no error or warning.
+    """
+    with pytest.raises(UserError, match=re.escape(_CUSTOM_LEAF_MESSAGE)):
+        Agent(
+            _durability_fn_model,
+            name='durability_custom_leaf',
+            toolsets=[_CustomLeafToolset()],
+            capabilities=[DBOSDurability()],
+        )
+
+
+async def test_dbos_durability_rejects_custom_leaf_toolset_at_runtime(dbos: DBOS) -> None:
+    """A custom leaf passed per-run gets the same error: it can't be durabilized either way."""
+    agent = Agent(_durability_fn_model, name='durability_custom_leaf_runtime', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
+        await agent.run('Hello', toolsets=[_CustomLeafToolset()])
+
+    with workflow_raises(UserError, _CUSTOM_LEAF_MESSAGE):
         await run_agent()
+
+
+async def test_dbos_durability_allows_opted_out_custom_leaf_toolset(dbos: DBOS) -> None:
+    """`requires_durable_wrapping = False` lets a deterministic custom leaf through, unwrapped."""
+
+    agent = Agent(
+        FunctionModel(_echo_custom_tool_result),
+        name='durability_pure_custom_leaf',
+        toolsets=[_PureCustomLeafToolset()],
+        capabilities=[DBOSDurability()],
+    )
+    durability = DBOSDurability.from_agent(agent)
+    assert durability is not None
+    # Not wrapped, so it contributes no steps and stays out of the `id` → wrapper registry
+    # (which holds only the leaves DBOS does wrap — function tools run inline).
+    assert sorted(durability._toolsets_by_id) == snapshot([])  # pyright: ignore[reportPrivateUsage]
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    # The tool runs in workflow code, which is exactly what the opt-out declares is safe.
+    assert await run_agent() == snapshot('workflow')
+
+
+def _custom_leaf_factory(ctx: RunContext[Any]) -> AbstractToolset[Any]:
+    return _CustomLeafToolset(id=None)
+
+
+async def test_dbos_durability_wraps_custom_leaf_behind_dynamic_toolset(dbos: DBOS) -> None:
+    """The remedy the error message points at works: a `DynamicToolset` durabilizes a custom leaf.
+
+    `DBOSDurability` wraps the `DynamicToolset` itself, and its step resolves the inner toolset
+    and calls the tool inside that step — so the custom leaf's I/O *is* checkpointed.
+    """
+    agent = Agent(
+        FunctionModel(_echo_custom_tool_result),
+        name='durability_custom_leaf_dynamic',
+        toolsets=[DynamicToolset(_custom_leaf_factory, id='custom_dynamic')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    assert await run_agent() == snapshot('step')
+
+
+def test_dbos_durability_wraps_recognized_leaf_toolsets() -> None:
+    """The recognized leaf types still get wrapped, and `ExternalToolset` still passes through.
+
+    DBOS deliberately leaves `FunctionToolset` unwrapped (its tools run inline), so the new
+    custom-leaf guard must not turn that intentional pass-through into an error.
+    """
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_leaf_kinds',
+        toolsets=[
+            FunctionToolset(id='fn'),
+            MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp'),
+            DynamicToolset(lambda _: FunctionToolset(), id='dyn'),
+            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='ext'),
+        ],
+        capabilities=[DBOSDurability()],
+    )
+    durability = DBOSDurability.from_agent(agent)
+    assert durability is not None
+    assert sorted(durability._toolsets_by_id) == snapshot(['dyn', 'mcp'])  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_dbos_durability_rejects_duplicate_toolset_id(dbos: DBOS) -> None:

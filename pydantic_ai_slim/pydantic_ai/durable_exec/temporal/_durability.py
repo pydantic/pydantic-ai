@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager, nullcontext, suppress
 from dataclasses import dataclass
 from datetime import timedelta
@@ -18,7 +18,6 @@ from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
-    AbstractCapability,
     WrapModelRequestHandler,
     WrapRunHandler,
 )
@@ -165,6 +164,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     )
 
     _durable_unit_noun = 'activity'
+    _durable_unit_plural = 'activities'
     _durable_container_noun = 'workflow'
     _tool_config_key = 'temporal'
 
@@ -460,23 +460,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     'The `deps` object failed to be serialized. Temporal requires all objects that are passed '
                     "to activities to be serializable using Pydantic's `TypeAdapter`."
                 ) from e
-
-    def _validate_runtime_capabilities(
-        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
-    ) -> None:
-        """Reject per-run capabilities whose activities were not registered with the worker."""
-        if self.in_durable_context:
-            unsafe_capabilities = [capability for capability in capabilities if not capability._safe_at_runtime]
-        else:
-            unsafe_capabilities = []
-        if unsafe_capabilities:
-            names = ', '.join(sorted(type(capability).__name__ for capability in unsafe_capabilities))
-            raise UserError(
-                f'Capabilities added per-run inside a Temporal workflow are not supported: {names}. '
-                'Temporal activities must be registered with the worker before the workflow runs. '
-                'Attach all capabilities at agent construction time so `TemporalDurability.for_agent()` '
-                'can register their activities.'
-            )
 
     async def wrap_model_request(
         self,

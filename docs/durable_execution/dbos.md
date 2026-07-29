@@ -162,7 +162,13 @@ Function tools and event stream handlers registered on the agent directly or thr
 * Skip the decorator if durability isn't needed, so you avoid the extra DB checkpoint write.
 * If the function needs to enqueue tasks or invoke other DBOS workflows, run it inside the agent's main workflow (not as a step).
 
+Toolsets that implement their own tool listing and calling but aren't one of the types above — a [custom toolset](../toolsets.md#building-a-custom-toolset) subclassing [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] — cannot be turned into steps, so attaching `DBOSDurability` to an agent that uses one raises a `UserError`. Return it from a `DynamicToolset` (whose tools are listed and called inside steps), expose its tools on a `FunctionToolset` (and decorate them with `@DBOS.step` as described above), or, if its tool listing and calling perform no I/O and are deterministic given the run context, set [`requires_durable_wrapping = False`][pydantic_ai.toolsets.AbstractToolset.requires_durable_wrapping] on the toolset class to have it left alone. See [Custom toolsets and durable execution](../toolsets.md#custom-toolsets-and-durable-execution).
+
 Other than that, any agent and toolset will just work!
+
+### Capabilities at Runtime
+
+All [capabilities](../capabilities/overview.md) must be attached when the agent is constructed, so `DBOSDurability.for_agent()` can register the steps they need. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: the capability's hooks — and any toolset it contributes — would run in workflow code rather than in a step, and re-run whenever the workflow recovers. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is exempt, since it only observes the run. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
 
 ### Agent Run Context and Dependencies
 
@@ -204,7 +210,7 @@ If you prefer strict ordering, you can configure the agent to run tools sequenti
 
 ### Toolsets at Runtime
 
-Additional toolsets can be passed per run via `agent.run(toolsets=...)`. Non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools DBOS runs inline, are supported. [`MCPToolset`][pydantic_ai.mcp.MCPToolset]s and dynamic toolsets must be set when constructing the agent so their steps are registered before the workflow runs; passing them at runtime raises a `UserError`.
+Additional toolsets can be passed per run via `agent.run(toolsets=...)`. Non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools DBOS runs inline, are supported. [`MCPToolset`][pydantic_ai.mcp.MCPToolset]s and dynamic toolsets must be set when constructing the agent so their steps are registered before the workflow runs; passing them at runtime raises a `UserError`. A custom toolset that isn't one of these types is rejected at runtime for the same reason it is at construction time (see [Agent and Toolset Requirements](#agent-and-toolset-requirements)) — it can't be turned into steps at all.
 
 
 ## Step Configuration

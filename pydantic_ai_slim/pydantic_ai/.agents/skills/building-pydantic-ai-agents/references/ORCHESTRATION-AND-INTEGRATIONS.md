@@ -85,6 +85,11 @@ Temporal entry points:
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
+Two hard requirements on all three engines (each raises a `UserError`):
+
+- Only `FunctionToolset`, `MCPToolset`, and `DynamicToolset` leaves can be durably wrapped. A custom `AbstractToolset` leaf is rejected — return it from a `DynamicToolset` (whose tool listing and calling run inside the durable unit), expose its tools on a `FunctionToolset`, or set `requires_durable_wrapping = False` on its class if its tool listing and calling perform no I/O and are deterministic.
+- Attach all capabilities at agent construction time. Passing `run(capabilities=[...])` inside a workflow or flow is rejected (only `Instrumentation` is allowed).
+
 ## Handle MCP Tool Errors
 
 Set `MCPToolset(tool_error_behavior=...)` according to the server error semantics:

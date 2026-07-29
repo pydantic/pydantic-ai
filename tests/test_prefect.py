@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import uuid
 import warnings
@@ -2065,21 +2066,181 @@ async def test_prefect_durability_rejects_runtime_toolset_in_iter() -> None:
         await run_agent()
 
 
-async def test_prefect_durability_rejects_per_run_capability_toolset() -> None:
-    """A toolset contributed by a per-run capability is rejected like `run(toolsets=...)`.
+async def test_prefect_durability_rejects_per_run_capabilities() -> None:
+    """Capabilities added per-run inside a flow are rejected; `Instrumentation` is exempt.
 
-    Construction-time capability toolsets are wrapped by `for_agent` (see the
-    capability-contributed test above); a per-run capability's toolset arrives after that
-    wrapping has happened, so its tools would run un-tasked inside the flow.
+    A capability's tasks are created when it's bound to the agent, so one attached per-run
+    arrives too late: its hooks — and any toolset it contributes — would run in flow code
+    rather than in a task. `Instrumentation` only observes the run and sets `_safe_at_runtime`.
     """
     agent = Agent(TestModel(), name='durability_reject_per_run_cap', capabilities=[PrefectDurability()])
 
     @flow
-    async def run_agent() -> None:
+    async def run_with_toolset_capability() -> None:
         await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
 
-    with pytest.raises(UserError, match='FunctionToolset cannot be passed to '):
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Capabilities added per-run inside a Prefect flow are not supported: Toolset. A capability is '
+            'registered for durable execution when it is bound to the agent, so one added per-run would run '
+            'its hooks in flow code instead of durable tasks, re-executing whenever the flow does. Attach all '
+            'capabilities at agent construction time so `PrefectDurability.for_agent()` can register their '
+            'durable tasks.'
+        ),
+    ):
+        await run_with_toolset_capability()
+
+    @flow
+    async def run_with_instrumentation() -> str:
+        return (await agent.run('Hello', capabilities=[Instrumentation(InstrumentationSettings())])).output
+
+    assert await run_with_instrumentation() == snapshot('success (no tool calls)')
+
+
+async def test_prefect_durability_allows_per_run_capabilities_outside_flow() -> None:
+    """Outside a flow the capability is transparent, so per-run capabilities are fine."""
+    agent = Agent(TestModel(), name='durability_per_run_cap_outside_flow', capabilities=[PrefectDurability()])
+    result = await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
+    assert result.output == snapshot('success (no tool calls)')
+
+
+class _CustomLeafToolset(AbstractToolset[Any]):
+    """A custom leaf toolset that performs its own (here: pretend) I/O in `call_tool`."""
+
+    def __init__(self, *, id: str | None = 'custom_leaf'):
+        self._id = id
+
+    @property
+    def id(self) -> str | None:
+        return self._id
+
+    async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+        return {
+            'custom': ToolsetTool(
+                toolset=self,
+                tool_def=ToolDefinition(name='custom'),
+                max_retries=0,
+                args_validator=TOOL_SCHEMA_VALIDATOR,
+            )
+        }
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+    ) -> Any:
+        return 'task' if TaskRunContext.get() is not None else 'flow'
+
+
+class _PureCustomLeafToolset(_CustomLeafToolset):
+    """The same toolset, declaring that it needs no durable wrapping."""
+
+    requires_durable_wrapping = False
+
+
+_CUSTOM_LEAF_MESSAGE = (
+    "_CustomLeafToolset 'custom_leaf' cannot be used with Prefect, which only knows how to checkpoint the "
+    'I/O of `FunctionToolset`, `MCPToolset`, and `DynamicToolset`. Its own `get_tools()` and `call_tool()` '
+    'would run inside the flow instead of a durable task, so any I/O they perform would re-execute whenever '
+    'the flow does. Return it from a `DynamicToolset` (which resolves and calls its toolset inside durable '
+    'tasks) or expose its tools on a `FunctionToolset`. If its tool listing and calling perform no I/O and '
+    'are deterministic given the run context, set `requires_durable_wrapping = False` on its class to allow '
+    'it as is.'
+)
+
+
+def test_prefect_durability_rejects_custom_leaf_toolset() -> None:
+    """A custom `AbstractToolset` leaf is rejected when the capability binds, not silently passed through.
+
+    Prefect only wraps the leaf types it recognizes, so a custom leaf's own I/O used to run
+    straight in flow code and re-execute on every flow retry, with no error or warning.
+    """
+    with pytest.raises(UserError, match=re.escape(_CUSTOM_LEAF_MESSAGE)):
+        Agent(
+            TestModel(),
+            name='durability_custom_leaf',
+            toolsets=[_CustomLeafToolset()],
+            capabilities=[PrefectDurability()],
+        )
+
+
+async def test_prefect_durability_rejects_custom_leaf_toolset_at_runtime() -> None:
+    """A custom leaf passed per-run gets the same error: it can't be durabilized either way."""
+    agent = Agent(TestModel(), name='durability_custom_leaf_runtime', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('Hello', toolsets=[_CustomLeafToolset()])
+
+    with pytest.raises(UserError, match=re.escape(_CUSTOM_LEAF_MESSAGE)):
         await run_agent()
+
+
+def _echo_custom_tool_result(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(str(part.content))])
+    return ModelResponse(parts=[ToolCallPart('custom', {}, tool_call_id='call-1')])
+
+
+async def test_prefect_durability_allows_opted_out_custom_leaf_toolset() -> None:
+    """`requires_durable_wrapping = False` lets a deterministic custom leaf through, unwrapped."""
+    agent = Agent(
+        FunctionModel(_echo_custom_tool_result),
+        name='durability_pure_custom_leaf',
+        toolsets=[_PureCustomLeafToolset()],
+        capabilities=[PrefectDurability()],
+    )
+    durability = PrefectDurability.from_agent(agent)
+    assert durability is not None
+    # Not wrapped, so it contributes no tasks and stays out of the `id` → wrapper registry
+    # (which only holds the agent's own function toolset here).
+    assert sorted(durability._toolsets_by_id) == snapshot(['<agent>'])  # pyright: ignore[reportPrivateUsage]
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    # The tool runs in flow code, which is exactly what the opt-out declares is safe.
+    assert await run_agent() == snapshot('flow')
+
+
+async def test_prefect_durability_wraps_custom_leaf_behind_dynamic_toolset() -> None:
+    """The remedy the error message points at works: a `DynamicToolset` durabilizes a custom leaf.
+
+    `PrefectDurability` wraps the `DynamicToolset` itself, and its task resolves the inner toolset
+    and calls the tool inside that task — so the custom leaf's I/O *is* checkpointed.
+    """
+    agent = Agent(
+        FunctionModel(_echo_custom_tool_result),
+        name='durability_custom_leaf_dynamic',
+        toolsets=[DynamicToolset(lambda _: _CustomLeafToolset(id=None), id='custom_dynamic')],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    assert await run_agent() == snapshot('task')
+
+
+def test_prefect_durability_wraps_recognized_leaf_toolsets() -> None:
+    """The recognized leaf types still get wrapped, and `ExternalToolset` still passes through."""
+    agent = Agent(
+        TestModel(),
+        name='durability_leaf_kinds',
+        toolsets=[
+            FunctionToolset(id='fn'),
+            MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp'),
+            DynamicToolset(lambda _: FunctionToolset(), id='dyn'),
+            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='ext'),
+        ],
+        capabilities=[PrefectDurability()],
+    )
+    durability = PrefectDurability.from_agent(agent)
+    assert durability is not None
+    assert sorted(durability._toolsets_by_id) == snapshot(['<agent>', 'dyn', 'fn', 'mcp'])  # pyright: ignore[reportPrivateUsage]
 
 
 def test_prefect_durability_rejects_duplicate_toolset_id() -> None:

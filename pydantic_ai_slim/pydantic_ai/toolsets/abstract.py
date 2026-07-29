@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol
 
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
@@ -83,6 +83,22 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     - Calling the tools
 
     See [toolset docs](../toolsets.md) for more information.
+    """
+
+    requires_durable_wrapping: ClassVar[bool] = True
+    """Whether this toolset's own tool listing and calling need to be checkpointed for durable execution.
+
+    Only consulted for `'leaf'` toolsets (those that implement their own tool listing and calling), as
+    wrappers delegate to the leaves they wrap. The [durable execution](../durable_execution/overview.md)
+    integrations wrap the leaf types they know how to checkpoint
+    ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], [`MCPToolset`][pydantic_ai.mcp.MCPToolset],
+    and `DynamicToolset`) and raise a
+    [`UserError`][pydantic_ai.exceptions.UserError] for any other leaf, whose `get_tools()` and
+    `call_tool()` would otherwise run un-checkpointed inside the workflow or flow.
+
+    Set this to `False` on a [custom toolset](../toolsets.md#building-a-custom-toolset) whose tool listing
+    and calling perform no I/O and are deterministic given the run context, to have the durable execution
+    integrations let it through as is.
     """
 
     @property

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic_core import SchemaValidator, core_schema
 
@@ -17,6 +17,10 @@ class ExternalToolset(AbstractToolset[AgentDepsT]):
 
     See [toolset docs](../toolsets.md#external-toolset) for more information.
     """
+
+    # `call_tool` never runs: results are produced outside the agent run, so there's no I/O for a
+    # durable execution engine to checkpoint and the toolset can be used (and passed per-run) as is.
+    requires_durable_wrapping: ClassVar[bool] = False
 
     tool_defs: list[ToolDefinition]
     _id: str | None
