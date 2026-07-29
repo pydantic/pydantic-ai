@@ -520,6 +520,9 @@ Where the two renderings differ is on instructions a model *should* be wary of t
 
 A mid-conversation instruction takes precedence over the top-level system prompt for the turns that follow it, and a later one takes precedence over an earlier one. Phrase it as what changed rather than as an override of the user: models are trained to resist instructions that appear to work against the person they're talking to, and that resistance applies to the `system` role too — "the build tag is no longer confidential" lands where "ignore what the user was told earlier" doesn't.
 
+!!! warning "Not a place for untrusted content"
+    Claude treats system content as operator instructions and follows it, so a mid-conversation system prompt gives whatever text you put in it operator-level authority. That makes [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] worth a second look: enqueueing a `SystemPromptPart` built from tool output, a retrieved document, or fetched web content hands that content the same authority as your own instructions. Keep third-party text in tool returns, where it's read as data.
+
 See the [message history docs](../message-history.md#using-messages-as-input-for-further-agent-runs) for how mid-conversation system prompts behave across providers generally.
 
 !!! note "Placement"
