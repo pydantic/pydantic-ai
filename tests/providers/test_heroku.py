@@ -114,3 +114,15 @@ async def test_heroku_model_provider_claude_3_7_sonnet(allow_model_requests: Non
     assert result.output == snapshot(
         "The capital of France is Paris. It's not only the political capital but also a major cultural and economic hub in Europe, known for landmarks like the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral."
     )
+
+
+def test_heroku_mixed_case_model_name_profile_flags():
+    """Mixed-case model IDs must yield the same profile flags as their lowercase
+    equivalents so thinking settings are not silently dropped."""
+    provider = HerokuProvider(api_key='api-key')
+
+    deepseek = provider.model_profile('DeepSeek-R1')
+    assert deepseek is not None
+    assert deepseek.get('supports_thinking') is True
+    assert deepseek.get('thinking_always_enabled') is True
+    assert deepseek.get('ignore_streamed_leading_whitespace') is True
