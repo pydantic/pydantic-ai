@@ -61,10 +61,7 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities.abstract import (
-    WrapIterGuard,
-    leaf_capabilities,
-)
+from ..capabilities.abstract import leaf_capabilities
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -1646,13 +1643,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         agent_name = self.name or 'agent'
 
+        # Initialized before the stack so the post-stack suppression check below can
+        # read it even when the run fails before the hand-off machinery assigns it.
+        _run_error: BaseException | None = None
+
         async with AsyncExitStack() as stack:
             # The `wrap_iter` chain brackets the whole run lifecycle: model/toolset setup,
             # sandbox provisioning and teardown, the `wrap_run` chain, and
             # `after_run`/`on_run_error` all happen inside it (LIFO: entered first, exits
             # last). The run is not yet assembled here; see `AbstractCapability.wrap_iter`.
             if run_capability.has_wrap_iter:
-                await stack.enter_async_context(WrapIterGuard(run_capability.wrap_iter(initial_ctx)))
+                await stack.enter_async_context(run_capability.wrap_iter(initial_ctx))
             model_stack = stack
             await stack.enter_async_context(
                 _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
@@ -1703,7 +1704,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             #    Otherwise the original error propagates.
             _run_ready = asyncio.Event()
             _run_done = asyncio.Event()
-            _run_error: BaseException | None = None
             _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
 
             async def _do_run() -> AgentRunResult[Any]:
@@ -1854,6 +1854,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # In an @asynccontextmanager, not re-raising suppresses the exception.
             if _run_error is not None:
                 raise _run_error
+
+        # The `raise _run_error` above unwinds through the exit stack; reaching this point
+        # with the error still set means a `wrap_iter` hook suppressed it during unwind,
+        # which would otherwise surface as a baffling "run did not finish" assertion.
+        # Surface the contract violation loudly instead, with the original as the cause.
+        if _run_error is not None:
+            raise exceptions.UserError(
+                'A `wrap_iter` hook suppressed the run error, which is not supported: '
+                '`wrap_iter` has no control-flow power. Re-raise the exception (or do not catch it) '
+                'and use `wrap_run` or `on_run_error` for recovery.'
+            ) from _run_error
 
     def _get_metadata(
         self,

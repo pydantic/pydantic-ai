@@ -30,7 +30,6 @@ from .abstract import (
     AbstractCapability,
     AgentModel,
     RawOutput,
-    WrapIterGuard,
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
 )
@@ -299,7 +298,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 if capability.defer_loading is True:
                     continue
                 if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
-                    await stack.enter_async_context(WrapIterGuard(capability.wrap_iter(cap_ctx)))
+                    await stack.enter_async_context(capability.wrap_iter(cap_ctx))
             yield
 
     async def before_run(

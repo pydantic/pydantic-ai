@@ -496,7 +496,9 @@ model selection), but before resource setup: `tool_manager` and `validation_cont
 populated, and a capability-served sandbox is provisioned only after the hook enters. A
 failure during per-run resolution therefore produces no span. Use `wrap_run` when the work
 needs the assembled run. Because `wrap_iter` has no `handler`, it cannot short-circuit,
-replace, or retry the run. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
+replace, or retry the run — and swallowing the run's exception is a contract violation the
+run reports as a [`UserError`][pydantic_ai.exceptions.UserError]; use `wrap_run` or
+`on_run_error` for recovery. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
 builds the agent-run span on this hook so setup and teardown are traced too.
 
 `wrap_run` supports error recovery: if `handler()` raises and `wrap_run` catches the exception and returns a result instead, the error is suppressed and the recovery result is used. This works with both [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] and [`agent.iter()`][pydantic_ai.agent.Agent.iter].

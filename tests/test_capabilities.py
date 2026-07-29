@@ -5456,18 +5456,12 @@ async def test_wrap_iter_observes_propagated_and_recovered_errors() -> None:
 
 
 @pytest.mark.parametrize('combined', [False, True])
-async def test_wrap_iter_cannot_suppress_run_error(combined: bool) -> None:
-    observed: list[BaseException] = []
+async def test_wrap_iter_suppression_is_a_loud_contract_violation(combined: bool) -> None:
+    """A hook that swallows the run's exception must not leave the run in a broken half-state.
 
-    @dataclass
-    class ObserveExit(AbstractCapability[Any]):
-        @asynccontextmanager
-        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
-            try:
-                yield
-            except BaseException as exc:
-                observed.append(exc)
-                raise
+    The run detects the suppression after the exit stack unwinds and raises `UserError`
+    with the suppressed error as the cause, instead of dying on an unrelated assertion.
+    """
 
     @dataclass
     class SuppressError(AbstractCapability[Any]):
@@ -5478,23 +5472,30 @@ async def test_wrap_iter_cannot_suppress_run_error(combined: bool) -> None:
             except RuntimeError:
                 pass
 
+    @dataclass
+    class OuterHook(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+            yield
+
     def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise RuntimeError('model exploded')
 
     capabilities: list[AbstractCapability[Any]] = [SuppressError()]
     if combined:
-        capabilities.insert(0, ObserveExit())
+        capabilities.insert(0, OuterHook())
 
-    with pytest.raises(RuntimeError, match='model exploded'):
+    with pytest.raises(UserError, match='suppressed the run error') as exc_info:
         await Agent(FunctionModel(failing_model), capabilities=capabilities).run('fail')
 
-    assert len(observed) == int(combined)
-    if observed:
-        assert isinstance(observed[0], RuntimeError)
-        assert str(observed[0]) == 'model exploded'
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+    assert str(exc_info.value.__cause__) == 'model exploded'
 
 
-async def test_wrap_iter_cleanup_error_does_not_mask_run_error() -> None:
+async def test_wrap_iter_cleanup_error_follows_context_manager_semantics() -> None:
+    """A cleanup bug propagates like any teardown error (toolset, sandbox), with the
+    run's error preserved on `__context__` by Python's implicit exception chaining."""
+
     @dataclass
     class RaiseOnExit(AbstractCapability[Any]):
         @asynccontextmanager
@@ -5507,11 +5508,12 @@ async def test_wrap_iter_cleanup_error_does_not_mask_run_error() -> None:
     def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise RuntimeError('model exploded')
 
-    with pytest.raises(RuntimeError, match='model exploded') as exc_info:
+    with pytest.raises(TypeError, match='teardown bug') as exc_info:
         await Agent(FunctionModel(failing_model), capabilities=[RaiseOnExit()]).run('fail')
 
-    assert isinstance(exc_info.value.__context__, TypeError)
-    assert str(exc_info.value.__context__) == 'teardown bug'
+    context = exc_info.value.__context__
+    assert isinstance(context, RuntimeError)
+    assert str(context) == 'model exploded'
 
 
 async def test_wrap_iter_cleanup_error_propagates_after_clean_run() -> None:

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import KW_ONLY, dataclass
-from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
@@ -52,40 +50,6 @@ NodeResult: TypeAlias = '_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResu
 
 WrapRunHandler: TypeAlias = 'Callable[[], Awaitable[AgentRunResult[Any]]]'
 """Handler type for [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]."""
-
-
-# Shared internally by the agent and combined-capability composition points.
-class WrapIterGuard:
-    """Enforces `wrap_iter`'s no-control-flow contract on exit. Internal: the run applies it; it is not part of the public API.
-
-    Suppression (a truthy `__aexit__` return) is ignored, and when the run is already
-    failing, a *new* exception raised by the hook's cleanup is attached to the run error
-    as `__context__` instead of masking it — mirroring the `wrap_run` machinery's
-    treatment of buggy hooks. On a clean run, a cleanup exception propagates normally.
-    """
-
-    __slots__ = ('_cm',)
-
-    def __init__(self, cm: AbstractAsyncContextManager[None]):
-        self._cm = cm
-
-    async def __aenter__(self) -> None:
-        return await self._cm.__aenter__()
-
-    async def __aexit__(
-        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
-    ) -> bool:
-        try:
-            await self._cm.__aexit__(exc_type, exc, tb)
-        except BaseException as exit_error:
-            if exc is None or exit_error is exc:
-                raise
-            # A buggy hook cleanup must not mask the run's own error. Skip CancelledError:
-            # it's expected cancellation propagation, and setting __context__ on it causes
-            # hangs on Python 3.10 (mirrors the wrap_run drain machinery).
-            if not isinstance(exit_error, asyncio.CancelledError):
-                exc.__context__ = exit_error
-        return False
 
 
 WrapNodeRunHandler: TypeAlias = 'Callable[[_agent_graph.AgentNode[AgentDepsT, Any]], Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]]]'
@@ -540,10 +504,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         the manager's `__aexit__`. Unlike
         [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run], it receives no
         `handler` and has no control-flow power: it cannot short-circuit, replace, or retry
-        the run. Exceptions cannot be suppressed: catching an exception around `yield`
-        without re-raising it is ignored, and the run's exception always propagates. When
-        the run is already failing, an exception raised by the hook's own cleanup is
-        attached to the run error as `__context__` rather than replacing it.
+        the run. Suppressing the run's exception (catching around `yield` without
+        re-raising) is a contract violation the run detects: it raises
+        [`UserError`][pydantic_ai.exceptions.UserError] with the suppressed error as its
+        cause. An exception raised by the hook's own cleanup propagates under normal
+        context-manager semantics, exactly like a toolset or sandbox teardown error.
 
         The hook is entered after per-run resolution (capability and toolset
         [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run], model selection),

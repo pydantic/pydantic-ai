@@ -3060,6 +3060,26 @@ async def test_agent_span_brackets_sandbox_lifecycle_and_recovery(capfire: Captu
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
+async def test_run_span_end_attribute_failure_does_not_break_the_run(
+    capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Span-end attribute recording is best-effort: it runs while the exit stack unwinds,
+    where a raised exception would mask the run's own result or error. The failure can't
+    be triggered through the public API (it only fires on internal serialization bugs),
+    so patch the private helper directly to pin the defensive branch."""
+
+    def broken_end_attributes(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise ValueError('attribute serialization bug')
+
+    monkeypatch.setattr(Instrumentation, '_run_span_end_attributes', broken_end_attributes)
+    agent = Agent(TestModel(), capabilities=[Instrumentation(settings=InstrumentationSettings())])
+    with pytest.warns(RuntimeWarning, match='Failed to record agent run span attributes'):
+        result = await agent.run('Hello')
+    assert result.output == 'success (no tool calls)'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
 async def test_agent_span_captures_after_run_replacement(capfire: CaptureLogfire) -> None:
     @dataclass
     class ReplaceResult(AbstractCapability[Any]):

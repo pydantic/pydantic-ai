@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -173,12 +174,21 @@ class Instrumentation(AbstractCapability[Any]):
             finally:
                 _otel_detach(token)
                 if span.is_recording():
-                    result = self._last_result
-                    if result is not None:
-                        message_history, metadata = result.all_messages(), result.metadata
-                    else:
-                        message_history, metadata = self._last_messages or ctx.messages, ctx.metadata
-                    span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata))
+                    # Best effort: this runs while the exit stack unwinds, where a raised
+                    # exception would mask the run's own error. Telemetry must never do that.
+                    try:
+                        result = self._last_result
+                        if result is not None:
+                            message_history, metadata = result.all_messages(), result.metadata
+                        else:
+                            message_history, metadata = self._last_messages or ctx.messages, ctx.metadata
+                        span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata))
+                    except Exception as attribute_error:
+                        warnings.warn(
+                            f'Failed to record agent run span attributes: {attribute_error!r}',
+                            RuntimeWarning,
+                            stacklevel=1,
+                        )
 
     async def after_run(
         self,
