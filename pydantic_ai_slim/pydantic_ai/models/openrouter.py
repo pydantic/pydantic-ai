@@ -1024,6 +1024,15 @@ class OpenRouterModel(OpenAIChatModel):
             try:
                 nested = _OpenRouterNestedProviderResponse.model_validate(response_dict)
             except ValidationError:
+                if response_dict.get('choices') is None and response_dict.get('error') is None:
+                    # A null-`choices` body with no error envelope at all is a transient
+                    # provider hiccup, not a malformed request: surface it as a retryable
+                    # upstream error rather than a bare ValidationError.
+                    raise ModelHTTPError(
+                        status_code=502,
+                        model_name=response_dict.get('model') or self.model_name,
+                        body='OpenRouter returned a response with null `choices` and no error envelope',
+                    ) from exc
                 raise exc
 
             validated = nested.provider

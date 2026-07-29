@@ -1374,6 +1374,33 @@ def test_openrouter_malformed_error_fallthrough() -> None:
         model._process_response(completion)  # type: ignore[reportPrivateUsage]
 
 
+def test_openrouter_null_choices_without_error_envelope_is_retryable() -> None:
+    """A null-`choices` body with no error envelope raises a retryable ModelHTTPError(502).
+
+    OpenRouter intermittently returns `{"choices": null, ...}` with no error field at
+    all (a provider hiccup). Re-raising the bare ValidationError makes retry layers
+    that classify on exception type treat a transient as fatal.
+    """
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider=None,
+        created=1234567890,
+        usage=None,
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        model._process_response(completion)  # type: ignore[reportPrivateUsage]
+
+    assert exc_info.value.status_code == 502
+    assert 'null `choices`' in str(exc_info.value)
+
+
 def test_openrouter_error_with_metadata() -> None:
     """Real-world error response with metadata field from #3994.
 
