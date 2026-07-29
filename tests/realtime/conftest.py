@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+import re
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -106,17 +107,40 @@ def _scrub_ephemeral_secret(response: dict[str, Any]) -> dict[str, Any]:
     return response
 
 
+# The address fields of an SDP offer: the `c=` connection line and the address in an ICE candidate
+# (`a=candidate:<foundation> <component> <transport> <priority> <address> <port> ...`).
+_SDP_ADDRESS_RE = re.compile(rb'^(?P<prefix>c=IN IP[46] |a=candidate:\S+ \d+ \S+ \d+ )(?P<address>\S+)', re.MULTILINE)
+
+
+def _zero_sdp_addresses(request: Any) -> Any:
+    """Zero out the network addresses in a recorded SDP offer.
+
+    A cassette recorded against a *live* WebRTC peer (see `_webrtc_media_peer` — the only way to get
+    the provider to report playback) otherwise commits the recorder's own machine addresses. Nothing
+    replays or matches on a recorded request body, so blanking them costs nothing, and it keeps
+    hand-zeroing them (as `REAL_SDP_OFFER` above was) from being a step someone has to remember.
+    """
+    body = request.body
+    if isinstance(body, bytes) and b'a=candidate:' in body:
+        request.body = _SDP_ADDRESS_RE.sub(
+            lambda match: match['prefix'] + (b'0.0.0.0' if b'.' in match['address'] else b'::'), body
+        )
+    return request
+
+
 @pytest.fixture(scope='module')
 def vcr_config() -> dict[str, Any]:
     """VCR config for realtime HTTP (WebRTC signaling) cassettes.
 
     Extends the repo default with Azure's `api-key` header (the WebSocket cassettes never record HTTP,
-    so the default set omits it) and scrubs the minted ephemeral client secret from response bodies.
+    so the default set omits it), scrubs the minted ephemeral client secret from response bodies, and
+    zeroes the network addresses in a recorded SDP offer.
     """
     return {
         'ignore_localhost': True,
         'filter_headers': ['authorization', 'x-api-key', 'api-key', 'cookie'],
         'decode_compressed_response': True,
+        'before_record_request': _zero_sdp_addresses,
         'before_record_response': _scrub_ephemeral_secret,
     }
 

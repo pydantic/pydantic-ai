@@ -1,0 +1,333 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: Answer in two words.
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: server_vad
+            create_response: true
+            interrupt_response: true
+          transcription:
+            model: gpt-realtime-whisper
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+- kind: message
+  direction: received
+  data:
+    type: session.updated
+    event_id: event_E6mH8hYV2YvX1VSffb7Hh
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_u0_E6mH7YwmYXwYY0iVKLojm
+      model: gpt-realtime
+      output_modalities:
+      - audio
+      instructions: Answer in two words.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1785287846
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: gpt-realtime-whisper
+            language: null
+            prompt: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Say hello.
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_E6mH8shuSMf4ZjBXEH44z
+    previous_item_id: null
+    item:
+      id: item_E6mH8gMSHj8w5w9SzpiLj
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Say hello.
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_E6mH8JYTMP83zCc423MnD
+    previous_item_id: null
+    item:
+      id: item_E6mH8gMSHj8w5w9SzpiLj
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Say hello.
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: event_E6mH8wWBAjb6xRWQiiQyB
+    response:
+      object: realtime.response
+      id: resp_E6mH8yliCx6bYmo0a6wWY
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_E6mH7vUGZsF5Vhhnr13Tp
+      output_modalities:
+      - audio
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: event_E6mH8CAAfzX6jdEuovUn1
+    response_id: resp_E6mH8yliCx6bYmo0a6wWY
+    output_index: 0
+    item:
+      id: item_E6mH8lEZC6KvjuwrKvm4y
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_E6mH8gU7uUvMGefWmUzaB
+    previous_item_id: item_E6mH8gMSHj8w5w9SzpiLj
+    item:
+      id: item_E6mH8lEZC6KvjuwrKvm4y
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: event_E6mH8Fz2zU7e32d3zma1B
+    response_id: resp_E6mH8yliCx6bYmo0a6wWY
+    item_id: item_E6mH8lEZC6KvjuwrKvm4y
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      transcript: ''
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: event_E6mH8rKDWjMJMTTZ2wyzK
+    response_id: resp_E6mH8yliCx6bYmo0a6wWY
+    item_id: item_E6mH8lEZC6KvjuwrKvm4y
+    output_index: 0
+    content_index: 0
+    delta: Hello
+    obfuscation: Ms39ljI9LTa
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: event_E6mH8pbNx1auusoMGEMpV
+    response_id: resp_E6mH8yliCx6bYmo0a6wWY
+    item_id: item_E6mH8lEZC6KvjuwrKvm4y
+    output_index: 0
+    content_index: 0
+    delta: ' there'
+    obfuscation: FuSKhQsh4P
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: event_E6mH8A0b88bySidpQW6ct
+    response_id: resp_E6mH8yliCx6bYmo0a6wWY
+    item_id: item_E6mH8lEZC6KvjuwrKvm4y
+    output_index: 0
+    content_index: 0
+    delta: .
+    obfuscation: 88Kxrhe1rpmuPOH
+- kind: message
+  direction: received
+  data:
+    type: output_audio_buffer.started
+    event_id: event_fd8cb17ab18a4a3f
+    response_id: resp_E6mH8yliCx6bYmo0a6wWY
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.done
+    event_id: event_E6mH97inb3qwpOsZLXObn
+    response_id: resp_E6mH8yliCx6bYmo0a6wWY
+    item_id: item_E6mH8lEZC6KvjuwrKvm4y
+    output_index: 0
+    content_index: 0
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.done
+    event_id: event_E6mH9fTYo1SzKJjzlyhYR
+    response_id: resp_E6mH8yliCx6bYmo0a6wWY
+    item_id: item_E6mH8lEZC6KvjuwrKvm4y
+    output_index: 0
+    content_index: 0
+    transcript: Hello there.
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: event_E6mH9r6dvQN90EusTxQkS
+    response_id: resp_E6mH8yliCx6bYmo0a6wWY
+    item_id: item_E6mH8lEZC6KvjuwrKvm4y
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      transcript: Hello there.
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_E6mH9CZDE77LnZJTFVuOQ
+    previous_item_id: null
+    item:
+      id: item_E6mH8lEZC6KvjuwrKvm4y
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_audio
+        transcript: Hello there.
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: event_E6mH9BvtWVDJrsw1LR4ZY
+    response_id: resp_E6mH8yliCx6bYmo0a6wWY
+    output_index: 0
+    item:
+      id: item_E6mH8lEZC6KvjuwrKvm4y
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_audio
+        transcript: Hello there.
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: event_E6mH9F6XhEJrk7SkTHg6K
+    response:
+      object: realtime.response
+      id: resp_E6mH8yliCx6bYmo0a6wWY
+      status: completed
+      status_details: null
+      output:
+      - id: item_E6mH8lEZC6KvjuwrKvm4y
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_audio
+          transcript: Hello there.
+      conversation_id: conv_E6mH7vUGZsF5Vhhnr13Tp
+      output_modalities:
+      - audio
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 82
+        input_tokens: 12
+        output_tokens: 70
+        input_token_details:
+          text_tokens: 12
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 9
+          audio_tokens: 61
+      metadata: null
+- kind: message
+  direction: received
+  data:
+    type: rate_limits.updated
+    event_id: event_E6mH9gRISGeSZ8cWK3Sti
+    rate_limits:
+    - name: tokens
+      limit: 15000000
+      remaining: 14999361
+      reset_seconds: 0.002
+- kind: message
+  direction: received
+  data:
+    type: output_audio_buffer.stopped
+    event_id: event_fae6b7077d4c4e23
+    response_id: resp_E6mH8yliCx6bYmo0a6wWY
