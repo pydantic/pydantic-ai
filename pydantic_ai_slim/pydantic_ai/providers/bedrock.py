@@ -318,11 +318,17 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
 
 def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a DeepSeek model used via Bedrock."""
-    profile = deepseek_model_profile(model_name)
+    # DeepSeek is the one vendor whose Bedrock model IDs drop the family name that the upstream profile
+    # matches on: Bedrock serves `deepseek.r1-v1:0`, so `split_bedrock_model_id` hands us `r1`, which
+    # `deepseek_model_profile`'s `startswith('deepseek-r1')` can't match. Restore the prefix so R1 is
+    # recognised as a reasoning model. Every other vendor's stripped name still carries its family
+    # (`claude-…`, `qwen3-…`, `kimi-…`, `glm-…`), so this is specific to DeepSeek.
+    upstream_name = model_name if model_name.startswith('deepseek-') else f'deepseek-{model_name}'
+    profile = deepseek_model_profile(upstream_name)
     if 'r1' in model_name:
         # Bedrock-specific override applies on top of the upstream DeepSeek profile.
         return merge_profile(profile, BedrockModelProfile(bedrock_send_back_thinking_parts=True))
-    return profile  # pragma: no cover
+    return profile
 
 
 def bedrock_meta_model_profile(model_name: str) -> ModelProfile | None:
