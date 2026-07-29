@@ -95,7 +95,12 @@ safe subset so the session instructions stay on the server's control connection.
     speaking-state, not the raw `response.created` / `response.done`. A frontend that keys "assistant is
     speaking" or latency telemetry off `response.*` needs to map the `output_audio_buffer.*` events
     instead. This affects only client code reading the data channel directly; the server-side session's
-    [event stream](index.md#event-reference) is unaffected.
+    [event stream](index.md#event-reference) is unaffected — verified live: the session receives the
+    `output_audio_buffer.*` frames in full and reports them as
+    [`OutputSpeechStartEvent`][pydantic_ai.realtime.OutputSpeechStartEvent] /
+    [`OutputSpeechEndEvent`][pydantic_ai.realtime.OutputSpeechEndEvent], so a
+    listening/speaking indicator can be driven from the server rather than reconstructed in the browser
+    (see [Knowing when the model is speaking](index.md#knowing-when-the-model-is-speaking)).
 
 Azure requests authenticate with the resource's API key by default. To use **Microsoft Entra ID**
 instead — so no API key is involved, e.g. when the resource is locked to managed identity — pass a

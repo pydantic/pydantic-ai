@@ -880,7 +880,8 @@ The runnable [realtime WebRTC example](../examples/realtime-webrtc.md) shows the
 An ordinary session sees the model's audio go by, so it knows when the model is talking. A sideband
 doesn't — the media never reaches it — and *generation* is not a usable stand-in: the provider
 produces audio far faster than it plays, so a response can be complete while the listener still has
-many seconds of speech to hear.
+many seconds of speech to hear. Measured on a twenty-second answer, the model stayed audible for
+another **24 to 36 seconds after** `TurnCompleteEvent`, on OpenAI and Azure alike.
 
 So the provider reports the boundary directly, as
 [`OutputSpeechStartEvent`][pydantic_ai.realtime.OutputSpeechStartEvent] and
@@ -891,9 +892,15 @@ So the provider reports the boundary directly, as
 [Logfire](#observability-with-logfire), so a trace shows how long the model was
 actually audible.
 
+Both events arrive on Azure too: its `webrtcfilter=on` restricts what the *browser's* data channel
+receives (see [Azure](azure.md#browser-webrtc-and-microsoft-entra-id)), and leaves the session's own
+control connection — where these come from — untouched.
+
 [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] handles the other half of the same
 problem: it drops the audio the provider has already produced but not yet played, so a barge-in stops
-the voice instead of only stopping generation.
+the voice instead of only stopping generation. Measured across OpenAI and Azure, the model went silent
+**within 60 ms** of the call, and `OutputSpeechEndEvent` followed immediately — so an indicator driven
+off these events clears itself on barge-in.
 
 ## Reconnecting
 
