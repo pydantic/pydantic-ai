@@ -512,6 +512,20 @@ async def test_close_discards_buffered_view_items() -> None:
         assert [chunk async for chunk in stream] == []
 
 
+async def test_session_reports_the_connected_model_profile() -> None:
+    """A session exposes the model's profile, because it may be all the caller holds.
+
+    `agent.realtime('google:…')` takes a model *name* and builds the model internally, so without this
+    there is nothing to read the input sample rate (or any capability flag) off of.
+    """
+    profile = RealtimeModelProfile(supports_interruption=False, audio_input_sample_rate=16000)
+    model = FakeRealtimeModel(FakeRealtimeConnection([]), profile=profile)
+    agent = Agent()
+    async with agent.realtime(model).session() as session:
+        assert session.profile == profile
+        assert session.profile.get('audio_input_sample_rate') == 16000
+
+
 async def test_close_ends_views_and_is_idempotent() -> None:
     session = RealtimeSession(BlockingRealtimeConnection([AudioDelta(b'audio')]))
 
