@@ -8912,3 +8912,81 @@ async def test_heartbeating_body_error_wins_over_beat_crash(monkeypatch: pytest.
         async with _heartbeating():
             await asyncio.sleep(0.01)
             raise ValueError('request failed')
+
+
+# --- Usage mutated inside an activity ---
+
+
+def _usage_delegation_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call the `delegate` tool once, then finish."""
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(
+                    parts=[TextPart(content=f'Delegate said: {part.content}')],
+                    usage=RequestUsage(input_tokens=5, output_tokens=1),
+                )
+    return ModelResponse(
+        parts=[ToolCallPart(tool_name='delegate', args='{}')],
+        usage=RequestUsage(input_tokens=5, output_tokens=1),
+    )
+
+
+_usage_delegate_agent = Agent(
+    FunctionModel(
+        lambda messages, info: ModelResponse(
+            parts=[TextPart(content='delegated')],
+            usage=RequestUsage(input_tokens=100, output_tokens=10),
+        )
+    ),
+    name='usage_delegate_agent',
+)
+
+usage_delegation_agent = Agent(
+    FunctionModel(_usage_delegation_model_fn),
+    name='usage_delegation_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@usage_delegation_agent.tool
+async def delegate(ctx: RunContext[None]) -> str:
+    """Delegate to another agent, passing the parent run's usage as the docs recommend."""
+    result = await _usage_delegate_agent.run('delegate this', usage=ctx.usage)
+    return result.output
+
+
+@workflow.defn
+class UsageDelegationWorkflow:
+    @workflow.run
+    async def run(self) -> RunUsage:
+        result = await usage_delegation_agent.run('delegate please')
+        return result.usage
+
+
+async def test_delegate_agent_usage_is_not_merged_back_from_activity(client: Client):
+    """Pins the documented Temporal limitation: `ctx.usage` mutations inside an activity are lost.
+
+    A tool running inside an activity gets a deserialized copy of the run's `RunUsage`, so the
+    usage a delegate agent accrues through `usage=ctx.usage` never reaches the workflow-side run:
+    the delegate's 100 input tokens, 10 output tokens, and its request are missing from the
+    workflow result, while the same agent run in-process (below) counts them.
+
+    See https://github.com/pydantic/pydantic-ai/issues/6886.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UsageDelegationWorkflow],
+        plugins=[AgentPlugin(usage_delegation_agent)],
+    ):
+        workflow_usage = await client.execute_workflow(
+            UsageDelegationWorkflow.run,
+            id=UsageDelegationWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert workflow_usage == snapshot(RunUsage(input_tokens=10, output_tokens=2, requests=2, tool_calls=1))
+
+    in_process_result = await usage_delegation_agent.run('delegate please')
+    assert in_process_result.usage == snapshot(RunUsage(requests=3, input_tokens=110, output_tokens=12, tool_calls=1))
