@@ -45,6 +45,7 @@ from pydantic_ai.tools import (
 )
 
 from .._runtime_toolsets import reject_unsupported_runtime_toolsets
+from ._activity_execution import execute_activity
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import temporalize_toolset, toolset_temporal_activities
@@ -274,7 +275,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         async for event in stream:
             activity_config: ActivityConfig = {'summary': f'handle event: {event.event_kind}', **self.activity_config}
-            await workflow.execute_activity(
+            await execute_activity(
                 activity=self.event_stream_handler_activity,
                 args=[
                     _EventStreamHandlerParams(
