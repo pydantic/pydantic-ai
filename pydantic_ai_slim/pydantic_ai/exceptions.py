@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 import pydantic_core
 from pydantic_core import core_schema
 
+from ._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
+
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
 else:
@@ -38,6 +40,7 @@ __all__ = (
     'ContentFilterError',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
+    'PydanticAIDeprecationWarning',
     'FallbackExceptionGroup',
     'ToolFailed',
 )

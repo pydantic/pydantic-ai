@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '233'
+      - '218'
       content-type:
       - application/json
       host:
@@ -23,7 +23,6 @@ interactions:
       model: gpt-5.6-sol
       reasoning:
         context: all_turns
-        mode: pro
       stream: false
     uri: https://api.openai.com/v1/responses
   response:
@@ -41,7 +40,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '2632'
+      - '1110'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -52,11 +51,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1784912262
-      created_at: 1784912259
+      completed_at: 1784912110
+      created_at: 1784912109
       error: null
       frequency_penalty: 0.0
-      id: resp_05709abff33d777e006a6399838e18819fbd072bf062444c5e
+      id: resp_08cd885aa2d06074006a6398eda928819c9e7215944c64d397
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -71,7 +70,7 @@ interactions:
           logprobs: []
           text: Paris
           type: output_text
-        id: msg_05709abff33d777e006a639985dff0819facf45889a3fe66c5
+        id: msg_08cd885aa2d06074006a6398ee8d00819ca1d59f8c1a91910a
         phase: final_answer
         role: assistant
         status: completed
@@ -84,7 +83,7 @@ interactions:
       reasoning:
         context: all_turns
         effort: medium
-        mode: pro
+        mode: standard
         summary: null
       safety_identifier: null
       service_tier: default
@@ -114,14 +113,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 1549
+        input_tokens: 18
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
-        output_tokens: 30
+        output_tokens: 5
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 1579
+        total_tokens: 23
       user: null
     status:
       code: 200

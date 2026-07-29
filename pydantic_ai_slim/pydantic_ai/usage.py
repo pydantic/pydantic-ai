@@ -3,10 +3,12 @@ from __future__ import annotations as _annotations
 import dataclasses
 from copy import copy
 from dataclasses import dataclass
-from typing import Annotated, Any
+from functools import cache
+from typing import Annotated, Any, cast
 
 from genai_prices.data_snapshot import get_snapshot
-from pydantic import AliasChoices, BeforeValidator, Field
+from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler, TypeAdapter
+from pydantic_core import SchemaSerializer, core_schema
 
 from . import _utils
 from .exceptions import UsageLimitExceeded
@@ -20,9 +22,66 @@ conceptual quantity under two attributes that consumers like Langfuse then sum, 
 and cost. Adapters that stash these keys in `details` (e.g. Anthropic's streaming carry-forward, Cohere's
 billed units) keep them accessible on `RequestUsage.details`; only the ambiguous OTel emission is dropped."""
 
+_LEGACY_USAGE_KEYS = frozenset({'requests', 'request_tokens', 'response_tokens', 'total_tokens'})
+"""Keys accepted in stored usage data for backwards compatibility but not preserved as arbitrary fields."""
+
+_LEGACY_TOKEN_ALIASES = (('input_tokens', 'request_tokens'), ('output_tokens', 'response_tokens'))
+
+
+@cache
+def _usage_serializer(usage_type: type[object]) -> SchemaSerializer:
+    return TypeAdapter(usage_type).serializer
+
+
+class _UsageSerializerDescriptor:
+    def __get__(self, instance: object, owner: type[object]) -> SchemaSerializer:
+        return _usage_serializer(owner)
+
+
+def _serialize_usage(
+    value: UsageBase,
+    inner: core_schema.SerializerFunctionWrapHandler,
+    info: core_schema.SerializationInfo,
+    *,
+    reserved_names: frozenset[str],
+    extra_serializer: SchemaSerializer,
+) -> dict[str, Any]:
+    serialized = inner(value)
+    assert isinstance(serialized, dict)
+    result = cast(dict[str, Any], serialized).copy()
+    extra = {
+        key: item
+        for key, item in value.__dict__.items()
+        if key not in reserved_names and (item is not None or not info.exclude_none)
+    }
+    extra = cast(
+        dict[str, Any],
+        extra_serializer.to_python(
+            extra,
+            # Apply selectors without consuming JSON fallback and warning handling from the outer serializer.
+            mode='python',
+            include=cast(Any, info.include),
+            exclude=cast(Any, info.exclude),
+            by_alias=info.by_alias,
+            exclude_unset=info.exclude_unset,
+            exclude_defaults=info.exclude_defaults,
+            exclude_none=info.exclude_none,
+            exclude_computed_fields=info.exclude_computed_fields,
+            round_trip=info.round_trip,
+            serialize_as_any=info.serialize_as_any,
+            context=info.context,
+        ),
+    )
+    result.update(extra)
+    return result
+
 
 @dataclass(repr=False, init=False, eq=False)
 class UsageBase:
+    # Bare `pydantic_core.to_json()` looks for this attribute but does not build custom core schemas for stdlib
+    # dataclasses. The descriptor builds the same serializer as `TypeAdapter` for each concrete usage class.
+    __pydantic_serializer__ = _UsageSerializerDescriptor()
+
     input_tokens: Annotated[
         int,
         # `request_tokens` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
@@ -69,6 +128,54 @@ class UsageBase:
         self.details = details or {}
         for k, v in kwargs.items():
             setattr(self, k, v)
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        """Preserve arbitrary usage fields across Pydantic serialization."""
+        schema = handler(source_type)
+        field_names = frozenset(field.name for field in dataclasses.fields(source_type))
+        reserved_names = field_names | frozenset(dir(source_type)) | _LEGACY_USAGE_KEYS
+        extra_serializer = SchemaSerializer(core_schema.any_schema())
+
+        def validate(value: Any, inner: core_schema.ValidatorFunctionWrapHandler) -> UsageBase:
+            if isinstance(value, dict):
+                value_dict = cast(dict[str, Any], value)
+                input_value = value_dict.copy()
+                if not value_dict.get('details'):
+                    input_value['details'] = {}
+                for field_name, legacy_name in _LEGACY_TOKEN_ALIASES:
+                    if field_name not in value_dict and legacy_name in value_dict and value_dict[legacy_name] is None:
+                        input_value[legacy_name] = 0
+            else:
+                value_dict = None
+                input_value = cast(object, value)
+
+            result = inner(input_value)
+            assert isinstance(result, UsageBase)
+            if value_dict is not None:
+                for key, item in value_dict.items():
+                    if key not in reserved_names:
+                        setattr(result, key, item)
+            return result
+
+        def serialize(
+            value: UsageBase,
+            inner: core_schema.SerializerFunctionWrapHandler,
+            info: core_schema.SerializationInfo,
+        ) -> Any:
+            return _serialize_usage(
+                value,
+                inner,
+                info,
+                reserved_names=reserved_names,
+                extra_serializer=extra_serializer,
+            )
+
+        return core_schema.no_info_wrap_validator_function(
+            validate,
+            schema,
+            serialization=core_schema.wrap_serializer_function_ser_schema(serialize, info_arg=True, schema=schema),
+        )
 
     def __copy__(self) -> UsageBase:
         """Shallow copy that also copies mutable fields like `details`."""
@@ -129,8 +236,9 @@ class UsageBase:
                 # under `gen_ai.usage.details.*` makes consumers like Langfuse sum the two and double-count.
                 if key in _FIRST_CLASS_TOKEN_DETAIL_KEYS:
                     continue
-                # Skipping check for value since spec implies all detail values are relevant
-                if value:
+                # Zero is a meaningful value, but a `None` would be an invalid OTel attribute value.
+                # Provider data can contain None despite the annotation.
+                if value is not None:  # pyright: ignore[reportUnnecessaryComparison]
                     result[prefix + key] = value
         return result
 

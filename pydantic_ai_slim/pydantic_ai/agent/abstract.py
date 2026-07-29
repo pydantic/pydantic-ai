@@ -1609,7 +1609,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```
 
         For per-agent configuration, use the
-        [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability instead.
+        [`UseThreadExecutor`][pydantic_ai.capabilities.UseThreadExecutor] capability instead.
 
         Args:
             executor: The executor to use for running sync functions.
