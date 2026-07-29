@@ -1742,6 +1742,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 """Call after_run, store the result override, and clear any pending error."""
                 nonlocal _run_error
                 r = await run_capability.after_run(run_ctx, result=r)
+                # Every completion path funnels through here — including `wrap_run`/`on_run_error`
+                # recovering from the very `CancelledError` an external cancel delivered. If that
+                # cancellation is still pending on this task, re-assert it rather than let the run
+                # finalize as a success.
+                _utils.raise_if_cancelling()
                 agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
                 _run_error = None
 
@@ -1783,12 +1788,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             # Skip CancelledError: it's expected cancellation propagation,
                             # and setting __context__ on it causes hangs on Python 3.10.
                             if not isinstance(_wrap_exc, asyncio.CancelledError) and _wrap_exc is not _run_error:
-                                _run_error.__context__ = (
-                                    _wrap_exc  # pragma: no cover — only fires for bugs in wrap_run implementations
-                                )
-                    elif (
-                        not _wrap_task.done()
-                    ):  # pragma: no branch — _run_done.set() can't complete _wrap_task synchronously
+                                # Only fires for bugs in `wrap_run` implementations.
+                                _run_error.__context__ = _wrap_exc  # pragma: no cover
+                    # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is always still pending here.
+                    elif not _wrap_task.done():  # pragma: no branch
                         _wrap_task.cancel()
                         try:
                             await _wrap_task
@@ -2921,7 +2924,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             for cap_ts in cap_toolsets if cap_toolsets is not None else self._cap_toolsets:
                 if isinstance(cap_ts, AbstractToolset):
                     toolsets.append(cap_ts)  # pyright: ignore[reportUnknownArgumentType]
-                else:  # pragma: no cover — get_toolset() always returns AbstractToolset
+                else:  # pragma: no cover
+                    # `get_toolset()` always returns an `AbstractToolset`.
                     toolsets.append(DynamicToolset(cap_ts))
 
         return toolsets

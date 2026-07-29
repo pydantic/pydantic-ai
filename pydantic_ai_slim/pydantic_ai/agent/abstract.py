@@ -84,7 +84,7 @@ AgentMetadata = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, An
 AgentInstructions = _instructions.AgentInstructions
 """Type alias for agent instructions — a string, `TemplateStr`, callable, or sequence thereof."""
 
-Instructions = AgentInstructions
+Instructions = AgentInstructions  # TODO(v3): remove the `Instructions` alias
 """Deprecated: use `AgentInstructions` instead."""
 
 AgentModelSettings = ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]
@@ -200,7 +200,12 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
         async def run_agent() -> AgentRunResult[Any]:
             # Closing the send stream on exit is what surfaces `EndOfStream` to the consumer once the run ends.
             async with send_stream:
-                return await self._run_agent(event_stream_handler)
+                result = await self._run_agent(event_stream_handler)
+                # This background task owns the run: if a step absorbed an external cancellation
+                # of this task, re-assert it here so a cancelled run never yields a normal
+                # `AgentRunResultEvent` to the consumer.
+                _utils.raise_if_cancelling()
+                return result
 
         self._task = asyncio.create_task(run_agent())
 
@@ -335,7 +340,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to expose as `RunContext.usage`.
             model_settings: Optional settings to expose as `RunContext.model_settings`.
         """
-        return []  # pragma: no cover — concrete subclasses override this
+        # Concrete subclasses override this.
+        return []  # pragma: no cover
 
     def output_json_schema(self, output_type: OutputSpec[OutputDataT | RunOutputDataT] | None = None) -> JsonSchema:
         """The output return JSON schema."""
@@ -1604,7 +1610,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```
 
         For per-agent configuration, use the
-        [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability instead.
+        [`UseThreadExecutor`][pydantic_ai.capabilities.UseThreadExecutor] capability instead.
 
         Args:
             executor: The executor to use for running sync functions.

@@ -479,12 +479,13 @@ class Model(ABC, Generic[InterfaceClient]):
     def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
         """Pre-process the message history before it's handed to the adapter's message-prep step.
 
-        Currently translates any typed `NativeToolSearch*Part` instances carried over from a
-        prior native turn (e.g. Anthropic / OpenAI Responses) into the local-shape
-        `ToolSearch*Part` instances when the active model's profile doesn't support
-        `ToolSearchTool` — splitting the single `ModelResponse(call+return)` carrying the
-        inline server-side result into `ModelResponse(call) + ModelRequest(return)` so the
-        adapter sees a normal function-call exchange against `search_tools`.
+        Translates typed `NativeToolSearch*Part` instances carried over from a
+        different provider (e.g. Anthropic to OpenAI Responses), or any native
+        provider when the active model doesn't support `ToolSearchTool`, into the
+        local-shape `ToolSearch*Part` instances. This splits the single
+        `ModelResponse(call+return)` carrying the inline server-side result into
+        `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
+        provider-agnostic exchange.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`.
@@ -493,10 +494,14 @@ class Model(ABC, Generic[InterfaceClient]):
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
         """
-        if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
-            from .._tool_search import synthesize_local_tool_search_messages
+        from .._tool_search import synthesize_local_tool_search_messages
 
-            messages = synthesize_local_tool_search_messages(messages)
+        target_provider_name = (
+            self.system
+            if ToolSearchTool in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+            else None
+        )
+        messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
 
         if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages)
@@ -1091,6 +1096,7 @@ class CompletedStreamedResponse(StreamedResponse):
         replay_events: bool | list[ModelResponseStreamEvent] | _utils.Unset = _utils.UNSET,
         events: bool | list[ModelResponseStreamEvent] | None = None,
     ):
+        # TODO(v3): remove the `events` alias and its deprecated `__init__` overloads
         if events is not None:
             warnings.warn(
                 '`events` is deprecated; use `replay_events` instead.',
@@ -1102,6 +1108,7 @@ class CompletedStreamedResponse(StreamedResponse):
                 replay_events = events
         if isinstance(replay_events, _utils.Unset):
             replay_events = False
+        # TODO(v3): remove the positional `(model_request_parameters, response)` order and its deprecated overloads
         if isinstance(response, ModelRequestParameters):
             # The positional `(model_request_parameters, response)` order predates the move
             # from `pydantic_ai.models.wrapper` to `pydantic_ai.models`.
@@ -1192,16 +1199,30 @@ ALLOW_MODEL_REQUESTS = True
 This global setting allows you to disable request to most models, e.g. to make sure you don't accidentally
 make costly requests to a model during tests.
 
-The testing models [`TestModel`][pydantic_ai.models.test.TestModel] and
-[`FunctionModel`][pydantic_ai.models.function.FunctionModel] are no affected by this setting.
+The testing models [`TestModel`][pydantic_ai.models.test.TestModel],
+[`FunctionModel`][pydantic_ai.models.function.FunctionModel] and
+[`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] are not affected by this setting, nor is
+[`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel],
+which runs inference locally and so has no per-call provider cost.
 """
 
 
 def check_allow_model_requests() -> None:
     """Check if model requests are allowed.
 
-    If you're defining your own models that have costs or latency associated with their use, you should call this in
-    [`Model.request`][pydantic_ai.models.Model.request] and [`Model.request_stream`][pydantic_ai.models.Model.request_stream].
+    If you're defining your own models that have costs or latency associated with their use, you should call this at the
+    top of each method that sends a request to the provider: [`Model.request`][pydantic_ai.models.Model.request],
+    [`Model.request_stream`][pydantic_ai.models.Model.request_stream],
+    [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens],
+    [`Model.compact_messages`][pydantic_ai.models.Model.compact_messages],
+    [`EmbeddingModel.embed`][pydantic_ai.embeddings.EmbeddingModel.embed] and
+    [`EmbeddingModel.count_tokens`][pydantic_ai.embeddings.EmbeddingModel.count_tokens].
+
+    Methods that produce their result locally don't need it — for example
+    [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel]'s `count_tokens`, which tokenizes with
+    `tiktoken` and never calls the provider. Neither does
+    [`Model.cancel_suspended_response`][pydantic_ai.models.Model.cancel_suspended_response], which deliberately omits it
+    so an already-started job can still be cancelled after the flag is flipped.
 
     Raises:
         RuntimeError: If model requests are not allowed.
