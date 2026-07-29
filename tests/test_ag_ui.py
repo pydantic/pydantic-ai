@@ -6447,8 +6447,11 @@ async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
                         'type': 'object',
                         'properties': {
                             'approved': {'type': 'boolean'},
-                            'editedArgs': {'type': 'object'},
-                            'reason': {'type': 'string'},
+                            'editedArgs': {
+                                'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                'default': None,
+                            },
+                            'reason': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
                         },
                         'required': ['approved'],
                     },
@@ -6595,13 +6598,20 @@ async def test_resume_cancelled_denies_tool_regardless_of_payload() -> None:
         pytest.param('approved', id='payload-is-string'),
         pytest.param([{'approved': True}], id='payload-is-list'),
         pytest.param(None, id='payload-null'),
+        pytest.param({'approved': True, 'editedArgs': 'not-a-dict'}, id='approved-with-malformed-edited-args'),
+        pytest.param({'approved': True, 'reason': 123}, id='approved-with-non-string-reason'),
+        pytest.param({'approved': False, 'reason': ''}, id='empty-reason-keeps-default-message'),
     ],
 )
 async def test_resume_deny_by_default_for_ambiguous_payload(payload: Any) -> None:
-    """Approval requires an explicit `payload.approved == True`.
+    """Approval requires a payload that validates with `approved=True`.
 
-    Anything else (missing, null, non-bool, non-dict payload) must deny so a malformed or
-    hostile client cannot bypass the `requires_approval=True` gate by omitting the field.
+    Anything that fails validation (missing, null, non-bool, non-dict payload, non-dict
+    `editedArgs`, non-string `reason`) must deny so a malformed or hostile client cannot
+    bypass the `requires_approval=True` gate. In particular, an approval carrying a
+    malformed `editedArgs` denies the whole payload rather than approving with the
+    original arguments the user visibly tried to change, and an empty-string `reason`
+    keeps `ToolDenied`'s default message.
     """
     agent = Agent(model=TestModel())
     run_input = RunAgentInput(
