@@ -102,7 +102,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import Sandbox
+from pydantic_ai.sandboxes import SandboxBackend
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
@@ -2659,7 +2659,7 @@ class WorkflowFakeSandbox:
 class SimpleAgentWorkflowWithRunSandbox:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await simple_temporal_agent.run(prompt, sandbox=cast(Sandbox, WorkflowFakeSandbox()))
+        result = await simple_temporal_agent.run(prompt, sandbox=cast(SandboxBackend, WorkflowFakeSandbox()))
         return result.output  # pragma: no cover
 
 
@@ -2689,8 +2689,8 @@ async def test_temporal_agent_run_in_workflow_with_sandbox(allow_model_requests:
 class SandboxContributingCapability(AbstractCapability[Any]):
     """Capability whose contributed sandbox would be entered as workflow code inside Temporal."""
 
-    def serve_sandbox(self) -> AbstractAsyncContextManager[Sandbox]:
-        return nullcontext(cast(Sandbox, WorkflowFakeSandbox()))  # pragma: no cover
+    def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend]:
+        return nullcontext(cast(SandboxBackend, WorkflowFakeSandbox()))  # pragma: no cover
 
 
 sandbox_capability_agent = Agent(model, name='sandbox_capability_agent', capabilities=[SandboxContributingCapability()])

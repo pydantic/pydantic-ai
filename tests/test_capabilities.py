@@ -6,8 +6,9 @@ import inspect
 import re
 import threading
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from importlib.util import find_spec
@@ -123,6 +124,7 @@ from pydantic_ai.output import NativeOutput, OutputContext, PromptedOutput, Text
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import AgentStream
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.sandboxes import LocalSandbox, Sandbox, SandboxBackend
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
@@ -5316,6 +5318,277 @@ class TestRunHooks:
             t for t in asyncio.all_tasks() if not t.done() and 'wrap_run' in (t.get_coro().__qualname__ or '')
         ]
         assert not pending_wrap_tasks, f'the wrap task must not be left pending: {pending_wrap_tasks}'
+
+
+@pytest.mark.parametrize('run_mode', ['run', 'iter', 'run_stream'])
+async def test_wrap_iter_brackets_complete_run_lifecycle(run_mode: str, tmp_path: Path) -> None:
+    events: list[str] = []
+
+    @dataclass
+    class IterCapability(AbstractCapability[Any]):
+        name: str
+
+        @asynccontextmanager
+        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+            events.append(f'{self.name}_enter')
+            try:
+                yield
+            finally:
+                events.append(f'{self.name}_exit')
+
+    @dataclass
+    class SandboxCapability(AbstractCapability[Any]):
+        def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend]:
+            @asynccontextmanager
+            async def serve() -> AsyncGenerator[SandboxBackend]:
+                events.append('sandbox_enter')
+                try:
+                    yield LocalSandbox(tmp_path)
+                finally:
+                    events.append('sandbox_exit')
+
+            return serve()
+
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            events.append('before_run')
+
+        async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            events.append('after_run')
+            return result
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        events.append('model')
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        events.append('model')
+        yield 'done'
+
+    agent = Agent(
+        FunctionModel(model_function, stream_function=stream_function),
+        capabilities=[IterCapability('iter1'), IterCapability('iter2'), SandboxCapability()],
+    )
+
+    if run_mode == 'run':
+        await agent.run('hello')
+    elif run_mode == 'iter':
+        async with agent.iter('hello') as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                node = await agent_run.next(node)
+    else:
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+
+    assert events == [
+        'iter1_enter',
+        'iter2_enter',
+        'sandbox_enter',
+        'before_run',
+        'model',
+        'after_run',
+        'sandbox_exit',
+        'iter2_exit',
+        'iter1_exit',
+    ]
+
+
+async def test_wrap_iter_receives_pre_assembly_context(tmp_path: Path) -> None:
+    seen: list[Sandbox | None] = []
+
+    @dataclass
+    class CaptureContext(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+            assert ctx.tool_manager is None
+            assert ctx.validation_context is None
+            seen.append(ctx.sandbox)
+            yield
+
+    @dataclass
+    class ServeSandbox(AbstractCapability[Any]):
+        def serve_sandbox(self) -> SandboxBackend:
+            return LocalSandbox(tmp_path)
+
+    model = FunctionModel(simple_model_function)
+    await Agent(model, capabilities=[CaptureContext(), ServeSandbox()]).run('capability served')
+
+    backend = LocalSandbox(tmp_path)
+    await Agent(model, capabilities=[CaptureContext()]).run('caller supplied', sandbox=backend)
+
+    assert seen[0] is None
+    assert isinstance(seen[1], Sandbox)
+    assert seen[1].backend is backend
+
+
+async def test_wrap_iter_observes_propagated_and_recovered_errors() -> None:
+    observed: list[BaseException | None] = []
+
+    @dataclass
+    class ObserveExit(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+            try:
+                yield
+            except BaseException as exc:
+                observed.append(exc)
+                raise
+            else:
+                observed.append(None)
+
+    @dataclass
+    class RecoverError(AbstractCapability[Any]):
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output='recovered')
+
+    def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model exploded')
+
+    model = FunctionModel(failing_model)
+    with pytest.raises(RuntimeError, match='model exploded'):
+        await Agent(model, capabilities=[ObserveExit()]).run('fail')
+
+    result = await Agent(model, capabilities=[ObserveExit(), RecoverError()]).run('recover')
+
+    assert result.output == 'recovered'
+    assert isinstance(observed[0], RuntimeError)
+    assert observed[1] is None
+
+
+@pytest.mark.parametrize('combined', [False, True])
+async def test_wrap_iter_cannot_suppress_run_error(combined: bool) -> None:
+    observed: list[BaseException] = []
+
+    @dataclass
+    class ObserveExit(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+            try:
+                yield
+            except BaseException as exc:
+                observed.append(exc)
+                raise
+
+    @dataclass
+    class SuppressError(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+            try:
+                yield
+            except RuntimeError:
+                pass
+
+    def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model exploded')
+
+    capabilities: list[AbstractCapability[Any]] = [SuppressError()]
+    if combined:
+        capabilities.insert(0, ObserveExit())
+
+    with pytest.raises(RuntimeError, match='model exploded'):
+        await Agent(FunctionModel(failing_model), capabilities=capabilities).run('fail')
+
+    assert len(observed) == int(combined)
+    if observed:
+        assert isinstance(observed[0], RuntimeError)
+        assert str(observed[0]) == 'model exploded'
+
+
+async def test_wrap_iter_cleanup_error_does_not_mask_run_error() -> None:
+    @dataclass
+    class RaiseOnExit(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+            try:
+                yield
+            finally:
+                raise TypeError('teardown bug')
+
+    def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model exploded')
+
+    with pytest.raises(RuntimeError, match='model exploded') as exc_info:
+        await Agent(FunctionModel(failing_model), capabilities=[RaiseOnExit()]).run('fail')
+
+    assert isinstance(exc_info.value.__context__, TypeError)
+    assert str(exc_info.value.__context__) == 'teardown bug'
+
+
+async def test_wrap_iter_cleanup_error_propagates_after_clean_run() -> None:
+    @dataclass
+    class RaiseOnExit(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+            try:
+                yield
+            finally:
+                raise TypeError('teardown bug')
+
+    with pytest.raises(TypeError, match='teardown bug'):
+        await Agent(FunctionModel(simple_model_function), capabilities=[RaiseOnExit()]).run('succeed')
+
+
+async def test_deferred_capability_wrap_iter_never_fires_when_loaded() -> None:
+    events: list[str] = []
+
+    @dataclass
+    class DeferredIter(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+            events.append('entered')
+            yield
+
+        def get_instructions(self) -> str:
+            return 'Deferred instructions.'
+
+    def load_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(part, LoadCapabilityReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'deferred'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    capability = DeferredIter(
+        id='deferred',
+        description='Load this capability.',
+        defer_loading=True,
+    )
+    result = await Agent(FunctionModel(load_then_finish), capabilities=[capability]).run('load it')
+
+    assert result.output == 'done'
+    assert any(
+        isinstance(part, LoadCapabilityReturnPart) for message in result.all_messages() for part in message.parts
+    )
+    assert events == []
+
+
+async def test_resumed_deferred_capability_wrap_iter_never_fires_when_already_loaded() -> None:
+    events: list[str] = []
+
+    @dataclass
+    class DeferredIter(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+            events.append('wrap_iter')
+            yield
+
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            events.append('before_run')
+
+    capability = DeferredIter(
+        id='deferred',
+        description='Load this capability.',
+        defer_loading=True,
+    )
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'deferred'}, tool_call_id='load-deferred')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='load-deferred')]),
+    ]
+
+    result = await Agent(FunctionModel(simple_model_function), capabilities=[capability]).run(
+        'resume', message_history=history
+    )
+
+    assert result.output == 'response from model'
+    assert events == ['before_run']
 
 
 class TestModelRequestHooks:
@@ -12410,6 +12683,31 @@ async def test_wrapper_capability_has_wrap_node_run():
             return await handler(node)  # pragma: no cover
 
     assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True
+
+
+async def test_wrapper_capability_forwards_wrap_iter():
+    """`WrapperCapability` forwards `wrap_iter` and reports whether the wrapped hook exists."""
+    events: list[str] = []
+    plain = CustomCapability()
+    assert WrapperCapability(wrapped=plain).has_wrap_iter is False
+
+    @dataclass
+    class IterCap(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+            events.append('enter')
+            try:
+                yield
+            finally:
+                events.append('exit')
+
+    wrapper = WrapperCapability(wrapped=IterCap())
+    assert wrapper.has_wrap_iter is True
+
+    async with wrapper.wrap_iter(_build_run_context()):
+        events.append('body')
+
+    assert events == ['enter', 'body', 'exit']
 
 
 async def test_wrapper_capability_delegates_resolve_model_id():

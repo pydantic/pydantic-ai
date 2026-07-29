@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -32,11 +33,12 @@ from .abstract import (
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapOutputProcessHandler,
-    WrapRunHandler,
     WrapToolExecuteHandler,
 )
 
 if TYPE_CHECKING:
+    from opentelemetry.trace import Span
+
     from pydantic_ai._run_context import RunContext
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -73,21 +75,23 @@ class Instrumentation(AbstractCapability[Any]):
     """OTel/Logfire instrumentation settings. Defaults to `InstrumentationSettings()`,
     which uses the global `TracerProvider` (typically configured by `logfire.configure()`)."""
 
-    # Per-run state (set in `for_run`, mutated by `wrap_model_request`). `for_run`
-    # returns a shallow copy via `replace(self)` for per-run isolation. These fields
-    # are updated as the run progresses and assume sequential model requests within
-    # a run — if the agent loop ever issues concurrent model requests, accesses to
-    # these fields would race.
+    # Per-run state (set in `for_run`, mutated by lifecycle hooks). `for_run` calls
+    # `replace(self)`, whose generated `__init__` resets these `init=False` fields to
+    # their defaults for per-run isolation. These fields assume sequential model
+    # requests within a run — if the agent loop ever issues concurrent model requests,
+    # accesses to them would race.
     _agent_name: str = field(default='agent', repr=False, init=False)
     _new_message_index: int = field(default=0, repr=False, init=False)
+    _run_span: Span | None = field(default=None, repr=False, init=False)
+    _last_result: AgentRunResult[Any] | None = field(default=None, repr=False, init=False)
     _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
     _last_model_request_parameters: ModelRequestParameters | None = field(default=None, repr=False, init=False)
     _last_formatted_instructions: str | None | Unset = field(default=UNSET, repr=False, init=False)
     """Last formatted instructions sent to the model, or `UNSET` before the first request."""
     _variable_instructions: bool = field(default=False, repr=False, init=False)
     """Whether agent-level instructions varied across requests in this run."""
-    # Resolved once from `self.settings.version` in `__post_init__` and preserved across
-    # `dataclasses.replace` calls in `for_run` (which only touches init=True fields).
+    # Resolved from `self.settings.version` whenever `__post_init__` runs, including on
+    # the per-run copy created by `dataclasses.replace`.
     _instrumentation_names: InstrumentationNames = field(
         default_factory=lambda: InstrumentationNames.for_version(DEFAULT_INSTRUMENTATION_VERSION),
         repr=False,
@@ -130,15 +134,12 @@ class Instrumentation(AbstractCapability[Any]):
         return inst
 
     # ------------------------------------------------------------------
-    # wrap_run — agent run span
+    # wrap_iter — agent run span
     # ------------------------------------------------------------------
 
-    async def wrap_run(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        handler: WrapRunHandler,
-    ) -> AgentRunResult[Any]:
+    @asynccontextmanager
+    async def wrap_iter(self, ctx: RunContext[AgentDepsT]) -> AsyncGenerator[None]:
+        """Keep resource setup, execution, recovery, and teardown inside the agent-run span."""
         settings = self.settings
         names = self._instrumentation_names
         agent_name = self._agent_name
@@ -162,38 +163,40 @@ class Instrumentation(AbstractCapability[Any]):
             names.get_agent_run_span_name(agent_name),
             attributes=span_attributes,
         ) as span:
+            self._run_span = span
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
             otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id or '', context=otel_ctx)
             token = _otel_attach(otel_ctx)
-            result: AgentRunResult[Any] | None = None
             try:
-                result = await handler()
-
-                if settings.include_content and span.is_recording():
-                    span.set_attribute(
-                        'final_result',
-                        (
-                            result.output
-                            if isinstance(result.output, str)
-                            else safe_to_json(serialize_any(result.output)).decode()
-                        ),
-                    )
-
-                return result
+                yield
             finally:
                 _otel_detach(token)
                 if span.is_recording():
-                    # Get current messages and metadata from the result (which holds the up-to-date state).
-                    # ctx.messages/ctx.metadata may be stale because the run state is mutated during execution.
+                    result = self._last_result
                     if result is not None:
-                        message_history = result.all_messages()
-                        metadata = result.metadata
+                        message_history, metadata = result.all_messages(), result.metadata
                     else:
-                        # On error, use the last messages seen during model requests.
-                        message_history = self._last_messages or ctx.messages
-                        metadata = ctx.metadata
+                        message_history, metadata = self._last_messages or ctx.messages, ctx.metadata
                     span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata))
+
+    async def after_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        result: AgentRunResult[Any],
+    ) -> AgentRunResult[Any]:
+        """Run last (outermost capability, reversed dispatch) to capture replacements and recoveries."""
+        self._last_result = result
+        span = self._run_span
+        if span is not None and self.settings.include_content and span.is_recording():
+            span.set_attribute(
+                'final_result',
+                result.output
+                if isinstance(result.output, str)
+                else safe_to_json(serialize_any(result.output)).decode(),
+            )
+        return result
 
     def _run_span_end_attributes(
         self,

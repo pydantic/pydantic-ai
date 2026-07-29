@@ -119,8 +119,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     sandbox: Sandbox | None = None
     """The [`Sandbox`][pydantic_ai.sandboxes.Sandbox] attached to this run, if any.
 
-    Set once per run — from the `sandbox=` run argument (caller-owned, available from the
-    earliest hooks on) or from a capability's
+    This is always the rich Pydantic AI facade; use
+    [`sandbox.backend`][pydantic_ai.sandboxes.Sandbox.backend] to access provider-specific
+    functionality. Set once per run — from the `sandbox=` run argument (caller-owned, available
+    from the earliest hooks on) or from a capability's
     [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox] contribution
     (available everywhere except run assembly: `for_run` on capabilities and toolsets, and
     initial metadata factories). Treat it as read-only.

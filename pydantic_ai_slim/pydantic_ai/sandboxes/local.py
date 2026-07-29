@@ -1,4 +1,4 @@
-"""A minimal local implementation of the [sandbox protocol][pydantic_ai.sandboxes.Sandbox].
+"""A minimal local implementation of the [sandbox backend protocol][pydantic_ai.sandboxes.SandboxBackend].
 
 [`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] runs commands as plain host
 subprocesses and touches the real filesystem through `pathlib` — it **isolates nothing**.
@@ -53,7 +53,7 @@ from typing_extensions import Self
 from .protocol import SandboxCommand
 
 if TYPE_CHECKING:
-    from .protocol import Sandbox
+    from .protocol import SandboxBackend, SupportsReadBytesRange
 
 __all__ = ('LocalSandbox',)
 
@@ -87,11 +87,13 @@ class _LocalFilesystem:
 
         await asyncio.to_thread(write)
 
-    async def read_text(self, path: str, encoding: str = 'utf-8') -> str:
-        return (await self.read_bytes(path)).decode(encoding)
+    async def read_bytes_range(self, path: str, start: int, end: int) -> bytes:
+        def read() -> bytes:
+            with Path(path).open('rb') as file:
+                file.seek(start)
+                return file.read(end - start)
 
-    async def write_text(self, path: str, content: str, encoding: str = 'utf-8') -> None:
-        await self.write_bytes(path, content.encode(encoding))
+        return await asyncio.to_thread(read)
 
     async def stat(self, path: str) -> _LocalFileEntry:
         def stat() -> _LocalFileEntry:
@@ -136,7 +138,9 @@ class _LocalFilesystem:
 
 
 class LocalSandbox:
-    """[`Sandbox`][pydantic_ai.sandboxes.Sandbox] over host subprocesses and the host filesystem. Isolates nothing.
+    """[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] over host subprocesses and the host filesystem.
+
+    Isolates nothing.
 
     Implements the protocol *structurally* — deliberately no base class, like any
     third-party implementation. Conformance is pinned by the type-checked assignment at
@@ -291,7 +295,8 @@ class LocalSandbox:
 
 
 if TYPE_CHECKING:
-    # LocalSandbox satisfies the Sandbox protocol structurally; this assignment makes the
+    # LocalSandbox satisfies the SandboxBackend protocol structurally; this assignment makes the
     # type checker verify full conformance — signatures included — which a
     # `@runtime_checkable` isinstance check cannot.
-    _conforms: Sandbox = LocalSandbox()
+    _conforms: SandboxBackend = LocalSandbox()
+    _filesystem_conforms: SupportsReadBytesRange = _LocalFilesystem()

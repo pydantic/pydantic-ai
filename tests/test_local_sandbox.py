@@ -14,7 +14,7 @@ import pytest
 from pydantic_ai import Agent, LocalSandbox, RunContext
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.sandboxes import Sandbox
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SupportsReadBytesRange
 
 pytestmark = [
     pytest.mark.anyio,
@@ -42,8 +42,9 @@ def test_non_posix_platforms_are_rejected_honestly(monkeypatch: pytest.MonkeyPat
 
 def test_local_sandbox_conforms_to_the_protocol(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
-    assert isinstance(sandbox, Sandbox)
-    typed: Sandbox = sandbox  # static conformance, checked because tests are type-checked
+    assert isinstance(sandbox, SandboxBackend)
+    assert isinstance(sandbox.fs, SupportsReadBytesRange)
+    typed: SandboxBackend = sandbox  # static conformance, checked because tests are type-checked
     assert typed.provider == 'local'
     assert sandbox.sandbox_id.startswith('local-')
 
@@ -153,9 +154,10 @@ async def test_working_dir_and_resolve(tmp_path: Path):
 
 async def test_filesystem_round_trip_with_parent_creation(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
+    facade = Sandbox(sandbox)
     nested = await sandbox.resolve('a/b/notes.txt')
-    await sandbox.fs.write_text(nested, 'hello')  # the write contract creates parents
-    assert await sandbox.fs.read_text(nested) == 'hello'
+    await facade.write_text('a/b/notes.txt', 'hello')  # the write contract creates parents
+    assert await facade.read_text('a/b/notes.txt') == 'hello'
     entry = await sandbox.fs.stat(nested)
     assert (entry.name, entry.is_dir, entry.size) == ('notes.txt', False, 5)
 
@@ -182,6 +184,28 @@ async def test_filesystem_round_trip_with_parent_creation(tmp_path: Path):
         await sandbox.fs.read_bytes(blob)
 
 
+async def test_read_bytes_range(tmp_path: Path):
+    sandbox = LocalSandbox(tmp_path)
+    path = tmp_path / 'data.bin'
+    path.write_bytes(b'0123456789')
+
+    assert await sandbox.fs.read_bytes_range(str(path), 2, 6) == b'2345'
+    assert await sandbox.fs.read_bytes_range(str(path), 8, 20) == b'89'
+    assert await sandbox.fs.read_bytes_range(str(path), 10, 20) == b''
+    assert await sandbox.fs.read_bytes_range(str(path), 20, 30) == b''
+
+
+async def test_facade_windowed_read_over_local_sandbox(tmp_path: Path):
+    sandbox = Sandbox(LocalSandbox(tmp_path))
+    await sandbox.write_text('notes.txt', 'one\ntwo\nthree\nfour\n')
+
+    window = await sandbox.read_file('notes.txt', offset=2, limit=2)
+
+    assert window.lines == ('two', 'three')
+    assert window.start_line == 2
+    assert window.has_more is True
+
+
 async def test_list_dir_symlink_sizes_match_stat(tmp_path: Path):
     """A symlinked file reports its target's size (as `stat` does); a broken symlink
     doesn't fail the listing, it just has no size."""
@@ -206,7 +230,7 @@ async def test_default_root_is_a_temp_dir_removed_on_exit():
     async with LocalSandbox() as sandbox:
         root = Path(await sandbox.working_dir())
         assert root.exists()
-        await sandbox.fs.write_text(str(root / 'x.txt'), 'x')
+        await Sandbox(sandbox).write_text('x.txt', 'x')
     assert not root.exists()
 
 
@@ -219,7 +243,7 @@ async def test_temp_root_already_deleted_on_exit_does_not_raise():
 
 async def test_caller_supplied_root_is_never_removed(tmp_path: Path):
     async with LocalSandbox(tmp_path) as sandbox:
-        await sandbox.fs.write_text(str(tmp_path / 'keep.txt'), 'kept')
+        await Sandbox(sandbox).write_text('keep.txt', 'kept')
     assert (tmp_path / 'keep.txt').read_text() == 'kept'
 
 

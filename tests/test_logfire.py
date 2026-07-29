@@ -1,7 +1,9 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, Literal
 
 import pytest
@@ -19,6 +21,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai.sandboxes import LocalSandbox, SandboxBackend
 from pydantic_ai.tools import DeferredToolRequests, RunContext
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -2968,6 +2972,112 @@ async def test_run_stream(
             ]
         )
     )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_agent_span_brackets_sandbox_lifecycle_and_recovery(capfire: CaptureLogfire, tmp_path: Path) -> None:
+    @dataclass
+    class TracedSandbox(AbstractCapability[Any]):
+        def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend]:
+            @asynccontextmanager
+            async def serve() -> AsyncGenerator[SandboxBackend]:
+                backend = LocalSandbox(tmp_path)
+                with logfire.span('sandbox_setup'):  # pyright: ignore[reportPossiblyUnboundVariable]
+                    await backend.__aenter__()
+                try:
+                    yield backend
+                finally:
+                    with logfire.span('sandbox_teardown'):  # pyright: ignore[reportPossiblyUnboundVariable]
+                        await backend.__aexit__(None, None, None)
+
+            return serve()
+
+    agent = Agent(
+        TestModel(),
+        name='sandbox_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), TracedSandbox()],
+    )
+    result = await agent.run('Hello')
+    assert result.output == 'success (no tool calls)'
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_span = next(span for span in spans if span['name'] == 'invoke_agent sandbox_agent')
+    child_spans = [
+        span
+        for span in spans
+        if span['parent'] is not None
+        and span['parent']['trace_id'] == agent_span['context']['trace_id']
+        and span['parent']['span_id'] == agent_span['context']['span_id']
+    ]
+    assert [span['name'] for span in child_spans] == ['sandbox_setup', 'chat test', 'sandbox_teardown']
+    assert agent_span['attributes']['final_result'] == 'success (no tool calls)'
+    assert agent_span['attributes']['pydantic_ai.all_messages']
+    assert agent_span['attributes']['gen_ai.aggregated_usage.input_tokens'] == 51
+    assert agent_span['attributes']['gen_ai.aggregated_usage.output_tokens'] == 4
+
+    capfire.exporter.clear()
+
+    @dataclass
+    class RecoverError(AbstractCapability[Any]):
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output='recovered')
+
+    def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model exploded')
+
+    recovered_agent = Agent(
+        FunctionModel(fail),
+        name='recovered_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RecoverError()],
+    )
+    recovered = await recovered_agent.run('Hello')
+    assert recovered.output == 'recovered'
+
+    recovered_spans = capfire.exporter.exported_spans_as_dict()
+    recovered_agent_span = next(span for span in recovered_spans if span['name'] == 'invoke_agent recovered_agent')
+    assert recovered_agent_span['attributes']['final_result'] == 'recovered'
+    assert 'events' not in recovered_agent_span
+    assert 'logfire.level_num' not in recovered_agent_span['attributes']
+
+    capfire.exporter.clear()
+
+    failed_agent = Agent(
+        FunctionModel(fail),
+        name='failed_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+    with pytest.raises(RuntimeError, match='model exploded'):
+        await failed_agent.run('Hello')
+
+    failed_spans = capfire.exporter.exported_spans_as_dict()
+    failed_agent_span = next(span for span in failed_spans if span['name'] == 'invoke_agent failed_agent')
+    assert 'final_result' not in failed_agent_span['attributes']
+    assert failed_agent_span['attributes']['pydantic_ai.all_messages'] == IsJson(
+        snapshot([{'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]}])
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_agent_span_captures_after_run_replacement(capfire: CaptureLogfire) -> None:
+    @dataclass
+    class ReplaceResult(AbstractCapability[Any]):
+        async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            return replace(result, output='replaced')
+
+    agent = Agent(
+        TestModel(),
+        name='replaced_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), ReplaceResult()],
+    )
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'replaced'
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_span = next(span for span in spans if span['name'] == 'invoke_agent replaced_agent')
+    assert agent_span['attributes']['final_result'] == 'replaced'
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

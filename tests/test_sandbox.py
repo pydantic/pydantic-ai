@@ -1,5 +1,4 @@
-"""Tests for the sandbox concept: the `Sandbox` protocol and the read-only `RunContext.sandbox`
-field, populated from the `sandbox=` run argument or a capability's `serve_sandbox` contribution."""
+"""Tests for sandbox backends, the rich facade, and read-only `RunContext.sandbox` propagation."""
 
 from __future__ import annotations
 
@@ -17,7 +16,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import Sandbox
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend
 from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RunUsage
 
@@ -51,12 +50,6 @@ class _Fs:
     async def write_bytes(self, path: str, data: bytes) -> None:
         self.files[path] = data
 
-    async def read_text(self, path: str, encoding: str = 'utf-8') -> str:
-        return self.files[path].decode(encoding)
-
-    async def write_text(self, path: str, content: str, encoding: str = 'utf-8') -> None:
-        self.files[path] = content.encode(encoding)
-
     async def stat(self, path: str) -> _Entry:
         return _Entry(name=path.rsplit('/', 1)[-1], path=path, is_dir=False, size=len(self.files[path]))
 
@@ -73,14 +66,24 @@ class _Fs:
         return path in self.files
 
 
+class _RangeFs(_Fs):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ranges: list[tuple[int, int]] = []
+
+    async def read_bytes_range(self, path: str, start: int, end: int) -> bytes:
+        self.ranges.append((start, end))
+        return self.files[path][start:end]
+
+
 class FakeSandbox:
-    """A minimal in-memory implementation of the `Sandbox` protocol."""
+    """A minimal in-memory implementation of the `SandboxBackend` protocol."""
 
     provider = 'fake'
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, fs: _Fs | None = None) -> None:
         self.name = name
-        self._fs = _Fs()
+        self._fs = fs or _Fs()
 
     @property
     def sandbox_id(self) -> str:
@@ -126,7 +129,7 @@ class FakeSandbox:
 def _describe(sandbox: Sandbox | None) -> str:
     if sandbox is None:
         return 'none'
-    return getattr(sandbox, 'name', sandbox.sandbox_id)
+    return getattr(sandbox.backend, 'name', sandbox.sandbox_id)
 
 
 def _tool_call_then_text(tool_name: str = 'probe') -> FunctionModel:
@@ -151,29 +154,41 @@ def make_probe_agent(seen: list[str], **kwargs: Any) -> Agent:
     return agent
 
 
+def make_identity_probe_agent(seen: list[Sandbox | None], **kwargs: Any) -> Agent:
+    agent: Agent = Agent(_tool_call_then_text(), **kwargs)
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        seen.append(ctx.sandbox)
+        return 'ok'
+
+    return agent
+
+
 def test_fake_sandbox_conforms_to_protocol():
     sandbox = FakeSandbox('x')
-    assert isinstance(sandbox, Sandbox)
+    assert isinstance(sandbox, SandboxBackend)
     # Static conformance too: pyright checks this assignment because tests are type-checked.
-    typed: Sandbox = sandbox
+    typed: SandboxBackend = sandbox
     assert typed.provider == 'fake'
 
 
 async def test_fake_sandbox_protocol_surface():
     """Exercise the in-memory protocol implementation used by the run tests."""
-    sandbox = FakeSandbox('surface')
-    await sandbox.fs.write_bytes('/workspace/data.bin', b'123')
-    assert await sandbox.fs.read_bytes('/workspace/data.bin') == b'123'
-    await sandbox.fs.write_text('/workspace/notes.txt', 'hello')
-    assert await sandbox.fs.read_text('/workspace/notes.txt') == 'hello'
-    assert await sandbox.fs.stat('/workspace/notes.txt') == _Entry(
+    backend = FakeSandbox('surface')
+    sandbox = Sandbox(backend)
+    await backend.fs.write_bytes('/workspace/data.bin', b'123')
+    assert await backend.fs.read_bytes('/workspace/data.bin') == b'123'
+    await sandbox.write_text('notes.txt', 'hello')
+    assert await sandbox.read_text('notes.txt') == 'hello'
+    assert await backend.fs.stat('/workspace/notes.txt') == _Entry(
         name='notes.txt', path='/workspace/notes.txt', is_dir=False, size=5
     )
-    assert {entry.name for entry in await sandbox.fs.list_dir('/workspace')} == {'data.bin', 'notes.txt'}
-    await sandbox.fs.make_dir('/workspace/subdir')
-    assert await sandbox.fs.exists('/workspace/notes.txt')
-    await sandbox.fs.remove('/workspace/notes.txt')
-    assert not await sandbox.fs.exists('/workspace/notes.txt')
+    assert {entry.name for entry in await backend.fs.list_dir('/workspace')} == {'data.bin', 'notes.txt'}
+    await backend.fs.make_dir('/workspace/subdir')
+    assert await backend.fs.exists('/workspace/notes.txt')
+    await backend.fs.remove('/workspace/notes.txt')
+    assert not await backend.fs.exists('/workspace/notes.txt')
 
     assert await sandbox.working_dir() == '/workspace'
     assert await sandbox.resolve('data.bin') == '/workspace/data.bin'
@@ -182,6 +197,147 @@ async def test_fake_sandbox_protocol_surface():
     assert (await sandbox.run(['echo', 'ok'])).stdout == "ran:['echo', 'ok']"
     with pytest.raises(NotImplementedError, match='cannot start background processes'):
         await sandbox.start(['echo', 'ok'])
+
+
+def test_sandbox_wrap_is_idempotent():
+    backend = FakeSandbox('wrapped')
+    sandbox = Sandbox.wrap(backend)
+    assert isinstance(sandbox, SandboxBackend)
+    assert sandbox.backend is backend
+    assert Sandbox.wrap(sandbox) is sandbox
+
+
+async def test_facade_text_helpers_resolve_relative_paths():
+    backend = FakeSandbox('text')
+    sandbox = Sandbox(backend)
+    await sandbox.write_text('notes.txt', 'héllo', encoding='utf-16')
+    assert backend.fs.files['/workspace/notes.txt'] == 'héllo'.encode('utf-16')
+    assert await sandbox.read_text('notes.txt', encoding='utf-16') == 'héllo'
+
+
+@pytest.mark.parametrize(
+    ('content', 'offset', 'limit', 'expected'),
+    [
+        (b'one\ntwo\nthree\nfour\n', 2, 2, (('two', 'three'), True, 4)),
+        (b'one\ntwo\nthree\n', 1, 2, (('one', 'two'), True, 3)),
+        (b'one\ntwo\n', 4, 2, ((), False, 2)),
+        (b'one\ntwo\nthree', 2, None, (('two', 'three'), False, 3)),
+        (b'one\ntwo\nthree', 3, 1, (('three',), False, 3)),
+        (b'one\ntwo\nthree\n', 3, 1, (('three',), False, 3)),
+        (b'one\r\ntwo\r\n', 1, None, (('one', 'two'), False, 2)),
+        (b'x\r', 1, None, (('x',), False, 1)),
+        (b'', 1, None, ((), False, 0)),
+        (b'one\xfftwo\n', 1, None, (('one�two',), False, 1)),
+    ],
+)
+async def test_read_file_slow_path(
+    content: bytes,
+    offset: int,
+    limit: int | None,
+    expected: tuple[tuple[str, ...], bool, int],
+):
+    backend = FakeSandbox('slow')
+    backend.fs.files['/workspace/file'] = content
+    window = await Sandbox(backend).read_file('file', offset=offset, limit=limit)
+    lines, has_more, total_lines = expected
+    assert window.lines == lines
+    assert window.text == '\n'.join(lines)
+    assert window.start_line == offset
+    assert window.has_more is has_more
+    assert window.total_lines == total_lines
+
+
+@pytest.mark.parametrize(('kwargs', 'message'), [({'offset': 0}, 'offset'), ({'limit': 0}, 'limit')])
+async def test_read_file_rejects_invalid_windows(kwargs: dict[str, int], message: str):
+    with pytest.raises(ValueError, match=message):
+        await Sandbox(FakeSandbox('invalid')).read_file('file', **kwargs)
+
+
+async def test_read_file_fast_path_stops_before_eof():
+    filesystem = _RangeFs()
+    backend = FakeSandbox('fast', filesystem)
+    filesystem.files['/workspace/file'] = b'line\n' * 40_000
+
+    window = await Sandbox(backend).read_file('file', offset=1, limit=2)
+
+    assert window.lines == ('line', 'line')
+    assert window.has_more is True
+    assert window.total_lines is None
+    assert len(filesystem.ranges) <= 2
+    assert sum(end - start for start, end in filesystem.ranges) <= 2 * 64 * 1024
+
+
+async def test_read_file_fast_path_does_not_overread_past_window():
+    filesystem = _RangeFs()
+    backend = FakeSandbox('fast-window', filesystem)
+    filesystem.files['/workspace/file'] = b'a\nb\n' + b'x' * (3 * 64 * 1024)
+
+    window = await Sandbox(backend).read_file('file', offset=1, limit=2)
+
+    assert filesystem.ranges == [(0, 64 * 1024)]
+    assert window.lines == ('a', 'b')
+    assert window.has_more is True
+
+
+async def test_read_file_fast_path_reaching_eof_reports_totals():
+    filesystem = _RangeFs()
+    backend = FakeSandbox('fast-eof', filesystem)
+    filesystem.files['/workspace/file'] = b'one\ntwo'
+
+    window = await Sandbox(backend).read_file('file', offset=2, limit=3)
+
+    assert window.lines == ('two',)
+    assert window.has_more is False
+    assert window.total_lines == 2
+
+
+async def test_read_file_fast_path_reports_totals_when_first_read_reaches_eof():
+    filesystem = _RangeFs()
+    backend = FakeSandbox('fast-eof-window', filesystem)
+    filesystem.files['/workspace/file'] = b'one\ntwo\nthree\n'
+
+    window = await Sandbox(backend).read_file('file', offset=1, limit=2)
+
+    assert window.lines == ('one', 'two')
+    assert window.has_more is True
+    assert window.total_lines == 3
+
+
+@pytest.mark.parametrize(
+    ('suffix', 'has_more', 'total_lines'),
+    [(b'more', True, 3), (b'', False, 2)],
+)
+async def test_read_file_fast_path_resolves_chunk_aligned_window_boundary(
+    suffix: bytes, has_more: bool, total_lines: int
+):
+    filesystem = _RangeFs()
+    backend = FakeSandbox('fast-boundary', filesystem)
+    second_line = b'x' * (64 * 1024 - 3)
+    filesystem.files['/workspace/file'] = b'a\n' + second_line + b'\n' + suffix
+
+    window = await Sandbox(backend).read_file('file', offset=1, limit=2)
+
+    assert filesystem.ranges == [(0, 64 * 1024), (64 * 1024, 2 * 64 * 1024)]
+    assert window.lines == ('a', second_line.decode())
+    assert window.has_more is has_more
+    assert window.total_lines == total_lines
+
+
+async def test_read_file_fast_and_slow_paths_have_window_parity():
+    content = b'one\r\ntwo\r\nthree\nfour\r\nfive'
+    slow_backend = FakeSandbox('slow')
+    slow_backend.fs.files['/workspace/file'] = content
+    range_filesystem = _RangeFs()
+    range_filesystem.files['/workspace/file'] = content
+    fast_backend = FakeSandbox('fast', range_filesystem)
+
+    for offset in (1, 2, 4, 8):
+        for limit in (1, 2, 5):
+            slow = await Sandbox(slow_backend).read_file('file', offset=offset, limit=limit)
+            fast = await Sandbox(fast_backend).read_file('file', offset=offset, limit=limit)
+            assert (fast.lines, fast.start_line, fast.has_more) == (slow.lines, slow.start_line, slow.has_more)
+            if fast.total_lines is not None:
+                assert fast.total_lines == slow.total_lines
 
 
 def test_bare_run_context_sandbox_defaults_to_none():
@@ -196,6 +352,22 @@ async def test_run_argument_sandbox_reaches_tools():
     result = await agent.run('go', sandbox=sandbox)
     assert result.output == 'done'
     assert seen == ['direct']
+
+
+async def test_run_argument_backend_is_exposed_through_facade():
+    observed: list[Sandbox | None] = []
+    backend = FakeSandbox('direct')
+    await make_identity_probe_agent(observed).run('go', sandbox=backend)
+    assert len(observed) == 1
+    assert isinstance(observed[0], Sandbox)
+    assert observed[0].backend is backend
+
+
+async def test_existing_facade_passes_through_run_unchanged():
+    observed: list[Sandbox | None] = []
+    sandbox = Sandbox(FakeSandbox('rich'))
+    await make_identity_probe_agent(observed).run('go', sandbox=sandbox)
+    assert observed == [sandbox]
 
 
 async def test_run_without_sandbox_sees_none():
@@ -255,8 +427,9 @@ async def test_sandbox_identity_stable_across_steps():
     sandbox = FakeSandbox('stable')
     await agent.run('go', sandbox=sandbox)
     assert len(observed) == 2
-    assert observed[0] is sandbox
-    assert observed[1] is sandbox
+    assert isinstance(observed[0], Sandbox)
+    assert observed[0].backend is sandbox
+    assert observed[1] is observed[0]
 
 
 async def test_sandbox_available_during_streamed_run():
@@ -280,15 +453,17 @@ class SandboxCapability(AbstractCapability[Any]):
 
     name: str = 'cap'
     events: list[str] = field(default_factory=lambda: [])
+    backend: FakeSandbox | None = field(default=None, init=False)
 
-    def serve_sandbox(self) -> AbstractAsyncContextManager[Sandbox]:
+    def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend]:
         self.events.append(f'{self.name}:offered')
 
         @asynccontextmanager
-        async def per_run_sandbox() -> AsyncGenerator[Sandbox]:
+        async def per_run_sandbox() -> AsyncGenerator[SandboxBackend]:
             self.events.append(f'{self.name}:enter')
+            self.backend = FakeSandbox(self.name)
             try:
-                yield FakeSandbox(self.name)
+                yield self.backend
             finally:
                 self.events.append(f'{self.name}:exit')
 
@@ -303,6 +478,15 @@ async def test_capability_sandbox_reaches_tools_and_is_bracketed_by_the_run():
     assert result.output == 'done'
     assert seen == ['cap']
     assert cap.events == ['cap:offered', 'cap:enter', 'cap:exit']
+
+
+async def test_context_manager_served_backend_is_exposed_through_facade():
+    cap = SandboxCapability()
+    observed: list[Sandbox | None] = []
+    await make_identity_probe_agent(observed, capabilities=[cap]).run('go')
+    assert len(observed) == 1
+    assert isinstance(observed[0], Sandbox)
+    assert observed[0].backend is cap.backend
 
 
 async def test_capability_sandbox_live_through_after_run():
@@ -353,7 +537,7 @@ async def test_warm_sandbox_shared_across_runs():
 
     @dataclass
     class WarmSandboxCapability(AbstractCapability[Any]):
-        def serve_sandbox(self) -> AbstractAsyncContextManager[Sandbox]:
+        def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend]:
             return nullcontext(warm)
 
     observed: list[Any] = []
@@ -366,21 +550,24 @@ async def test_warm_sandbox_shared_across_runs():
 
     await agent.run('one')
     await agent.run('two')
-    assert observed == [warm, warm]
+    assert len(observed) == 2
+    assert all(isinstance(sandbox, Sandbox) and sandbox.backend is warm for sandbox in observed)
 
 
 async def test_bare_sandbox_is_used_without_being_entered():
-    """A capability may serve a bare `Sandbox`; the run then never brackets its lifecycle."""
+    """A capability may serve a bare backend; the run does not bracket its lifecycle."""
     warm = FakeSandbox('bare')
 
     @dataclass
     class BareSandboxCapability(AbstractCapability[Any]):
-        def serve_sandbox(self) -> Sandbox:
+        def serve_sandbox(self) -> SandboxBackend:
             return warm
 
-    seen: list[str] = []
-    await make_probe_agent(seen, capabilities=[BareSandboxCapability()]).run('go')
-    assert seen == ['bare']
+    observed: list[Sandbox | None] = []
+    await make_identity_probe_agent(observed, capabilities=[BareSandboxCapability()]).run('go')
+    assert len(observed) == 1
+    assert isinstance(observed[0], Sandbox)
+    assert observed[0].backend is warm
 
 
 async def test_deferred_capability_never_contributes():

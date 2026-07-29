@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +30,7 @@ from .abstract import (
     AbstractCapability,
     AgentModel,
     RawOutput,
+    WrapIterGuard,
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
 )
@@ -42,7 +44,7 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
-    from pydantic_ai.sandboxes import Sandbox
+    from pydantic_ai.sandboxes import SandboxBackend
     from pydantic_graph import End
 
 
@@ -74,6 +76,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     @property
     def has_wrap_node_run(self) -> bool:
         return any(c.has_wrap_node_run for c in self.capabilities)
+
+    @property
+    def has_wrap_iter(self) -> bool:
+        return any(c.has_wrap_iter for c in self.capabilities)
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
@@ -244,7 +250,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 any_wrapped = True
         return wrapped if any_wrapped else None
 
-    def serve_sandbox(self) -> AbstractAsyncContextManager[Sandbox] | Sandbox | None:
+    def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend] | SandboxBackend | None:
         # The capability latest in the resolved chain wins, matching the reversed dispatch of
         # `after_run`/`get_wrapper_toolset` and the later-wins model-settings merge. A losing
         # capability's hook is never called, so it never even builds a sandbox.
@@ -281,6 +287,20 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return tool_defs
 
     # --- Run lifecycle hooks ---
+
+    @asynccontextmanager
+    async def wrap_iter(self, ctx: RunContext[AgentDepsT]) -> AsyncGenerator[None]:
+        async with AsyncExitStack() as stack:
+            for capability in self.capabilities:
+                if not capability.has_wrap_iter:
+                    continue
+                # Resolved once at run start; deferred capabilities are always excluded,
+                # even when already loaded from resumed history.
+                if capability.defer_loading is True:
+                    continue
+                if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+                    await stack.enter_async_context(WrapIterGuard(capability.wrap_iter(cap_ctx)))
+            yield
 
     async def before_run(
         self,

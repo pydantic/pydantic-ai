@@ -50,7 +50,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import Sandbox
+from pydantic_ai.sandboxes import SandboxBackend
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .conftest import IsDatetime, IsNow, IsStr
@@ -1256,8 +1256,8 @@ class FakeRunSandbox:
 
 
 class SandboxContributingCapability(AbstractCapability[Any]):
-    def serve_sandbox(self) -> AbstractAsyncContextManager[Sandbox]:
-        return nullcontext(cast(Sandbox, FakeRunSandbox()))  # pragma: no cover
+    def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend]:
+        return nullcontext(cast(SandboxBackend, FakeRunSandbox()))  # pragma: no cover
 
 
 _SANDBOX_REJECTION_MESSAGE = (
@@ -1270,13 +1270,13 @@ _SANDBOX_REJECTION_MESSAGE = (
 async def test_dbos_agent_run_rejects_sandbox(dbos: DBOS):
     # Rejected before `dbos_wrapped_run_workflow` is entered, i.e. before its arguments are pickled.
     with pytest.raises(UserError, match=re.escape(_SANDBOX_REJECTION_MESSAGE)):
-        await simple_dbos_agent.run('Hello', sandbox=cast(Sandbox, FakeRunSandbox()))
+        await simple_dbos_agent.run('Hello', sandbox=cast(SandboxBackend, FakeRunSandbox()))
 
 
 async def test_dbos_agent_run_sync_rejects_sandbox(dbos: DBOS):
     # Rejected before `dbos_wrapped_run_sync_workflow` is entered, i.e. before its arguments are pickled.
     with pytest.raises(UserError, match=re.escape(_SANDBOX_REJECTION_MESSAGE)):
-        simple_dbos_agent.run_sync('Hello', sandbox=cast(Sandbox, FakeRunSandbox()))
+        simple_dbos_agent.run_sync('Hello', sandbox=cast(SandboxBackend, FakeRunSandbox()))
 
 
 async def test_dbos_agent_rejects_sandbox_capabilities(dbos: DBOS):

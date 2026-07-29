@@ -373,7 +373,7 @@ Dynamic selection is not currently supported by durable execution capabilities. 
 | [`get_wrapper_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] | [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] `| None` | [Wrap the agent's assembled toolset](#toolset-wrapping) |
 | [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai.agent.AgentInstructions] `| None` | [Instructions](../agent.md#instructions) (static strings, [template strings](../agent-spec.md#template-strings), or callables) |
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.AgentModelSettings] `| None` | [Model settings](../agent.md#model-run-settings) dict, or a callable for per-step settings |
-| [`serve_sandbox()`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox] | `AbstractAsyncContextManager[`[`Sandbox`][pydantic_ai.sandboxes.Sandbox]`]` or [`Sandbox`][pydantic_ai.sandboxes.Sandbox] when overridden; the inherited method returns `None` | Serve a [sandbox](../sandbox.md) for the run — do not override unless the capability supplies one |
+| [`serve_sandbox()`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox] | `AbstractAsyncContextManager[`[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend]`]` or [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] when overridden; the inherited method returns `None` | Serve a [sandbox](../sandbox.md) for the run — do not override unless the capability supplies one |
 | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] | [`AgentModel`][pydantic_ai.capabilities.AgentModel] `| None` | Static or per-step [model selection](#selecting-the-model) |
 | [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] | [`Model`][pydantic_ai.models.Model] `| None` | [Resolve a selected model ID](#resolving-model-ids) using the agent and run dependencies |
 
@@ -433,6 +433,7 @@ Binding hooks establish which capability participates in a run; lifecycle hooks 
 | Run binding | [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] | A complete [`RunContext`][pydantic_ai.tools.RunContext] containing the bootstrap model; may return a run-scoped replacement capability |
 | Each logical model step | Post-`for_run()` model selection/resolution, model settings, tool preparation, and message preparation | The selected model is installed in `RunContext` before its settings, profile-sensitive tools, and model-specific message preparation are evaluated |
 | Model request and response | Model request, tool, output, node, and event-stream [hooks](#hooking-into-the-lifecycle) | The fully prepared request and the live run state appropriate to each hook |
+| Whole-run scope | `wrap_iter` entry and exit | Context after per-run resolution but before resource entry; final outcome or propagated error on exit |
 | Run completion | `after_run`, `on_run_error`, and `wrap_run` completion | Final result or error, accumulated messages, and usage |
 
 If `for_run()` returns the original capability, the bootstrap model selection is reused for step one. A replacement capability can select a different model for step one. Continuation polling within one logical step remains pinned to that step's selected model.
@@ -446,6 +447,9 @@ Capabilities can hook into five lifecycle points, each with up to four variants:
 * **`wrap_*`** — full middleware control: receives a `handler` callable and decides whether/how to call it
 * **`on_*_error`** — fires when the action fails (after `wrap_*` has had its chance to recover), can observe, transform, or recover from errors
 
+The context-manager-shaped `wrap_iter` hook is the exception to these variants: it brackets
+the complete run lifecycle without receiving a handler or controlling the run.
+
 !!! tip
     For quick, application-level hooks without subclassing, use the [`Hooks`](../hooks.md) capability instead.
 
@@ -453,10 +457,47 @@ Capabilities can hook into five lifecycle points, each with up to four variants:
 
 | Hook | Signature | Purpose |
 |---|---|---|
+| [`wrap_iter`][pydantic_ai.capabilities.AbstractCapability.wrap_iter] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`) -> AbstractAsyncContextManager[None]` | Bracket resource setup, execution, recovery, and teardown |
 | [`before_run`][pydantic_ai.capabilities.AbstractCapability.before_run] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`) -> None` | Observe-only notification that a run is starting |
 | [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, result: `[`AgentRunResult`][pydantic_ai.run.AgentRunResult]`) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Modify the final result |
 | [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, handler: `[`WrapRunHandler`][pydantic_ai.capabilities.WrapRunHandler]`) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Wrap the entire run |
 | [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, error: BaseException) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Handle run errors (see [error hooks](#error-hooks)) |
+
+Use `wrap_iter` for resources or telemetry that must include setup and teardown, such as
+timing the complete lifecycle:
+
+```python {title="whole_run_timing.py"}
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from time import monotonic
+from typing import Any
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class WholeRunTimer(AbstractCapability[Any]):
+    @asynccontextmanager
+    async def wrap_iter(self, ctx: RunContext[Any]) -> AsyncGenerator[None]:
+        started = monotonic()
+        try:
+            yield
+        finally:
+            print(f'Complete run lifecycle: {monotonic() - started:.3f}s')
+
+
+agent = Agent('openai:gpt-5.2', capabilities=[WholeRunTimer()])
+```
+
+`wrap_iter` receives the context after per-run resolution (`for_run`, toolset `for_run`, and
+model selection), but before resource setup: `tool_manager` and `validation_context` are not
+populated, and a capability-served sandbox is provisioned only after the hook enters. A
+failure during per-run resolution therefore produces no span. Use `wrap_run` when the work
+needs the assembled run. Because `wrap_iter` has no `handler`, it cannot short-circuit,
+replace, or retry the run. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
+builds the agent-run span on this hook so setup and teardown are traced too.
 
 `wrap_run` supports error recovery: if `handler()` raises and `wrap_run` catches the exception and returns a result instead, the error is suppressed and the recovery result is used. This works with both [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] and [`agent.iter()`][pydantic_ai.agent.Agent.iter].
 

@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
-    from pydantic_ai.sandboxes import Sandbox
+    from pydantic_ai.sandboxes import SandboxBackend
 
 
 @dataclass
@@ -89,6 +89,10 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     @property
     def has_wrap_node_run(self) -> bool:
         return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped.has_wrap_node_run
+
+    @property
+    def has_wrap_iter(self) -> bool:
+        return type(self).wrap_iter is not WrapperCapability.wrap_iter or self.wrapped.has_wrap_iter
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
@@ -148,7 +152,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
 
-    def serve_sandbox(self) -> AbstractAsyncContextManager[Sandbox] | Sandbox | None:
+    def serve_sandbox(self) -> AbstractAsyncContextManager[SandboxBackend] | SandboxBackend | None:
         return self.wrapped.serve_sandbox()
 
     async def prepare_tools(
@@ -166,6 +170,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return await self.wrapped.prepare_output_tools(ctx, tool_defs)
 
     # --- Run lifecycle hooks ---
+
+    def wrap_iter(self, ctx: RunContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
+        return self.wrapped.wrap_iter(ctx)
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         await self.wrapped.before_run(ctx)

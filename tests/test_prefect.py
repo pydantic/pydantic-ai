@@ -57,7 +57,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.sandboxes import Sandbox
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -1622,7 +1622,7 @@ class FakeCacheSandbox:
 
 
 def _ctx_with_sandbox(sandbox_id: str | None) -> RunContext[None]:
-    sandbox = cast(Sandbox, FakeCacheSandbox(sandbox_id)) if sandbox_id is not None else None
+    sandbox = Sandbox(cast(SandboxBackend, FakeCacheSandbox(sandbox_id))) if sandbox_id is not None else None
     return RunContext(
         deps=None,
         model=TestModel(),
@@ -1641,7 +1641,7 @@ async def test_cache_policy_includes_sandbox_identity():
 
 
 async def test_prefect_flow_forwards_sandbox_to_tools():
-    sandbox = cast(Sandbox, FakeCacheSandbox('flow-sandbox'))
+    backend = cast(SandboxBackend, FakeCacheSandbox('flow-sandbox'))
     seen: list[Sandbox | None] = []
 
     def call_tool_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1660,10 +1660,11 @@ async def test_prefect_flow_forwards_sandbox_to_tools():
 
     @flow
     async def run_agent() -> str:
-        return (await prefect_agent.run('Use the sandbox tool.', sandbox=sandbox)).output
+        return (await prefect_agent.run('Use the sandbox tool.', sandbox=backend)).output
 
     assert await run_agent() == 'done'
-    assert seen == [sandbox]
+    assert len(seen) == 1
+    assert seen[0] is not None and seen[0].backend is backend
 
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
@@ -1685,7 +1686,7 @@ async def test_prefect_flow_forwards_sandbox_to_tools():
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        sandbox=cast(Sandbox, OtherProviderSandbox('sandbox-1')),
+        sandbox=Sandbox(cast(SandboxBackend, OtherProviderSandbox('sandbox-1'))),
     )
     assert cache_policy.compute_key(
         task_ctx=mock_task_ctx, inputs={'ctx': other}, flow_parameters={}

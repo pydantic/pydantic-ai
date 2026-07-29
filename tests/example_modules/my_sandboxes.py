@@ -1,6 +1,6 @@
 """A fictional third-party sandbox library imported by the examples in `docs/sandbox.md`.
 
-`DockerSandbox` conforms to the `pydantic_ai.sandboxes.Sandbox` protocol structurally (pinned
+`DockerSandbox` conforms to the `pydantic_ai.sandboxes.SandboxBackend` protocol structurally (pinned
 at the bottom), but nothing here runs real containers: commands succeed with empty output and
 the "filesystem" is an in-memory dict.
 """
@@ -14,7 +14,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pydantic_ai.sandboxes import Sandbox, SandboxProcess
+    from pydantic_ai.sandboxes import SandboxBackend, SandboxProcess
 
 
 @dataclass(frozen=True)
@@ -43,12 +43,6 @@ class ContainerFilesystem:
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         self._files[path] = data
-
-    async def read_text(self, path: str, encoding: str = 'utf-8') -> str:
-        return self._files[path].decode(encoding)
-
-    async def write_text(self, path: str, content: str, encoding: str = 'utf-8') -> None:
-        self._files[path] = content.encode(encoding)
 
     async def stat(self, path: str) -> ContainerFileEntry:
         return ContainerFileEntry(name=posixpath.basename(path), path=path, is_dir=False, size=len(self._files[path]))
@@ -130,5 +124,5 @@ async def open_sandbox(provider: str, sandbox_id: str) -> DockerSandbox:
 
 
 if TYPE_CHECKING:
-    # The docs promise that `DockerSandbox` is a valid `Sandbox`; hold this module to it.
-    _conforms: Sandbox = DockerSandbox()
+    # The docs promise that `DockerSandbox` is a valid `SandboxBackend`; hold this module to it.
+    _conforms: SandboxBackend = DockerSandbox()

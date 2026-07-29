@@ -132,7 +132,7 @@ from .profiles import (
     ModelProfileSpec,
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
-from .sandboxes import LocalSandbox, Sandbox
+from .sandboxes import LocalSandbox, Sandbox, SandboxBackend
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .template import TemplateStr
 from .tools import (
@@ -317,9 +317,10 @@ __all__ = (
     # capabilities
     'AgentCapability',
     'CapabilityFunc',
-    # sandbox
+    # sandboxes
     'LocalSandbox',
     'Sandbox',
+    'SandboxBackend',
     # output
     'ToolOutput',
     'NativeOutput',

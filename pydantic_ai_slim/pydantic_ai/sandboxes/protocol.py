@@ -1,10 +1,10 @@
-"""Structural protocols for execution environments attached to an agent run.
+"""Structural backend protocols for execution environments attached to an agent run.
 
 A *sandbox* is an environment — a subprocess jail, a container, a microVM, a remote worker —
-that an agent run can execute commands in and read/write files of. Pydantic AI defines the
-protocol only: any object that structurally satisfies [`Sandbox`][pydantic_ai.sandboxes.Sandbox]
-can be attached to a run via the `sandbox=` argument to the run methods. Tools and
-capabilities then reach it through the read-only
+that an agent run can execute commands in and read/write files of. Providers implement the
+small [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol defined here. Pydantic AI
+wraps that backend in the concrete [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade, where
+user-facing conveniences live, before tools and capabilities reach it through the read-only
 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] field.
 
 This is a *usage* interface: creating, destroying, sharing, and reconnecting sandboxes is the
@@ -12,12 +12,13 @@ business of whoever supplies one, never of Pydantic AI or of code that merely us
 See the [sandbox documentation](../sandbox.md) for the lifecycle rules and how sandboxes
 interact with durable execution.
 
-The protocol is deliberately a floor, not a ceiling: implementations are expected to offer
+The backend protocol is deliberately a floor, not a ceiling: implementations are expected to offer
 richer surfaces (reconnection, snapshotting, streaming limits) on their concrete types, and
 code written against the protocol must only rely on what is documented here. The floor is
 also frozen once released: because conformance is structural, adding a member to any protocol
 in this module silently breaks every existing implementation. New operations must arrive on
-concrete types or as new, separate protocols, never as members of these.
+concrete types or as new, separate protocols, such as
+[`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange], never as members of these.
 
 Every type in this module — including the plain data carriers
 [`SandboxResult`][pydantic_ai.sandboxes.SandboxResult],
@@ -48,7 +49,7 @@ Contracts every implementation must honor:
   joined by guesswork. Since `str` is itself a `Sequence[str]`, the type checker cannot catch
   the mismatch; this runtime rejection is what keeps it from becoming an injection vector.
 - **The protocol is not a security boundary.** Isolation comes from the environment the
-  implementation provides; [`resolve`][pydantic_ai.sandboxes.Sandbox.resolve] is a textual
+  implementation provides; [`resolve`][pydantic_ai.sandboxes.SandboxBackend.resolve] is a textual
   convenience that does not confine paths.
 """
 
@@ -58,13 +59,14 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
 __all__ = (
-    'Sandbox',
+    'SandboxBackend',
     'SandboxCommand',
     'SandboxFileEntry',
     'SandboxFilesystem',
     'SandboxOutputChunk',
     'SandboxProcess',
     'SandboxResult',
+    'SupportsReadBytesRange',
 )
 
 SandboxCommand: TypeAlias = str | Sequence[str]
@@ -160,7 +162,7 @@ class SandboxFileEntry(Protocol):
 class SandboxProcess(Protocol):
     """A started command inside a sandbox.
 
-    Returned by [`Sandbox.start`][pydantic_ai.sandboxes.Sandbox.start]. `wait()` must be safe to
+    Returned by [`SandboxBackend.start`][pydantic_ai.sandboxes.SandboxBackend.start]. `wait()` must be safe to
     call more than once (and concurrently), returning the same result each time.
     """
 
@@ -198,8 +200,9 @@ class SandboxFilesystem(Protocol):
     """File access inside a sandbox.
 
     All paths are absolute POSIX paths; use
-    [`Sandbox.resolve`][pydantic_ai.sandboxes.Sandbox.resolve] to turn model-supplied relative
-    paths into absolute ones first.
+    [`SandboxBackend.resolve`][pydantic_ai.sandboxes.SandboxBackend.resolve] to turn model-supplied
+    relative paths into absolute ones first. The backend SPI is bytes-only: decoding policy lives
+    in the [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade's text helpers.
     """
 
     async def read_bytes(self, path: str) -> bytes:
@@ -208,14 +211,6 @@ class SandboxFilesystem(Protocol):
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         """Write bytes to a file, creating missing parent directories and replacing existing contents."""
-        ...
-
-    async def read_text(self, path: str, encoding: str = 'utf-8') -> str:
-        """Read a file's contents as text."""
-        ...
-
-    async def write_text(self, path: str, content: str, encoding: str = 'utf-8') -> None:
-        """Write text to a file, creating missing parent directories and replacing existing contents."""
         ...
 
     async def stat(self, path: str) -> SandboxFileEntry:
@@ -240,8 +235,30 @@ class SandboxFilesystem(Protocol):
 
 
 @runtime_checkable
-class Sandbox(Protocol):
-    """An isolated execution environment attached to an agent run.
+class SupportsReadBytesRange(Protocol):
+    """Optional fast path for reading a byte range of a file.
+
+    Checked (via `isinstance`) against a backend's `fs` object by the
+    [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade: when present, windowed reads fetch only
+    the bytes they need instead of the whole file. This check is shallow: the presence of a
+    method with this name activates the fast path, so implementations must match this
+    signature and contract exactly. Pin conformance statically (for example,
+    `_conforms: SupportsReadBytesRange = MyFs()`) as `local.py` does.
+    """
+
+    async def read_bytes_range(self, path: str, start: int, end: int) -> bytes:
+        """Read bytes `[start, end)` of a file (absolute POSIX path).
+
+        Returns fewer bytes than requested when the range extends past EOF, and `b''` when
+        `start` is at or past EOF. Implementations must not raise for out-of-range reads on an
+        existing file.
+        """
+        ...
+
+
+@runtime_checkable
+class SandboxBackend(Protocol):
+    """Backend for an isolated execution environment attached to an agent run.
 
     Structural protocol: any object with these members conforms — no registration or base
     class required. See the [module doc string][pydantic_ai.sandboxes] for the contracts
@@ -249,10 +266,9 @@ class Sandbox(Protocol):
     rules: this protocol deliberately contains no create/destroy/connect surface, because the
     supplier of a sandbox always owns its lifecycle.
 
-    This is the module's only `@runtime_checkable` protocol, because it is the boundary
-    object handed to `sandbox=`. `isinstance` checks are shallow (member presence, not
-    signatures), so full conformance is the type checker's job: verify it statically, e.g.
-    `sandbox: Sandbox = MySandbox(...)`.
+    `isinstance` checks are shallow (member presence, not signatures), so full conformance is
+    the type checker's job: verify it statically, e.g.
+    `sandbox: SandboxBackend = MySandbox(...)`.
     """
 
     @property
@@ -298,7 +314,7 @@ class Sandbox(Protocol):
             command: An argv sequence, or a shell string with `shell=True`.
             shell: Whether to interpret `command` with the sandbox's shell.
             cwd: Absolute working directory for the command; defaults to the sandbox's
-                [`working_dir`][pydantic_ai.sandboxes.Sandbox.working_dir].
+                [`working_dir`][pydantic_ai.sandboxes.SandboxBackend.working_dir].
             env: Extra environment variables for the command.
             timeout: Deadline in seconds. On expiry the command is killed and an exception
                 deriving from `TimeoutError` is raised.
@@ -323,7 +339,7 @@ class Sandbox(Protocol):
 
         Prefer `start()` + [`stream()`][pydantic_ai.sandboxes.SandboxProcess.stream] +
         [`wait()`][pydantic_ai.sandboxes.SandboxProcess.wait] over
-        [`run()`][pydantic_ai.sandboxes.Sandbox.run] when output produced before a timeout or
+        [`run()`][pydantic_ai.sandboxes.SandboxBackend.run] when output produced before a timeout or
         kill matters. Arguments as for `run()`.
         """
         ...
@@ -335,9 +351,10 @@ class Sandbox(Protocol):
     async def resolve(self, path: str, *, base: str | None = None) -> str:
         """Resolve a possibly-relative path to an absolute POSIX path.
 
-        Joins `path` onto `base` (default: [`working_dir`][pydantic_ai.sandboxes.Sandbox.working_dir])
-        and normalizes it textually. This is a spelling convenience for model-supplied paths,
-        **not** a confinement mechanism: `..` segments can escape `base` and symlinks are not
-        inspected. Isolation is the sandbox's job, not this method's.
+        Joins `path` onto `base` (default:
+        [`working_dir`][pydantic_ai.sandboxes.SandboxBackend.working_dir]) and normalizes it
+        textually. This is a spelling convenience for model-supplied paths, **not** a
+        confinement mechanism: `..` segments can escape `base` and symlinks are not inspected.
+        Isolation is the sandbox's job, not this method's.
         """
         ...

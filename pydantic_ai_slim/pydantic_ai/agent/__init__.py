@@ -61,14 +61,17 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities.abstract import leaf_capabilities
+from ..capabilities.abstract import (
+    WrapIterGuard,
+    leaf_capabilities,
+)
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
-from ..sandboxes import Sandbox
+from ..sandboxes import Sandbox, SandboxBackend
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -955,7 +958,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: Sandbox | None = None,
+        sandbox: SandboxBackend | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -979,7 +982,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: Sandbox | None = None,
+        sandbox: SandboxBackend | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1003,7 +1006,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        sandbox: Sandbox | None = None,
+        sandbox: SandboxBackend | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1093,16 +1096,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandboxes.Sandbox] to attach to this run, exposed to tools
+            sandbox: Optional [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] to attach to this run.
+                It is wrapped once in the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade exposed to tools
                 and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
-                The caller owns its lifecycle (create it before the run, tear it down after), and it wins over any
-                sandbox a capability would contribute via
+                The caller owns the backend lifecycle (create it before the run, tear it down after), and it wins over
+                any sandbox a capability would contribute via
                 [`serve_sandbox`][pydantic_ai.capabilities.AbstractCapability.serve_sandbox].
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
         """
+        sandbox = Sandbox.wrap(sandbox) if sandbox is not None else None
+
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -1641,6 +1647,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         agent_name = self.name or 'agent'
 
         async with AsyncExitStack() as stack:
+            # The `wrap_iter` chain brackets the whole run lifecycle: model/toolset setup,
+            # sandbox provisioning and teardown, the `wrap_run` chain, and
+            # `after_run`/`on_run_error` all happen inside it (LIFO: entered first, exits
+            # last). The run is not yet assembled here; see `AbstractCapability.wrap_iter`.
+            if run_capability.has_wrap_iter:
+                await stack.enter_async_context(WrapIterGuard(run_capability.wrap_iter(initial_ctx)))
             model_stack = stack
             await stack.enter_async_context(
                 _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
@@ -1651,15 +1663,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # bracketed by the run's own exit stack — mirroring capability toolsets, whose
             # enter/exit the run also owns. Entered before the graph run, so it exits after
             # toolset `__aexit__` and `after_run`/`on_run_error`: `ctx.sandbox` is live for the
-            # whole run and teardown is guaranteed even when the run fails to start. A bare
-            # `Sandbox` is attached as-is; its lifecycle stays with the capability. Skipped
-            # entirely when the caller passed `sandbox=` — the caller then owns the lifecycle.
+            # whole run, while both provisioning and teardown remain inside the `wrap_iter`
+            # scope. A bare `SandboxBackend` is wrapped without entering it; its lifecycle
+            # stays with the capability. An existing `Sandbox` facade passes through unchanged.
+            # Skipped entirely when the caller passed `sandbox=` — the caller then owns the
+            # lifecycle.
             if sandbox is None and (served_sandbox := run_capability.serve_sandbox()) is not None:
-                graph_deps.sandbox = (
+                served_backend = (
                     await stack.enter_async_context(served_sandbox)
                     if isinstance(served_sandbox, AbstractAsyncContextManager)
                     else served_sandbox
                 )
+                graph_deps.sandbox = Sandbox.wrap(served_backend)
             graph_run = await stack.enter_async_context(
                 graph.iter(
                     inputs=user_prompt_node,
@@ -1753,9 +1768,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             stack.callback(_restore_context_vars)
 
             try:
-                # Enter toolset AFTER context vars are propagated so that
-                # toolset __aenter__/__aexit__ run inside the run span context
-                # (set by the Instrumentation capability's wrap_run).
+                # Enter the toolset after propagating context vars set by `wrap_run` or
+                # `before_run`. The instrumentation span is already current in this task
+                # because `wrap_iter` was entered before any other stack entry.
                 await stack.enter_async_context(toolset)
             except BaseException as exc:
                 # A failure here (e.g. a toolset `__aenter__` raising) would otherwise leave

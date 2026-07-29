@@ -9,7 +9,7 @@ import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import pytest
 from pydantic import BaseModel
@@ -74,7 +74,7 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT
-from pydantic_ai.sandboxes import Sandbox
+from pydantic_ai.sandboxes import LocalSandbox, Sandbox
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -3251,6 +3251,7 @@ async def test_adapter_run_stream_native_capabilities_kwarg_merged_into_run() ->
 
 
 async def test_adapter_run_stream_native_forwards_sandbox() -> None:
+    """Verify in-memory sandbox propagation; a model cassette would not exercise this adapter path."""
     seen: list[Sandbox | None] = []
     agent = Agent(TestModel())
 
@@ -3259,14 +3260,15 @@ async def test_adapter_run_stream_native_forwards_sandbox() -> None:
         seen.append(ctx.sandbox)
         return 'ok'
 
-    sandbox = cast(Sandbox, object())
+    backend = LocalSandbox()
     run_input = create_input(UserMessage(id='msg0', content='Use the available tool.'))
     adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
 
-    async for _ in adapter.transform_stream(adapter.run_stream_native(sandbox=sandbox)):
+    async for _ in adapter.transform_stream(adapter.run_stream_native(sandbox=backend)):
         pass
 
-    assert seen == [sandbox]
+    assert len(seen) == 1
+    assert seen[0] is not None and seen[0].backend is backend
 
 
 async def test_callback_async() -> None:

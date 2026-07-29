@@ -1,6 +1,6 @@
 # Sandboxes
 
-Use a sandbox when tools need an execution environment for commands or files. Pydantic AI attaches a sandbox to a run through the structural [`Sandbox`][pydantic_ai.sandboxes.Sandbox] protocol; it does not decide which command or file tools the model may call.
+Use a sandbox when tools need an execution environment for commands or files. Providers implement the small structural [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol. Pydantic AI wraps the backend once and exposes the rich [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade at `ctx.sandbox`, with text helpers and windowed file reads; it does not decide which command or file tools the model may call.
 
 ## Attach and expose
 
@@ -21,17 +21,28 @@ async def execute(ctx: RunContext[None], command: str) -> str:
     return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
 
 
+@agent.tool
+async def read_file(ctx: RunContext[None], path: str, offset: int = 1, limit: int = 200) -> str:
+    """Read a bounded line window from a workspace file."""
+    sandbox = ctx.sandbox
+    if sandbox is None:
+        raise UserError('No sandbox is attached to this run.')
+    window = await sandbox.read_file(path, offset=offset, limit=limit)
+    suffix = '\n[more lines available]' if window.has_more else ''
+    return window.text + suffix
+
+
 async def main() -> None:
     async with LocalSandbox() as sandbox:
         await agent.run('Create and run hello.py.', sandbox=sandbox)
 ```
 
-`LocalSandbox` runs on the host and isolates nothing. Use it only for trusted development and tests; use a container, VM, or remote implementation for untrusted code. Keep approval, command restrictions, output limits, and path policy in the tool layer.
+`LocalSandbox` runs on the host and isolates nothing. Use it only for trusted development and tests; use a container, VM, or remote implementation for untrusted code. [`Sandbox.read_file`][pydantic_ai.sandboxes.Sandbox.read_file] falls back to a full bytes read and uses [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] for bounded transfer when the backend implements it. Keep approval, command restrictions, output limits, and path policy in the tool layer.
 
 ## Ownership and precedence
 
-- The caller of `run(sandbox=...)` owns the sandbox: create it before the run, tear it down after (typically an `async with` around the run). It wins over any capability contribution.
-- A sandbox-supplying capability overrides `serve_sandbox` and returns an async context manager: the run enters it at run start and exits it at run end, like a capability toolset. Capabilities that only use the sandbox do not override this method. Return a fresh context manager for a per-run sandbox, or the sandbox itself for a warm sandbox shared across runs.
+- The caller of `run(sandbox=...)` owns the backend: create it before the run, tear it down after (typically an `async with` around the run). It wins over any capability contribution. Inside tools, `ctx.sandbox.backend` is that backend.
+- A sandbox-supplying capability overrides `serve_sandbox` and returns a [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or async context manager yielding one: the run enters it at run start and exits it at run end, like a capability toolset, then wraps the yielded backend once. Capabilities that only use the sandbox do not override this method. Return a fresh context manager for a per-run backend, or the backend itself for a warm sandbox shared across runs. Serving an existing [`Sandbox`][pydantic_ai.sandboxes.Sandbox] passes it through unchanged.
 - Among sandbox suppliers, the latest in the resolved chain wins, and deferred capabilities are never consulted.
 - The handle is available on `ctx.sandbox` for the whole run (capability-contributed: everywhere except `for_run` and initial metadata factories).
 
