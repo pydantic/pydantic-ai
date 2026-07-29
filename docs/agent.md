@@ -621,7 +621,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
-On Python 3.10, asyncio recreates `CancelledError` across an `await task` boundary, so the attached state is only available when the error is caught directly inside the cancelled task. [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] is the version-universal fallback when only history is needed.
+On Python 3.10, asyncio recreates `CancelledError` across an `await task` boundary, but chains the original exception -- carrying the attached run state -- via `__context__`, which `from_cancellation()` traverses. The chain is attached only to the first `await` of the cancelled task, so later awaits of the same task see an unchained exception; [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] is the fallback when only history is needed.
 
 To request cancellation from a tool, an `event_stream_handler`, or a capability hook, call [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run]. This first-party cancellation raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] directly:
 
@@ -1378,6 +1378,8 @@ Pydantic AI's instrumentation is built on [OpenTelemetry](https://opentelemetry.
 If models behave unexpectedly (e.g., the retry limit is exceeded, or their API returns `503`), agent runs will raise [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
 
 In these cases, [`capture_run_messages`][pydantic_ai.capture_run_messages] can be used to access the messages exchanged during the run to help diagnose the issue.
+
+For a run that was cancelled rather than failed, [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] carry the run's history directly -- see [Cancelling a Run](#cancelling-a-run).
 
 ```python {title="agent_model_errors.py"}
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, capture_run_messages

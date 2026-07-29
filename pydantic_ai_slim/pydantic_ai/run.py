@@ -498,6 +498,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         complete snapshot that can be passed to a new run as `message_history` to resume the
         conversation.
 
+        Cancellation is terminal: `wrap_run` and `on_run_error` capability hooks may observe it
+        and clean up, but cannot recover the run into a successful result.
+
         Unlike [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel], which
         only stops the current model response and lets the run continue, this ends the run itself.
 

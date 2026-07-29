@@ -1651,7 +1651,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 yield
             except asyncio.CancelledError as exc:
                 first_party = graph_deps.cancellation.resolve()
-                graph_deps.cancellation.release_issued()
                 if first_party:
                     raise _run_cancelled('The agent run was cancelled.') from exc
                 # An external cancellation must keep propagating as `CancelledError`, but the run
@@ -1660,10 +1659,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # last and wins, giving its awaiter the outer run's history.
                 _run_cancelled('The agent run was cancelled by an external asyncio cancellation.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
                 raise
-            else:
-                # A requested cancellation that user code swallowed inside the block, or that was
-                # issued to a superseded driving task, must not leak an elevated `Task.cancelling()`
-                # count past the run: exiting the block without finishing the run is quiet abandonment.
+            finally:
+                # On every exit path — translation above, a clean exit after user code swallowed a
+                # requested cancellation, a superseded driving task, or a non-cancellation error
+                # overtaking a requested cancel — an issued-but-unresolved cancellation must not
+                # leak an elevated `Task.cancelling()` count past the run: it would spuriously
+                # cancel unrelated later work on the task that drove the run.
                 graph_deps.cancellation.release_issued()
 
         async with AsyncExitStack() as stack:
@@ -1787,7 +1788,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # consumed the task's cancellation counter.
                 _utils.raise_if_cancelling()
                 if graph_deps.cancellation.cancel_requested:
-                    raise asyncio.CancelledError
+                    raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
                 agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
                 _run_error = None
 

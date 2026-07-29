@@ -351,7 +351,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         down, sibling tool tasks are cancelled and drained, a suspended server-side job is
         best-effort cancelled) and raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled],
         preserving everything that completed before the cancellation took effect in message
-        history. Idempotent; a no-op once the run has finished.
+        history. Idempotent; a no-op once the run has finished. Cancellation is terminal:
+        capability hooks may observe it and clean up, but cannot recover the run to success.
 
         Raises:
             UserError: If this `RunContext` isn't backed by a running agent (e.g. the synthetic

@@ -46,7 +46,7 @@ class RunCancellation:
 
     @property
     def cancel_requested(self) -> bool:
-        """Whether a first-party cancellation has been requested (and not yet resolved)."""
+        """Whether a first-party cancellation has been requested. Sticky for the life of the run."""
         return self._requested
 
     def bind(self, task: asyncio.Task[object] | None = None) -> None:
@@ -59,7 +59,11 @@ class RunCancellation:
         this one. A caller that catches and uncancels the controller's own cancellation takes
         over its bookkeeping; the issued count is re-synchronized at the next step boundary.
         """
-        task = task or asyncio.current_task()
+        if task is None:
+            try:
+                task = asyncio.current_task()
+            except RuntimeError:  # pragma: no cover - no running asyncio loop (e.g. a Trio-backed run)
+                return
         if task is None:  # pragma: no cover — agent runs always execute inside a task
             return
         self._owner = task
@@ -97,6 +101,11 @@ class RunCancellation:
         propagating as `CancelledError`.
 
         Must be called on the task the cancellation was delivered to.
+
+        Unlike `asyncio.timeout()`, which arbitrates against a baseline count captured at scope
+        entry, this check is baseline-free: a cancellation count already pending when the run
+        started makes a first-party cancel resolve as external. That is deliberate — the
+        conservative direction is "external wins", never mis-translating an external cancellation.
         """
         if not self._requested:
             return False
@@ -104,7 +113,10 @@ class RunCancellation:
             # No `Task.uncancel()`/`Task.cancelling()`: we can't tell whether an external
             # cancellation raced with ours, so a requested cancellation wins (documented).
             return True
-        task = asyncio.current_task()
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:  # pragma: no cover - no running asyncio loop (e.g. a Trio-backed run)
+            return True
         if task is None:  # pragma: no cover — agent runs always execute inside a task
             return True
         count = self._issued.pop(task, 0)
