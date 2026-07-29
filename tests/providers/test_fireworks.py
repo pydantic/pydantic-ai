@@ -105,7 +105,7 @@ def test_fireworks_provider_model_profile(mocker: MockerFixture):
 
 
 def test_fireworks_mixed_case_model_name_profile_flags():
-    """Mixed-case model IDs (and mixed-case ``accounts/fireworks/models/`` paths)
+    """Mixed-case model IDs (and mixed-case `accounts/fireworks/models/` paths)
     must yield the same profile flags as their lowercase equivalents."""
     provider = FireworksProvider(api_key='api-key')
 
