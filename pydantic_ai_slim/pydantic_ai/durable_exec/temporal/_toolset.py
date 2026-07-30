@@ -159,6 +159,26 @@ class _ValidatedActivityConfig(ActivityConfig):
 _activity_config_adapter: TypeAdapter[ActivityConfig] = TypeAdapter(_ValidatedActivityConfig)
 
 
+def validate_activity_config(config: ActivityConfig, source: str) -> ActivityConfig:
+    """Return `config` validated into Temporal's own types, or raise a `UserError`.
+
+    Unknown keys survive `ActivityConfig` construction (it's a `total=False` `TypedDict`) and only
+    fail once they're splatted into `workflow.start_activity()` inside the workflow, where the
+    resulting `TypeError` isn't one of `PydanticAIPlugin`'s `workflow_failure_exception_types` and
+    so fails the workflow *task*, which Temporal retries forever.
+
+    The validated config is returned rather than discarded because validation also coerces: a
+    `'PT5M'` that came back from a round trip becomes a `timedelta`, and only the coerced value is
+    something `start_activity()` accepts.
+
+    `source` names where the config came from, for example '`model_activity_config`'.
+    """
+    try:
+        return _activity_config_adapter.validate_python(config)
+    except ValidationError as e:
+        raise UserError(f'Invalid Temporal `ActivityConfig` in {source}: {e}') from e
+
+
 def resolve_tool_activity_config(
     tool: ToolsetTool[Any] | None,
     tool_name: str,
