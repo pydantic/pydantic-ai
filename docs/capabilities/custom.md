@@ -411,14 +411,6 @@ sales = Agent('openai:gpt-5.2', name='sales', capabilities=[identity])
 
 `for_agent()` is synchronous because it binds configuration during agent construction, before run dependencies or a lifecycle context exist. Keep it free of I/O; asynchronous run-specific setup belongs in [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run].
 
-### Late toolset registration
-
-Override [`handle_late_toolset_registration()`][pydantic_ai.capabilities.AbstractCapability.handle_late_toolset_registration] when a bound capability transforms the agent's leaf toolsets. It fires only when [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] registers a toolset after binding. Toolsets passed to [`Agent(toolsets=[...])`][pydantic_ai.Agent] are already visible to `for_agent()`, so they do not trigger it.
-
-[`get_wrapper_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] transforms the assembled toolset tree for each run. `handle_late_toolset_registration()` tells the capability that the tree gained a leaf after binding, so it can prepare the corresponding transform. For example, the durable-execution capabilities wrap each leaf in an activity, step, or task during binding and use this notification to prepare the same wrapper for a decorator-registered leaf.
-
-The notification is synchronous and runs during agent setup, with no run dependencies or [`RunContext`][pydantic_ai.tools.RunContext], so keep it free of I/O. Raising rejects the registration: the agent notifies capabilities before appending the toolset. This lets requirements such as a unique toolset `id`, and Temporal's restriction after activities have been handed to a worker, fail at the decorator instead of during a run.
-
 Return a new bound copy rather than mutating the original when the same capability may be attached to multiple agents. [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] and [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability] propagate binding to their children, and the bound copy participates in all configuration hooks, including `get_model()` and `resolve_model_id()`.
 
 The parameter is typed as [`AbstractAgent`][pydantic_ai.agent.AbstractAgent] so reusable capabilities depend only on the portable agent interface and remain compatible with custom agent implementations. Runs through a [`WrapperAgent`][pydantic_ai.agent.WrapperAgent] are delegated to its wrapped agent, so Pydantic AI's built-in wrappers do not rebind the capability to the outer wrapper.
@@ -436,7 +428,6 @@ Binding hooks establish which capability participates in a run; lifecycle hooks 
 | Phase | Capability work | What is available |
 |---|---|---|
 | Agent binding | [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] | Agent name, raw constructor model, toolsets, and other constructor configuration; no run dependencies or `RunContext` |
-| Late toolset registration | [`handle_late_toolset_registration()`][pydantic_ai.capabilities.AbstractCapability.handle_late_toolset_registration] | The toolset registered by `@agent.toolset`; no run dependencies or `RunContext` |
 | Run bootstrap | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model], then [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] if the selection is a string | Dependencies, message history, usage, and the lower-precedence model through selection/resolution contexts; no complete `RunContext` yet |
 | Run binding | [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] | A complete [`RunContext`][pydantic_ai.tools.RunContext] containing the bootstrap model; may return a run-scoped replacement capability |
 | Each logical model step | Post-`for_run()` model selection/resolution, model settings, tool preparation, and message preparation | The selected model is installed in `RunContext` before its settings, profile-sensitive tools, and model-specific message preparation are evaluated |
@@ -784,16 +775,15 @@ class ErrorLogger(AbstractCapability[Any]):
         raise error  # Re-raise to let the normal retry flow handle it
 ```
 
-### Specialized hooks
+### Deferred tool calls
 
-Capabilities can respond to setup events and resolve [deferred tool calls](../deferred-tools.md) with these specialized hooks:
+Capabilities can resolve [deferred tool calls](../deferred-tools.md) — calls that require approval, or that are executed externally — directly from the agent run, without ending the run and waiting for a follow-up:
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| [`handle_late_toolset_registration`][pydantic_ai.capabilities.AbstractCapability.handle_late_toolset_registration] | `(toolset: AbstractToolset) -> None` | Handle a toolset added by `@agent.toolset` after binding |
 | [`handle_deferred_tool_calls`][pydantic_ai.capabilities.AbstractCapability.handle_deferred_tool_calls] | `(ctx: RunContext, *, requests: DeferredToolRequests) -> DeferredToolResults \| None` | Resolve some or all pending approval/external calls inline |
 
-For `handle_deferred_tool_calls`, multiple capabilities can each handle a subset: dispatch accumulates results across the chain, passing only the still-unresolved requests to the next capability. Returning `None` (or a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] with no entries) declines handling. Anything still unresolved bubbles up as a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output for the caller to handle.
+Multiple capabilities can each handle a subset: dispatch accumulates results across the chain, passing only the still-unresolved requests to the next capability. Returning `None` (or a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] with no entries) declines handling. Anything still unresolved bubbles up as a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output for the caller to handle.
 
 For application code that just needs to plug in a handler, use the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability — see [Resolving deferred calls with a handler](../deferred-tools.md#resolving-deferred-calls-with-a-handler).
 

@@ -417,7 +417,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def _register_durable_units(self, wrapper: WrapperToolset[AgentDepsT]) -> None:
         self._temporal_activities.extend(toolset_temporal_activities(wrapper))
 
-    def handle_late_toolset_registration(self, toolset: AbstractToolset[AgentDepsT]) -> None:
+    def _register_late_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         # Unlike DBOS steps and Prefect tasks, Temporal activities have to be handed to the worker
         # before it starts, so a toolset registered after that hand-off can never reach one.
         if self._activities_handed_off:
@@ -428,7 +428,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 'toolsets before the worker is set up, or pass the `DynamicToolset` to '
                 '`Agent(toolsets=[...])`.'
             )
-        super().handle_late_toolset_registration(toolset)
+        super()._register_late_toolset(toolset)
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:

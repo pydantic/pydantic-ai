@@ -310,26 +310,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
         """
 
-    def handle_late_toolset_registration(self, toolset: AbstractToolset[AgentDepsT]) -> None:
-        """Handle a toolset registered on the agent after this capability was bound.
+    def _register_late_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> None:
+        """Take note of a toolset registered on the agent after this capability was bound.
 
-        This is called only for a toolset registered with
-        [`@agent.toolset`][pydantic_ai.agent.Agent.toolset], after capability binding. It is not called
-        for toolsets passed to [`Agent`][pydantic_ai.Agent] with `toolsets=`, because those are already
-        visible to [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent].
+        Capabilities bind — and take their view of `agent.toolsets` — during agent construction, but
+        the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator runs afterwards. Capabilities
+        that transform the agent's *leaf* toolsets (the durable-execution capabilities wrap each one in
+        an activity, step, or task) override this so a late registration gets the same treatment as one
+        passed to `toolsets=`, instead of silently slipping through untransformed.
 
-        Capabilities that transform the agent's leaf toolsets take their view of `agent.toolsets`
-        during binding. This hook lets them handle a leaf added afterwards instead of allowing it to
-        escape the transform. The durable-execution capabilities use it to wrap each late leaf in an
-        activity, step, or task; [`get_wrapper_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset]
-        still performs the actual substitution by `id` for each run.
-
-        This synchronous notification runs during agent setup, with no run dependencies or
-        [`RunContext`][pydantic_ai.tools.RunContext]. Keep it free of I/O, like `for_agent()`. Raising
-        rejects the registration: capabilities are notified before the toolset is appended to the
-        agent. This is how requirements such as a unique toolset `id`, and errors for Temporal
-        activities that have already been handed off, surface at the decorator instead of during a
-        run.
+        Deliberately private: post-construction agent mutation is not part of the public capability
+        contract, and `@agent.toolset` is currently the only path that reaches it.
         """
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
