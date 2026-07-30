@@ -11160,11 +11160,6 @@ class DeferringHookCap(AbstractCapability[Any]):
         self._maybe('after_tool_execute')
         return result
 
-    async def on_tool_execute_error(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Exception
-    ) -> Any:
-        self._maybe('on_tool_execute_error')
-
 
 class TestToolHookDeferrals:
     """A tool call may only be deferred once its arguments are known to be valid.
@@ -11331,10 +11326,18 @@ class TestToolHookDeferrals:
     @pytest.mark.parametrize('exc_type', [ApprovalRequired, CallDeferred])
     async def test_execute_error_hook_defers(self, exc_type: type[ApprovalRequired] | type[CallDeferred]):
         """The execution error hook can replace a tool failure with a deferral."""
+
+        @dataclass
+        class DeferringExecuteErrorCap(AbstractCapability[Any]):
+            async def on_tool_execute_error(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Exception
+            ) -> Any:
+                raise exc_type(metadata={'from': 'on_tool_execute_error'})
+
         agent = Agent(
             TestModel(),
             output_type=[str, DeferredToolRequests],
-            capabilities=[DeferringHookCap(where='on_tool_execute_error', exc_type=exc_type)],
+            capabilities=[DeferringExecuteErrorCap()],
         )
 
         @agent.tool(retries=0)
