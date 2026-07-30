@@ -1,0 +1,26 @@
+tests/models/openrouter/test_cache.py
+  s_9b289e5afc8389::t_28c3f43284ebc5 451,520,584,647,725,874
+tests/models/test_bedrock_mantle.py
+  s_9b289e5afc8389::t_9fd0aabced3837 103-107,144-148,194-198
+tests/models/test_zai.py
+  s_9b289e5afc8389::t_3d9bace1cde0ce 250
+  s_9b289e5afc8389::t_9fd0aabced3837 57
+tests/models/test_openai_prompt_cache.py
+  s_9b289e5afc8389::t_10405e0c9ea351 588,653,703
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "5c3a9b35076130b5c4f5e9a287b0f6a5bdb079aa",
+  "prompts": {},
+  "sessions": {
+    "s_9b289e5afc8389": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fb2a4-586d-7a22-922a-b0b29a4cdf08",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
