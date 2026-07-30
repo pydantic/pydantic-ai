@@ -1535,6 +1535,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 usage=RequestUsage(
                     input_tokens=71,
                     output_tokens=46,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1582,6 +1583,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 usage=RequestUsage(
                     input_tokens=133,
                     output_tokens=19,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1680,6 +1682,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 usage=RequestUsage(
                     input_tokens=71,
                     output_tokens=46,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1727,6 +1730,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 usage=RequestUsage(
                     input_tokens=133,
                     output_tokens=19,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1795,6 +1799,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 usage=RequestUsage(
                     input_tokens=47,
                     output_tokens=17,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1839,6 +1844,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 usage=RequestUsage(
                     input_tokens=87,
                     output_tokens=17,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1877,6 +1883,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 usage=RequestUsage(
                     input_tokens=116,
                     output_tokens=10,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,

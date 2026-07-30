@@ -3806,7 +3806,12 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=23, output_tokens=2211, details={'reasoning_tokens': 1920}),
+                usage=RequestUsage(
+                    input_tokens=23,
+                    output_tokens=2211,
+                    output_reasoning_tokens=1920,
+                    details={'reasoning_tokens': 1920},
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -8755,7 +8760,9 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=329, output_tokens=12, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=329, output_tokens=12, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                ),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
