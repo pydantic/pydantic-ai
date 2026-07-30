@@ -24,6 +24,7 @@ from pydantic_ai._utils import (
     check_object_json_schema,
     dataclasses_no_defaults_repr,
     format_inlined_text_file,
+    get_first_param_type,
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
@@ -38,6 +39,18 @@ from .conftest import undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 
 pytestmark = pytest.mark.anyio
+
+
+def test_get_first_param_type_annotation_type_error():
+    """An annotation that can't be evaluated at all stays a silent `None`, unlike an unresolvable name."""
+
+    def function(value: int) -> None:
+        pass
+
+    # Not every resolution failure is a `NameError`: this one raises `TypeError` when evaluated.
+    function.__annotations__['value'] = 'int | 5'
+
+    assert get_first_param_type(function) is None
 
 
 @pytest.mark.parametrize(

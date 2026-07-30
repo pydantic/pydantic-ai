@@ -344,6 +344,8 @@ Temporal activity configuration, like timeouts and retry policies, can be custom
 - `event_stream_handler_activity_config`: The Temporal activity config to use for event stream handler activities. This is merged with the base activity config.
 - `toolset_activity_config`: The Temporal activity config to use for get-tools and call-tool activities for specific toolsets identified by ID. This is merged with the base activity config.
 
+Because `ActivityConfig` is a `TypedDict`, a misspelled or misplaced key is not caught at runtime by Python and would only fail once the config is handed to Temporal inside the workflow, where the failure is retried indefinitely. Config keys are therefore checked when [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] is constructed, so a key Temporal doesn't know raises a `UserError` up front.
+
 Per-tool activity config lives on the tool itself — see [Per-tool activity config](#per-tool-activity-config) below.
 
 Every activity Pydantic AI registers heartbeats in the background while it runs, so that a long-but-healthy activity isn't mistaken for a crashed worker and so that cancelling the Temporal workflow can be delivered to it — see [Streaming](#streaming) for how that stops an in-flight model request. Only model request activities get a `heartbeat_timeout` by default, of 30 seconds; setting one on any other activity is up to you.

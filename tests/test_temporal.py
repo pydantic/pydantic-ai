@@ -6628,6 +6628,68 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
     ]
 
 
+@pytest.mark.parametrize(
+    'kwargs,expected',
+    [
+        pytest.param(
+            {'activity_config': {'timeout': timedelta(seconds=1)}},
+            'Invalid Temporal `ActivityConfig` in `activity_config`',
+            id='activity_config',
+        ),
+        pytest.param(
+            {'model_activity_config': {'start_to_close': timedelta(seconds=1)}},
+            'Invalid Temporal `ActivityConfig` in `model_activity_config`',
+            id='model_activity_config',
+        ),
+        pytest.param(
+            {'event_stream_handler_activity_config': {'summry': 'oops', 'task_q': 'oops'}},
+            'Invalid Temporal `ActivityConfig` in `event_stream_handler_activity_config`',
+            id='event_stream_handler_activity_config',
+        ),
+        pytest.param(
+            {'toolset_activity_config': {'my_toolset': {'my_tool': False}}},
+            "Invalid Temporal `ActivityConfig` in `toolset_activity_config['my_toolset']`",
+            id='toolset_activity_config',
+        ),
+        pytest.param(
+            {'model_activity_config': {'start_to_close_timeout': 'five minutes'}},
+            'Invalid Temporal `ActivityConfig` in `model_activity_config`',
+            id='unusable-value',
+        ),
+    ],
+)
+def test_durability_rejects_unknown_activity_config_keys(kwargs: dict[str, Any], expected: str):
+    """An `ActivityConfig` key Temporal doesn't know fails at construction, not mid-workflow.
+
+    `ActivityConfig` is a `total=False` `TypedDict`, so an unknown key survives construction and
+    would only fail when it's splatted into `workflow.start_activity()` inside workflow code —
+    where the resulting `TypeError` isn't a `workflow_failure_exception_types` member and so fails
+    the workflow *task*, which Temporal retries forever. The last case is the shape reported in
+    #6917: a per-tool map (which belongs in tool `metadata`) passed as a toolset's config.
+    """
+    with pytest.raises(UserError, match=re.escape(expected)):
+        TemporalDurability(**kwargs)
+
+
+def test_durability_coerces_activity_config_values():
+    """Validation keeps the coerced config, not the caller's raw one.
+
+    A config that round-tripped through JSON carries `'PT5M'` where Temporal wants a `timedelta`.
+    That validates fine, so only *keeping* the coerced result stops the raw string from reaching
+    `workflow.start_activity()` and wedging the workflow task — the same failure an unknown key
+    causes, just via a value.
+    """
+    durability = TemporalDurability(
+        activity_config={'start_to_close_timeout': 'PT5M'},  # pyright: ignore[reportArgumentType]
+        toolset_activity_config={'my_toolset': {'schedule_to_close_timeout': 'PT9M'}},  # pyright: ignore[reportArgumentType]
+    )
+
+    assert durability.activity_config.get('start_to_close_timeout') == timedelta(minutes=5)
+    assert durability._model_activity_config.get('start_to_close_timeout') == timedelta(minutes=5)  # pyright: ignore[reportPrivateUsage]
+    toolset_config = durability._toolset_activity_config['my_toolset']  # pyright: ignore[reportPrivateUsage]
+    assert toolset_config.get('schedule_to_close_timeout') == timedelta(minutes=9)
+
+
 def test_durability_shared_instance_across_agents():
     """Same TemporalDurability instance can be reused across multiple agents.
 
