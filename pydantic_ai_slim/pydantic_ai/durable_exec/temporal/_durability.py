@@ -374,6 +374,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         async def cancel_suspended_response_activity(params: _CancelParams, deps: Any = None) -> None:
             if params.serialized_run_context is None:
+                # Wrapper-era payload only: `TemporalModel` sent no run context, so there's no chain
+                # to consult. It can't carry an unregistered instance's `model_id` either —
+                # `TemporalModel._get_model_id` rejected arbitrary instances workflow-side before
+                # scheduling anything — so this `infer_model` is always the faithful rebuild of a
+                # registry key or a string the caller wrote. Every capability-era payload carries a
+                # run context (`serialize_run_context` returns a `dict`) and takes the guarded
+                # `_resolve_model_for_request` path below.
                 model = self._models_by_id.get(params.model_id or 'default')
                 if model is None:
                     assert params.model_id is not None
