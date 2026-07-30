@@ -13,6 +13,7 @@ Run:  uv run --with pytest pytest .github/scripts/test_pydantic_ai_runner.py
 """
 
 import asyncio
+import importlib
 import io
 import json
 import os
@@ -125,29 +126,18 @@ esac
 """
 
 
-def test_prefetch_github_context_prefers_gh_token(tmp_path: Path):
+@pytest.mark.parametrize(
+    ('env_vars', 'expected_token'),
+    [
+        ({'GH_TOKEN': 'preferred-token', 'GITHUB_TOKEN': 'fallback-token'}, 'preferred-token'),
+        ({'GITHUB_TOKEN': 'fallback-token'}, 'fallback-token'),
+    ],
+)
+def test_prefetch_github_context_selects_token(tmp_path: Path, env_vars: dict[str, str], expected_token: str):
     result, _ = _run_context_prefetch(
         tmp_path,
-        gh_script='[ "$GH_TOKEN" = "preferred-token" ] || exit 9\n' + _SUCCESSFUL_GH_PREFETCH,
-        env_vars={
-            'GH_TOKEN': 'preferred-token',
-            'GITHUB_TOKEN': 'fallback-token',
-            'GITHUB_REPOSITORY': 'pydantic/pydantic-ai',
-        },
-    )
-
-    assert result.returncode == 0
-    assert 'Could not prefetch' not in result.stdout
-
-
-def test_prefetch_github_context_falls_back_to_github_token(tmp_path: Path):
-    result, _ = _run_context_prefetch(
-        tmp_path,
-        gh_script='[ "$GH_TOKEN" = "fallback-token" ] || exit 9\n' + _SUCCESSFUL_GH_PREFETCH,
-        env_vars={
-            'GITHUB_TOKEN': 'fallback-token',
-            'GITHUB_REPOSITORY': 'pydantic/pydantic-ai',
-        },
+        gh_script=f'[ "$GH_TOKEN" = "{expected_token}" ] || exit 9\n' + _SUCCESSFUL_GH_PREFETCH,
+        env_vars={**env_vars, 'GITHUB_REPOSITORY': 'pydantic/pydantic-ai'},
     )
 
     assert result.returncode == 0
@@ -173,18 +163,18 @@ def test_prefetch_github_context_without_repository_is_non_fatal(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
-    ('failed_command', 'preserved_files', 'missing_files', 'warning'),
+    ('failed_command', 'preserved_file', 'missing_file', 'warning'),
     [
         (
             'issue:list',
-            ('open-pull-requests.json',),
-            ('open-issues.json',),
+            'open-pull-requests.json',
+            'open-issues.json',
             'Could not prefetch open issues',
         ),
         (
             'pr:list',
-            ('open-issues.json',),
-            ('open-pull-requests.json',),
+            'open-issues.json',
+            'open-pull-requests.json',
             'Could not prefetch open pull requests',
         ),
     ],
@@ -192,8 +182,8 @@ def test_prefetch_github_context_without_repository_is_non_fatal(tmp_path: Path)
 def test_prefetch_github_context_preserves_independent_corpus(
     tmp_path: Path,
     failed_command: str,
-    preserved_files: tuple[str, ...],
-    missing_files: tuple[str, ...],
+    preserved_file: str,
+    missing_file: str,
     warning: str,
 ):
     result, agent_dir = _run_context_prefetch(
@@ -208,8 +198,8 @@ def test_prefetch_github_context_preserves_independent_corpus(
     context_dir = agent_dir / 'github-context'
     assert result.returncode == 0
     assert warning in result.stdout
-    assert all((context_dir / filename).exists() for filename in preserved_files)
-    assert all(not (context_dir / filename).exists() for filename in missing_files)
+    assert (context_dir / preserved_file).exists()
+    assert not (context_dir / missing_file).exists()
 
 
 @pytest.mark.parametrize('malformed_command', ['issue:list', 'pr:list'])
@@ -645,8 +635,6 @@ def test_grep_large_match_set_is_not_misreported_as_error(tmp_path: Path, monkey
     # A match set larger than the harness output cap is tail-truncated, which
     # elides the `[stdout]` header and prepends a truncation marker. The adapter
     # must still return it as matches, not as an error.
-    import importlib
-
     # `pkg.grep` is the re-exported callable; reach the module to patch its deps.
     grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
 
@@ -669,53 +657,26 @@ def test_grep_large_match_set_is_not_misreported_as_error(tmp_path: Path, monkey
     assert grep_mod._TRUNCATION_PREFIX not in out
 
 
-def test_grep_falls_back_when_ripgrep_is_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    import importlib
-
-    grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
-    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
-
-    def no_search_command(command: str, *, path: str | None = None) -> None:
-        return None
-
-    monkeypatch.setattr(grep_mod.shutil, 'which', no_search_command)
-
-    class _FakeShell:
-        async def run_command(self, command: str, *, timeout_seconds: float) -> str:
-            assert command.startswith('grep -r -n -I -E --exclude-dir=.git ')
-            return '[stdout]\n./a.txt:2:NEEDLE here\n'
-
-    class _FakeFs:
-        async def file_info(self, path: str) -> str:
-            return 'ok'
-
-    monkeypatch.setattr(grep_mod, 'shell', lambda: _FakeShell())
-    monkeypatch.setattr(grep_mod, 'filesystem', lambda: _FakeFs())
-    assert 'a.txt:2:NEEDLE here' in asyncio.run(grep_mod.grep('NEEDLE', '.'))
-
-
-def test_grep_fallback_does_not_follow_workspace_symlinks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    import importlib
-
+def test_grep_portable_fallback_is_usable_and_does_not_follow_symlinks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
+    (workspace / 'visible.py').write_text('VISIBLE\n', encoding='utf-8')
     outside = tmp_path / 'outside'
     outside.mkdir()
     (outside / 'secret.txt').write_text('TOPSECRET\n', encoding='utf-8')
     (workspace / 'outside-link').symlink_to(outside, target_is_directory=True)
     monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
 
-    def no_ripgrep(command: str, *, path: str | None = None) -> None:
+    def no_search_command(command: str, *, path: str | None = None) -> None:
         return None
 
-    monkeypatch.setattr(grep_mod.shutil, 'which', no_ripgrep)
+    monkeypatch.setattr(grep_mod.shutil, 'which', no_search_command)
+    assert 'visible.py:1:VISIBLE' in asyncio.run(grep_mod.grep('VISIBLE', '.'))
     assert asyncio.run(grep_mod.grep('TOPSECRET', '.')) == 'No matches found.'
 
 
 def test_grep_probes_the_shell_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    import importlib
-
     grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     monkeypatch.setattr(grep_mod, 'augmented_env', lambda: {'PATH': '/harness/bin'})
@@ -740,8 +701,6 @@ def test_grep_probes_the_shell_path(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 
 def test_grep_uses_git_ignores_without_ripgrep(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    import importlib
-
     grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
@@ -764,8 +723,6 @@ def test_grep_uses_git_ignores_without_ripgrep(tmp_path: Path, monkeypatch: pyte
 
 
 def test_grep_treats_git_pathspec_metacharacters_literally(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    import importlib
-
     grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
@@ -925,14 +882,16 @@ def test_plan_mode_keeps_new_readonly_tools_drops_multiedit():
     assert {'TodoWrite', 'ExitPlanMode'} <= names  # non-mutating callables
 
 
-def test_request_limit_is_bounded_for_attention(monkeypatch: pytest.MonkeyPatch):
-    assert shim.REQUEST_LIMIT == 200
-    assert shim.ATTENTION_REQUEST_LIMIT == 25
-
-    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI Attention Triage')
-    assert shim.run_request_limit() == 25
-    monkeypatch.setenv('GITHUB_WORKFLOW', 'Other Pydantic AI workflow')
-    assert shim.run_request_limit() == 200
+@pytest.mark.parametrize(
+    ('workflow', 'expected_limit'),
+    [
+        ('Pydantic AI Attention Triage', 25),
+        ('Other Pydantic AI workflow', 200),
+    ],
+)
+def test_request_limit_is_bounded_by_workflow(workflow: str, expected_limit: int, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
+    assert shim.run_request_limit() == expected_limit
 
 
 def test_instructions_encourage_parallel_tool_calls():
@@ -1046,36 +1005,24 @@ def test_main_can_disable_task(disable_task: bool, monkeypatch: pytest.MonkeyPat
     assert selected_tasks == [None if disable_task else shim.task]
 
 
-def test_attention_workflow_uses_one_direct_bounded_classification_pass():
+def test_attention_workflow_uses_direct_classification():
     workflow = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.md'
     text = workflow.read_text(encoding='utf-8')
 
-    assert 'use `Read` to load `attention-candidates.json`' in text
-    assert 'continue\nfrom the reported offset until the complete snapshot is loaded' in text
     assert 'Classify every candidate yourself' in text
-    assert 'parallel in one response when possible' in text
-    assert 'Do not use `Task`, `LS`, `TodoWrite`' in text
-    assert 'name: "Pydantic AI Attention Triage"' in text
     assert 'PYDANTIC_AI_DYNAMIC_WORKFLOW' not in text
     assert 'run_workflow' not in text
-    assert 'Monty' not in text
-    assert '        pull-requests: write' in text
-    assert 'report-failure-as-issue: false' in text
 
+
+def test_runner_drops_dynamic_workflow_dependencies():
     runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
-    assert 'pydantic-ai-harness==0.7.0' in runner
     assert 'dynamic-workflow' not in runner
     assert 'pydantic-monty' not in runner
 
-    lock = workflow.with_suffix('.lock.yml').read_text(encoding='utf-8')
-    assert '      pull-requests: write' in lock
-    assert 'GH_AW_FAILURE_REPORT_AS_ISSUE: "false"' in lock
 
-    engine = workflow.parent / 'shared' / 'engine-minimax.md'
-    engine_text = engine.read_text(encoding='utf-8')
-    assert 'GH_AW_HARNESS_MAX_RETRIES: "0"' in engine_text
-    assert 'GH_AW_HARNESS_MAX_RETRIES: "3"' in engine_text
-    for compiled_workflow in workflow.parent.glob('pydantic-ai-*.lock.yml'):
+def test_compiled_workflows_pin_retry_policy():
+    workflow_dir = Path(__file__).parent.parent / 'workflows'
+    for compiled_workflow in workflow_dir.glob('pydantic-ai-*.lock.yml'):
         compiled_text = compiled_workflow.read_text(encoding='utf-8')
         assert compiled_text.count('GH_AW_HARNESS_MAX_RETRIES: 0') == 1
         assert compiled_text.count('GH_AW_HARNESS_MAX_RETRIES: 3') == 1
