@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 import pytest
+from inline_snapshot import snapshot
 from vcr.cassette import Cassette
 
 from pydantic_ai import Agent
@@ -420,48 +421,47 @@ def test_tool_availability_history_is_stable_across_a_b_a(origin: Origin) -> Non
     assert history == original
 
 
-def test_two_deltas_with_the_same_tools_get_distinct_synthesized_ids() -> None:
-    """A history can legitimately carry the same tool names twice, and the ids must still differ.
+def test_a_revealed_tool_is_announced_once_and_the_text_never_moves() -> None:
+    """One reveal, one announcement, byte-identical on every later turn.
 
-    The synthesized id is a digest of the tool names, so a tool withdrawn and re-added — or a UI
-    adapter replaying the same frontend tool set — used to produce one id for both exchanges.
-    Providers that require call ids to be unique reject that, and anything pairing a call to its
-    return by id binds the second return to the first call.
+    `ToolSearch.before_model_request` records a reveal only for tools absent from
+    `ctx.discovered_tool_names`, so using a tool repeatedly doesn't re-announce it. That matters twice
+    over: a second announcement would be noise the model has to reconcile, and because the projection
+    reruns over the whole history each turn, any announcement whose text moved would invalidate the
+    cached prefix it sits in front of.
     """
     model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='x'))
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='start')]),
         ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup'])]),
         ModelResponse(parts=[TextPart(content='ok')]),
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup'])]),
     ]
 
-    call_ids = [
-        part.tool_call_id
-        for message in model.prepare_messages(history)
-        for part in message.parts
-        if isinstance(part, ToolSearchCallPart)
-    ]
+    def announcements_of(messages: list[ModelMessage]) -> list[Any]:
+        prepared = model.prepare_messages(messages)
+        # Nothing tool-search-shaped: the history never claims a search the model didn't run.
+        assert not [part for message in prepared for part in message.parts if isinstance(part, ToolSearchCallPart)]
+        return [
+            part.content
+            for message in prepared
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and 'have become available to you' in str(part.content)
+        ]
 
-    assert len(call_ids) == 2
-    assert call_ids[0] != call_ids[1]
+    # Google has no inline system-prompt support, so the announcement arrives `<system>`-tagged.
+    assert announcements_of(history) == snapshot(
+        ['<system>The following tools have become available to you: `lookup`.</system>']
+    )
 
-    # Each return pairs with its own call, not with the other one's.
-    return_ids = [
-        part.tool_call_id
-        for message in model.prepare_messages(history)
-        for part in message.parts
-        if isinstance(part, ToolSearchReturnPart)
-    ]
-    assert return_ids == call_ids
-
-    # And the ids are stable across turns, or they would move the prefix they exist to protect.
-    assert [
-        part.tool_call_id
-        for message in model.prepare_messages([*history, ModelResponse(parts=[TextPart(content='more')])])
-        for part in message.parts
-        if isinstance(part, ToolSearchCallPart)
-    ] == call_ids
+    # Three turns later, still exactly one, still the same bytes.
+    assert announcements_of(
+        [
+            *history,
+            ModelRequest(parts=[UserPromptPart(content='again')]),
+            ModelResponse(parts=[TextPart(content='sure')]),
+            ModelRequest(parts=[UserPromptPart(content='and again')]),
+        ]
+    ) == snapshot(['<system>The following tools have become available to you: `lookup`.</system>'])
 
 
 async def test_unrenderable_delta_raises_user_error_not_assertion(allow_model_requests: None) -> None:

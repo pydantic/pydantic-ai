@@ -536,16 +536,45 @@ class Model(ABC, Generic[InterfaceClient]):
                 f'Model {self.model_name!r} cannot withdraw tools {sorted(removed_tools)!r}: '
                 'tool removal is not supported.'
             )
+        supports_native_tool_search = ToolSearchTool in self.profile.get(
+            'supported_native_tools', SUPPORTED_NATIVE_TOOLS
+        )
         if not supports_tool_addition:
-            messages = _synthesize_tool_availability_delta_messages(messages)
+            # Two different jobs hide behind "render the delta", and which applies turns on whether this
+            # model can withhold a tool's schema at all.
+            #
+            # Where it can, the revealed tool is already on the wire behind `defer_loading`, and the
+            # tool-search exchange is what takes the flag off again: Anthropic renders the return as the
+            # `tool_reference` block that unhides the schema. Announcing the change in prose there would
+            # leave the tool hidden for good, which `test_anthropic_defer_loading_needs_a_reveal_mechanism`
+            # pins as "the reveal and the flag travel together".
+            #
+            # Where it can't, the tool is simply present in `tools` from the turn it's revealed and the
+            # exchange carries no mechanism, only the news. Stating that beats fabricating a
+            # `search_tools` call the model never made, and beats naming a `search_tools` tool the
+            # corpus-empty drop may have removed from the wire entirely.
+            #
+            # "Can withhold a schema" is narrower than "has native tool search". OpenAI has tool search
+            # but rejects `defer_loading` without a `tool_search` tool on the wire, and a capability-only
+            # corpus has nothing to put there — so its gated tools aren't declared until revealed, and
+            # arrive visible. Anthropic takes `defer_loading` with no search surface at all, so its gated
+            # tools do arrive hidden and do need the reveal.
+            #
+            # A mixed corpus on an OpenAI-*compatible* endpoint without `additional_tools` is the one
+            # shape this profile-level answer gets wrong: a standalone deferred tool puts a search
+            # surface back, so `defer_loading` is sent and the reveal is load-bearing again. Deciding
+            # that exactly needs `ModelRequestParameters`, which `prepare_messages` isn't given.
+            hides_deferred_schemas = supports_native_tool_search and not self.profile.get(
+                'deferred_tools_require_tool_search', False
+            )
+            if hides_deferred_schemas:
+                messages = _synthesize_tool_availability_delta_messages(messages)
+            else:
+                messages = _announce_tool_availability_delta_messages(messages)
 
         from .._tool_search import synthesize_local_tool_search_messages
 
-        target_provider_name = (
-            self.system
-            if ToolSearchTool in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-            else None
-        )
+        target_provider_name = self.system if supports_native_tool_search else None
         messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
 
         if not self.profile.get('supports_inline_system_prompts', False):
@@ -1769,23 +1798,43 @@ def unsynthesized_tool_availability_delta_error() -> UserError:
     )
 
 
-def _synthesize_tool_availability_delta_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Project tool availability changes to the local tool-search exchange supported by every model."""
+TOOL_AVAILABILITY_ANNOUNCEMENT = 'The following tools have become available to you: {names}.'
+"""What a tool-availability change says to a model whose API can't express one itself.
+
+Deliberately states only the fact. The tools appear in the request's `tools` list on this path, so
+the model can already see their schemas; what it can't see is *when* they appeared, which is what
+leaves it unable to explain a list that grew mid-conversation. Naming them is enough, and anything
+more — urging the model to use them, explaining why they arrived — is an instruction nobody asked
+for, on a turn the user didn't write.
+"""
+
+
+def _announce_tool_availability_delta_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Render tool availability changes as a mid-conversation system instruction.
+
+    Providers with a native way to say "these tools just appeared" get it rendered natively. The rest
+    used to get a fabricated `search_tools` call/return pair, which told the model it had run a search
+    it never ran. That was wrong in three ways, and all three go away by stating the fact instead:
+
+    * It attributed an action to the model. In a mixed corpus — some tools searchable, some gated
+      behind a capability — a capability load rendered as a search claims the wrong cause.
+    * It could reference a `search_tools` tool that isn't on the wire, since the corpus-empty drop
+      removes it when nothing is searchable. Some providers reject a history naming an undeclared tool.
+    * It had to fabricate a `tool_call_id`, and two deltas over the same tool names produced the same
+      one — duplicate ids in a history that providers requiring uniqueness reject.
+
+    A `SystemPromptPart` also replaces the delta *in place*, where the pair had to be spliced across
+    two messages: the fabricated `ModelResponse` went in ahead of the rebuilt `ModelRequest`, so a
+    delta sharing a request with a user prompt put the assistant's turn before it and reordered the
+    conversation.
+
+    On a model that takes a mid-conversation system message this lands as a real one, carrying the
+    operator authority the statement deserves; elsewhere `_wrap_non_leading_system_prompts` — which
+    runs after this — degrades it to `<system>`-tagged user text. Either way it's append-only, so the
+    cached prefix ahead of it survives.
+    """
     transformed: list[ModelMessage] = []
     changed = False
-    # Counts deltas that had to have an id fabricated, so two of them can't collide. The digest is
-    # taken over the tool names, and the same names legitimately recur in one conversation — a tool
-    # withdrawn and re-added, or a UI adapter replaying the same frontend tool set — which without
-    # this produced one id for both exchanges. Duplicate ids in a history are rejected by providers
-    # that require them to be unique, and mis-pair the call with the wrong return for anything that
-    # matches on id.
-    #
-    # The ordinal has to be stable across requests or the ids would change from turn to turn and
-    # invalidate the very prefix this feature exists to keep. It is: the projection reruns over the
-    # whole history each turn, history is append-only, so a delta already in it keeps its position
-    # and its id. A processor that drops earlier messages shifts the ordinals, but rewriting history
-    # has already moved the prefix by then.
-    synthesized_count = 0
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(
             isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
@@ -1799,6 +1848,69 @@ def _synthesize_tool_availability_delta_messages(messages: list[ModelMessage]) -
             if not isinstance(part, ToolAvailabilityDeltaPart):
                 replacement_parts.append(part)
                 continue
+            # `removed` never reaches here: `prepare_messages` raises for a withdrawal this model
+            # can't express, rather than announcing one while the tool stays in the wire `tools`
+            # list — which would read as a rule the model can see it's able to break. A delta that
+            # adds nothing has nothing to announce, so it drops out entirely.
+            if part.added:
+                replacement_parts.append(
+                    SystemPromptPart(
+                        content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(
+                            names=', '.join(f'`{name}`' for name in part.added)
+                        )
+                    )
+                )
+        # A request whose only part was an empty delta would otherwise reach the adapter with no
+        # parts at all, which providers reject.
+        if replacement_parts:
+            transformed.append(replace(message, parts=replacement_parts))
+
+    return transformed if changed else messages
+
+
+def _synthesize_tool_availability_delta_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Render tool availability changes as the local tool-search exchange.
+
+    For a model that can withhold a tool's schema, this exchange is the mechanism rather than the
+    news: the return is what Anthropic renders as the `tool_reference` block that unhides the schema
+    `defer_loading` is holding shut. A model without that ability gets
+    `_announce_tool_availability_delta_messages` instead, which states the change without claiming
+    the model ran a search.
+
+    The exchange spans a turn boundary — an assistant call, then its return — so a request holding
+    other parts alongside the delta has to be split at the delta's position. Emitting the whole
+    rebuilt request after the synthetic `ModelResponse` instead would hoist an assistant turn ahead
+    of a user prompt that originally preceded the delta, reordering the conversation.
+    """
+    transformed: list[ModelMessage] = []
+    changed = False
+    # Counts deltas that had an id fabricated, so two can't collide. The digest is taken over the tool
+    # names, and the same names legitimately recur in one conversation — a tool withdrawn and re-added,
+    # or a UI adapter replaying the same frontend tool set — which without this produced one id for both
+    # exchanges. Duplicate ids are rejected by providers that require uniqueness, and mis-pair a call
+    # with the wrong return for anything matching on id.
+    #
+    # The ordinal is stable across requests, which it has to be or the ids would move the prefix they
+    # exist to protect: the projection reruns over the whole history each turn, and history is
+    # append-only, so a delta already in it keeps its position and its id.
+    synthesized_count = 0
+    for message in messages:
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
+        ):
+            transformed.append(message)
+            continue
+
+        changed = True
+        # Parts accumulated since the last split; flushed as their own `ModelRequest` before each
+        # synthetic assistant turn so everything keeps the order it was authored in.
+        pending: list[ModelRequestPart] = []
+        for part in message.parts:
+            if not isinstance(part, ToolAvailabilityDeltaPart):
+                pending.append(part)
+                continue
+            if not part.added:
+                continue
 
             tool_call_id = part.tool_call_id
             if tool_call_id is None:
@@ -1809,15 +1921,19 @@ def _synthesize_tool_availability_delta_messages(messages: list[ModelMessage]) -
                 ).hexdigest()
                 tool_call_id = f'auto_load_{digest}'
                 synthesized_count += 1
+            if pending:
+                transformed.append(replace(message, parts=pending))
+                pending = []
             transformed.append(
                 ModelResponse(parts=[ToolSearchCallPart(args={'queries': part.added}, tool_call_id=tool_call_id)])
             )
-            replacement_parts.append(
+            pending.append(
                 ToolSearchReturnPart(
                     content={'discovered_tools': [{'name': name} for name in part.added]},
                     tool_call_id=tool_call_id,
                 )
             )
-        transformed.append(replace(message, parts=replacement_parts))
+        if pending:
+            transformed.append(replace(message, parts=pending))
 
     return transformed if changed else messages

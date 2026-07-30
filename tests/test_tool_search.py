@@ -50,6 +50,7 @@ from pydantic_ai.messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     PartStartEvent,
+    SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolPartKind,
@@ -2294,12 +2295,18 @@ async def test_openai_deferred_capability_reveal_sends_no_tool_search_surface(al
     )
     assert not any('defer_loading' in tool for tool in first_tools + second_tools)
 
-    # No native tool-search items either: the reveal rides the synthesized `search_tools` exchange,
-    # which stays a plain function call because there's no search surface to promote it onto.
+    # Nothing tool-search-shaped anywhere on the wire — no native item, and no replayed `search_tools`
+    # call either. The reveal is stated as a system instruction instead, so the history never claims
+    # the model ran a search it didn't run, and never names a `search_tools` tool that isn't declared.
     second_input = cast(list[dict[str, Any]], second_request['input'])
     assert not [item for item in second_input if str(item.get('type', '')).startswith('tool_search')]
-    [replayed_call] = [item for item in second_input if item.get('name') == _SEARCH_TOOLS_NAME]
-    assert replayed_call['type'] == 'function_call'
+    assert not [item for item in second_input if item.get('name') == _SEARCH_TOOLS_NAME]
+    announcements = [
+        item
+        for item in second_input
+        if 'have become available to you' in json.dumps(item.get('content', ''))
+    ]
+    assert len(announcements) == 1
 
 
 async def test_openai_mixed_corpus_keeps_the_search_surface_and_defers_both_kinds(allow_model_requests: None):
@@ -6691,22 +6698,60 @@ def test_tool_availability_delta_reconstructs_available_tools_in_order():
     assert parse_discovered_tools(messages) == {'kept_tool', 'new_tool'}
 
 
-def test_tool_availability_delta_falls_back_to_tool_search_messages():
-    """Profiles without native tool changes receive the established local tool-search wire shape."""
+def test_tool_availability_delta_falls_back_to_a_system_instruction():
+    """A profile without native tool changes is told what happened, not sold a search it never ran.
+
+    The part is replaced where it stands, so the message count doesn't change — which is the point:
+    the fabricated `search_tools` call this replaced had to be spliced in as a separate
+    `ModelResponse` ahead of the rebuilt request.
+    """
     model = TestModel()
     prepared = model.prepare_messages(
         [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])]
     )
 
-    assert len(prepared) == 2
-    assert isinstance(prepared[0], ModelResponse)
-    assert prepared[0].parts == [ToolSearchCallPart(args={'queries': ['new_tool']}, tool_call_id='load-1')]
-    assert isinstance(prepared[1], ModelRequest)
-    assert len(prepared[1].parts) == 1
-    return_part = prepared[1].parts[0]
-    assert isinstance(return_part, ToolSearchReturnPart)
-    assert return_part.content == {'discovered_tools': [{'name': 'new_tool'}]}
-    assert return_part.tool_call_id == 'load-1'
+    assert len(prepared) == 1
+    request = prepared[0]
+    assert isinstance(request, ModelRequest)
+    [part] = request.parts
+    assert isinstance(part, SystemPromptPart)
+    assert part.content == snapshot('The following tools have become available to you: `new_tool`.')
+
+
+def test_tool_availability_delta_keeps_its_place_among_other_parts():
+    """The announcement replaces the delta in place, so the parts around it keep their order.
+
+    This is the shape the old splice got wrong: it appended the fabricated `ModelResponse` to the
+    output before the rebuilt `ModelRequest`, so an assistant turn landed ahead of a user prompt that
+    had originally preceded the delta.
+    """
+    model = TestModel()
+    prepared = model.prepare_messages(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='before'),
+                    ToolAvailabilityDeltaPart(added=['new_tool']),
+                    UserPromptPart(content='after'),
+                ]
+            )
+        ]
+    )
+
+    assert len(prepared) == 1
+    request = prepared[0]
+    assert isinstance(request, ModelRequest)
+    assert [type(part).__name__ for part in request.parts] == snapshot(
+        ['UserPromptPart', 'SystemPromptPart', 'UserPromptPart']
+    )
+
+
+def test_tool_availability_delta_adding_nothing_leaves_no_empty_request():
+    """A delta with nothing to announce drops out rather than reaching an adapter with no parts."""
+    model = TestModel()
+    prepared = model.prepare_messages([ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[])])])
+
+    assert prepared == snapshot([])
 
 
 def _vercel_tool_history_roundtrip(messages: list[ModelMessage]) -> list[ModelMessage]:
