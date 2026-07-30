@@ -85,6 +85,8 @@ Temporal entry points:
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
+Only `FunctionToolset`, `MCPToolset` and dynamic toolsets get their I/O checkpointed. A custom `AbstractToolset` runs its `get_tools`/`call_tool` in workflow/flow code — fine when pure, but if it does I/O, make it a `FunctionToolset` subclass or return it from a dynamic toolset or `DynamicCapability`.
+
 ## Handle MCP Tool Errors
 
 Set `MCPToolset(tool_error_behavior=...)` according to the server error semantics:

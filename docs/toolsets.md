@@ -878,6 +878,70 @@ Toolsets support lifecycle hooks for per-run isolation and per-step state manage
 - [`for_run(ctx)`][pydantic_ai.toolsets.AbstractToolset.for_run] -- called once per agent run, before `__aenter__`. Return a fresh instance to isolate state between runs. Default: returns `self`.
 - [`for_run_step(ctx)`][pydantic_ai.toolsets.AbstractToolset.for_run_step] -- called at the start of each run step. Manage internal transitions (e.g. refreshing tool availability) in-place. Default: returns `self`.
 
+### Custom toolsets and durable execution
+
+The [durable execution](durable_execution/overview.md) integrations checkpoint the I/O of the toolset types they know: `FunctionToolset`, [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and dynamic toolsets. A custom toolset is not one of those, so its own `get_tools()` and `call_tool()` run in workflow or flow code rather than inside an activity, step, or task.
+
+If your custom toolset is pure — its tool listing and calling perform no I/O and are deterministic given the run context — that's fine, and it works with all three engines as is.
+
+If it performs I/O, or anything else that shouldn't re-run when a workflow replays, recovers, or a flow retries, you're better off with one of these instead:
+
+- Implement it as a `FunctionToolset` subclass, so its tools are ordinary function tools that each engine integrates in its own way (see the engine's docs).
+- Return it from a [dynamic toolset](#dynamically-building-a-toolset) or a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability]. The engines wrap those, and the dynamic toolset resolves and calls the toolset it returns *inside* the durable unit, so the custom toolset's I/O is checkpointed like any other. The factory itself runs in workflow/flow code and is re-resolved inside each durable unit, so it needs to be deterministic given the run's dependencies — construct the toolset there and leave the I/O to its tools.
+
+Registering the custom toolset through `@agent.toolset` is the smallest version of that second option:
+
+```python {title="durable_custom_toolset.py"}
+from typing import Any
+
+from pydantic import TypeAdapter
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
+
+celsius_args = TypeAdapter(dict[str, float])
+
+
+class UnitConversionToolset(AbstractToolset[None]):
+    @property
+    def id(self) -> str | None:
+        return None  # (1)!
+
+    async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+        return {
+            'celsius_to_fahrenheit': ToolsetTool(
+                toolset=self,
+                tool_def=ToolDefinition(
+                    name='celsius_to_fahrenheit',
+                    parameters_json_schema={
+                        'type': 'object',
+                        'properties': {'celsius': {'type': 'number'}},
+                        'required': ['celsius'],
+                    },
+                ),
+                max_retries=0,
+                args_validator=celsius_args.validator,
+            )
+        }
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        return tool_args['celsius'] * 9 / 5 + 32
+
+
+agent = Agent('openai:gpt-5.2')
+
+
+@agent.toolset(id='unit_conversion')  # (2)!
+def unit_conversion_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
+    return UnitConversionToolset()
+```
+
+1. The dynamic toolset below carries the `id` that names the durable units, so the inner toolset doesn't need one of its own.
+2. The `id` must be stable, since it names the activities, steps, or tasks that list and call these tools.
+
 ## Third-Party Toolsets
 
 Third-party toolsets can also be wrapped as [capabilities](capabilities/overview.md), which bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem.
