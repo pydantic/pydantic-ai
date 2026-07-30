@@ -48,7 +48,11 @@ with try_import() as imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaUsage
 
     from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic import (
+        _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS,  # pyright: ignore[reportPrivateUsage]
+        AnthropicModel,
+        AnthropicModelSettings,
+    )
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
     from .test_anthropic import completion_message
@@ -204,10 +208,10 @@ async def test_mid_conversation_system_prompt(
 ):
     """A non-leading `SystemPromptPart` gets its own `system` entry only on models that accept the role.
 
-    Both cases send the same history, so the snapshots show the only difference: Sonnet 5 gets a
-    fourth `{'role': 'system'}` message, Sonnet 4.6 gets the instruction folded into the user turn as
-    `<system>`-tagged text. The leading system prompt hoists to the top-level `system` parameter
-    either way — the point of the feature is that adding the instruction leaves it untouched.
+    Both cases send the same history, so the snapshots show the only difference: the supported model
+    gets a fourth `{'role': 'system'}` message, the unsupported one gets the instruction folded into the
+    user turn as `<system>`-tagged text. The leading system prompt hoists to the top-level `system`
+    parameter either way — the point of the feature is that adding the instruction leaves it untouched.
 
     Both recordings show the model acting on the instruction, so the annotated signature is asserted
     on the output: the two renderings are equivalent in effect, they differ in what they cost.
@@ -299,10 +303,9 @@ async def test_mid_conversation_system_prompt_before_another_request(
     """A system entry that a *user* turn would follow slides past it instead of degrading.
 
     `[user, system, user]` is rejected outright, and a second `ModelRequest` directly after the one
-    carrying the instruction produces exactly that. `_merge_consecutive_messages` folds consecutive
-    requests into one for agent runs, but leaves them unmerged when their instructions differ, and
-    `Model.request` is callable directly — the adapter can't assume every request is followed by a
-    response.
+    carrying the instruction produces exactly that. `Model.request` is public and doesn't run the
+    history cleaning that folds consecutive requests together, so the adapter can't assume every
+    request is followed by a response.
 
     Moving the entry past the user turn costs nothing: it governs the same generation either way, and
     it stays an operator instruction rather than becoming text the model can overrule.
@@ -566,6 +569,19 @@ async def test_mid_conversation_system_prompt_anchor_keeps_tool_pair_intact(
             },
         ]
     )
+
+
+def test_only_foundry_is_excluded_by_the_transport_gate():
+    """Exactly which transports fall back, asserted as a set rather than left to a comment.
+
+    Anthropic publishes the feature for the Claude API, Amazon Bedrock and Google Cloud, so Microsoft
+    Foundry is the only exclusion. Bedrock is recorded (`..._on_bedrock`) and the direct API is recorded
+    by every other test here, but Vertex rests on the published list — we have no Vertex credentials, and
+    a mocked test can only show what we send, never that the transport serves the role. Pinning the tuple
+    is the honest half of that: it can't confirm Vertex works, but it does stop Vertex being added to or
+    dropped from the exclusions without someone changing this line and thinking about why.
+    """
+    assert _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS == (AsyncAnthropicFoundry,)
 
 
 async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: None):
