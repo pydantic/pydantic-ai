@@ -45,13 +45,13 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
-from ._activity_config import validate_activity_config
 from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
     temporalize_toolset as _default_temporalize_toolset,
     toolset_temporal_activities,
+    validate_activity_config,
     with_non_retryable_errors,
 )
 
@@ -137,6 +137,22 @@ async def _heartbeating() -> AsyncGenerator[None]:
         with suppress(asyncio.CancelledError):
             # Anything but our own cancellation is a `beat()` crash — propagate it.
             await task
+
+
+def serialization_user_error(error: PydanticSerializationError) -> UserError:
+    """Explain a serialization failure that happened while scheduling a Temporal activity.
+
+    The failing value isn't identifiable from here — activity arguments are encoded by
+    Temporal's payload converter, which reports the offending type but not the argument it
+    came from — so the message names the values the framework passes rather than claiming
+    it was `deps`.
+    """
+    return UserError(
+        f'A value passed to a Temporal activity failed to be serialized ({error}). '
+        "Temporal requires all values that are passed to activities to be serializable using Pydantic's "
+        '`TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and '
+        '`tool_call_metadata`, and tool `metadata`.'
+    )
 
 
 @dataclass(init=False)
@@ -462,18 +478,22 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Disable threads and catch serialization errors inside Temporal workflows."""
+        """Disable threads inside Temporal workflows."""
         if not self.in_durable_context:
             return await handler()
 
         with disable_threads(), set_agent_graph_sleep(workflow.sleep):
-            try:
-                return await handler()
-            except PydanticSerializationError as e:  # pragma: lax no cover
-                raise UserError(
-                    'The `deps` object failed to be serialized. Temporal requires all objects that are passed '
-                    "to activities to be serializable using Pydantic's `TypeAdapter`."
-                ) from e
+            return await handler()
+
+    async def on_run_error(self, ctx: RunContext[AgentDepsT], *, error: BaseException) -> AgentRunResult[Any]:
+        """Explain a serialization failure raised while scheduling an activity.
+
+        This is the run's error-transformation hook: an exception raised from `wrap_run`
+        would only be attached as the original error's `__context__`, never propagated.
+        """
+        if self.in_durable_context and isinstance(error, PydanticSerializationError):
+            raise serialization_user_error(error) from error
+        raise error
 
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]

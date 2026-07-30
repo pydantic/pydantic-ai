@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from pydantic import ConfigDict, with_config
+from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
 from pydantic.errors import PydanticUserError
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -25,7 +25,6 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._activity_config import validate_activity_config
 from ._run_context import TemporalRunContext
 
 if TYPE_CHECKING:
@@ -45,6 +44,8 @@ class CallToolParams:
     tool_args: dict[str, Any]
     serialized_run_context: Any
     tool_def: ToolDefinition | None
+    original_name: str | None = None
+    """The name the toolset holds the tool under, when a `prepare` function renamed it in `tool_def.name`."""
 
 
 class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
@@ -101,6 +102,34 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
     return retry_policy
 
 
+@with_config(ConfigDict(extra='forbid'))
+class _ValidatedActivityConfig(ActivityConfig):
+    """`ActivityConfig` with validation settings attached, for `_activity_config_adapter`.
+
+    `extra='forbid'` so a misspelled key is reported rather than dropped: without it, validation
+    would silently swallow the typo that `workflow.execute_activity(**config)` currently rejects.
+    """
+
+
+_activity_config_adapter: TypeAdapter[ActivityConfig] = TypeAdapter(_ValidatedActivityConfig)
+
+
+def validate_activity_config(config: ActivityConfig, source: str) -> None:
+    """Raise a `UserError` if `config` isn't a valid `ActivityConfig`.
+
+    Unknown keys survive `ActivityConfig` construction (it's a `total=False` `TypedDict`) and only
+    fail once they're splatted into `workflow.start_activity()` inside the workflow, where the
+    resulting `TypeError` isn't one of `PydanticAIPlugin`'s `workflow_failure_exception_types` and
+    so fails the workflow *task*, which Temporal retries forever.
+
+    `source` names where the config came from, for example '`model_activity_config`'.
+    """
+    try:
+        _activity_config_adapter.validate_python(config)
+    except ValidationError as e:
+        raise UserError(f'Invalid Temporal `ActivityConfig` in {source}: {e}') from e
+
+
 def resolve_tool_activity_config(
     tool: ToolsetTool[Any] | None,
     tool_name: str,
@@ -111,6 +140,13 @@ def resolve_tool_activity_config(
     Reads `tool.tool_def.metadata['temporal']` first, then falls back to the explicit
     `tool_activity_config` dict keyed by tool name. Returns an `ActivityConfig` dict
     (possibly empty), or `False` to skip activity wrapping.
+
+    The config is validated back into Temporal's own types: a `DynamicToolset`'s tools are
+    discovered inside the get-tools activity, so their `ToolDefinition.metadata` returns to the
+    workflow as JSON, where `timedelta(minutes=5)` has become `'PT5M'`, a `RetryPolicy` a plain
+    dict, and an `ActivityCancellationType` an int. Handing those to
+    `workflow.execute_activity` fails the workflow *task*, which Temporal retries forever;
+    a `UserError` for what validation can't restore fails the workflow instead.
     """
     config = cast(
         'ActivityConfig | Literal[False]',
@@ -124,8 +160,10 @@ def resolve_tool_activity_config(
     )
     if config is False:
         return False
-    validate_activity_config(config, f'the Temporal activity config for tool {tool_name!r}')
-    config = copy.copy(config)
+    try:
+        config = _activity_config_adapter.validate_python(config)
+    except ValidationError as e:
+        raise UserError(f'Tool {tool_name!r} has an invalid Temporal `ActivityConfig`: {e}') from e
     if 'retry_policy' in config:
         config['retry_policy'] = with_non_retryable_errors(config.get('retry_policy'))
     return config
