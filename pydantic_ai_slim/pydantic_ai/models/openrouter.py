@@ -599,10 +599,14 @@ class _OpenRouterNoCompletionResponse(BaseModel, extra='allow'):
     `provider` is typed `str | None` on purpose: a body whose `provider` is a *dict* is a
     malformed nested-provider response, not this shape, so it fails validation here and
     stays fatal.
+
+    `Literal[None]` rather than a bare `None` annotation: this module uses
+    `from __future__ import annotations`, so annotations are strings, and resolving the
+    string `'None'` raises `PydanticUserError` on the lowest supported pydantic (2.12).
     """
 
-    choices: None
-    error: None = None
+    choices: Literal[None]
+    error: Literal[None] = None
     provider: str | None = None
     model: str | None = None
 
