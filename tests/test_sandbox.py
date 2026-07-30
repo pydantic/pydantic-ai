@@ -702,8 +702,7 @@ async def test_non_posix_default_is_present_and_reports_platform_reason(monkeypa
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
         assert ctx.sandbox.provider == 'unavailable'
-        await ctx.sandbox.run(['echo', 'hello'])
-        return 'unreachable'
+        return (await ctx.sandbox.run(['echo', 'hello'])).stdout
 
     with pytest.raises(UserError, match=reason):
         await agent.run('go')
@@ -715,8 +714,7 @@ async def test_unavailable_sandbox_run_argument_opts_out_of_default():
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
-        await ctx.sandbox.run(['echo', 'hello'])
-        return 'unreachable'
+        return (await ctx.sandbox.run(['echo', 'hello'])).stdout
 
     with pytest.raises(UserError, match=reason):
         await agent.run('go', sandbox=UnavailableSandbox(reason))
@@ -854,6 +852,8 @@ async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection(
         assert (sandbox.provider, sandbox.sandbox_id) == ('fake', 'fake-deferred')
         with pytest.raises(UserError, match='has not connected yet'):
             sandbox.backend
+        deferred_fs = sandbox.fs
+        assert sandbox.fs is deferred_fs  # the pre-connection adapter is cached
 
         run_results = await asyncio.gather(
             sandbox.run(['one']),
@@ -863,6 +863,15 @@ async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection(
         )
         assert run_results[2:] == ['/workspace', False]
         assert sandbox.backend is backend
+
+        # The pre-connection adapter keeps delegating after the connection is made.
+        await deferred_fs.make_dir('/workspace/dir')
+        await deferred_fs.write_bytes('/workspace/notes.txt', b'data')
+        assert await deferred_fs.read_bytes('/workspace/notes.txt') == b'data'
+        assert (await deferred_fs.stat('/workspace/notes.txt')).size == 4
+        assert [entry.name for entry in await deferred_fs.list_dir('/workspace')] == ['notes.txt']
+        await deferred_fs.remove('/workspace/notes.txt')
+        assert await deferred_fs.exists('/workspace/notes.txt') is False
         return 'ok'
 
     result = await agent.run('go', sandbox=SandboxRef('fake', 'fake-deferred'))
@@ -929,6 +938,8 @@ def test_sandbox_connectors_compose_and_latest_duplicate_wins():
     assert connectors == [first, other, last]
     assert {connector.provider: connector for connector in connectors} == {'fake': last, 'other': other}
     assert contributes_sandbox(combined) is False
+    # The visit short-circuits once a supplier is found, even with more capabilities after it.
+    assert contributes_sandbox(CombinedCapability([SandboxCapability(), SandboxConnectorCapability([])])) is True
 
 
 async def test_context_manager_served_backend_is_exposed_through_facade():
@@ -1039,6 +1050,11 @@ async def test_context_manager_shaped_backend_returned_bare_stays_warm():
     assert len(observed) == 2
     assert all(sandbox.backend is warm for sandbox in observed)
     assert (warm.enters, warm.exits) == (0, 0)
+    # Prove the backend really is a working context manager — the run's restraint above is
+    # what this test pins, not an inert `__aenter__`.
+    async with warm:
+        pass
+    assert (warm.enters, warm.exits) == (1, 1)
 
 
 async def test_deferred_capability_never_contributes():

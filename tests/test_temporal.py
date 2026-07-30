@@ -4093,6 +4093,37 @@ async def test_temporal_run_context_round_trips_sandbox_ref():
     assert connector.sandbox_ids == []
     assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
     assert connector.sandbox_ids == ['sandbox-123']
+    assert await reconstructed.sandbox.working_dir() == '/workspace'
+
+
+def test_temporal_run_context_omits_live_backend_identity():
+    """A live backend's identity does not round-trip: only refs and unavailability serialize."""
+    from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
+
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        sandbox=Sandbox(cast(SandboxBackend, FakeSandboxHandle('live'))),
+    )
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert '_sandbox_state' not in serialized
+
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
+    with pytest.raises(UserError, match=re.escape(_TEMPORAL_UNAVAILABLE_SANDBOX_MESSAGE)):
+        _ = reconstructed.sandbox
+
+
+def test_temporal_run_context_ignores_malformed_sandbox_state():
+    """Deserialization tolerates a `_sandbox_state` that carries neither a ref nor a reason."""
+    from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    serialized['_sandbox_state'] = {'unexpected': 'value'}
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
+    with pytest.raises(UserError, match=re.escape(_TEMPORAL_UNAVAILABLE_SANDBOX_MESSAGE)):
+        _ = reconstructed.sandbox
 
 
 def test_temporal_run_context_round_trips_unavailable_reason():

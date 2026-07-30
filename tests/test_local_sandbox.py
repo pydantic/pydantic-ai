@@ -52,6 +52,12 @@ def _process_running(pid: int) -> bool:
     return state != 'Z'
 
 
+def test_process_running_probe_sees_this_test_process():
+    """Deterministic anchor for the probe's alive path — polling after a kill may never
+    observe the process alive, so the kill-guarantee tests alone cannot pin it."""
+    assert _process_running(os.getpid()) is True
+
+
 async def _assert_process_gone(pid: int) -> None:
     for _ in range(200):
         if not _process_running(pid):
@@ -267,7 +273,8 @@ async def test_unused_default_sandbox_creates_no_directory():
 
 async def test_unused_agent_default_creates_no_directory(monkeypatch: pytest.MonkeyPatch):
     def fail_mkdtemp(*args: Any, **kwargs: Any) -> str:
-        raise AssertionError('unused default sandbox created a temporary directory')
+        # Trap: the test passes exactly when this is never called.
+        raise AssertionError('unused default sandbox created a temporary directory')  # pragma: no cover
 
     monkeypatch.setattr('pydantic_ai.sandboxes.local.tempfile.mkdtemp', fail_mkdtemp)
     result = await Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')]))).run('go')

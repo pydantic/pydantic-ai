@@ -10299,6 +10299,16 @@ async def test_wrapper_agent():
     default_agent = _DescriptionAgent()
     default_agent.description = 'wrapped description'
     assert default_agent.render_description() == 'wrapped description'
+    # Exercise the stub's full abstract surface so its conformance is real, not dead code.
+    assert default_agent.model is None
+    default_agent.name = 'stub'
+    assert default_agent.name == 'stub'
+    assert default_agent.deps_type is type(None)
+    assert default_agent.output_type is str
+    assert default_agent.event_stream_handler is None
+    assert default_agent.toolsets == ()
+    async with default_agent:
+        pass
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
     assert wrapper_agent.root_capability is agent.root_capability
