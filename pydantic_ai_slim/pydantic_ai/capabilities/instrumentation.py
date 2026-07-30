@@ -331,7 +331,9 @@ class Instrumentation(AbstractCapability[Any]):
         if run_state is not None:
             message_json_cache = run_state.message_json_cache
         else:
-            message_json_cache = self._fallback_message_json_cache = self._fallback_message_json_cache or MessageJsonCache()
+            message_json_cache = self._fallback_message_json_cache = (
+                self._fallback_message_json_cache or MessageJsonCache()
+            )
         with open_model_request_span(self.settings, request_context, message_json_cache=message_json_cache) as (
             finish,
             prepared_request_context,

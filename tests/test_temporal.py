@@ -4068,18 +4068,17 @@ def test_temporal_run_context_sandbox_unavailable():
 async def test_temporal_run_context_round_trips_sandbox_ref():
     from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
 
-    async def unused_resolver(ref: SandboxRef) -> SandboxBackend:  # pragma: no cover
-        raise AssertionError(ref)
-
     ref = SandboxRef('fake', 'sandbox-123')
+    source_connector = RecordingSandboxConnector()
     ctx = RunContext(
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        sandbox=Sandbox.from_ref(ref, unused_resolver),
+        sandbox=Sandbox.from_ref(ref, [source_connector]),
     )
     serialized = TemporalRunContext.serialize_run_context(ctx)
     assert serialized['_sandbox_state'] == {'provider': 'fake', 'sandbox_id': 'sandbox-123'}
+    assert source_connector.sandbox_ids == []
 
     connector = RecordingSandboxConnector()
     typed_connector: SandboxConnector = connector

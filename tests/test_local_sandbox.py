@@ -29,11 +29,25 @@ pytestmark = [
 ]
 
 
+def _process_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    # A killed orphan re-parents to PID 1 and stays a signalable zombie until reaped,
+    # which a loaded CI host can delay past this polling window — but a zombie is dead:
+    # it can never run again, which is what the kill guarantee promises.
+    try:
+        state = Path(f'/proc/{pid}/stat').read_text(encoding='ascii').rsplit(')', 1)[1].split()[0]
+    # No procfs (macOS): signalable means running.
+    except FileNotFoundError:  # pragma: no cover
+        return True
+    return state != 'Z'
+
+
 async def _assert_process_gone(pid: int) -> None:
     for _ in range(200):
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+        if not _process_running(pid):
             return
         await asyncio.sleep(0.01)
     with suppress(ProcessLookupError):  # pragma: no cover - defensive cleanup before failing

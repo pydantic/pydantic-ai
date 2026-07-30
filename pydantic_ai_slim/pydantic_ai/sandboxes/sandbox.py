@@ -103,7 +103,10 @@ class _ShellFilesystem:
         quoted_temporary_path = shlex.quote(temporary_path)
         encoded = base64.b64encode(data).decode()
         # Keep each command below Linux's per-argument cap; large payloads cannot be written in one invocation.
-        chunks = [encoded[start : start + _BASE64_WRITE_CHUNK_SIZE] for start in range(0, len(encoded), _BASE64_WRITE_CHUNK_SIZE)]
+        chunks = [
+            encoded[start : start + _BASE64_WRITE_CHUNK_SIZE]
+            for start in range(0, len(encoded), _BASE64_WRITE_CHUNK_SIZE)
+        ]
         try:
             for index, chunk in enumerate(chunks or ['']):
                 quoted_chunk = shlex.quote(chunk)

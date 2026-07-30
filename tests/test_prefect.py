@@ -118,7 +118,7 @@ except ImportError:  # pragma: lax no cover
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
-from .sandbox_fakes import FakeSandboxHandle
+from .sandbox_fakes import FakeSandboxHandle, RecordingSandboxConnector
 
 # `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warnings here
@@ -1713,21 +1713,16 @@ def test_cache_policy_sandbox_key_permutations():
 
 
 async def test_cache_policy_includes_deferred_sandbox_identity_without_connecting():
-    calls: list[str] = []
-
-    async def resolver(ref: SandboxRef) -> SandboxBackend:
-        calls.append(ref.sandbox_id)
-        return cast(SandboxBackend, FakeSandboxHandle(ref.sandbox_id))
-
+    connector = RecordingSandboxConnector()
     ctx = RunContext(
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        sandbox=Sandbox.from_ref(SandboxRef('fake', 'deferred-sandbox'), resolver),
+        sandbox=Sandbox.from_ref(SandboxRef('fake', 'deferred-sandbox'), [connector]),
     )
     projected = _replace_run_context({'ctx': ctx})['ctx']
     assert projected['sandbox'] == ('fake', 'deferred-sandbox')
-    assert calls == []
+    assert connector.sandbox_ids == []
 
 
 async def test_prefect_flow_forwards_sandbox_to_tools():
