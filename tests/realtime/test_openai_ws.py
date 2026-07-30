@@ -32,7 +32,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeModelProfile, ResponseCompleteEvent
+from pydantic_ai.realtime import RealtimeModelProfile, ResponseCompleteEvent, TurnCompleteEvent
 from pydantic_ai.realtime._base import SessionErrorEvent
 from pydantic_ai.usage import RunUsage
 
@@ -211,7 +211,13 @@ async def test_audio_in_server_vad_turn(
 
 
 async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
-    """A tool call is executed by the session and its result folded back into a classic-shaped history."""
+    """A tool call is executed by the session and its result folded back into a classic-shaped history.
+
+    Consumed the way the docs tell you to — stopping on `TurnCompleteEvent` — against a real recording,
+    where the protocol suppresses the function-call-only `response.done` and the *only* terminal frame is
+    the answer's. That makes this the case a turn boundary derived from the suppressed response's
+    bookkeeping would silently swallow, leaving the loop hanging until the socket closed.
+    """
     provider, cassette = openai_ws_cassette
     model = OpenAIRealtimeModel(
         'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
@@ -229,9 +235,11 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, TurnCompleteEvent):
                     break
 
+    # One turn boundary, after the tool round is over — not one per response.
+    assert [type(event).__name__ for event in events].count('TurnCompleteEvent') == 1
     assert sent_frames_containing(cassette, 'Look up the weather for a city.') == snapshot(
         [
             {

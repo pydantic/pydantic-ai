@@ -1392,14 +1392,6 @@ class RealtimeSession:
         events = self._finalize_user()
         events.extend(self._finalize_untranscribed_user())
         events.extend(self._finalize_assistant_part())
-        # Whether the model will speak again: it always responds to a tool's result, so a response that
-        # called one (or that finalized early *because* it called one, or that left one still running) is
-        # never the last of the exchange. `TurnCompleteEvent` waits for the one that is.
-        more_expected = bool(
-            self._pending_tool_calls
-            or self._response_finalized_before_terminal
-            or any(isinstance(part, ToolCallPart) for part in self._response_parts)
-        )
         already_finalized = bool(
             self._response_finalized_before_terminal
             and not self._response_parts
@@ -1407,6 +1399,19 @@ class RealtimeSession:
             and self._pending_provider_response_id is None
             and self._pending_finish_reason is None
             and self._pending_response_usage == RequestUsage()
+        )
+        # Whether the model will speak again: it always responds to a tool's result, so a response that
+        # called one, that left one still running, or whose content was already recorded (making this the
+        # trailing terminal of a tool-call response, with the answer still to come) is never the last of
+        # the exchange. `TurnCompleteEvent` waits for the one that is.
+        #
+        # Not the `_response_finalized_before_terminal` flag itself: the OpenAI protocol *suppresses* a
+        # function-call-only `response.done`, so the flag would still be set when the answer's terminal
+        # arrives and would swallow the turn boundary for the whole exchange.
+        more_expected = bool(
+            self._pending_tool_calls
+            or already_finalized
+            or any(isinstance(part, ToolCallPart) for part in self._response_parts)
         )
         self._response_finalized_before_terminal = False
         self._finalize_response(
