@@ -5772,6 +5772,84 @@ class SimpleDurableAgentWorkflow:
         return result.output
 
 
+@workflow.defn
+class RunSyncDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return simple_durable_agent.run_sync(prompt).output
+
+
+async def test_durability_run_sync_in_workflow_fails_the_workflow(client: Client):
+    """`agent.run_sync()` inside a workflow fails the workflow with a clear error instead of hanging.
+
+    Temporal's workflow event loop leaves `run_until_complete()` (and `is_closed()`) unimplemented, so
+    before this was detected up front, `run_sync()` raised the bare `NotImplementedError` `asyncio`'s
+    abstract loop raises. That type isn't among the plugin's `workflow_failure_exception_types`, so it
+    failed the workflow *task*, which Temporal retries forever -- the caller hung instead of seeing an
+    error. `UserError` is in that list, so the failure now reaches the caller.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunSyncDurableAgentWorkflow],
+        plugins=[AgentPlugin(simple_durable_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                RunSyncDurableAgentWorkflow.run,
+                args=['What is the capital of Mexico?'],
+                id=RunSyncDurableAgentWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+    assert 'does not implement `run_until_complete()`' in str(exc_info.value.cause)
+    assert '`await agent.run()` rather than `agent.run_sync()`' in str(exc_info.value.cause)
+
+
+_sync_graph_builder = GraphBuilder(name='run_sync_graph', input_type=str, output_type=str)
+
+
+@_sync_graph_builder.step
+async def _echo_step(ctx: StepContext[None, None, str]) -> str:
+    return ctx.inputs  # pragma: no cover
+
+
+_sync_graph_builder.add(
+    _sync_graph_builder.edge_from(_sync_graph_builder.start_node).to(_echo_step),
+    _sync_graph_builder.edge_from(_echo_step).to(_sync_graph_builder.end_node),
+)
+_sync_graph = _sync_graph_builder.build()
+
+
+@workflow.defn
+class GraphRunSyncWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return _sync_graph.run_sync(inputs='hello')
+
+
+async def test_durability_graph_run_sync_in_workflow_fails_the_workflow(client: Client):
+    """`Graph.run_sync()` inside a workflow fails the workflow too, not just the workflow task.
+
+    `pydantic_graph`'s sync entry points raise `UnsupportedEventLoopError` directly rather than going
+    through the `pydantic_ai` wrapper that converts it to `UserError`, so the plugin has to recognize
+    that type as well; otherwise this path keeps hanging with a good message nobody ever sees.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[GraphRunSyncWorkflow],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                GraphRunSyncWorkflow.run,
+                id=GraphRunSyncWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+    assert 'does not implement `run_until_complete()`' in str(exc_info.value.cause)
+
+
 async def test_durability_simple_agent_run_in_workflow(client: Client):
     """TemporalDurability routes model requests through activities."""
     async with Worker(

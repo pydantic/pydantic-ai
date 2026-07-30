@@ -160,6 +160,8 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 Because the same agent works inside and outside a workflow, [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] composes with all other [capabilities](../capabilities/overview.md) (instrumentation, [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata], [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream], etc.) without each needing a Temporal-specific wrapper variant.
 
+Workflow code has to use the async API: [`Agent.run_sync()`][pydantic_ai.agent.Agent.run_sync] drives the event loop itself, which Temporal's workflow event loop doesn't allow, so calling it inside a workflow raises a [`UserError`][pydantic_ai.exceptions.UserError] telling you to `await agent.run()` instead. Outside a workflow, an agent with `TemporalDurability` behaves like a normal agent, so `run_sync()` works as usual.
+
 In a real world application, the agent, workflow, and worker are typically defined separately from the code that calls for a workflow to be executed.
 Because Temporal workflows need to be defined at the top level of the file and the agent is needed inside the workflow and when starting the worker (to register the activities), it needs to be defined at the top level of the file as well.
 
