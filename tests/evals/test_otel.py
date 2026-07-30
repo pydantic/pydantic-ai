@@ -868,6 +868,22 @@ async def test_span_query_child_count():
     assert matched_names == {'parent_two_children', 'parent_three_children'}
 
 
+async def test_span_query_zero_maximums(span_tree: SpanTree):
+    """Zero-valued maximums constrain counts and depth rather than being ignored."""
+    root_node = span_tree.roots[0]
+    leaf_node = root_node.first_descendant({'name_equals': 'grandchild1'})
+    assert leaf_node is not None
+
+    assert root_node.matches({'max_depth': 0})
+    assert not leaf_node.matches({'max_depth': 0})
+
+    assert leaf_node.matches({'max_child_count': 0})
+    assert not root_node.matches({'max_child_count': 0})
+
+    assert leaf_node.matches({'max_descendant_count': 0})
+    assert not root_node.matches({'max_descendant_count': 0})
+
+
 async def test_or_cannot_be_mixed(span_tree: SpanTree):
     with pytest.raises(ValueError) as exc_info:
         span_tree.first({'name_equals': 'child1', 'or_': [SpanQuery(name_equals='child2')]})
