@@ -138,10 +138,14 @@ def _origin(url: str) -> tuple[str, str, int]:
 def _keeps_credentials(from_url: str, to_url: str) -> bool:
     """Whether sensitive headers may be forwarded from `from_url` to `to_url`.
 
-    Matches httpx semantics: credentials are kept on a same-origin redirect
-    (scheme + host + port all match) and on an http→https upgrade on the same
-    host (from http:80 to https:443); they are stripped on every other redirect,
-    including port changes, https→http downgrades, and cross-host hops.
+    Credentials are kept on a same-origin redirect (scheme + host + port all
+    match) and on an http→https upgrade on the same host (from http:80 to
+    https:443); they are stripped on every other redirect, including port
+    changes, https→http downgrades, and cross-host hops. This applies the
+    origin rule httpx uses for `Authorization` (including its http→https
+    upgrade exemption) to every header in `_SENSITIVE_HEADERS`; httpx itself
+    never forwards a caller-supplied `Cookie` across redirects, re-deriving
+    cookies from its cookie jar instead.
     """
     from_scheme, from_host, from_port = _origin(from_url)
     to_scheme, to_host, to_port = _origin(to_url)
@@ -553,12 +557,12 @@ async def safe_download(
                 previous_url = current_url
                 current_url = resolve_redirect_url(current_url, location)
 
-                # Strip sensitive headers on cross-origin redirects (RFC 7235).
+                # Strip sensitive headers when the redirect crosses origins, as
+                # RFC 9110 section 15.4 recommends for caller-added credentials.
                 # Compare full origins (scheme + host + port) against the previous
-                # hop, not just the first hostname, so credentials are stripped on
-                # port changes, https→http downgrades, and re-leaks in chained
-                # redirects (a→b→a). An http→https upgrade on the same host keeps
-                # credentials, matching httpx.
+                # hop, not just the first hostname, so credentials are also stripped
+                # on port changes and https→http downgrades. An http→https upgrade
+                # on the same host keeps credentials, matching httpx.
                 if not _keeps_credentials(previous_url, current_url):
                     effective_headers = {
                         k: v for k, v in effective_headers.items() if k.lower() not in _SENSITIVE_HEADERS

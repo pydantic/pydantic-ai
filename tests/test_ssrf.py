@@ -932,250 +932,125 @@ class TestSafeDownload:
 class TestSensitiveHeaderStrippingOnRedirects:
     """Tests for sensitive-header (Authorization/Cookie/Proxy-Authorization) stripping on redirects.
 
-    `safe_download` must compare full origins (scheme + host + port) against the *previous* hop,
-    not just the first hostname, matching httpx semantics: credentials are kept on same-origin
-    redirects and http→https upgrades, and stripped on port changes, https→http downgrades,
-    cross-host hops, and re-leaks in chained redirects (a→b→a).
+    `safe_download` compares full origins (scheme + host + port) against the *previous* hop,
+    keeping credentials on same-origin redirects and same-host http→https upgrades, and
+    stripping them on cross-host hops, port changes, and https→http downgrades
+    (RFC 9110 section 15.4).
     """
 
     @staticmethod
-    def _auth_header(call: Any) -> str | None:
-        """Return the Authorization header value from a recorded client.get call (case-insensitive)."""
-        headers: dict[str, str] = call[1]['headers']
-        for k, v in headers.items():
-            if k.lower() == 'authorization':
-                return v
-        return None
+    def _redirect_response(location: str) -> AsyncMock:
+        response = AsyncMock()
+        response.is_redirect = True
+        response.headers = {'location': location}
+        return response
 
-    async def test_same_origin_redirect_keeps_authorization(
-        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    @staticmethod
+    def _final_response() -> AsyncMock:
+        response = AsyncMock()
+        response.is_redirect = False
+        response.raise_for_status = lambda: None
+        response.content = b'final'
+        return response
+
+    @staticmethod
+    def _sent_header(call: Any, name: str) -> str | None:
+        """Return a header sent in a recorded `client.get` call (case-insensitive)."""
+        headers: dict[str, str] = call.kwargs['headers']
+        return next((v for k, v in headers.items() if k.lower() == name), None)
+
+    @pytest.mark.parametrize(
+        'start_url,location,kept',
+        [
+            # same origin
+            ('https://example.com/file', 'https://example.com/elsewhere', True),
+            # same origin with the default port spelled out
+            ('https://example.com:443/file', 'https://example.com/elsewhere', True),
+            # http→https upgrade on the same host, matching httpx
+            ('http://example.com/file', 'https://example.com/file', True),
+            ('http://example.com:80/file', 'https://example.com:443/file', True),
+            # `example.com.` (FQDN root label) is the same server as `example.com`
+            ('https://example.com./file', 'https://example.com/file', True),
+            # cross-host
+            ('https://example.com/file', 'https://other.com/file', False),
+            # same host, different port
+            ('https://example.com/file', 'https://example.com:8443/file', False),
+            # https→http downgrade on the same host
+            ('https://example.com/file', 'http://example.com/file', False),
+            # https→http downgrade with the default ports spelled out
+            ('https://example.com:443/file', 'http://example.com:80/file', False),
+            # http→https from a non-default port is not the upgrade exemption
+            ('http://example.com:8080/file', 'https://example.com/file', False),
+        ],
+    )
+    async def test_authorization_across_redirect(
+        self,
+        mock_dns: AsyncMock,
+        mock_ssrf_client: MagicMock,
+        start_url: str,
+        location: str,
+        kept: bool,
     ) -> None:
-        """A redirect with identical scheme + host + port keeps the Authorization header."""
-        redirect_response = AsyncMock()
-        redirect_response.is_redirect = True
-        redirect_response.headers = {'location': 'https://example.com/elsewhere'}
-
-        final_response = AsyncMock()
-        final_response.is_redirect = False
-        final_response.raise_for_status = lambda: None
-        final_response.content = b'final'
-
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
         mock_client = AsyncMock()
-        mock_client.get.side_effect = [redirect_response, final_response]
+        mock_client.get.side_effect = [self._redirect_response(location), self._final_response()]
         mock_ssrf_client.return_value = mock_client
 
-        await safe_download('https://example.com/file', headers={'Authorization': 'Bearer SECRET'})
+        await safe_download(start_url, headers={'Authorization': 'Bearer SECRET'})
 
-        assert self._auth_header(mock_client.get.call_args_list[1]) == 'Bearer SECRET'
+        expected = 'Bearer SECRET' if kept else None
+        assert self._sent_header(mock_client.get.call_args_list[1], 'authorization') == expected
 
-    async def test_cross_host_redirect_strips_authorization(
+    async def test_cross_host_redirect_strips_all_sensitive_headers(
         self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
     ) -> None:
-        """A redirect to a different host strips the Authorization header."""
-        redirect_response = AsyncMock()
-        redirect_response.is_redirect = True
-        redirect_response.headers = {'location': 'https://other.com/file'}
-
-        final_response = AsyncMock()
-        final_response.is_redirect = False
-        final_response.raise_for_status = lambda: None
-        final_response.content = b'final'
-
-        mock_dns.side_effect = [
-            [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('140.82.114.4', 0))],
-        ]
-
-        mock_client = AsyncMock()
-        mock_client.get.side_effect = [redirect_response, final_response]
-        mock_ssrf_client.return_value = mock_client
-
-        await safe_download('https://example.com/file', headers={'Authorization': 'Bearer SECRET'})
-
-        assert self._auth_header(mock_client.get.call_args_list[1]) is None
-
-    async def test_port_change_redirect_strips_authorization(
-        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
-    ) -> None:
-        """A redirect to the same host on a different port strips the Authorization header."""
-        redirect_response = AsyncMock()
-        redirect_response.is_redirect = True
-        redirect_response.headers = {'location': 'https://example.com:8443/file'}
-
-        final_response = AsyncMock()
-        final_response.is_redirect = False
-        final_response.raise_for_status = lambda: None
-        final_response.content = b'final'
-
+        """A cross-host redirect strips every sensitive header but keeps the rest."""
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
         mock_client = AsyncMock()
-        mock_client.get.side_effect = [redirect_response, final_response]
+        mock_client.get.side_effect = [self._redirect_response('https://other.com/file'), self._final_response()]
         mock_ssrf_client.return_value = mock_client
 
-        await safe_download('https://example.com/file', headers={'Authorization': 'Bearer SECRET'})
+        await safe_download(
+            'https://example.com/file',
+            headers={
+                'Authorization': 'Bearer SECRET',
+                'Cookie': 'session=abc',
+                'Proxy-Authorization': 'Basic abc',
+                'Accept': 'text/html',
+            },
+        )
 
-        assert self._auth_header(mock_client.get.call_args_list[1]) is None
+        second_call = mock_client.get.call_args_list[1]
+        assert self._sent_header(second_call, 'authorization') is None
+        assert self._sent_header(second_call, 'cookie') is None
+        assert self._sent_header(second_call, 'proxy-authorization') is None
+        assert self._sent_header(second_call, 'accept') == 'text/html'
 
-    async def test_https_to_http_downgrade_strips_authorization(
+    async def test_chained_redirect_keeps_headers_stripped(
         self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
     ) -> None:
-        """A https→http downgrade on the same host strips the Authorization header."""
-        redirect_response = AsyncMock()
-        redirect_response.is_redirect = True
-        redirect_response.headers = {'location': 'http://example.com/file'}
+        """Once stripped on a cross-origin hop, headers stay stripped for the rest of the chain.
 
-        final_response = AsyncMock()
-        final_response.is_redirect = False
-        final_response.raise_for_status = lambda: None
-        final_response.content = b'final'
-
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-
-        mock_client = AsyncMock()
-        mock_client.get.side_effect = [redirect_response, final_response]
-        mock_ssrf_client.return_value = mock_client
-
-        await safe_download('https://example.com/file', headers={'Authorization': 'Bearer SECRET'})
-
-        assert self._auth_header(mock_client.get.call_args_list[1]) is None
-
-    async def test_http_to_https_upgrade_keeps_authorization(
-        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
-    ) -> None:
-        """An http→https upgrade on the same host keeps the Authorization header, matching httpx."""
-        redirect_response = AsyncMock()
-        redirect_response.is_redirect = True
-        redirect_response.headers = {'location': 'https://example.com/file'}
-
-        final_response = AsyncMock()
-        final_response.is_redirect = False
-        final_response.raise_for_status = lambda: None
-        final_response.content = b'final'
-
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-
-        mock_client = AsyncMock()
-        mock_client.get.side_effect = [redirect_response, final_response]
-        mock_ssrf_client.return_value = mock_client
-
-        await safe_download('http://example.com/file', headers={'Authorization': 'Bearer SECRET'})
-
-        assert self._auth_header(mock_client.get.call_args_list[1]) == 'Bearer SECRET'
-
-    async def test_trailing_dot_redirect_keeps_authorization(
-        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
-    ) -> None:
-        """A redirect from `example.com.` to `example.com` (same server) keeps headers after trailing-dot normalization."""
-        redirect_response = AsyncMock()
-        redirect_response.is_redirect = True
-        redirect_response.headers = {'location': 'https://example.com/file'}
-
-        final_response = AsyncMock()
-        final_response.is_redirect = False
-        final_response.raise_for_status = lambda: None
-        final_response.content = b'final'
-
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-
-        mock_client = AsyncMock()
-        mock_client.get.side_effect = [redirect_response, final_response]
-        mock_ssrf_client.return_value = mock_client
-
-        await safe_download('https://example.com./file', headers={'Authorization': 'Bearer SECRET'})
-
-        assert self._auth_header(mock_client.get.call_args_list[1]) == 'Bearer SECRET'
-
-    async def test_chained_redirect_does_not_re_leak_credentials(
-        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
-    ) -> None:
-        """A chained redirect a.com→b.com→a.com must NOT re-leak credentials on the third hop.
-
-        Comparing against the *previous* hop (not the first URL) ensures the Authorization
-        header, once stripped on the a→b cross-origin hop, stays stripped on the b→a hop.
+        The a.com→b.com→a.com return hop is same-host relative to the first URL but
+        cross-origin relative to the previous hop; either way the strip is destructive,
+        so the credential must not reappear on the third request.
         """
-        first = AsyncMock()
-        first.is_redirect = True
-        first.headers = {'location': 'https://b.com/file'}
-
-        second = AsyncMock()
-        second.is_redirect = True
-        second.headers = {'location': 'https://a.com/file'}
-
-        third = AsyncMock()
-        third.is_redirect = False
-        third.raise_for_status = lambda: None
-        third.content = b'final'
-
-        mock_dns.side_effect = [
-            [(2, 1, 6, '', ('93.184.215.14', 0))],  # a.com
-            [(2, 1, 6, '', ('140.82.114.4', 0))],  # b.com
-            [(2, 1, 6, '', ('93.184.215.14', 0))],  # a.com again
-        ]
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
         mock_client = AsyncMock()
-        mock_client.get.side_effect = [first, second, third]
+        mock_client.get.side_effect = [
+            self._redirect_response('https://b.com/file'),
+            self._redirect_response('https://a.com/file'),
+            self._final_response(),
+        ]
         mock_ssrf_client.return_value = mock_client
 
         await safe_download('https://a.com/file', headers={'Authorization': 'Bearer SECRET'})
 
-        # hop 0 → 1 (a.com → b.com): cross-origin, stripped
-        assert self._auth_header(mock_client.get.call_args_list[1]) is None
-        # hop 1 → 2 (b.com → a.com): previous hop was b.com, so a.com is cross-origin; stays stripped
-        assert self._auth_header(mock_client.get.call_args_list[2]) is None
-
-
-class TestOriginHelpers:
-    """Unit tests for `_origin` and `_keeps_credentials`."""
-
-    @pytest.mark.parametrize(
-        'url,expected',
-        [
-            ('https://example.com', ('https', 'example.com', 443)),
-            ('http://example.com', ('http', 'example.com', 80)),
-            ('https://example.com:8443', ('https', 'example.com', 8443)),
-            ('http://example.com:8080', ('http', 'example.com', 8080)),
-            ('https://EXAMPLE.com.', ('https', 'example.com', 443)),
-            ('http://Example.Com.:80', ('http', 'example.com', 80)),
-        ],
-    )
-    def test_origin_normalization(self, url: str, expected: tuple[str, str, int]) -> None:
-        from pydantic_ai._ssrf import _origin  # pyright: ignore[reportPrivateUsage]
-
-        assert _origin(url) == expected
-
-    @pytest.mark.parametrize(
-        'from_url,to_url,keeps',
-        [
-            # same origin
-            ('https://example.com/a', 'https://example.com/b', True),
-            ('http://example.com:80/a', 'http://example.com/b', True),
-            ('https://example.com:443/a', 'https://example.com/b', True),
-            # http → https upgrade on same host
-            ('http://example.com/a', 'https://example.com/b', True),
-            ('http://example.com:80/a', 'https://example.com:443/b', True),
-            # trailing-dot equivalence
-            ('https://example.com./a', 'https://example.com/b', True),
-            ('https://example.com/a', 'https://example.com./b', True),
-            # port change
-            ('https://example.com/a', 'https://example.com:8443/b', False),
-            ('http://example.com/a', 'http://example.com:8080/b', False),
-            # https → http downgrade
-            ('https://example.com/a', 'http://example.com/b', False),
-            # cross-host
-            ('https://a.com/a', 'https://b.com/b', False),
-            # http → https with a non-default port is NOT an upgrade exemption
-            ('http://example.com:8080/a', 'https://example.com/b', False),
-            # https → http with explicit default ports is a downgrade
-            ('https://example.com:443/a', 'http://example.com:80/b', False),
-        ],
-    )
-    def test_keeps_credentials(self, from_url: str, to_url: str, keeps: bool) -> None:
-        from pydantic_ai._ssrf import _keeps_credentials  # pyright: ignore[reportPrivateUsage]
-
-        assert _keeps_credentials(from_url, to_url) is keeps
+        assert self._sent_header(mock_client.get.call_args_list[1], 'authorization') is None
+        assert self._sent_header(mock_client.get.call_args_list[2], 'authorization') is None
 
 
 class TestDnsRebindingPrevention:

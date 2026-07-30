@@ -118,6 +118,15 @@ print(result.output)
     [`WebFetch`][pydantic_ai.capabilities.WebFetch] capability automatically uses it
     as a local fallback when the model doesn't support native URL fetching.
 
+!!! warning "Credentials in `headers`"
+    Headers configured via `web_fetch_tool(headers=...)` are sent with every request, and the URL is
+    controlled by the model. If you configure a credential like `Authorization`, use `allowed_domains`
+    to restrict which hosts can receive it, and keep in mind that domain filters match the hostname
+    only: the model can still direct the credential to plain `http://` or to a non-standard port on an
+    allowed host. On redirects, sensitive headers (`Authorization`, `Cookie`, `Proxy-Authorization`)
+    are only forwarded when the redirect stays on the same origin (scheme, host, and port) or upgrades
+    from `http` to `https` on the same host; they are stripped on any other redirect.
+
 ## Tavily Search Tool
 
 !!! info
