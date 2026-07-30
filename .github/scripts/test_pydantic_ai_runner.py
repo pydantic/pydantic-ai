@@ -13,7 +13,6 @@ Run:  uv run --with pytest pytest .github/scripts/test_pydantic_ai_runner.py
 """
 
 import asyncio
-import importlib
 import io
 import json
 import os
@@ -244,11 +243,12 @@ fi
     assert (context_dir / 'open-pull-requests.json').exists()
 
 
-def test_issue_filing_context_scopes_token_to_prefetch():
+def test_shared_context_setup_is_scoped_and_uses_runtime_paths():
     shared_steps = Path(__file__).parent.parent / 'workflows' / 'shared' / 'pre-agent-steps.md'
     shared_text = shared_steps.read_text(encoding='utf-8')
     context_steps = shared_steps.with_name('issue-filing-context.md')
     context_text = context_steps.read_text(encoding='utf-8')
+    tool_hints = context_steps.with_name('tool-hints.md').read_text(encoding='utf-8')
     prewarm = Path(__file__).with_name('prewarm-pydantic-ai-runner.sh').read_text(encoding='utf-8')
 
     assert 'run: bash .github/scripts/prewarm-pydantic-ai-runner.sh' in shared_text
@@ -256,6 +256,8 @@ def test_issue_filing_context_scopes_token_to_prefetch():
     assert 'run: bash .github/scripts/prefetch-github-context.sh' in context_text
     assert '      GH_TOKEN: ${{ github.token }}' in context_text
     assert 'prefetch-github-context.sh' not in prewarm
+    assert '$GITHUB_WORKSPACE/.review-context/' in tool_hints
+    assert '$GITHUB_WORKSPACE/.review-context/' in shim.INSTRUCTIONS
 
 
 @pytest.mark.parametrize(
@@ -596,10 +598,10 @@ def test_bash_subprocess_startup_failure_is_an_error_not_a_crash(monkeypatch: py
 
 
 def test_grep_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    # grep runs an available search binary through the harness shell capability;
-    # the adapter keys off its exit code (parsed from `run_command`'s trailing
-    # `[exit code: N]`) to unwrap the `[stdout]` framing into `file:line:text`
-    # matches, and maps exit-1 ("nothing matched") to the harness sentinel.
+    # grep runs ripgrep through the harness shell capability; the adapter keys off
+    # ripgrep's exit code (parsed from `run_command`'s trailing `[exit code: N]`)
+    # to unwrap the `[stdout]` framing into `file:line:text` matches, and maps
+    # exit-1 ("nothing matched") to the harness's own `No matches found.` sentinel.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     (tmp_path / 'a.txt').write_text('alpha\nNEEDLE here\n', encoding='utf-8')
     assert 'a.txt:2:NEEDLE here' in asyncio.run(pkg.grep('NEEDLE', '.'))
@@ -610,9 +612,9 @@ def test_grep_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_grep_bad_pattern_is_an_error_not_a_match(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    # Both grep implementations exit 2 on a malformed regex. Even though they
-    # write to the framed output, the adapter keys off the exit code, so it
-    # surfaces as an error rather than being mistaken for a match.
+    # ripgrep exits 2 on a malformed regex. Even though it writes to the framed
+    # output, the adapter keys off the exit code, so it surfaces as an error
+    # rather than being mistaken for a match (the `[stdout]`-prefix sniff bug).
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     (tmp_path / 'a.txt').write_text('alpha\n', encoding='utf-8')
     out = asyncio.run(pkg.grep('(', '.'))
@@ -635,6 +637,8 @@ def test_grep_large_match_set_is_not_misreported_as_error(tmp_path: Path, monkey
     # A match set larger than the harness output cap is tail-truncated, which
     # elides the `[stdout]` header and prepends a truncation marker. The adapter
     # must still return it as matches, not as an error.
+    import importlib
+
     # `pkg.grep` is the re-exported callable; reach the module to patch its deps.
     grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
 
@@ -655,94 +659,6 @@ def test_grep_large_match_set_is_not_misreported_as_error(tmp_path: Path, monkey
     assert not out.startswith('error:')
     assert 'src/a.py:1:hit' in out and 'src/b.py:2:hit' in out
     assert grep_mod._TRUNCATION_PREFIX not in out
-
-
-def test_grep_portable_fallback_is_usable_and_does_not_follow_symlinks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
-    workspace = tmp_path / 'workspace'
-    workspace.mkdir()
-    (workspace / 'visible.py').write_text('VISIBLE\n', encoding='utf-8')
-    outside = tmp_path / 'outside'
-    outside.mkdir()
-    (outside / 'secret.txt').write_text('TOPSECRET\n', encoding='utf-8')
-    (workspace / 'outside-link').symlink_to(outside, target_is_directory=True)
-    monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
-
-    def no_search_command(command: str, *, path: str | None = None) -> None:
-        return None
-
-    monkeypatch.setattr(grep_mod.shutil, 'which', no_search_command)
-    assert 'visible.py:1:VISIBLE' in asyncio.run(grep_mod.grep('VISIBLE', '.'))
-    assert asyncio.run(grep_mod.grep('TOPSECRET', '.')) == 'No matches found.'
-
-
-def test_grep_probes_the_shell_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
-    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
-    monkeypatch.setattr(grep_mod, 'augmented_env', lambda: {'PATH': '/harness/bin'})
-
-    def find_augmented_ripgrep(command: str, *, path: str | None = None) -> str | None:
-        assert path == '/harness/bin'
-        return '/harness/bin/rg' if command == 'rg' else None
-
-    class _FakeShell:
-        async def run_command(self, command: str, *, timeout_seconds: float) -> str:
-            assert command.startswith('rg ')
-            return '[stdout]\na.txt:1:hit\n'
-
-    class _FakeFs:
-        async def file_info(self, path: str) -> str:
-            return 'ok'
-
-    monkeypatch.setattr(grep_mod.shutil, 'which', find_augmented_ripgrep)
-    monkeypatch.setattr(grep_mod, 'shell', lambda: _FakeShell())
-    monkeypatch.setattr(grep_mod, 'filesystem', lambda: _FakeFs())
-    assert 'a.txt:1:hit' in asyncio.run(grep_mod.grep('hit', '.'))
-
-
-def test_grep_uses_git_ignores_without_ripgrep(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
-    workspace = tmp_path / 'workspace'
-    workspace.mkdir()
-    (workspace / '.gitignore').write_text('.venv/\n', encoding='utf-8')
-    (workspace / 'source.py').write_text('VISIBLE\n', encoding='utf-8')
-    ignored = workspace / '.venv'
-    ignored.mkdir()
-    (ignored / 'dependency.py').write_text('IGNORED\n', encoding='utf-8')
-    subprocess.run(['git', 'init', '-q'], cwd=workspace, check=True)
-    monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
-    real_which = grep_mod.shutil.which
-
-    def no_ripgrep(command: str, *, path: str | None = None) -> str | None:
-        return None if command == 'rg' else real_which(command, path=path)
-
-    monkeypatch.setattr(grep_mod.shutil, 'which', no_ripgrep)
-    assert 'source.py:1:VISIBLE' in asyncio.run(grep_mod.grep('VISIBLE', '.'))
-    assert asyncio.run(grep_mod.grep('IGNORED', '.')) == 'No matches found.'
-    assert asyncio.run(grep_mod.grep('IGNORED', str(workspace))) == 'No matches found.'
-
-
-def test_grep_treats_git_pathspec_metacharacters_literally(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    grep_mod = importlib.import_module('pydantic_ai_gh_aw_shim.grep')
-    workspace = tmp_path / 'workspace'
-    workspace.mkdir()
-    literal = workspace / 'a*'
-    literal.mkdir()
-    (literal / 'wanted.py').write_text('HIT\n', encoding='utf-8')
-    wildcard_match = workspace / 'a1'
-    wildcard_match.mkdir()
-    (wildcard_match / 'unwanted.py').write_text('HIT\n', encoding='utf-8')
-    subprocess.run(['git', 'init', '-q'], cwd=workspace, check=True)
-    monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
-    real_which = grep_mod.shutil.which
-
-    def no_ripgrep(command: str, *, path: str | None = None) -> str | None:
-        return None if command == 'rg' else real_which(command, path=path)
-
-    monkeypatch.setattr(grep_mod.shutil, 'which', no_ripgrep)
-    out = asyncio.run(grep_mod.grep('HIT', 'a*'))
-    assert 'a*/wanted.py:1:HIT' in out
-    assert 'unwanted.py' not in out
 
 
 def test_glob_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Prepare shared resources for the harness on the OPEN network.
+# Pre-warm the harness's uv script environment on the OPEN network.
 #
 # Runs in each workflow's `pre-agent-steps` — after checkout + Setup uv but
 # before the firewalled agent step — into the same uv dirs the in-sandbox
 # launcher uses, so the agent run reuses the warm cache instead of depending
 # on PyPI access through the AWF firewall.
 #
-# This warms the uv script environment before the firewall proxy is enabled.
-# It is non-fatal because the sandboxed runner can still install from scratch.
+# Strictly non-fatal: on any failure the sandboxed `uv run --script` (with
+# the `python` allowlist in each workflow) still installs from scratch.
 set -uo pipefail
 export UV_CACHE_DIR=/tmp/gh-aw/uv/cache
 export UV_PYTHON_INSTALL_DIR=/tmp/gh-aw/uv/python
@@ -19,8 +19,8 @@ runner="${GITHUB_WORKSPACE}/.github/scripts/pydantic-ai-runner"
 uv_bin="$(command -v uv 2>/dev/null || true)"
 if [ -z "${uv_bin}" ]; then
   echo "::warning::uv not found for pre-warm; agent will install under the firewall"
-else
-  echo "[harness-prewarm] using uv=${uv_bin} cache=${UV_CACHE_DIR}"
-  "${uv_bin}" sync --script "${runner}" \
-    || echo "::warning::harness uv pre-warm failed; agent will install under the firewall"
+  exit 0
 fi
+echo "[harness-prewarm] using uv=${uv_bin} cache=${UV_CACHE_DIR}"
+"${uv_bin}" sync --script "${runner}" \
+  || echo "::warning::harness uv pre-warm failed; agent will install under the firewall"

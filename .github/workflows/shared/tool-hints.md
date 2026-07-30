@@ -44,7 +44,7 @@ jq '.[] | select(any(.labels[]; .name == "<label>")) | {number, title, url}' \
 Do **not** run `gh issue list`, `gh pr list`, `gh search`, or a paginated/list
 `gh api` request from inside the agent. Narrow per-item reads may still be used
 after the local corpus identifies a specific issue or PR. PR reviewers instead
-use `/tmp/gh-aw/.review-context/`; the stale-issues workflow uses
+use `$GITHUB_WORKSPACE/.review-context/`; the stale-issues workflow uses
 `/tmp/gh-aw/agent/open-issues.tsv` and `/tmp/gh-aw/agent/issues/`.
 If required prefetched context is missing or unreadable, call
 `mcp__safeoutputs__noop` and report that missing data instead of attempting a

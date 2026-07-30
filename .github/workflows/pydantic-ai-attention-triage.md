@@ -23,7 +23,7 @@ tools:
 safe-outputs:
   footer: false
   activation-comments: false
-  # Keep the agent job read-only; engine failures remain visible in the run.
+  # Keep transient engine failures in Actions instead of filing report issues.
   report-failure-as-issue: false
   noop:
     report-as-issue: false

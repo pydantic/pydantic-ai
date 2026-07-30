@@ -212,7 +212,7 @@ INSTRUCTIONS = (
     'are blocked or can stall until the workflow times out. Issue-filing sweeps '
     'provide `/tmp/gh-aw/agent/github-context/open-issues.json` and '
     '`open-pull-requests.json`; filter their local JSON with jq. PR reviewers '
-    'use `/tmp/gh-aw/.review-context/`; the stale-issues workflow uses '
+    'use `$GITHUB_WORKSPACE/.review-context/`; the stale-issues workflow uses '
     '`/tmp/gh-aw/agent/open-issues.tsv` and `/tmp/gh-aw/agent/issues/`. Do NOT '
     'run `gh issue list`, `gh pr list`, `gh search`, or a paginated/list `gh api` '
     'request from inside the agent. Narrow per-item reads may still be used '
