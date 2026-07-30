@@ -11,8 +11,11 @@ T = TypeVar('T')
 def import_mcp_types(feature: str) -> ModuleType:
     """Import the MCP wire types from whichever SDK generation is installed.
 
-    MCP SDK v1 ships them as `mcp.types`; SDK v2 moved them to a standalone `mcp_types`
-    distribution. `feature` names the caller in the error raised when neither is installed.
+    SDK v1 ships them as `mcp.types`. SDK v2 moved them to a standalone `mcp_types` distribution,
+    then restored `mcp.types` as an exact re-export of it — so either import can yield either
+    generation, and only [`is_mcp_sdk_v2`][pydantic_ai._mcp_compat.is_mcp_sdk_v2] tells them apart.
+    The `mcp_types` fallback covers an install that has the wire types but not the `mcp` package.
+    `feature` names the caller in the error raised when neither is installed.
     """
     try:
         from mcp import types
@@ -29,8 +32,13 @@ def import_mcp_types(feature: str) -> ModuleType:
 
 
 def is_mcp_sdk_v2(mcp_types: ModuleType) -> bool:
-    """Whether the imported MCP wire types come from the standalone SDK v2 package."""
-    return mcp_types.__name__ == 'mcp_types'
+    """Whether the imported MCP wire types are the SDK v2 generation.
+
+    Detected from the v2 field rename rather than the module name: SDK v2.0.0 restored `mcp.types`
+    as an exact re-export of the standalone package, so both spellings resolve to the same v2
+    classes and the module name says nothing about the generation.
+    """
+    return 'input_schema' in mcp_types.Tool.model_fields
 
 
 def mcp_field_value(value: BaseModel, v1_name: str, v2_name: str) -> object:

@@ -27,6 +27,7 @@ import anyio
 import httpx
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 from pydantic_ai import models
 from pydantic_ai._run_context import RunContext
@@ -157,6 +158,22 @@ def test_import_mcp_types_without_either_package_raises(monkeypatch: pytest.Monk
 
     with pytest.raises(ImportError, match=r'Please install the `mcp` package to use `MCPToolset`'):
         import_mcp_types('`MCPToolset`')
+
+
+def test_is_mcp_sdk_v2_reads_the_field_rename_not_the_module_name():
+    """SDK v2.0.0 restored `mcp.types` as an exact re-export of the standalone package, so a v2
+    install serves the v2 classes under the v1 module name. Detecting on the name would report v2
+    as v1 and silently take the v1 code paths, so the generation is read off the field rename.
+    """
+
+    class Tool(BaseModel):
+        input_schema: dict[str, Any] = {}
+
+    v2_types = ModuleType('mcp.types')
+    setattr(v2_types, 'Tool', Tool)
+
+    assert is_mcp_sdk_v2(v2_types) is True
+    assert is_mcp_sdk_v2(mcp_types) is MCP_SDK_V2
 
 
 # Construction tests don't need a server and don't take async fixtures.
