@@ -595,6 +595,10 @@ class _OpenRouterNoCompletionResponse(BaseModel, extra='allow'):
     malformed nested-provider response, not this shape, so it fails validation here and
     stays fatal.
 
+    `choices` cannot be dropped in favour of `extra='allow'` the way `_OpenRouterErrorResponse`'s
+    was: there `error` is the discriminator, whereas here `choices` is the only field that
+    identifies the shape, so without it this model would match almost any body.
+
     `Literal[None]` rather than a bare `None` annotation: this module uses
     `from __future__ import annotations`, so annotations are strings, and on Python 3.14
     (PEP 649) resolving the string `'None'` raises `PydanticUserError` under pydantic
@@ -1061,8 +1065,8 @@ class OpenRouterModel(OpenAIChatModel):
                     body=error_response.error.message,
                 )
 
-            # `ModelAPIError` is `FallbackModel`'s default `fallback_on`, so on this non-streamed
-            # path the transient now falls back where a bare `ValidationError` never did.
+            # `ModelAPIError` is `FallbackModel`'s default `fallback_on`, so raising it here lets the
+            # transient reach fallback on this non-streamed path.
             _raise_for_no_completion(response_dict, self.model_name, exc)
 
             try:
@@ -1248,6 +1252,11 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                     # newly terminate any stream that used to succeed.
                     # Classification only: `FallbackModel`'s window is `Model.request_stream`'s own
                     # `__aenter__`, which returns before any chunk is validated, so this never falls back.
+                    # Only the no-completion shape is mapped here: it is the only one of the three shapes
+                    # `_validate_completion` knows that has been reproduced on a stream. An error-envelope
+                    # chunk never reaches this branch — the openai SDK raises `APIError` at SSE decode for
+                    # any body carrying a truthy `error`, handled below — and the nested-provider shape
+                    # carries `message`, not `delta`, so it cannot arrive as a chunk at all.
                     _raise_for_no_completion(chunk_dict, self._model_name, exc)
                     raise
                 yield validated
