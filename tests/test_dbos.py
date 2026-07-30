@@ -3235,6 +3235,58 @@ async def test_dbos_durability_dynamic_capability_tool_runs_in_step(dbos: DBOS) 
     assert 'dbos_dynamic_capability__dynamic_toolset__dyn.call_tool' in step_names
 
 
+async def test_dbos_durability_decorator_registered_dynamic_toolset_runs_in_steps(dbos: DBOS) -> None:
+    """A `@agent.toolset`-registered `DynamicToolset` gets its own steps.
+
+    The decorator appends to the agent's toolsets after `DBOSDurability` bound in `Agent.__init__`
+    and registered the toolsets it saw there; before the late registration was picked up, the
+    factory and its tools ran un-checkpointed in workflow code and re-executed on recovery.
+
+    Regression for https://github.com/pydantic/pydantic-ai/issues/6902.
+    """
+    calls: list[str] = []
+
+    agent = Agent(TestModel(), name='dbos_late_dynamic', capabilities=[DBOSDurability()])
+
+    @agent.toolset(id='late_tools')
+    def late_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any](id='late_inner')
+
+        @toolset.tool_plain
+        def dynamic_tool() -> str:
+            calls.append('called')
+            return 'dynamic result'
+
+        return toolset
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Call the tool')).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_agent()
+
+    assert output == '{"dynamic_tool":"dynamic result"}'
+    assert calls == ['called']
+    step_names = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+    assert 'dbos_late_dynamic__dynamic_toolset__late_tools.get_tools' in step_names
+    assert 'dbos_late_dynamic__dynamic_toolset__late_tools.call_tool' in step_names
+
+
+def test_dbos_durability_toolset_decorator_requires_id(dbos: DBOS) -> None:
+    """`@agent.toolset` needs an `id` under DBOS, exactly like a `DynamicToolset` in `toolsets=`."""
+    agent = Agent(TestModel(), name='dbos_late_dynamic_no_id', capabilities=[DBOSDurability()])
+
+    with pytest.raises(UserError, match=r'need to have a unique `id` in order to be used with DBOS'):
+
+        @agent.toolset
+        def late_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
+            return FunctionToolset[Any]()  # pragma: no cover
+
+    assert [toolset.id for toolset in agent.toolsets] == ['<agent>']
+
+
 def test_dbos_durability_dynamic_capability_requires_id(dbos: DBOS) -> None:
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
         # Construction raises before the factory can run.

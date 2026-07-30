@@ -111,6 +111,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     ) -> None:
         self.wrapped._validate_runtime_capabilities(ctx, capabilities)
 
+    def _register_late_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> None:
+        self.wrapped._register_late_toolset(toolset)
+
     # --- Get methods ---
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:

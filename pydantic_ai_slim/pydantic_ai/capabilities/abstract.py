@@ -310,6 +310,19 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
         """
 
+    def _register_late_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> None:
+        """Take note of a toolset registered on the agent after this capability was bound.
+
+        Capabilities bind — and take their view of `agent.toolsets` — during agent construction, but
+        the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator runs afterwards. Capabilities
+        that transform the agent's *leaf* toolsets (the durable-execution capabilities wrap each one in
+        an activity, step, or task) override this so a late registration gets the same treatment as one
+        passed to `toolsets=`, instead of silently slipping through untransformed.
+
+        Deliberately private: post-construction agent mutation is not part of the public capability
+        contract, and `@agent.toolset` is currently the only path that reaches it.
+        """
+
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Return instructions to include in the system prompt, or None.
 

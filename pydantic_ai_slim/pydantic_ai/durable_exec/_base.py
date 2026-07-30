@@ -198,6 +198,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         for toolset in agent.toolsets:
             toolset.visit_and_replace(self._wrap_and_register_leaf)
 
+    def _register_late_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> None:
+        """Register a toolset added by `@agent.toolset` after this capability was bound.
+
+        The decorator runs after the agent's constructor has bound the capability and registered the
+        durable units for the toolsets it saw then, so without this the toolset's factory and tools
+        would run in the workflow/flow with no durable unit at all.
+        """
+        toolset.visit_and_replace(self._wrap_and_register_leaf)
+
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         ts_id = ts.id
         if ts_id is None and isinstance(ts, DynamicToolset):
@@ -234,11 +243,21 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 f'{self._durable_container_noun}.'
             )
         self._toolsets_by_id[ts_id] = wrapped
+        self._register_durable_units(wrapped)
         return wrapped
 
     @abstractmethod
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
         """Wrap one leaf toolset in this engine's durable wrapper, or `None` to pass it through unwrapped."""
+
+    def _register_durable_units(self, wrapper: WrapperToolset[AgentDepsT]) -> None:
+        """Collect the durable units of a newly wrapped leaf toolset.
+
+        DBOS and Prefect need nothing here: building the wrapper creates their steps/tasks, which are
+        dispatched at call time. Temporal overrides this to add the toolset's activities to
+        [`temporal_activities`][pydantic_ai.durable_exec.temporal.TemporalDurability.temporal_activities],
+        which the worker has to be given up front.
+        """
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Replace leaf toolsets with their durable-wrapped versions."""

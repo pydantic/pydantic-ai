@@ -94,6 +94,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self.capabilities:
             capability._validate_runtime_capabilities(ctx, capabilities)
 
+    def _register_late_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> None:
+        for capability in self.capabilities:
+            capability._register_late_toolset(toolset)
+
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         instructions: list[str | SystemPromptFunc[AgentDepsT]] = []
         for capability in self.capabilities:
