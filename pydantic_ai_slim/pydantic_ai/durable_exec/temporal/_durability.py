@@ -22,9 +22,10 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
     WrapRunHandler,
 )
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
+from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
-from pydantic_ai.durable_exec._toolset import DurableToolsetBase
+from pydantic_ai.durable_exec._toolset import DurableToolsetBase, Lifecycle
 from pydantic_ai.durable_exec._utils import (
     DurableModel,
     StreamedActivityResult,
@@ -160,9 +161,18 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     """
 
     engine_name = 'Temporal'
+    _codec: ClassVar = IDENTITY_CODEC
     _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset(
         {'function', 'mcp', 'dynamic'}
     )
+    _wrapped_toolset_kinds: ClassVar[frozenset[ToolsetKind]] = frozenset({'function', 'mcp', 'dynamic'})
+    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
+        'function': 'enter-outside-durable',
+        'mcp': 'enter-outside-durable',
+        'dynamic': 'enter-never',
+    }
+    _tool_call_result_upgrade_lenient = False
+    _journal_discovery = True
 
     _durable_unit_noun = 'activity'
     _durable_container_noun = 'workflow'
@@ -475,7 +485,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 f'Capabilities added per-run inside a Temporal workflow are not supported: {names}. '
                 'Temporal activities must be registered with the worker before the workflow runs. '
                 'Attach all capabilities at agent construction time so `TemporalDurability.for_agent()` '
-                'can register their activities.'
+                'can register the activities for the toolsets they contribute.'
             )
 
     async def wrap_model_request(
