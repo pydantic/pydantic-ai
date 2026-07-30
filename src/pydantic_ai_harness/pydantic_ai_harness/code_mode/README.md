@@ -187,7 +187,7 @@ Printed output is limited to 10 MiB. Exceeding the limit makes `run_code` return
 
 ## REPL state
 
-State persists between `run_code` calls within the same agent run -- variables, imports, and function definitions carry over. Pass `restart: true` in the tool call to reset state.
+State persists between `run_code` calls within the same agent run -- variables, imports, and function definitions carry over. Pass `restart: true` in the tool call to reset state. If a worker crash or host-side execution failure invalidates the session, `run_code` returns a model retry that reports the reset; the next snippet must recreate any required state.
 
 ## Temporal durability
 

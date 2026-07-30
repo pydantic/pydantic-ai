@@ -662,6 +662,18 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             raise ModelRetry(
                 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'
             ) from e
+        except Exception as e:
+            # The session may have been invalidated by a host-side binding or protocol failure.
+            # Make the reset visible so the model can rebuild state on its next attempt. Include
+            # the error text: there is no Monty `display()` for host-side failures, and the cause
+            # chain is dropped once the retry becomes a prompt part, so this message is the only
+            # record of what failed for both the model and the transcript.
+            run_state.reset()
+            error_text = f'{type(e).__name__}: {e}'
+            raise ModelRetry(
+                'Code execution failed and the session was reset. Re-run any imports, recreate '
+                f'any state you need, and try again.\n{capture.prepend_to(error_text)}'
+            ) from e
         except BaseException as e:
             # Convert a sandbox panic to a retry (see `is_sandbox_panic`);
             # interruptions re-raise unchanged after dropping the suspended session.
