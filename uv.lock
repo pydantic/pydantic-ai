@@ -2061,14 +2061,10 @@ wheels = [
 [[package]]
 name = "genai-prices"
 version = "0.0.73"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/pydantic/genai-prices?subdirectory=packages%2Fpython&branch=codex%2Funit-registry-06-data-v2#2ece94581bd6bea1b29a6ab2069775473f4bd040" }
 dependencies = [
     { name = "httpx2" },
     { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/84/0b/4b430d9c6ff0c76e42b91fc4cedff84dfbefa1a35b885fad45a22d29303f/genai_prices-0.0.73.tar.gz", hash = "sha256:ddad5b23dadd7aac8a58ab5af7506addb062114037e96427324703e50bc35077", size = 88406, upload-time = "2026-07-29T12:48:58.215Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/85/527a729ecd58b7169430e47febdab2e3f91193d0e3f5a56d721c04525709/genai_prices-0.0.73-py3-none-any.whl", hash = "sha256:64dfbbf55df91db6b74ff2b24ac752b8154952e0aed4e62868d6cd42710bf742", size = 92507, upload-time = "2026-07-29T12:48:57.194Z" },
 ]
 
 [[package]]
@@ -5480,7 +5476,7 @@ dev = [
     { name = "duckduckgo-search", specifier = ">=7.0.0" },
     { name = "exa-py", specifier = ">=2.0.0" },
     { name = "fastmcp", specifier = ">=3.3.0,<4" },
-    { name = "genai-prices", specifier = ">=0.0.69" },
+    { name = "genai-prices", git = "https://github.com/pydantic/genai-prices?subdirectory=packages%2Fpython&branch=codex%2Funit-registry-06-data-v2" },
     { name = "inline-snapshot", specifier = ">=0.32.5" },
     { name = "markdownify", specifier = ">=1.2" },
     { name = "pip", specifier = ">=26.1" },
@@ -5691,7 +5687,7 @@ requires-dist = [
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<4" },
-    { name = "genai-prices", specifier = ">=0.0.70" },
+    { name = "genai-prices", git = "https://github.com/pydantic/genai-prices?subdirectory=packages%2Fpython&branch=codex%2Funit-registry-06-data-v2" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.70.0" },
     { name = "griffelib", specifier = ">=2.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },

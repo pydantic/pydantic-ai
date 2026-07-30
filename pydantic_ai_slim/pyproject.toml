@@ -141,4 +141,5 @@ pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for 
 packages = ["pydantic_ai"]
 
 [tool.uv.sources]
+genai-prices = { git = "https://github.com/pydantic/genai-prices", branch = "codex/unit-registry-06-data-v2", subdirectory = "packages/python" }
 pydantic-graph = { workspace = true }
