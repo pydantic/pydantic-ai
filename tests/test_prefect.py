@@ -2622,20 +2622,29 @@ async def test_prefect_durability_override_registered_model() -> None:
     assert await run_agent() == 'alt-response'
 
 
-async def test_prefect_durability_unrebuildable_runtime_model_errors() -> None:
-    """An unregistered instance whose `model_id` can't be fed back through `infer_model` errors helpfully.
+async def test_prefect_durability_unregistered_model_instance_errors() -> None:
+    """An unregistered `Model` instance is rejected in the flow, before any task runs.
 
-    `TestModel()` round-trips as `'test:test'`, which `infer_model` can't rebuild; instead of a
-    bare 'Unknown provider' the task points at the `models=` / `ResolveModelId` escape hatches.
+    A `Model` can't be serialized into a task, and rebuilding this one from its `model_id` would
+    build the same model name on the default provider — dropping the tenant's `base_url` and API
+    key, so the request would silently go to `api.openai.com` with the worker's credentials.
+    Registering the instance in `models=`, or passing a string a `ResolveModelId` capability builds
+    inside the task, are the two supported paths.
     """
-    agent = Agent(_durability_fn_model, name='durability_unrebuildable', capabilities=[PrefectDurability()])
+    agent = Agent(_durability_fn_model, name='durability_unregistered_instance', capabilities=[PrefectDurability()])
+    tenant_model = OpenAIChatModel(
+        'gpt-5.6-sol', provider=OpenAIProvider(api_key='tenant-key', base_url='https://tenant.example.com/v1')
+    )
 
     @flow
     async def run_agent() -> None:
-        await agent.run('hello', model=TestModel())
+        await agent.run('hello', model=tenant_model)
 
-    with pytest.raises(UserError, match='could not be rebuilt'):
+    with pytest.raises(UserError) as exc_info:
         await run_agent()
+    assert str(exc_info.value) == snapshot(
+        "The model instance 'openai:gpt-5.6-sol' was not registered with `PrefectDurability`, so it cannot be used inside a flow. A `Model` instance cannot be serialized across the task boundary, and rebuilding it from its `model_id` would build a different model — the same model name on the provider the worker environment implies — so the request would go to another endpoint with other credentials. Register the instance in `models=` on `PrefectDurability` and reference it by key (or pass the registered instance), or pass a model-name string and build the instance from it with a `ResolveModelId` capability."
+    )
 
 
 def _prefect_tenant_resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:

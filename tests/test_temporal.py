@@ -128,7 +128,7 @@ try:
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError
-    from temporalio.testing import WorkflowEnvironment
+    from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
@@ -152,7 +152,8 @@ try:
     )
     from pydantic_ai.durable_exec.temporal._durability import (
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
-        _heartbeating,  # pyright: ignore[reportPrivateUsage]
+        _EventStreamHandlerParams,  # pyright: ignore[reportPrivateUsage]
+        _RequestParams,  # pyright: ignore[reportPrivateUsage]
         _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._dynamic_toolset import temporalize_dynamic_toolset
@@ -165,7 +166,9 @@ try:
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
     from pydantic_ai.durable_exec.temporal._toolset import (
         CallToolParams,
+        GetToolsParams,
         TemporalWrapperToolset,
+        heartbeating,
         resolve_tool_activity_config,
         toolset_temporal_activities,
     )
@@ -6163,15 +6166,16 @@ def test_durability_find_model_id_prefers_registered_wrapper_identity():
 def test_durability_find_model_id_does_not_unwrap_registered_wrappers():
     """A registered wrapper's identity holds at its registered depth.
 
-    Its bare inner model must not inherit the wrapper's alias — the worker would rebuild the
-    wrapper and add behavior the request never had — so it falls back to its own `model_id`.
+    Its bare inner model must not inherit the wrapper's alias — the activity would rebuild the
+    wrapper and add behavior the request never had — so the bare model counts as unregistered.
     """
     default = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='default')]))
     inner = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='inner')]))
     agent = Agent(default, name='test', capabilities=[TemporalDurability(models={'wrapped_alt': WrapperModel(inner)})])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    assert bound._find_model_id(inner) == inner.model_id  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match='was not registered with `TemporalDurability`'):
+        bound._find_model_id(inner)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_durability_temporal_activities():
@@ -6541,11 +6545,9 @@ async def test_durability_alias_default_model(client: Client):
 # --- Outer capability swaps `request_context.model` inside a workflow ---
 
 
-def _swapped_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[TextPart(content='swapped-response')])
-
-
-_swap_target_registered = FunctionModel(_swapped_model_fn)
+# The swapped-in model never runs — the request is rejected before it is dispatched — so this
+# reuses the shared durability model function rather than defining an unreachable one.
+_swap_target_registered = FunctionModel(_durability_model_fn)
 
 
 class _SwapModelCapability(AbstractCapability[Any]):
@@ -6554,13 +6556,13 @@ class _SwapModelCapability(AbstractCapability[Any]):
     async def before_model_request(
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        request_context.model = FunctionModel(_swapped_model_fn)
+        request_context.model = FunctionModel(_durability_model_fn)
         return request_context
 
 
 _swap_model_durability = TemporalDurability(
-    # A *different* instance is registered under the same `model_id`, so the swapped
-    # instance can only reach the activity via the `model_id` string round-trip.
+    # A *different* instance is registered under the same `model_id`: registration is matched by
+    # identity, so the swapped-in instance is still unregistered.
     models={_swap_target_registered.model_id: _swap_target_registered},
     activity_config=BASE_ACTIVITY_CONFIG,
 )
@@ -6576,49 +6578,87 @@ class SwapModelWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await _swap_model_agent.run(prompt)
-        return result.output
+        return result.output  # pragma: no cover
 
 
-async def test_durability_outer_capability_model_swap_round_trips(client: Client):
-    """A model swapped in by an outer capability's `before_model_request` survives the activity boundary.
+async def test_durability_outer_capability_model_swap_rejected(client: Client):
+    """A model swapped in by an outer capability's `before_model_request` is rejected too.
 
     Managed-style capabilities sit outside the durability capability and may replace
-    `request_context.model` with a freshly-built instance the durability registry has
-    never seen. `_find_model_id` must fall back to the instance's `model_id` string
-    (rather than erroring), so the activity can rebuild the equivalent model.
+    `request_context.model` with a freshly-built instance the registry has never seen. Another
+    instance registered under the same `model_id` doesn't make it registered — registration is
+    matched by identity, and rebuilding from a `model_id` is exactly the assumption this rejects.
+    Such a capability should supply its model through `resolve_model_id` (from a string) instead.
     """
     async with Worker(
         client, task_queue=TASK_QUEUE, workflows=[SwapModelWorkflow], plugins=[AgentPlugin(_swap_model_agent)]
     ):
-        output = await client.execute_workflow(
-            SwapModelWorkflow.run,
-            args=['ignored'],
-            id='SwapModelWorkflow',
-            task_queue=TASK_QUEUE,
-        )
-    assert output == 'swapped-response'
+        with workflow_raises(
+            UserError,
+            snapshot(
+                "The model instance 'function:function:_durability_model_fn:' was not registered with `TemporalDurability`, so it cannot be used inside a workflow. A `Model` instance cannot be serialized across the activity boundary, and rebuilding it from its `model_id` would build a different model — the same model name on the provider the worker environment implies — so the request would go to another endpoint with other credentials. Register the instance in `models=` on `TemporalDurability` and reference it by key (or pass the registered instance), or pass a model-name string and build the instance from it with a `ResolveModelId` capability."
+            ),
+        ):
+            await client.execute_workflow(
+                SwapModelWorkflow.run,
+                args=['ignored'],
+                id='SwapModelWorkflow',
+                task_queue=TASK_QUEUE,
+            )
 
 
-def test_durability_find_model_id_falls_back_to_model_id_string():
-    """_find_model_id round-trips runtime-built models via their `model_id` string.
+# --- Unregistered `Model` instances are rejected ---
 
-    Pre-registered models (default and `models=` extras) match by identity. Runtime
-    models — built from a string via the `resolve_model_id` chain — aren't in the
-    registry, so we send their `model_id` string across the activity boundary; the
-    worker rebuilds them via the same chain (or default `infer_model`).
+
+# A per-tenant endpoint and API key: rebuilding this from `'openai:gpt-5.6-sol'` on the worker
+# would quietly send the request to `api.openai.com` with the ambient key instead.
+_tenant_endpoint_model = OpenAIChatModel(
+    'gpt-5.6-sol',
+    provider=OpenAIProvider(api_key='tenant-key', base_url='https://tenant.example.com/v1', http_client=http_client),
+)
+
+_unregistered_instance_agent = Agent(
+    _rt_primary_model,
+    name='durability_unregistered_instance',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class UnregisteredModelInstanceWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _unregistered_instance_agent.run(prompt, model=_tenant_endpoint_model)
+        return result.output  # pragma: no cover
+
+
+async def test_durability_unregistered_model_instance_errors(client: Client):
+    """An unregistered `Model` instance is rejected in the workflow, before any activity runs.
+
+    A `Model` can't be serialized into an activity, and rebuilding this one from its `model_id`
+    would build the same model name on the default provider — dropping the tenant's `base_url` and
+    API key, so the request would silently go to `api.openai.com` with the worker's credentials.
+    Registering the instance in `models=`, or passing a string a `ResolveModelId` capability builds
+    on the worker, are the two supported paths.
     """
-    m1 = FunctionModel(_durability_model_fn, model_name='registered')
-    m_runtime = FunctionModel(_durability_model_fn, model_name='runtime-built')
-
-    agent = Agent(m1, name='model_round_trip_test', capabilities=[TemporalDurability()])
-    bound = TemporalDurability.from_agent(agent)
-    assert bound is not None
-
-    # Registered default model matches by identity → None
-    assert bound._find_model_id(m1) is None  # pyright: ignore[reportPrivateUsage]
-
-    # Unregistered runtime model: round-trip via its model_id string.
-    assert bound._find_model_id(m_runtime) == m_runtime.model_id  # pyright: ignore[reportPrivateUsage]
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UnregisteredModelInstanceWorkflow],
+        plugins=[AgentPlugin(_unregistered_instance_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                "The model instance 'openai:gpt-5.6-sol' was not registered with `TemporalDurability`, so it cannot be used inside a workflow. A `Model` instance cannot be serialized across the activity boundary, and rebuilding it from its `model_id` would build a different model — the same model name on the provider the worker environment implies — so the request would go to another endpoint with other credentials. Register the instance in `models=` on `TemporalDurability` and reference it by key (or pass the registered instance), or pass a model-name string and build the instance from it with a `ResolveModelId` capability."
+            ),
+        ):
+            await client.execute_workflow(
+                UnregisteredModelInstanceWorkflow.run,
+                args=['ignored'],
+                id='UnregisteredModelInstanceWorkflow',
+                task_queue=TASK_QUEUE,
+            )
 
 
 # --- Runtime capability validation ---
@@ -9424,7 +9464,7 @@ async def test_durability_streaming_continuation_resume_from_history(client: Cli
 
 
 # --- Heartbeat supervision ---
-# Unit tests on the private `_heartbeating` helper: a `beat()` crash requires simulating an
+# Unit tests on the internal `heartbeating` helper: a `beat()` crash requires simulating an
 # SDK failure that no workflow-level test can trigger, and the exception-precedence contract
 # (request error wins; beat crash surfaces after a successful request) is exactly the kind of
 # internal invariant a VCR/workflow test would silently miss.
@@ -9436,7 +9476,7 @@ async def test_heartbeating_beats_and_stops(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr('temporalio.activity.info', lambda: SimpleNamespace(heartbeat_timeout=timedelta(seconds=0.02)))
     monkeypatch.setattr('temporalio.activity.heartbeat', lambda: beats.append(None))
 
-    async with _heartbeating():
+    async with heartbeating():
         await asyncio.sleep(0.05)
 
     assert beats  # at least the immediate first beat, then every ~10ms
@@ -9455,7 +9495,7 @@ async def test_heartbeating_beat_crash_surfaces_after_body(monkeypatch: pytest.M
     monkeypatch.setattr('temporalio.activity.heartbeat', broken_heartbeat)
 
     with pytest.raises(RuntimeError, match='heartbeat exploded'):
-        async with _heartbeating():
+        async with heartbeating():
             await asyncio.sleep(0.01)
 
 
@@ -9469,9 +9509,270 @@ async def test_heartbeating_body_error_wins_over_beat_crash(monkeypatch: pytest.
     monkeypatch.setattr('temporalio.activity.heartbeat', broken_heartbeat)
 
     with pytest.raises(ValueError, match='request failed'):
-        async with _heartbeating():
+        async with heartbeating():
             await asyncio.sleep(0.01)
             raise ValueError('request failed')
+
+
+# --- Every registered activity heartbeats ---
+
+
+async def heartbeat_probe_tool() -> str:
+    """A tool that yields to the event loop, giving the heartbeat task a chance to run."""
+    await asyncio.sleep(0.01)
+    return 'probe tool ran'
+
+
+async def heartbeat_probe_agent_tool() -> str:
+    """The same, for the agent's own implicit toolset, which registers its own activity."""
+    await asyncio.sleep(0.01)
+    return 'probe agent tool ran'
+
+
+_heartbeat_function_toolset = FunctionToolset[None](tools=[heartbeat_probe_tool], id='hb_tools')
+_heartbeat_mcp_toolset = MCPToolset(
+    StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+    id='hb_mcp',
+    init_timeout=20,
+    # Without this, the test's own `get_tools()` warms the cache and the `get_tools` activity
+    # returns without ever awaiting the server, leaving no window for a heartbeat to be observed.
+    cache_tools=False,
+)
+
+
+async def _heartbeat_dynamic_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
+    await asyncio.sleep(0.01)
+    return FunctionToolset[None](tools=[heartbeat_probe_tool], id='hb_dynamic_inner')
+
+
+async def _heartbeat_event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        await asyncio.sleep(0.01)
+
+
+async def _heartbeat_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    await asyncio.sleep(0.01)
+    return ModelResponse(parts=[TextPart('probe model response')])
+
+
+async def _heartbeat_stream_model_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    await asyncio.sleep(0.01)
+    yield 'probe model response'
+
+
+class _HeartbeatProbeModel(FunctionModel):
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        await asyncio.sleep(0.01)
+
+
+_heartbeat_agent = Agent(
+    _HeartbeatProbeModel(_heartbeat_model_fn, stream_function=_heartbeat_stream_model_fn),
+    name='heartbeat_probe_agent',
+    deps_type=type(None),
+    tools=[heartbeat_probe_agent_tool],
+    toolsets=[
+        _heartbeat_function_toolset,
+        _heartbeat_mcp_toolset,
+        DynamicToolset(_heartbeat_dynamic_toolset, id='hb_dynamic'),
+    ],
+    capabilities=[TemporalDurability(event_stream_handler=_heartbeat_event_stream_handler)],
+)
+
+
+async def _heartbeats_during_activity(activity_fn: Callable[..., Any], args: Sequence[Any]) -> list[tuple[Any, ...]]:
+    """Run an activity body inside an activity context, recording the heartbeats it emits."""
+    beats: list[tuple[Any, ...]] = []
+    env = ActivityEnvironment()
+    env.info = replace(env.info, heartbeat_timeout=timedelta(seconds=0.02))
+    env.on_heartbeat = lambda *details: beats.append(details)
+    await env.run(activity_fn, *args)
+    return beats
+
+
+async def test_every_registered_activity_heartbeats(allow_model_requests: None):
+    """Every activity Pydantic AI registers beats while it runs, not just the model ones (#6914).
+
+    Heartbeats have no observable effect unless a `heartbeat_timeout` is configured and the
+    activity outlives it, so a workflow-level test can only cover one activity kind at a time,
+    and only slowly (see the test below for the user-visible consequence). Running each
+    registered body in an `ActivityEnvironment` pins the property for all of them at once, and
+    the exhaustiveness assertion means a newly registered activity has to be listed here — and
+    so wrapped in `heartbeating()` — deliberately.
+    """
+    durability = TemporalDurability.from_agent(_heartbeat_agent)
+    assert durability is not None
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='hb-run')
+    serialized_run_context = TemporalRunContext.serialize_run_context(ctx)
+    request_params = _RequestParams(
+        messages=[ModelRequest(parts=[UserPromptPart('hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=serialized_run_context,
+    )
+    get_tools_params = GetToolsParams(serialized_run_context=serialized_run_context)
+
+    async with _heartbeat_mcp_toolset:
+        agent_toolset = durability._toolsets_by_id['<agent>']  # pyright: ignore[reportPrivateUsage]
+        agent_tool_def = (await agent_toolset.get_tools(ctx))['heartbeat_probe_agent_tool'].tool_def
+        function_tool_def = (await _heartbeat_function_toolset.get_tools(ctx))['heartbeat_probe_tool'].tool_def
+        mcp_tool_def = (await _heartbeat_mcp_toolset.get_tools(ctx))['get_none'].tool_def
+
+        prefix = 'agent__heartbeat_probe_agent'
+        args_by_activity_name: dict[str, list[Any]] = {
+            f'{prefix}__toolset__<agent>__call_tool': [
+                CallToolParams(
+                    name='heartbeat_probe_agent_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=agent_tool_def,
+                ),
+                None,
+            ],
+            f'{prefix}__model_request': [request_params, None],
+            f'{prefix}__model_request_stream': [request_params, None],
+            f'{prefix}__model_cancel_suspended_response': [
+                _CancelParams(
+                    response=ModelResponse(parts=[TextPart('suspended')]),
+                    serialized_run_context=serialized_run_context,
+                ),
+                None,
+            ],
+            f'{prefix}__event_stream_handler': [
+                _EventStreamHandlerParams(
+                    event=PartStartEvent(index=0, part=TextPart('probe')),
+                    serialized_run_context=serialized_run_context,
+                ),
+                None,
+            ],
+            f'{prefix}__toolset__hb_tools__call_tool': [
+                CallToolParams(
+                    name='heartbeat_probe_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=function_tool_def,
+                ),
+                None,
+            ],
+            f'{prefix}__mcp_server__hb_mcp__get_tools': [get_tools_params, None],
+            f'{prefix}__mcp_server__hb_mcp__get_instructions': [get_tools_params, None],
+            f'{prefix}__mcp_server__hb_mcp__call_tool': [
+                CallToolParams(
+                    name='get_none',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=mcp_tool_def,
+                ),
+                None,
+            ],
+            f'{prefix}__dynamic_toolset__hb_dynamic__get_tools': [get_tools_params, None],
+            f'{prefix}__dynamic_toolset__hb_dynamic__call_tool': [
+                CallToolParams(
+                    name='heartbeat_probe_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=function_tool_def,
+                ),
+                None,
+            ],
+        }
+
+        activities_by_name: dict[str, Callable[..., Any]] = {}
+        for activity_fn in durability.temporal_activities:
+            activity_name = ActivityDefinition.must_from_callable(activity_fn).name  # pyright: ignore[reportUnknownMemberType]
+            assert activity_name is not None
+            activities_by_name[activity_name] = activity_fn
+        assert activities_by_name.keys() == args_by_activity_name.keys()
+
+        for name, activity_fn in activities_by_name.items():
+            beats = await _heartbeats_during_activity(activity_fn, args_by_activity_name[name])
+            assert beats, f'activity {name!r} ran without heartbeating'
+
+
+def test_tool_activities_get_no_default_heartbeat_timeout():
+    """Only model activities get a default `heartbeat_timeout`; tool activities deliberately don't.
+
+    A `heartbeat_timeout` fails the attempt as soon as the beats stop, and a CPU-bound tool can
+    occupy the event loop and starve the heartbeat task — so defaulting one would kill tools that
+    run indefinitely today. Users who want one set it themselves.
+    """
+    agent = Agent(
+        TestModel(),
+        name='heartbeat_default_agent',
+        deps_type=type(None),
+        toolsets=[FunctionToolset[None](tools=[heartbeat_probe_tool], id='hb_default_tools')],
+        capabilities=[TemporalDurability()],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    assert bound._model_activity_config.get('heartbeat_timeout') == timedelta(seconds=30)  # pyright: ignore[reportPrivateUsage]
+    assert 'heartbeat_timeout' not in bound.activity_config
+
+    toolset_wrapper = bound._toolsets_by_id['hb_default_tools']  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(toolset_wrapper, TemporalFunctionToolset)
+    assert toolset_wrapper.durable_config is not None
+    assert 'heartbeat_timeout' not in toolset_wrapper.durable_config
+
+
+async def slow_heartbeat_tool() -> str:
+    """Outlive the `heartbeat_timeout` the agent below configures for all of its activities."""
+    await asyncio.sleep(2)
+    return 'slow tool finished'
+
+
+def _slow_tool_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(str(part.content))])
+    return ModelResponse(parts=[ToolCallPart('slow_heartbeat_tool', {})])
+
+
+_slow_tool_agent = Agent(
+    FunctionModel(_slow_tool_model_fn),
+    name='slow_tool_agent',
+    deps_type=type(None),
+    toolsets=[FunctionToolset[None](tools=[slow_heartbeat_tool], id='slow_tools')],
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=30),
+                heartbeat_timeout=timedelta(seconds=1),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        )
+    ],
+)
+
+
+@workflow.defn
+class SlowToolHeartbeatWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _slow_tool_agent.run('call the slow tool')).output
+
+
+async def test_tool_outliving_configured_heartbeat_timeout_survives(client: Client):
+    """A tool that runs longer than the `heartbeat_timeout` its user set completes (#6914).
+
+    Setting a `heartbeat_timeout` — on the base config here, but `toolset_activity_config` and
+    per-tool metadata reach the same activity — used to arm a kill switch: the tool activity
+    never beat, so the server failed the attempt the moment the timeout elapsed.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SlowToolHeartbeatWorkflow],
+        plugins=[AgentPlugin(_slow_tool_agent)],
+    ):
+        output = await client.execute_workflow(
+            SlowToolHeartbeatWorkflow.run,
+            id=f'{SlowToolHeartbeatWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == snapshot('slow tool finished')
 
 
 # --- Usage mutated inside an activity ---

@@ -2785,20 +2785,60 @@ async def test_dbos_durability_override_registered_model(dbos: DBOS) -> None:
     assert await run_agent() == 'alt-response'
 
 
-async def test_dbos_durability_unrebuildable_runtime_model_errors(dbos: DBOS) -> None:
-    """An unregistered instance whose `model_id` can't be fed back through `infer_model` errors helpfully.
+async def test_dbos_durability_unregistered_model_instance_errors(dbos: DBOS) -> None:
+    """An unregistered `Model` instance is rejected in the workflow, before any step runs.
 
-    `TestModel()` round-trips as `'test:test'`, which `infer_model` can't rebuild; instead of a
-    bare 'Unknown provider' the step points at the `models=` / `ResolveModelId` escape hatches.
+    A `Model` can't be serialized into a step, and rebuilding this one from its `model_id` would
+    build the same model name on the default provider — dropping the tenant's `base_url` and API
+    key, so the request would silently go to `api.openai.com` with the worker's credentials.
+    Registering the instance in `models=`, or passing a string a `ResolveModelId` capability builds
+    inside the step, are the two supported paths.
     """
-    agent = Agent(_durability_fn_model, name='durability_unrebuildable', capabilities=[DBOSDurability()])
+    agent = Agent(_durability_fn_model, name='durability_unregistered_instance', capabilities=[DBOSDurability()])
+    tenant_model = OpenAIChatModel(
+        'gpt-5.6-sol', provider=OpenAIProvider(api_key='tenant-key', base_url='https://tenant.example.com/v1')
+    )
 
     @DBOS.workflow()
     async def run_agent() -> None:
-        await agent.run('hello', model=TestModel())
+        await agent.run('hello', model=tenant_model)
 
-    with pytest.raises(UserError, match='could not be rebuilt'):
+    with pytest.raises(UserError) as exc_info:
         await run_agent()
+    assert str(exc_info.value) == snapshot(
+        "The model instance 'openai:gpt-5.6-sol' was not registered with `DBOSDurability`, so it cannot be used inside a workflow. A `Model` instance cannot be serialized across the step boundary, and rebuilding it from its `model_id` would build a different model — the same model name on the provider the worker environment implies — so the request would go to another endpoint with other credentials. Register the instance in `models=` on `DBOSDurability` and reference it by key (or pass the registered instance), or pass a model-name string and build the instance from it with a `ResolveModelId` capability."
+    )
+
+
+async def test_dbos_durability_unrebuildable_model_string_errors(dbos: DBOS) -> None:
+    """A model-name string no resolver claims inside the step errors helpfully.
+
+    The alias resolves outside the step (so the run starts), but the resolver declines inside it —
+    as a worker whose configuration no longer knows the alias would — and `infer_model` can't build
+    it. Instead of a bare 'Unknown model' the step points at the escape hatches.
+    """
+
+    def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
+        # The resolved model never runs: the step's re-resolution declines and `infer_model` fails.
+        if model_id == 'stale-alias' and DBOS.step_id is None:
+            return FunctionModel(_dbos_alt_model_fn, model_name='stale-alias')
+        return None
+
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_unrebuildable_string',
+        capabilities=[ResolveModelId(resolver), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
+        await agent.run('hello', model='stale-alias')
+
+    with pytest.raises(UserError) as exc_info:
+        await run_agent()
+    assert str(exc_info.value) == snapshot(
+        "The model 'stale-alias' could not be rebuilt on the DBOS worker: it is not a model name `infer_model` can build, and no `resolve_model_id` capability claimed it. Register the instance in `models=` on `DBOSDurability` and reference it by key (or pass the registered instance), or pass a model-name string and build the instance from it with a `ResolveModelId` capability."
+    )
 
 
 async def test_dbos_durability_string_default_model(dbos: DBOS) -> None:
