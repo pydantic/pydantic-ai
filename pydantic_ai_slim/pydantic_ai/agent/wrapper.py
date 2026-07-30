@@ -81,6 +81,10 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
         return self.wrapped.toolsets
 
+    @property
+    def _registered_toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        return self.wrapped._registered_toolsets
+
     async def __aenter__(self) -> AbstractAgent[AgentDepsT, OutputDataT]:
         return await self.wrapped.__aenter__()
 

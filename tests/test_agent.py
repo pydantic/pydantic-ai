@@ -9394,9 +9394,11 @@ def test_registered_toolsets_ignores_overrides():
         'registered',
     ]
 
-    # An agent with no notion of overriding falls back to `toolsets`, per `AbstractAgent`'s default.
+    # A wrapper reports its wrapped agent's construction-time toolsets, even during an override.
     wrapper = WrapperAgent(agent)
-    assert list(wrapper._registered_toolsets) == list(wrapper.toolsets)  # pyright: ignore[reportPrivateUsage]
+    with agent.override(toolsets=[overriding]):
+        assert list(wrapper.toolsets)[1:] == [overriding]
+        assert list(wrapper._registered_toolsets)[1:] == [registered]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_override_tools():
