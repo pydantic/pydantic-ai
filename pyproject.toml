@@ -106,6 +106,8 @@ members = [
 ]
 
 [tool.uv]
+# `exclude-newer` relative durations need >= 0.9.17, `exclude-newer-package` `false` needs >= 0.9.25
+required-version = ">=0.9.25"
 default-groups = ["dev", "lint", "docs"]
 exclude-newer = "7 days"
 constraint-dependencies = [
