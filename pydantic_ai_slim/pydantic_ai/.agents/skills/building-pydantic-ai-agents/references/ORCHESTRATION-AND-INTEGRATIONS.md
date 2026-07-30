@@ -85,7 +85,9 @@ Temporal entry points:
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
-Only `FunctionToolset`, `MCPToolset` and dynamic toolsets get their I/O checkpointed. A custom `AbstractToolset` runs its `get_tools`/`call_tool` in workflow/flow code — fine when pure, but if it does I/O, make it a `FunctionToolset` subclass or return it from a dynamic toolset or `DynamicCapability`. Caveat on Prefect: it resolves a dynamic toolset's tool *listing* in flow code (Temporal and DBOS journal it), so keep non-deterministic I/O out of `get_tools()` there — tracked in #6910.
+Only `FunctionToolset`, `MCPToolset` and dynamic toolsets get their I/O checkpointed. A custom `AbstractToolset` runs its `get_tools`/`call_tool` in workflow/flow code — fine when pure, but if it does I/O, make it a `FunctionToolset` subclass or return it from a dynamic toolset or `DynamicCapability`, whose tool listing and tool calls are both checkpointed by Temporal, DBOS, and Prefect.
+
+A run-time `model=` inside a workflow must be a model-name string or an instance registered in the durability capability's `models=`. An unregistered `Model` instance raises a `UserError`: it can't be serialized into the activity/step/task, and rebuilding it from its `model_id` would build a different model. To build a specific instance inside the durable unit (e.g. per-user credentials from `deps`), pass a string and use a `ResolveModelId` capability.
 
 ## Handle MCP Tool Errors
 

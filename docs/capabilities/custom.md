@@ -578,6 +578,8 @@ All tool hooks receive a `tool_def` parameter with the [`ToolDefinition`][pydant
 
 To skip validation and provide pre-validated args, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.SkipToolValidation] from `before_tool_validate` or `wrap_tool_validate`.
 
+`after_tool_validate` is a gate on validated arguments, so it also runs when a tool's [`args_validator`](../tools-advanced.md#args-validator) [deferred](../deferred-tools.md) the call: rejecting there (with `ModelRetry` or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]) wins over the deferral, and the args it returns are the ones the deferred call carries.
+
 **Execution hooks** — `args` is always the validated `dict[str, Any]`:
 
 | Hook | Signature | Purpose |

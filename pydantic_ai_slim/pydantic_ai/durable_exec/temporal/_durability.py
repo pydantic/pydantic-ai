@@ -138,6 +138,22 @@ async def _heartbeating() -> AsyncGenerator[None]:
             await task
 
 
+def serialization_user_error(error: PydanticSerializationError) -> UserError:
+    """Explain a serialization failure that happened while scheduling a Temporal activity.
+
+    The failing value isn't identifiable from here — activity arguments are encoded by
+    Temporal's payload converter, which reports the offending type but not the argument it
+    came from — so the message names the values the framework passes rather than claiming
+    it was `deps`.
+    """
+    return UserError(
+        f'A value passed to a Temporal activity failed to be serialized ({error}). '
+        "Temporal requires all values that are passed to activities to be serializable using Pydantic's "
+        '`TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and '
+        '`tool_call_metadata`, and tool `metadata`.'
+    )
+
+
 @dataclass(init=False)
 class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Temporal activities.
@@ -199,13 +215,14 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 `'default'`. A `Model` instance can't be serialized across the
                 activity boundary, so a run-time model (via `agent.run(model=...)`
                 / `agent.override(model=...)`, or swapped in by an outer capability)
-                is sent as its `model_id` string and rebuilt on the worker by
-                registry lookup, then the agent's `resolve_model_id` capability
-                chain / `infer_model`. Register an instance here (and reference it
-                by key or pass the registered instance) whenever its `model_id`
-                alone wouldn't rebuild it faithfully — e.g. a custom provider,
-                client, or settings. Model-name strings never need registering;
-                to customize how they're built (e.g. a custom provider), use the
+                has to be registered here and referenced by key (or passed as the
+                registered instance); an unregistered instance is rejected, because
+                rebuilding it from its `model_id` would build a different model.
+                Model-name strings never need registering: they cross as the string
+                the caller wrote and are built on the worker by the agent's
+                `resolve_model_id` capability chain, then `infer_model`. To build a
+                specific instance on the worker from such a string — a custom
+                provider, or per-user credentials carried on `deps` — use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request activities, and tool events are handled in
@@ -449,18 +466,22 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Disable threads and catch serialization errors inside Temporal workflows."""
+        """Disable threads inside Temporal workflows."""
         if not self.in_durable_context:
             return await handler()
 
         with disable_threads(), set_agent_graph_sleep(workflow.sleep):
-            try:
-                return await handler()
-            except PydanticSerializationError as e:  # pragma: lax no cover
-                raise UserError(
-                    'The `deps` object failed to be serialized. Temporal requires all objects that are passed '
-                    "to activities to be serializable using Pydantic's `TypeAdapter`."
-                ) from e
+            return await handler()
+
+    async def on_run_error(self, ctx: RunContext[AgentDepsT], *, error: BaseException) -> AgentRunResult[Any]:
+        """Explain a serialization failure raised while scheduling an activity.
+
+        This is the run's error-transformation hook: an exception raised from `wrap_run`
+        would only be attached as the original error's `__context__`, never propagated.
+        """
+        if self.in_durable_context and isinstance(error, PydanticSerializationError):
+            raise serialization_user_error(error) from error
+        raise error
 
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]

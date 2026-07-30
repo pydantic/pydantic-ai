@@ -210,6 +210,8 @@ As workflows and activities run in separate processes, any values passed between
 
 To account for these limitations, tool functions and the [event stream handler](#streaming) running inside activities receive a limited version of the agent's [`RunContext`][pydantic_ai.tools.RunContext], and it's your responsibility to make sure that the [dependencies](../dependencies.md) object provided to [`Agent.run()`][pydantic_ai.agent.Agent.run] can be serialized using Pydantic.
 
+`deps` isn't the only value that crosses into an activity: [`model_settings`](../agent.md#model-run-settings), the `RunContext` `metadata` and `tool_call_metadata`, and [tool metadata](#per-tool-activity-config) do too, and all need to be serializable by Pydantic. A value that isn't raises a `UserError` naming the type it couldn't serialize. This includes some values that are otherwise supported: pass [`model_settings['timeout']`][pydantic_ai.settings.ModelSettings.timeout] as a number of seconds rather than an `httpx.Timeout`.
+
 Values that Pydantic AI carries across the boundary as untyped dictionaries — [tool metadata](#per-tool-activity-config), the `RunContext` `metadata` and `tool_call_metadata`, the `metadata` on [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred], and the `metadata`, `provider_details`, and `vendor_metadata` carried on messages and their parts — arrive as their JSON shapes rather than the original Python objects: a `set` or `tuple` becomes a `list`, a dataclass or Pydantic model becomes a `dict`, UTF-8-decodable `bytes` become a `str`, and non-string dictionary keys become strings. Arbitrary binary doesn't make it onto the wire at all — encode it as base64 first. There's no type information on the wire to restore any of this from, so keep these payloads JSON-native, or re-validate them into the type you expect (with a [`TypeAdapter`](https://docs.pydantic.dev/latest/api/type_adapter/)) on the receiving side. Every field with a declared type — the rest of each message, [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters], as well as `usage` — round-trips faithfully.
 
 !!! warning "Persisted payload schemas"
@@ -259,9 +261,12 @@ This has a few operational implications:
 
 ### Model Selection at Runtime
 
-[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. Under Temporal, a model instance can't be serialized for the replay mechanism, so it's sent to the worker as its `model_id` string and rebuilt there. That faithfully reproduces model-name strings and models with standard providers, but not an instance whose exact behavior depends on a custom provider, client, or settings — pre-register those.
+[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. Under Temporal, a model instance can't be serialized for the replay mechanism, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance inside a workflow:
 
-To use such model instances inside a workflow, pre-register them by passing a `models` dict to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. You can then reference them by name or by passing the registered instance directly to `agent.run(model=...)`. The agent's own model, set at construction, is always available as the default; the agent must have a model set when it's created.
+- pre-register it by passing a `models` dict to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], then reference it by name or by passing the registered instance directly to `agent.run(model=...)`;
+- pass a model-name string and build the instance on the worker with a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability — the right choice when the model depends on the run's `deps`, e.g. per-user credentials.
+
+Model-name strings themselves never need registering. The agent's own model, set at construction, is always available as the default; the agent must have a model set when it's created.
 
 Model strings work as expected. To customize how a model string is built — a custom provider, API keys injected from configuration, per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `TemporalDurability`: it gets first crack at every string, both at run setup and when the model is rebuilt inside the activity, where the resolver runs again with the run's actual `deps`. Since the resolver re-runs on the worker, it must be deterministic for a given `(model_id, deps)` and must not perform external I/O — carry credentials on `deps` or close over configuration loaded at startup.
 
@@ -416,7 +421,7 @@ async def main():
     )
 ```
 
-By default, the `LogfirePlugin` will instrument Temporal (including metrics) and Pydantic AI and send all data to Logfire. To customize Logfire configuration and instrumentation, you can pass a `logfire_setup` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`). To disable sending Temporal metrics to Logfire, you can pass `metrics=False` to the `LogfirePlugin` constructor.
+By default, the `LogfirePlugin` will instrument Temporal (including metrics) and Pydantic AI and send all data to Logfire. If your application already called `logfire.configure()` itself, the plugin keeps that configuration instead of replacing it, so your scrubbing options, exporters, sampling, and console settings are left alone. To customize Logfire configuration and instrumentation, you can pass a `setup_logfire` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`). To disable sending Temporal metrics to Logfire, you can pass `metrics=False` to the `LogfirePlugin` constructor.
 
 ## Known Issues
 
