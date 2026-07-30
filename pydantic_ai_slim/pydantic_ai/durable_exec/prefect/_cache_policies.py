@@ -164,7 +164,7 @@ def _strip_cache_excluded_fields(
 def _replace_toolset_tools(
     inputs: dict[str, Any],
 ) -> Any:
-    """Replace `ToolsetTool` objects with their JSON-native `ToolDefinition`.
+    """Replace `ToolsetTool` objects with their JSON-native toolset ID and `ToolDefinition`.
 
     A `ToolsetTool` carries live objects — the toolset that produced it, the function to call, and
     an `args_validator` Prefect's JSON serializer can't handle — which pushes `hash_objects` onto
@@ -173,11 +173,19 @@ def _replace_toolset_tools(
     between the first attempt, where the tool name and the tool definition's name are the same
     string object, and a flow retry, where the model response was replayed from its own cache and
     deserialized into fresh objects. That made tool results never replay, re-running non-idempotent
-    tools on every retry. The `ToolDefinition` is the tool's value identity and hashes over the
-    JSON path, so the key is value-addressed and stable across attempts.
+    tools on every retry.
+
+    The toolset's ID and the `ToolDefinition` together are the tool's value identity, and both hash
+    over the JSON path, so the key is value-addressed and stable across attempts. The ID is what
+    distinguishes two toolsets that expose an identically defined tool: every toolset's tool task is
+    the same function, so `TASK_SOURCE` doesn't tell them apart, and a tool's name is only unique
+    within its own toolset.
     """
     return {
-        key: _cacheable_value(value.tool_def) if _is_toolset_tool(value) else value for key, value in inputs.items()
+        key: {'toolset': value.toolset.id, 'tool_def': _cacheable_value(value.tool_def)}
+        if _is_toolset_tool(value)
+        else value
+        for key, value in inputs.items()
     }
 
 

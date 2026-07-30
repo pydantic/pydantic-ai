@@ -291,7 +291,7 @@ This prevents requests from being retried multiple times at different layers.
 
 Prefect 3.0 provides built-in caching and transactional semantics. Tasks with identical inputs will not re-execute if their results are already cached, making workflows naturally idempotent and resilient to failures.
 
-* **Task inputs**: A model request's messages, settings and parameters; a tool call's name, arguments and definition; and the run state the task's work can depend on: dependencies, [`metadata`][pydantic_ai.tools.RunContext.metadata], [`validation_context`][pydantic_ai.tools.RunContext.validation_context], the prompt, and the message history.
+* **Task inputs**: A model request's messages, settings and parameters; a tool call's name, arguments, definition and [`tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] (so two parallel calls to the same tool with the same arguments each execute); and the run state the task's work can depend on: dependencies, [`metadata`][pydantic_ai.tools.RunContext.metadata], [`validation_context`][pydantic_ai.tools.RunContext.validation_context], the prompt, and the message history.
 
 Per-run identifiers like [`run_id`][pydantic_ai.tools.RunContext.run_id] and [`conversation_id`][pydantic_ai.tools.RunContext.conversation_id], and message timestamps, are deliberately left out, so an otherwise identical run replays recorded results instead of re-executing them.
 

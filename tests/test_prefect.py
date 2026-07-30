@@ -1620,6 +1620,40 @@ async def test_cache_policy_hashes_tools_by_value_not_object_identity():
     assert key_for(shared_name, tools['side_effect']) != key_for(shared_name, tools['other_effect'])
 
 
+async def test_cache_policy_forks_identically_defined_tools_from_different_toolsets():
+    """Two toolsets exposing an identically defined tool must not share a cache entry.
+
+    Tool names are only unique within a toolset, and every toolset's tool task is the same
+    function, so `TASK_SOURCE` doesn't tell two toolsets apart either. The toolset's `id` is what
+    separates them.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def toolset_with_search(toolset_id: str, result: str) -> FunctionToolset[None]:
+        toolset = FunctionToolset[None](id=toolset_id)
+
+        async def search(ctx: RunContext[None], query: str) -> str:
+            return result  # pragma: no cover
+
+        toolset.add_function(search)
+        return toolset
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    alpha = (await toolset_with_search('alpha', 'from alpha').get_tools(ctx))['search']
+    beta = (await toolset_with_search('beta', 'from beta').get_tools(ctx))['search']
+    assert alpha.tool_def == beta.tool_def
+
+    def key_for(tool: ToolsetTool[None]) -> str | None:
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx,
+            inputs={'tool_name': 'search', 'tool_args': {'query': 'x'}, 'ctx': ctx, 'tool': tool},
+            flow_parameters={},
+        )
+
+    assert key_for(alpha) != key_for(beta)
+
+
 def test_cache_policy_keys_the_run_context_tool_call_id_verbatim():
     """The ID of the call being made is keyed verbatim; the ones inside `messages` are normalized.
 
