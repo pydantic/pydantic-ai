@@ -2109,6 +2109,84 @@ async def test_prefect_durability_rejects_per_run_capability_toolset() -> None:
         await run_agent()
 
 
+@pytest.mark.parametrize('kind', ['function', 'mcp', 'dynamic'])
+async def test_prefect_durability_rejects_overridden_executing_toolsets(kind: str) -> None:
+    """`override(toolsets=...)` inside a flow is guarded exactly like `run(toolsets=...)`.
+
+    An overridden toolset arrives after `for_agent` wrapped the agent's toolsets in tasks, so its
+    tools would run straight in flow code, un-checkpointed. The guard used to miss this because it
+    read `agent.toolsets`, which returns the *overridden* list while an override is in scope.
+    """
+    toolset_factories = {
+        'function': lambda: FunctionToolset(id='override_fn'),
+        'mcp': lambda: MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='override_mcp'),
+        'dynamic': lambda: DynamicToolset(lambda _: FunctionToolset(), id='override_dynamic'),
+    }
+    labels = {'function': 'FunctionToolset', 'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
+
+    agent = Agent(TestModel(), name=f'durability_reject_override_{kind}', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        with agent.override(toolsets=[toolset_factories[kind]()]):
+            await agent.run('Hello')
+
+    with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
+        await run_agent()
+
+
+async def test_prefect_durability_allows_overridden_toolsets_outside_flow() -> None:
+    """Outside a flow the capability is transparent, so `override(toolsets=...)` is fine."""
+    agent = Agent(_durability_fn_model, name='durability_override_outside', capabilities=[PrefectDurability()])
+
+    with agent.override(toolsets=[FunctionToolset(id='override_outside')]):
+        result = await agent.run('Hello outside')
+    assert result.output == 'Echo: Hello outside'
+
+
+async def test_prefect_durability_rejects_runtime_toolset_reusing_registered_id() -> None:
+    """A run-time toolset under an already-registered `id` is rejected, not silently substituted.
+
+    `get_wrapper_toolset` swaps registered `id`s for their task wrappers, so without this guard the
+    run would have called the *construction-time* toolset's tools in place of the ones the caller
+    passed. `ExternalToolset` gets past the executing-toolset guard (it needs no durable wrapping),
+    which is what makes the collision reachable.
+    """
+
+    def registered_tool() -> str:
+        return 'registered'  # pragma: no cover
+
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_runtime_id_collision',
+        toolsets=[FunctionToolset([registered_tool], id='shared')],
+        capabilities=[PrefectDurability()],
+    )
+    colliding = ExternalToolset[Any]([ToolDefinition(name='external')], id='shared')
+
+    @flow
+    async def run_with_override() -> None:
+        with agent.override(toolsets=[colliding]):
+            await agent.run('Hello')
+
+    @flow
+    async def run_with_runtime_toolset() -> None:
+        await agent.run('Hello', toolsets=[colliding])
+
+    message = "A toolset added at run time has the same `id` 'shared' as one the agent was constructed with"
+    with pytest.raises(UserError, match=message):
+        await run_with_override()
+    with pytest.raises(UserError, match=message):
+        await run_with_runtime_toolset()
+
+    # Unlike the executing-toolset guard, this one fires outside a flow too: the swap substitutes the
+    # construction-time toolset's wrapper there as well, and outside a flow that wrapper just calls
+    # the wrapped toolset inline — still the wrong toolset's tools.
+    with pytest.raises(UserError, match=message):
+        with agent.override(toolsets=[colliding]):
+            await agent.run('Hello')
+
+
 def test_prefect_durability_rejects_duplicate_toolset_id() -> None:
     """Two distinct toolsets under one `id` are rejected at binding time.
 

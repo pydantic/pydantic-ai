@@ -324,6 +324,8 @@ class MultiModelWorkflow:
 
 Additional toolsets can be passed per run via `agent.run(toolsets=...)`, but only toolsets that don't need durable wrapping are supported: non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools all opt out of activity wrapping with [`metadata={'temporal': False}`](#per-tool-activity-config). Other executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets must be set when constructing the agent so their activities can be registered with the worker before the workflow runs; passing them at runtime raises a `UserError`.
 
+Toolsets swapped in with [`agent.override(toolsets=...)`][pydantic_ai.agent.AbstractAgent.override] inside a workflow are held to the same rule, as they also arrive after the worker registered the agent's activities. A toolset added at runtime also cannot reuse the `id` of one the agent was constructed with, as the `id` is what identifies which registered toolset's activity a tool call is dispatched to.
+
 ## Activity Configuration
 
 Temporal activity configuration, like timeouts and retry policies, can be customized by passing [`temporalio.workflow.ActivityConfig`](https://python.temporal.io/temporalio.workflow._activities.ActivityConfig.html) objects to the [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] constructor:

@@ -310,6 +310,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """
         raise NotImplementedError
 
+    @property
+    def _registered_toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        """The toolsets the agent itself holds, ignoring any contextual override that is in scope.
+
+        [`toolsets`][pydantic_ai.agent.AbstractAgent.toolsets] reflects an active
+        [`override`][pydantic_ai.agent.AbstractAgent.override], so code that needs to know what the
+        agent was actually *built* with — as durable execution does, since it wraps the agent's
+        toolsets once up front — has to read this instead. Agents that don't support overriding can
+        leave the default.
+        """
+        return self.toolsets
+
     async def system_prompt_parts(
         self,
         *,

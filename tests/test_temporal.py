@@ -2886,11 +2886,12 @@ async def test_temporal_agent_run_in_workflow_with_executing_toolsets(allow_mode
         with workflow_raises(
             UserError,
             snapshot(
-                'FunctionToolset cannot be passed to `run(toolsets=...)` at runtime with Temporal, because '
-                'toolsets that execute their own tools or resolve dynamically must be registered for durable '
-                'execution when the agent is constructed. Pass them to the agent constructor instead. '
-                'Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that '
-                "don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                'FunctionToolset cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime '
+                'with Temporal, because toolsets that execute their own tools or resolve dynamically must be '
+                'registered for durable execution when the agent is constructed. Pass them to the agent '
+                'constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. '
+                "Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to "
+                'be allowed at runtime.'
             ),
         ):
             await client.execute_workflow(
@@ -8453,11 +8454,12 @@ async def test_durability_runtime_function_toolset_opt_out(allow_model_requests:
         with workflow_raises(
             UserError,
             snapshot(
-                'FunctionToolset cannot be passed to `run(toolsets=...)` at runtime with Temporal, because '
-                'toolsets that execute their own tools or resolve dynamically must be registered for durable '
-                'execution when the agent is constructed. Pass them to the agent constructor instead. '
-                'Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that '
-                "don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                'FunctionToolset cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime '
+                'with Temporal, because toolsets that execute their own tools or resolve dynamically must be '
+                'registered for durable execution when the agent is constructed. Pass them to the agent '
+                'constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. '
+                "Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to "
+                'be allowed at runtime.'
             ),
         ):
             await client.execute_workflow(
@@ -8491,11 +8493,12 @@ async def test_durability_rejects_runtime_executing_toolsets_in_workflow(allow_m
         with workflow_raises(
             UserError,
             snapshot(
-                'FunctionToolset cannot be passed to `run(toolsets=...)` at runtime with Temporal, because '
-                'toolsets that execute their own tools or resolve dynamically must be registered for durable '
-                'execution when the agent is constructed. Pass them to the agent constructor instead. '
-                'Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that '
-                "don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                'FunctionToolset cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime '
+                'with Temporal, because toolsets that execute their own tools or resolve dynamically must be '
+                'registered for durable execution when the agent is constructed. Pass them to the agent '
+                'constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. '
+                "Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to "
+                'be allowed at runtime.'
             ),
         ):
             await client.execute_workflow(
@@ -8504,6 +8507,119 @@ async def test_durability_rejects_runtime_executing_toolsets_in_workflow(allow_m
                 id=DurabilityRuntimeFunctionToolsetWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+@workflow.defn
+class DurabilityOverriddenFunctionToolsetWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        with simple_durable_agent.override(toolsets=[FunctionToolset(id='overridden')]):
+            result = await simple_durable_agent.run(prompt)
+            return result.output  # pragma: no cover
+
+
+async def test_durability_rejects_overridden_executing_toolsets_in_workflow(allow_model_requests: None, client: Client):
+    """`override(toolsets=...)` inside a workflow is guarded exactly like `run(toolsets=...)`.
+
+    An overridden toolset arrives after the capability registered the agent's toolset activities with
+    the worker, so its tools would run inside the workflow sandbox. The guard used to miss this
+    because it read `agent.toolsets`, which returns the *overridden* list while an override is in
+    scope; this restores the rejection the deprecated `TemporalAgent` performed.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityOverriddenFunctionToolsetWorkflow],
+        plugins=[AgentPlugin(simple_durable_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                'FunctionToolset cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime '
+                'with Temporal, because toolsets that execute their own tools or resolve dynamically must be '
+                'registered for durable execution when the agent is constructed. Pass them to the agent '
+                'constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. '
+                "Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to "
+                'be allowed at runtime.'
+            ),
+        ):
+            await client.execute_workflow(
+                DurabilityOverriddenFunctionToolsetWorkflow.run,
+                args=['What is the capital of Mexico?'],
+                id=DurabilityOverriddenFunctionToolsetWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+def _registered_tool() -> str:
+    return 'registered'  # pragma: no cover
+
+
+_id_collision_agent = Agent(
+    _durability_fn_model,
+    name='durability_id_collision_agent',
+    toolsets=[FunctionToolset([_registered_tool], id='shared')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_colliding_external_toolset = ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='shared')
+
+
+@workflow.defn
+class DurabilityCollidingRuntimeToolsetIdWorkflow:
+    @workflow.run
+    async def run(self, override: bool) -> str:
+        if override:
+            with _id_collision_agent.override(toolsets=[_colliding_external_toolset]):
+                result = await _id_collision_agent.run('Hello')
+        else:
+            result = await _id_collision_agent.run('Hello', toolsets=[_colliding_external_toolset])
+        return result.output  # pragma: no cover
+
+
+@pytest.mark.parametrize('override', [False, True])
+async def test_durability_rejects_runtime_toolset_reusing_registered_id(
+    allow_model_requests: None, client: Client, override: bool
+):
+    """A run-time toolset under an already-registered `id` is rejected, not silently substituted.
+
+    `get_wrapper_toolset` swaps registered `id`s for their activity wrappers, so without this guard
+    the run would have called the *construction-time* toolset's tools in place of the ones the caller
+    passed. `ExternalToolset` gets past the executing-toolset guard (it needs no durable wrapping),
+    which is what makes the collision reachable.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityCollidingRuntimeToolsetIdWorkflow],
+        plugins=[AgentPlugin(_id_collision_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                "A toolset added at run time has the same `id` 'shared' as one the agent was constructed with. "
+                "Toolset `id`s must be unique: the `id` identifies which registered toolset's activity a tool "
+                'call is dispatched to inside the workflow, so this run would have called the construction-time '
+                "toolset's tools instead. Give the toolset a different `id`."
+            ),
+        ):
+            await client.execute_workflow(
+                DurabilityCollidingRuntimeToolsetIdWorkflow.run,
+                args=[override],
+                id=f'{DurabilityCollidingRuntimeToolsetIdWorkflow.__name__}-{override}',
+                task_queue=TASK_QUEUE,
+            )
+
+
+async def test_durability_allows_overridden_toolsets_outside_workflow(allow_model_requests: None):
+    """Outside a workflow the capability is transparent, so `override(toolsets=...)` is fine."""
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_override_outside_workflow',
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    with agent.override(toolsets=[FunctionToolset(id='override_outside')]):
+        result = await agent.run('Hello outside')
+    assert result.output == 'Echo: Hello outside'
 
 
 async def test_durability_allows_runtime_toolsets_outside_workflow(allow_model_requests: None):

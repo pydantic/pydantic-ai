@@ -2896,14 +2896,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         return self._build_toolset_list()
 
+    @property
+    def _registered_toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        return self._build_toolset_list(ignore_overrides=True)
+
     def _build_toolset_list(
         self,
         cap_toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
+        *,
+        ignore_overrides: bool = False,
     ) -> list[AbstractToolset[AgentDepsT]]:
-        """Build the list of toolsets, optionally with per-run capability toolsets."""
+        """Build the list of toolsets, optionally with per-run capability toolsets.
+
+        With `ignore_overrides`, active `override(tools=...)`/`override(toolsets=...)` values are
+        skipped so the result is what the agent itself holds. See
+        [`_registered_toolsets`][pydantic_ai.agent.AbstractAgent._registered_toolsets].
+        """
         toolsets: list[AbstractToolset[AgentDepsT]] = []
 
-        if some_tools := self._override_tools.get():
+        if not ignore_overrides and (some_tools := self._override_tools.get()):
             # `max_retries=None` for the same reason as the agent's own function toolset: the
             # tool-retry default rides `ToolManager.default_max_retries` rather than being baked here.
             function_toolset = _AgentFunctionToolset(
@@ -2916,7 +2927,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             function_toolset = self._function_toolset
         toolsets.append(function_toolset)
 
-        if some_user_toolsets := self._override_toolsets.get():
+        if not ignore_overrides and (some_user_toolsets := self._override_toolsets.get()):
             toolsets.extend(some_user_toolsets.value)
         else:
             toolsets.extend(self._user_toolsets)

@@ -85,6 +85,8 @@ Temporal entry points:
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
+Pass every executing toolset to the agent constructor. Toolsets that arrive later — via `run(toolsets=...)`, `override(toolsets=...)`, or a per-run capability — are never wrapped for durable execution, so inside a workflow or flow they raise a `UserError` (DBOS still accepts a `FunctionToolset`, whose tools it runs inline either way). A toolset added at run time also cannot reuse a construction-time toolset's `id`.
+
 ## Handle MCP Tool Errors
 
 Set `MCPToolset(tool_error_behavior=...)` according to the server error semantics:

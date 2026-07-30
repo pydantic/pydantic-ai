@@ -9361,6 +9361,32 @@ def test_override_toolsets():
     assert result.output == snapshot('{"baz":"Hello from baz"}')
 
 
+def test_registered_toolsets_ignores_overrides():
+    """`_registered_toolsets` reports what the agent itself holds, not what an override swapped in.
+
+    Durable execution reads it to tell construction-time toolsets — wrapped in activities/steps/tasks
+    when the capability bound — from ones that arrive per-run and were never wrapped. `toolsets`
+    can't serve that purpose because it returns the *overridden* list while an override is in scope.
+    Not reachable through the public API: the distinction only shows up inside a workflow or flow,
+    where `test_temporal.py`/`test_dbos.py`/`test_prefect.py` cover it end to end.
+    """
+    registered = FunctionToolset(id='registered')
+    agent = Agent('test', toolsets=[registered])
+    overriding = FunctionToolset(id='overriding')
+
+    with agent.override(toolsets=[overriding], tools=[lambda: 'hi']):
+        # The agent's own function toolset leads both lists; only the user toolsets differ.
+        assert list(agent.toolsets)[1:] == [overriding]
+        assert list(agent._registered_toolsets)[1:] == [registered]  # pyright: ignore[reportPrivateUsage]
+        assert agent.toolsets[0] is not agent._registered_toolsets[0]  # pyright: ignore[reportPrivateUsage]
+
+    assert list(agent._registered_toolsets) == list(agent.toolsets)  # pyright: ignore[reportPrivateUsage]
+
+    # An agent with no notion of overriding falls back to `toolsets`, per `AbstractAgent`'s default.
+    wrapper = WrapperAgent(agent)
+    assert list(wrapper._registered_toolsets) == list(wrapper.toolsets)  # pyright: ignore[reportPrivateUsage]
+
+
 def test_override_tools():
     def foo() -> str:
         return 'Hello from foo'

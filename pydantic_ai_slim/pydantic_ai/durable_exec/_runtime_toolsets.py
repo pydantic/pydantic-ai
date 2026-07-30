@@ -2,10 +2,10 @@
 
 Durable execution engines (DBOS, Prefect, Temporal) durably wrap the *executing* toolsets an agent is
 constructed with — function tools become steps/tasks/activities and MCP servers get their I/O
-checkpointed — so their side effects are recorded and replayed deterministically. Toolsets passed
-per-run via `run(toolsets=...)` arrive after that wrapping has happened (and, for Temporal, after
-activities have been registered with the worker), so an *executing* runtime toolset would run
-un-checkpointed inside the workflow.
+checkpointed — so their side effects are recorded and replayed deterministically. A toolset that arrives
+after the capability was bound — via `run(toolsets=...)`, via `override(toolsets=...)`, or from a per-run
+capability — missed that wrapping (and, for Temporal, the registration of activities with the worker),
+so an *executing* runtime toolset would run un-checkpointed inside the workflow.
 
 We therefore reject executing runtime toolsets, while still allowing non-executing ones like
 `ExternalToolset` whose tools are resolved outside the agent run and so need no durable wrapping.
@@ -100,8 +100,9 @@ def reject_unsupported_runtime_toolsets(
             else ''
         )
         raise UserError(
-            f'{labels} cannot be passed to `run(toolsets=...)` at runtime with {engine}, because toolsets '
-            'that execute their own tools or resolve dynamically must be registered for durable execution '
-            'when the agent is constructed. Pass them to the agent constructor instead. Non-executing '
-            f'toolsets like `ExternalToolset` can be passed at runtime.{opt_out}'
+            f'{labels} cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime with '
+            f'{engine}, because toolsets that execute their own tools or resolve dynamically must be '
+            'registered for durable execution when the agent is constructed. Pass them to the agent '
+            'constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at '
+            f'runtime.{opt_out}'
         )

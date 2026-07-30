@@ -125,7 +125,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         construction_leaves: set[int] = set()
         # `for_agent` always binds before a run.
         if self._agent is not None:  # pragma: no branch
-            for agent_toolset in self._agent.toolsets:
+            # `_registered_toolsets`, not `toolsets`: the latter returns the *overridden* list while
+            # an `override(toolsets=...)` is in scope, so the overridden toolsets would land in the
+            # known-good set and this guard would wave through the very thing it exists to catch —
+            # toolsets that arrive after binding and therefore were never wrapped.
+            for agent_toolset in self._agent._registered_toolsets:  # pyright: ignore[reportPrivateUsage]
                 agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
 
         runtime_leaves: list[AbstractToolset[AgentDepsT]] = []
@@ -248,9 +252,22 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             ts_id = ts.id
-            if ts_id is not None and ts_id in self._toolsets_by_id:
-                return self._toolsets_by_id[ts_id]
-            return ts
+            if ts_id is None or (registered := self._toolsets_by_id.get(ts_id)) is None:
+                return ts
+            if registered.wrapped is not ts:
+                # A toolset that arrived after binding (via `run(toolsets=...)`,
+                # `override(toolsets=...)`, or a per-run capability) under an `id` that is already
+                # registered would be replaced here by the wrapper around the *construction-time*
+                # toolset, silently running that toolset's tools instead of its own. The
+                # construction-time counterpart of this is caught in `_wrap_and_register_leaf`.
+                raise UserError(
+                    f'A toolset added at run time has the same `id` {ts_id!r} as one the agent was '
+                    f'constructed with. Toolset `id`s must be unique: the `id` identifies which registered '
+                    f"toolset's {self._durable_unit_noun} a tool call is dispatched to inside the "
+                    f'{self._durable_container_noun}, so this run would have called the construction-time '
+                    "toolset's tools instead. Give the toolset a different `id`."
+                )
+            return registered
 
         return toolset.visit_and_replace(swap)
 
