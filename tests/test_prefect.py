@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel, Field
+from pydantic.errors import PydanticUserError
 
 from pydantic_ai import (
     Agent,
@@ -58,6 +59,7 @@ from pydantic_ai.exceptions import (
     CallDeferred,
     ModelRetry,
     ToolFailed,
+    UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
@@ -2800,20 +2802,29 @@ async def test_prefect_durability_override_registered_model() -> None:
     assert await run_agent() == 'alt-response'
 
 
-async def test_prefect_durability_unrebuildable_runtime_model_errors() -> None:
-    """An unregistered instance whose `model_id` can't be fed back through `infer_model` errors helpfully.
+async def test_prefect_durability_unregistered_model_instance_errors() -> None:
+    """An unregistered `Model` instance is rejected in the flow, before any task runs.
 
-    `TestModel()` round-trips as `'test:test'`, which `infer_model` can't rebuild; instead of a
-    bare 'Unknown provider' the task points at the `models=` / `ResolveModelId` escape hatches.
+    A `Model` can't be serialized into a task, and rebuilding this one from its `model_id` would
+    build the same model name on the default provider — dropping the tenant's `base_url` and API
+    key, so the request would silently go to `api.openai.com` with the worker's credentials.
+    Registering the instance in `models=`, or passing a string a `ResolveModelId` capability builds
+    inside the task, are the two supported paths.
     """
-    agent = Agent(_durability_fn_model, name='durability_unrebuildable', capabilities=[PrefectDurability()])
+    agent = Agent(_durability_fn_model, name='durability_unregistered_instance', capabilities=[PrefectDurability()])
+    tenant_model = OpenAIChatModel(
+        'gpt-5.6-sol', provider=OpenAIProvider(api_key='tenant-key', base_url='https://tenant.example.com/v1')
+    )
 
     @flow
     async def run_agent() -> None:
-        await agent.run('hello', model=TestModel())
+        await agent.run('hello', model=tenant_model)
 
-    with pytest.raises(UserError, match='could not be rebuilt'):
+    with pytest.raises(UserError) as exc_info:
         await run_agent()
+    assert str(exc_info.value) == snapshot(
+        "The model instance 'openai:gpt-5.6-sol' was not registered with `PrefectDurability`, so it cannot be used inside a flow. A `Model` instance cannot be serialized across the task boundary, and rebuilding it from its `model_id` would build a different model — the same model name on the provider the worker environment implies — so the request would go to another endpoint with other credentials. Register the instance in `models=` on `PrefectDurability` and reference it by key (or pass the registered instance), or pass a model-name string and build the instance from it with a `ResolveModelId` capability."
+    )
 
 
 def _prefect_tenant_resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
@@ -3195,6 +3206,177 @@ async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest
     assert len(outside_context.pending_messages or []) == 1
 
 
+async def test_prefect_mcp_tool_metadata_configures_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`metadata={'prefect': ...}` on an MCP tool reaches the task, as the Prefect docs promise.
+
+    The default `retries` is 0, so the retry only happens if the per-tool config is honored.
+    """
+    calls = 0
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='config_mcp')
+
+    async def flaky_call_tool(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError('transient')
+        return 'done'
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', flaky_call_tool)
+    durable = prefectify_mcp_toolset(mcp_toolset, task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='flaky', metadata={'prefect': TaskConfig(retries=1, retry_delay_seconds=0.0)}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @flow
+    async def run_tool() -> Any:
+        return await durable.call_tool('flaky', {}, ctx, tool)
+
+    assert await run_tool() == 'done'
+    assert calls == 2
+
+
+async def test_prefect_mcp_tool_metadata_false_runs_inline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`metadata={'prefect': False}` opts an MCP tool out of task wrapping.
+
+    Unlike Temporal, where MCP tools can't leave the activity because workflow code can't do I/O,
+    a Prefect flow can call the server itself, so the opt-out runs the call inline in flow code.
+    """
+    ran_in_task: list[bool] = []
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='opt_out_mcp')
+
+    async def recording_call_tool(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        ran_in_task.append(TaskRunContext.get() is not None)
+        return 'done'
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', recording_call_tool)
+    durable = prefectify_mcp_toolset(mcp_toolset, task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='inline', metadata={'prefect': False}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @flow
+    async def run_tool() -> Any:
+        return await durable.call_tool('inline', {}, ctx, tool)
+
+    assert await run_tool() == 'done'
+    assert ran_in_task == [False]
+
+
+async def test_prefect_model_request_task_rejects_enqueue() -> None:
+    """The non-streaming model-request task guards enqueue like its streaming sibling.
+
+    `Model.request` takes no run context, so code inside the task (a custom model, a
+    `models=` wrapper, a `resolve_model_id` capability rebuilding it) reaches the run
+    through `get_current_run_context()`. The task's cached result is replayed without
+    re-running it, so an enqueue there would be dropped.
+    """
+    enqueue_errors: list[str] = []
+    enqueued: list[str | None] = []
+
+    class AmbientEnqueueModel(TestModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            ambient = get_current_run_context()
+            assert ambient is not None
+            # Only on the first request of a run: a successful enqueue triggers another request,
+            # and enqueueing from each of those would never terminate.
+            if not (enqueue_errors or enqueued):
+                try:
+                    enqueued.append(ambient.enqueue('later'))
+                except UserError as e:
+                    enqueue_errors.append(str(e))
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    agent = Agent(AmbientEnqueueModel(), name='prefect_model_request_enqueue', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('go')
+
+    await run_agent()
+    assert enqueued == []
+    assert enqueue_errors == snapshot(
+        [
+            "`ctx.enqueue()` is not supported inside a durable task: the durable runtime replays the task's recorded result without re-running your code, so the enqueued messages would be dropped. Enqueue messages from flow-level code instead."
+        ]
+    )
+
+    # Outside a flow the model runs inline and enqueueing keeps working.
+    enqueue_errors.clear()
+    result = await agent.run('go')
+    assert enqueue_errors == []
+    assert len(enqueued) == 1
+    assert result.output == snapshot('success (no tool calls)')
+
+
+async def test_prefect_cancel_suspended_response_task_rejects_enqueue() -> None:
+    """The suspended-response cancellation task guards enqueue too.
+
+    The teardown is a provider call inside its own task, so the same replay argument applies.
+    """
+    enqueue_errors: list[str] = []
+
+    class AmbientEnqueueContinuationModel(ScriptedContinuationModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            ambient = get_current_run_context()
+            assert ambient is not None
+            try:
+                ambient.enqueue('later')
+            except UserError as e:
+                enqueue_errors.append(str(e))
+            await super().cancel_suspended_response(response)
+
+    model = AmbientEnqueueContinuationModel(
+        responses=[
+            scripted_response(
+                texts=['still going '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            scripted_response(
+                texts=['keeps going '],
+                state='suspended',
+                provider_response_id='cont2',
+                input_tokens=100,
+                output_tokens=50,
+            ),
+        ]
+    )
+    agent = Agent(model, name='prefect_cancel_enqueue', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('go', usage_limits=UsageLimits(total_tokens_limit=20))
+
+    with pytest.raises(UsageLimitExceeded, match='total_tokens_limit'):
+        await run_agent()
+
+    assert [cancelled.provider_response_id for cancelled in model.cancelled] == ['cont2']
+    assert enqueue_errors == snapshot(
+        [
+            "`ctx.enqueue()` is not supported inside a durable task: the durable runtime replays the task's recorded result without re-running your code, so the enqueued messages would be dropped. Enqueue messages from flow-level code instead."
+        ]
+    )
+
+
 async def test_prefect_tool_model_retry_is_not_retried_by_task_engine() -> None:
     calls = 0
 
@@ -3267,7 +3449,10 @@ async def test_prefect_with_non_retryable_errors_condition() -> None:
         return condition
 
     condition = condition_of(TaskConfig())
+    # The same three types Temporal marks non-retryable on every activity config.
     assert await condition(None, None, _State(UserError('bad config'))) is False
+    assert await condition(None, None, _State(PydanticUserError('bad schema', code=None))) is False
+    assert await condition(None, None, _State(UnexpectedModelBehavior('bad response'))) is False
     assert await condition(None, None, _State(RuntimeError('boom'))) is True
 
     def deny(task: Any, task_run: Any, state: Any) -> bool:

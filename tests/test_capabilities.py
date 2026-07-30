@@ -82,6 +82,7 @@ from pydantic_ai.messages import (
     BinaryImage,
     EnqueuedMessagesEvent,
     FilePart,
+    FunctionToolCallEvent,
     ImageUrl,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
@@ -10945,8 +10946,9 @@ class TestToolValidateErrorHooks:
     async def test_args_validator_deferral_is_not_a_validate_error(self):
         """A deferral raised by an `args_validator` passes through the validate hooks as control flow.
 
-        Like an execute-stage deferral, it's not an error: `on_tool_validate_error` doesn't fire, the
-        hooks that run after successful validation don't either, and the tool is never executed.
+        Like an execute-stage deferral, it's not an error, so `on_tool_validate_error` doesn't fire
+        and the tool is never executed. `after_tool_validate` still runs: it guards validated
+        arguments, and a deferred call is queued with exactly those.
         """
         cap = LoggingCapability()
 
@@ -10962,8 +10964,414 @@ class TestToolValidateErrorHooks:
         result = await agent.run('call the tool')
         assert isinstance(result.output, DeferredToolRequests)
         assert [entry for entry in cap.log if 'tool_validate' in entry or 'tool_execute' in entry] == snapshot(
-            ['before_tool_validate:my_tool', 'wrap_tool_validate:my_tool:before']
+            ['before_tool_validate:my_tool', 'wrap_tool_validate:my_tool:before', 'after_tool_validate:my_tool']
         )
+
+
+# --- `after_tool_validate` as a policy gate on deferred calls ---
+
+
+@dataclass
+class ArgsGateCap(AbstractCapability[Any]):
+    """An `after_tool_validate` policy gate: records the args it sees, and can reject or rewrite them."""
+
+    reject_first: bool = False
+    rewrite: dict[str, Any] | None = None
+    seen: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+
+    async def after_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.seen.append(dict(args))
+        if self.reject_first and len(self.seen) == 1:
+            raise ModelRetry('policy says no')
+        return self.rewrite if self.rewrite is not None else args
+
+
+class TestAfterToolValidateOnDeferral:
+    """`after_tool_validate` guards validated arguments, so a deferral must not bypass it.
+
+    Before this was fixed, an `args_validator` deferral escaped `wrap_tool_validate` and skipped the
+    hook entirely, so a deployment using it as an authorization gate had a privileged call queued for
+    approval without ever passing the gate.
+    """
+
+    async def test_runs_when_args_validator_defers(self):
+        """The gate sees the validated args, and the call is still deferred once it passes."""
+        cap = ArgsGateCap()
+        agent = Agent(TestModel(), output_type=[str, DeferredToolRequests], capabilities=[cap])
+
+        def my_validator(ctx: RunContext[Any], x: int) -> None:
+            raise ApprovalRequired(metadata={'from': 'args_validator'})
+
+        # `retries=0` pins that the deferral still doesn't consume the retry budget.
+        @agent.tool(args_validator=my_validator, retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:  # pragma: no cover
+            return x
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[Any]] = []
+        async with agent.run_stream_events('call the tool') as stream:
+            async for event in stream:
+                events.append(event)
+
+        result = events[-1]
+        assert isinstance(result, AgentRunResultEvent)
+        assert result.result.output == snapshot(
+            DeferredToolRequests(
+                approvals=[
+                    ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
+                ],
+                metadata={'pyd_ai_tool_call_id__my_tool': {'from': 'args_validator'}},
+            )
+        )
+        assert cap.seen == snapshot([{'x': 0}])
+        assert [e.args_valid for e in events if isinstance(e, FunctionToolCallEvent)] == [True]
+
+    async def test_rejection_wins_over_the_deferral(self):
+        """A gate that rejects is honored: the model gets the retry, not a queued approval request."""
+        cap = ArgsGateCap(reject_first=True)
+        agent = Agent(TestModel(), output_type=[str, DeferredToolRequests], capabilities=[cap])
+
+        def my_validator(ctx: RunContext[Any], x: int) -> None:
+            raise ApprovalRequired()
+
+        @agent.tool(args_validator=my_validator, retries=1)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:  # pragma: no cover
+            return x
+
+        result = await agent.run('call the tool')
+        retries = [
+            part.content
+            for msg in result.all_messages()
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+            if isinstance(part, RetryPromptPart)
+        ]
+        assert retries == snapshot(['policy says no'])
+        # The second attempt passes the gate, so that one defers.
+        assert isinstance(result.output, DeferredToolRequests)
+        assert cap.seen == snapshot([{'x': 0}, {'x': 0}])
+
+    async def test_still_runs_after_a_recovered_validation_failure(self):
+        """Regression pin: the failure path already ran the gate, via `on_tool_validate_error`."""
+
+        @dataclass
+        class RecoverCap(AbstractCapability[Any]):
+            async def on_tool_validate_error(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+            ) -> dict[str, Any]:
+                return {'name': 'recovered'}
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            return ModelResponse(parts=[ToolCallPart(tool_name='greet', args='{"wrong": 1}', tool_call_id='call-1')])
+
+        gate = ArgsGateCap()
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[RecoverCap(), gate])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        result = await agent.run('greet someone')
+        assert result.output == snapshot('got: hello recovered')
+        assert gate.seen == snapshot([{'name': 'recovered'}])
+
+    async def test_deferral_carries_the_hooks_args(self):
+        """A deferred call carries `after_tool_validate`'s output — what a non-deferred call would use.
+
+        `ValidatedToolCall.validated_args` has no public observable on the deferral path (the request
+        holds the model's original `ToolCallPart`, and resuming re-validates from it), so the
+        contract is pinned directly on the tool manager.
+        """
+        toolset = FunctionToolset[None]()
+
+        def my_validator(ctx: RunContext[None], x: int) -> None:
+            raise ApprovalRequired()
+
+        @toolset.tool(args_validator=my_validator)
+        def my_tool(ctx: RunContext[None], x: int) -> int:  # pragma: no cover
+            return x
+
+        cap = ArgsGateCap(rewrite={'x': 99})
+        manager = await ToolManager[None](toolset=toolset, root_capability=cap).for_run_step(_build_run_context())
+
+        validated = await manager.validate_tool_call(ToolCallPart('my_tool', {'x': 0}, tool_call_id='call-1'))
+        assert validated.args_valid is True
+        assert isinstance(validated.deferral, ApprovalRequired)
+        assert validated.validated_args == snapshot({'x': 99})
+        assert cap.seen == snapshot([{'x': 0}])
+
+
+# --- Deferrals raised from tool hooks ---
+
+
+@dataclass
+class DeferringHookCap(AbstractCapability[Any]):
+    """Raises a deferral from the single hook position named by `where` (none, if `where` is empty)."""
+
+    where: str
+    exc_type: type[ApprovalRequired] | type[CallDeferred] = ApprovalRequired
+
+    def _maybe(self, position: str) -> None:
+        if self.where == position:
+            raise self.exc_type(metadata={'from': position})
+
+    async def before_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+    ) -> Any:
+        self._maybe('before_tool_validate')
+        return args
+
+    async def wrap_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+    ) -> Any:
+        self._maybe('wrap_tool_validate_before')
+        result = await handler(args)
+        self._maybe('wrap_tool_validate_after')
+        return result
+
+    async def after_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+    ) -> Any:
+        self._maybe('after_tool_validate')
+        return args
+
+    async def before_tool_execute(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+    ) -> Any:
+        self._maybe('before_tool_execute')
+        return args
+
+    async def wrap_tool_execute(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+    ) -> Any:
+        self._maybe('wrap_tool_execute_before')
+        result = await handler(args)
+        self._maybe('wrap_tool_execute_after')
+        return result
+
+    async def after_tool_execute(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, result: Any
+    ) -> Any:
+        self._maybe('after_tool_execute')
+        return result
+
+
+class TestToolHookDeferrals:
+    """A tool call may only be deferred once its arguments are known to be valid.
+
+    That admits the tool's `args_validator` (covered by `tests/test_tools.py`), the validation hooks
+    that run after validation, and every execution hook; the validation hooks that run before it get
+    a `UserError` instead of the bare exception aborting the run.
+    """
+
+    @pytest.mark.parametrize('exc_type', [ApprovalRequired, CallDeferred])
+    @pytest.mark.parametrize('where', ['after_tool_validate', 'wrap_tool_validate_after'])
+    async def test_validate_hook_defers_once_args_are_valid(
+        self, where: str, exc_type: type[ApprovalRequired] | type[CallDeferred]
+    ):
+        """Hooks holding validated args defer the call, exactly like an `args_validator` does."""
+        executed: list[int] = []
+
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringHookCap(where=where, exc_type=exc_type)],
+        )
+
+        # `retries=0` pins that deferring doesn't consume the retry budget: charging it would raise
+        # `UnexpectedModelBehavior` here rather than deferring.
+        @agent.tool(retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:  # pragma: no cover
+            executed.append(x)
+            return x
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[Any]] = []
+        async with agent.run_stream_events('call the tool') as stream:
+            async for event in stream:
+                events.append(event)
+
+        result = events[-1]
+        assert isinstance(result, AgentRunResultEvent)
+        requests = result.result.output
+        assert isinstance(requests, DeferredToolRequests)
+        deferred = requests.approvals if exc_type is ApprovalRequired else requests.calls
+        assert [call.tool_name for call in deferred] == ['my_tool']
+        assert requests.metadata == {deferred[0].tool_call_id: {'from': where}}
+        assert [e.args_valid for e in events if isinstance(e, FunctionToolCallEvent)] == [True]
+        assert executed == []
+
+    @pytest.mark.parametrize('exc_type', [ApprovalRequired, CallDeferred])
+    @pytest.mark.parametrize('where', ['before_tool_validate', 'wrap_tool_validate_before'])
+    async def test_validate_hook_cannot_defer_before_args_are_valid(
+        self, where: str, exc_type: type[ApprovalRequired] | type[CallDeferred]
+    ):
+        """Deferring before validation has run is a usage error, not a bare exception aborting the run."""
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringHookCap(where=where, exc_type=exc_type)],
+        )
+
+        @agent.tool
+        def my_tool(ctx: RunContext[Any], x: int) -> int:  # pragma: no cover
+            return x
+
+        # The full wording is pinned once by `test_on_tool_validate_error_cannot_defer`; here we pin
+        # that each rejected position is named, so a user can find the hook that raised.
+        hook_name = 'wrap_tool_validate' if where.startswith('wrap') else where
+        with pytest.raises(UserError, match=re.escape(f'`{hook_name}` raised `{exc_type.__name__}`')):
+            await agent.run('call the tool')
+
+    async def test_on_tool_validate_error_cannot_defer(self):
+        """The error hook only runs when validation failed, so it has no valid arguments to defer."""
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(tool_name='greet', args='{"wrong": 1}', tool_call_id='call-1')])
+
+        @dataclass
+        class DeferringValidateErrorCap(AbstractCapability[Any]):
+            async def on_tool_validate_error(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+            ) -> Any:
+                raise ApprovalRequired()
+
+        agent = Agent(
+            FunctionModel(bad_args_model),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringValidateErrorCap()],
+        )
+
+        @agent.tool_plain
+        def greet(name: str) -> str:  # pragma: no cover
+            return f'hello {name}'
+
+        with pytest.raises(UserError) as exc_info:
+            await agent.run('greet someone')
+        assert str(exc_info.value) == snapshot(
+            "`on_tool_validate_error` raised `ApprovalRequired`, but a tool call can only be deferred once its arguments have been validated. Raise it from `after_tool_validate`, from the tool's `args_validator`, or from `before_tool_execute` instead."
+        )
+
+    async def test_hook_deferral_replaces_an_args_validator_deferral(self):
+        """When both defer, the hook wins: it runs later and is the policy layer.
+
+        The `args_validator` asks for approval; `after_tool_validate` — which runs even for an
+        already-deferred call — defers for external execution instead, and that's what the run
+        surfaces, with the hook's metadata.
+        """
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringHookCap(where='after_tool_validate', exc_type=CallDeferred)],
+        )
+
+        def my_validator(ctx: RunContext[Any], x: int) -> None:
+            raise ApprovalRequired(metadata={'from': 'args_validator'})
+
+        @agent.tool(args_validator=my_validator, retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:  # pragma: no cover
+            return x
+
+        result = await agent.run('call the tool')
+        assert result.output == snapshot(
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
+                metadata={'pyd_ai_tool_call_id__my_tool': {'from': 'after_tool_validate'}},
+            )
+        )
+
+    @pytest.mark.parametrize('exc_type', [ApprovalRequired, CallDeferred])
+    @pytest.mark.parametrize(
+        'where',
+        ['before_tool_execute', 'wrap_tool_execute_before', 'wrap_tool_execute_after', 'after_tool_execute'],
+    )
+    async def test_execute_hook_defers(self, where: str, exc_type: type[ApprovalRequired] | type[CallDeferred]):
+        """Every execution hook can defer: by then the arguments are validated.
+
+        The two positions that run after the tool body defer a call whose side effects already
+        happened and whose result is discarded — documented, not fixed here.
+        """
+        executed: list[int] = []
+
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringHookCap(where=where, exc_type=exc_type)],
+        )
+
+        @agent.tool(retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:
+            executed.append(x)
+            return x
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[Any]] = []
+        async with agent.run_stream_events('call the tool') as stream:
+            async for event in stream:
+                events.append(event)
+
+        result = events[-1]
+        assert isinstance(result, AgentRunResultEvent)
+        requests = result.result.output
+        assert isinstance(requests, DeferredToolRequests)
+        deferred = requests.approvals if exc_type is ApprovalRequired else requests.calls
+        assert [call.tool_name for call in deferred] == ['my_tool']
+        assert requests.metadata == {deferred[0].tool_call_id: {'from': where}}
+        assert [e.args_valid for e in events if isinstance(e, FunctionToolCallEvent)] == [True]
+        assert executed == ([0] if where.endswith('_after') or where == 'after_tool_execute' else [])
+
+    @pytest.mark.parametrize('exc_type', [ApprovalRequired, CallDeferred])
+    async def test_execute_error_hook_defers(self, exc_type: type[ApprovalRequired] | type[CallDeferred]):
+        """The execution error hook can replace a tool failure with a deferral."""
+
+        @dataclass
+        class DeferringExecuteErrorCap(AbstractCapability[Any]):
+            async def on_tool_execute_error(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Exception
+            ) -> Any:
+                raise exc_type(metadata={'from': 'on_tool_execute_error'})
+
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringExecuteErrorCap()],
+        )
+
+        @agent.tool(retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:
+            raise RuntimeError('tool failed')
+
+        result = await agent.run('call the tool')
+        requests = result.output
+        assert isinstance(requests, DeferredToolRequests)
+        deferred = requests.approvals if exc_type is ApprovalRequired else requests.calls
+        assert [call.tool_name for call in deferred] == ['my_tool']
+        assert requests.metadata == {deferred[0].tool_call_id: {'from': 'on_tool_execute_error'}}
+
+    async def test_hooks_that_defer_nowhere_leave_the_call_alone(self):
+        """Control case: the same capability without a deferral runs the tool and returns its result.
+
+        Pins that it's the deferral, not the hooks themselves, that changes any of the above.
+        """
+        executed: list[int] = []
+
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringHookCap(where='')],
+        )
+
+        @agent.tool(retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:
+            executed.append(x)
+            return x
+
+        result = await agent.run('call the tool')
+        assert result.output == snapshot('{"my_tool":0}')
+        assert executed == [0]
 
 
 # --- Tool execute error hook tests ---
