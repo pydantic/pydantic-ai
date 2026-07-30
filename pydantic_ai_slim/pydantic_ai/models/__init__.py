@@ -136,10 +136,20 @@ class ModelRequestParameters:
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
     revealed_tool_names: set[str] = field(default_factory=set[str], repr=False)
-    """Deferred tools currently revealed through tool search or capability loading."""
+    """Names of the deferred tools tool search or capability loading has revealed so far.
+
+    A subset of `function_tools`' names. `ToolDefinition.defer_loading` records what the author asked for
+    and stays set after a reveal, so this answers the separate question of what the model can see *now* —
+    which is what an adapter needs in order to decide what to put on the wire.
+    """
 
     deferred_capability_ids: set[str] = field(default_factory=set[str], repr=False)
-    """IDs of on-demand capabilities."""
+    """IDs of the run's capabilities configured with `defer_loading=True`.
+
+    The whole configured set, not the loaded subset, so it doesn't change as capabilities load. Adapters
+    use it to recognize a tool as capability-owned — `ToolDefinition.capability_id` in this set — and so
+    to tell a corpus a capability gates apart from one the model may search freely.
+    """
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
