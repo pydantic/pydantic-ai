@@ -30,15 +30,199 @@ provider rejects an orphaned pair. The zero-LLM strategies never call a model.
 | `SummarizingCompaction` | one LLM call | Summarizes older messages into a structured summary, keeping the recent tail | Old context still matters but must be compressed; use behind the cheap tiers |
 | `TieredCompaction` | escalates | Runs cheap passes first, summarizes only if still over `target_tokens` | You want a sensible default: spend the expensive summary only when needed |
 | `WarnNearLimits` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
+| `ReportContextUsage` | zero-LLM | Reports context usage to your application; never edits history | You want a live context gauge in a UI |
 
 ## Triggers
 
-Every size-based strategy triggers on `max_messages` and/or `max_tokens` (estimated). Token counts
-use a ~4-chars-per-token heuristic by default; pass a `tokenizer` callable (e.g. `tiktoken`) for
-accuracy. `DeduplicateFileReads` runs on every request when no trigger is set (it is cheap and
-near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens` budget.
-`ClampOversizedMessages` triggers per *part* (`max_part_tokens` / `max_part_chars`), not on the
-whole history -- the failure it targets is one oversized part, not a large total.
+Every size-based strategy triggers on `max_messages`, `max_tokens` (estimated), or `max_fraction`.
+Token counts use a ~4-chars-per-token heuristic by default; pass a `tokenizer` callable (e.g.
+`tiktoken`) for accuracy. `DeduplicateFileReads` runs on every request when no trigger is set (it is
+cheap and near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens` /
+`target_fraction` budget. `ClampOversizedMessages` triggers per *part* (`max_part_tokens` /
+`max_part_chars`), not on the whole history -- the failure it targets is one oversized part, not a
+large total.
+
+### `max_fraction`: one setting for every model
+
+An absolute `max_tokens` is only correct for the model it was measured against. Configure `180_000`
+and a 1M-context model compacts at a fifth of its capacity, paying for summaries it did not need; a
+128K model configured for `1_000_000` never compacts before the provider rejects the request.
+
+`max_fraction` is resolved per request against the model's real context window, so one configuration
+is correct everywhere:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness.compaction import SummarizingCompaction
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[SummarizingCompaction(max_fraction=0.9, keep_messages=20)],
+)
+```
+
+That compacts at 900K on a 1M model and at 115K on a 128K one. `WarnNearLimits` takes the same shape as
+`max_context_fraction`, and `TieredCompaction` as `target_fraction`.
+
+`max_tokens` and `max_fraction` are mutually exclusive -- a strategy taking both would have to
+pick one and discard the other, leaving the caller unable to tell which budget was in force.
+
+The window comes from [`genai-prices`](https://github.com/pydantic/genai-prices), already a
+dependency of `pydantic-ai-slim`; `resolve_context_window` is exported if you want the number
+yourself. Pydantic AI does not expose it yet (`ModelProfile` has no `context_window` field), so when
+it does, that one function switches over. Nothing is cached: only a registry-confirmed number is
+ever treated as the real window.
+
+The model consulted is `ModelRequestContext.model`, the one the request will be sent to, not the one
+the run started with. A capability ordered earlier may replace it, and the budget follows.
+
+### When the window does not resolve
+
+Not every model is in the registry. A local endpoint, a bespoke deployment, a Bedrock-prefixed
+reference such as `bedrock:us.anthropic.claude-sonnet-4-5`, a model the registry knows without a
+recorded window (`google-gla:gemini-2.5-pro` today), and any `FallbackModel` (its `model_id` is a
+composite `fallback:...`) all resolve to nothing. The fraction is then taken of
+`fallback_context_window`, which defaults to a conservative 200K (`DEFAULT_CONTEXT_WINDOW`):
+compacting earlier than necessary costs one summary, overestimating costs the whole request.
+
+Every capability that takes a fraction takes the fallback too, so you are not stuck with 200K on a
+model you know the size of:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness.compaction import SummarizingCompaction
+
+agent = Agent(
+    'google-gla:gemini-2.5-pro',
+    capabilities=[SummarizingCompaction(max_fraction=0.9, fallback_context_window=1_000_000)],
+)
+```
+
+It is only consulted when resolution fails, so it costs nothing on a model the registry does know.
+
+`TestModel` is one of the models that does not resolve: its `model_id` is `test:test`, so a fraction
+is taken of `fallback_context_window` and `max_fraction=0.9` becomes a 180,000-token trigger. A
+compaction config exercised only against `TestModel` will look like it never fires; pass
+`context_window=` or `fallback_context_window=` in the test to put the trigger where you can reach it.
+
+### When the window resolves to the wrong number
+
+Resolution can also succeed and be wrong, which `fallback_context_window` cannot help with -- it
+applies only when resolution fails. Three cases:
+
+- **The registry entry itself is wrong.** Harness reads `genai-prices` and cannot validate it.
+  Measured against `genai-prices` 0.0.71:
+
+  | model id | registry records | real window |
+  |---|---|---|
+  | `anthropic:claude-sonnet-4-5` | 1,000,000 | 200,000 |
+  | `anthropic:claude-opus-4-6` | 200,000 | 1,000,000 |
+  | `google:gemini-2.5-pro` (also the `google-gla:` and `google-vertex:` forms) | no window recorded | 1,000,000 |
+
+  An over-recorded window is the direction that breaks a run. On `anthropic:claude-sonnet-4-5`,
+  `max_fraction=0.9` resolves to a 900,000-token trigger against a 200,000-token window: compaction
+  never fires, and the provider rejects the request instead. **Pass `context_window=200_000`
+  explicitly on Anthropic Sonnet-class models** (`claude-sonnet-4-5` today; check any Sonnet id you
+  use against the provider's own documentation before relying on the resolved number). An
+  under-recorded window is safe but wasteful -- it compacts earlier than it has to.
+- The registry records the maximum a model can be made to accept. Where that maximum is gated --
+  a beta header, a pricing tier -- an ordinary request gets less, and a fraction of the recorded
+  number never triggers before the provider rejects the request.
+- A self-hosted or proxied endpoint reports a model id whose registry entry describes someone
+  else's deployment.
+
+`context_window` overrides resolution outright, on every capability that takes a fraction:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness.compaction import SummarizingCompaction
+
+agent = Agent(
+    'openai:gpt-4o',  # served by a local endpoint with a smaller window than the registry records
+    capabilities=[SummarizingCompaction(max_fraction=0.9, context_window=32_000)],
+)
+```
+
+### What counts toward the fraction
+
+The estimator counts every part that is sent: prompts, system prompts, tool calls and their
+results, retry prompts, extended-thinking blocks, provider-side tool results, and the
+instructions, once. It is a ~4-characters-per-token approximation, not a tokenizer; pass
+`tokenizer=` to any strategy to measure with the real one. `FilePart` is not counted -- its
+payload is binary, and its length in characters would mean nothing.
+
+**If you already set an absolute `max_tokens`, re-check it.** The estimator used to count only user
+and system prompts, tool returns, response text, and tool calls. `ThinkingPart` / `CompactionPart`
+content, `RetryPromptPart` content, `NativeToolCallPart` / `NativeToolReturnPart`, and the most
+recent `ModelRequest.instructions` are now counted too, so the same history measures higher and an
+unchanged `max_tokens` compacts earlier. How much earlier depends on how much of the history is
+thinking blocks, retries, and instructions; on a thinking-heavy tool-calling history it can be
+several times the old count. What each strategy clears is unchanged -- only when it runs.
+
+## Reporting usage: `ReportContextUsage`
+
+A strategy knows when to act but says nothing about how close the run is to the limit, so an
+application that wants to show `context: 73%` ends up re-counting the history and guessing the
+denominator. `ReportContextUsage` does neither -- it reuses the same estimator and the same resolved
+window, and only observes:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness.compaction import ReportContextUsage, SummarizingCompaction
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[
+        SummarizingCompaction(max_fraction=0.9, keep_messages=20),
+        ReportContextUsage(on_usage=lambda usage: print(f'{usage.fraction:.0%}')),
+    ],
+)
+```
+
+Each reading carries `used_tokens`, `window_tokens`, and `resolved` -- `False` when the window is the
+fallback rather than the model's real one, so a gauge can show that the percentage is a guess.
+`on_usage` may be a coroutine function, so a gauge that pushes over a socket does not need a sync
+bridge.
+
+Order matters: register the monitor *after* a compaction capability to observe the compacted history,
+or before it to see what triggered the compaction.
+
+`used_tokens` counts the same way the triggers do: every message part that is sent, plus the most
+recent `ModelRequest.instructions` once. Tool schemas are outside that count, so the reading is lower
+than what the provider bills; tool-schema accounting is tracked in
+[#100](https://github.com/pydantic/pydantic-ai-harness/issues/100).
+
+## Compacting outside a run: `compact_now`
+
+A strategy's `compact` takes a `RunContext`, which an application holding a conversation *between*
+runs does not have -- and that is exactly when a user types `/compact`. `compact_now` builds a
+throwaway context so the same strategy the agent uses can be driven from a command handler:
+
+```python {test="skip"}
+from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
+
+strategy = SummarizingCompaction(max_fraction=0.9, keep_messages=20)
+history = await compact_now(
+    strategy,
+    history,
+    model='anthropic:claude-sonnet-4-6',
+    focus='the auth refactor, not the earlier CSS work',
+)
+```
+
+`compact_now` applies no trigger of its own, so a strategy whose `compact` is unconditional runs
+whatever the history size. A strategy that defines its own stop condition still honours it:
+`TieredCompaction` escalates only until the history fits its target, so a history already under
+target comes back unchanged. Pass the tier directly if you need it to run regardless.
+
+`focus` steers strategies that write prose -- `SummarizingCompaction`, via the exported
+`SupportsFocus` protocol's `with_focus` -- and is passed over by the ones that drop or blank content
+by rule, since they have nothing to steer. `TieredCompaction` is focusable when any of its tiers is, so a focus reaches the
+summarizing tier rather than stopping at the wrapper.
+
+A compaction that changes the history emits the same `compact_messages` span the in-run path emits,
+so an instrumented application sees one shape however compaction was triggered. Pass `tracer=` to
+record it; without one the span goes to a no-op tracer.
 
 ## `ClampOversizedMessages`: surviving a runaway generation
 
@@ -115,8 +299,8 @@ rewriting it via `dataclasses.replace` would bypass validation and corrupt the p
 
 Warnings begin at `warning_threshold` (default `0.7`, a fraction of the limit) and escalate to CRITICAL
 for iterations once the remaining request count drops to `critical_remaining_iterations` (default `3`).
-It watches `max_iterations`, `max_context_tokens`, and `max_total_tokens`, warning on whichever are
-configured; narrow that with `warn_on`.
+It watches `max_iterations`, `max_context_tokens` (or `max_context_fraction`), and `max_total_tokens`,
+warning on whichever are configured; narrow that with `warn_on`.
 
 ## Cost: why summarization is the last resort
 

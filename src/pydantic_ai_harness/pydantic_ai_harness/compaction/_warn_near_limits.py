@@ -10,7 +10,12 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, UserPromptPart
 from pydantic_ai.tools import RunContext
 
-from pydantic_ai_harness.compaction._shared import estimate_token_count
+from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
+from pydantic_ai_harness.compaction._shared import (
+    estimate_token_count,
+    resolve_token_trigger,
+    validate_token_trigger,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -63,6 +68,27 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
     max_context_tokens: int | None = None
     """Maximum context-window size to warn against."""
 
+    max_context_fraction: float | None = field(default=None, kw_only=True)
+    """Context limit as a fraction of the model's real context window, resolved per request.
+
+    Use this instead of `max_context_tokens` when the same agent runs on models with
+    different windows. Mutually exclusive with `max_context_tokens`.
+    """
+
+    context_window: int | None = field(default=None, kw_only=True)
+    """Window override in tokens. `None` resolves it from the request's model.
+
+    Unlike `fallback_context_window`, this applies whether or not resolution succeeds. Reach
+    for it when the registry is confidently wrong: a beta- or tier-gated window it records as
+    the maximum, or a self-hosted endpoint whose model id describes someone else's
+    deployment. Only consulted alongside `max_context_fraction`."""
+
+    fallback_context_window: int = field(default=DEFAULT_CONTEXT_WINDOW, kw_only=True)
+    """Window assumed when the request's model is not in the pricing registry.
+
+    Only consulted alongside `max_context_fraction`. Supply the real number for a deployment
+    the registry cannot resolve."""
+
     max_total_tokens: int | None = None
     """Maximum cumulative run token budget to warn against."""
 
@@ -80,8 +106,14 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         if self.max_iterations is not None and self.max_iterations <= 0:
             raise ValueError('max_iterations must be positive.')
-        if self.max_context_tokens is not None and self.max_context_tokens <= 0:
-            raise ValueError('max_context_tokens must be positive.')
+        validate_token_trigger(
+            self.max_context_tokens,
+            self.max_context_fraction,
+            self.fallback_context_window,
+            self.context_window,
+            tokens_name='max_context_tokens',
+            fraction_name='max_context_fraction',
+        )
         if self.max_total_tokens is not None and self.max_total_tokens <= 0:
             raise ValueError('max_total_tokens must be positive.')
         if not 0 < self.warning_threshold <= 1:
@@ -89,21 +121,26 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
         if self.critical_remaining_iterations < 0:
             raise ValueError('critical_remaining_iterations must be non-negative.')
 
-        configured: dict[WarningKind, int | None] = {
-            'iterations': self.max_iterations,
-            'context_window': self.max_context_tokens,
-            'total_tokens': self.max_total_tokens,
+        # The two context limits are mutually exclusive (checked above), so either one marks
+        # the kind as configured.
+        configured: dict[WarningKind, bool] = {
+            'iterations': self.max_iterations is not None,
+            'context_window': self.max_context_tokens is not None or self.max_context_fraction is not None,
+            'total_tokens': self.max_total_tokens is not None,
         }
-        if all(v is None for v in configured.values()):
-            raise ValueError('At least one of max_iterations, max_context_tokens, or max_total_tokens must be set.')
+        if not any(configured.values()):
+            raise ValueError(
+                'At least one of max_iterations, max_context_tokens, max_context_fraction, '
+                'or max_total_tokens must be set.'
+            )
 
         if self.warn_on is None:
-            self._active_kinds = tuple(k for k in _WARNING_ORDER if configured[k] is not None)
+            self._active_kinds = tuple(k for k in _WARNING_ORDER if configured[k])
         else:
             if not self.warn_on:
                 raise ValueError('warn_on must not be empty.')
             for kind in self.warn_on:
-                if configured[kind] is None:
+                if not configured[kind]:
                     raise ValueError(f'{kind!r} requires its corresponding max_* limit to be configured.')
             self._active_kinds = tuple(dict.fromkeys(self.warn_on))
 
@@ -152,15 +189,13 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
         details = f'Iterations: {ctx.usage.requests}/{self.max_iterations} requests used ({usage_frac:.0%}); {remaining} remaining.'
         return _Warning(kind='iterations', severity=severity, details=details)
 
-    def _build_context_warning(self, context_tokens: int) -> _Warning | None:
-        if self.max_context_tokens is None or 'context_window' not in self._active_kinds:
-            return None  # pragma: no cover
-        usage_frac = context_tokens / self.max_context_tokens
+    def _build_context_warning(self, context_tokens: int, limit: int) -> _Warning | None:
+        usage_frac = context_tokens / limit
         if usage_frac < self.warning_threshold:
             return None
-        remaining = max(0, self.max_context_tokens - context_tokens)
+        remaining = max(0, limit - context_tokens)
         severity: Literal['URGENT', 'CRITICAL'] = 'CRITICAL' if usage_frac >= 1 else 'URGENT'
-        details = f'Context window: {context_tokens}/{self.max_context_tokens} tokens used ({usage_frac:.0%}); {remaining} remaining.'
+        details = f'Context window: {context_tokens}/{limit} tokens used ({usage_frac:.0%}); {remaining} remaining.'
         return _Warning(kind='context_window', severity=severity, details=details)
 
     def _build_total_tokens_warning(self, ctx: RunContext[AgentDepsT]) -> _Warning | None:
@@ -204,11 +239,18 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
         if w is not None:
             active.append(w)
 
-        if self.max_context_tokens is not None and 'context_window' in self._active_kinds:
-            context_tokens = estimate_token_count(messages)
-            w = self._build_context_warning(context_tokens)
-            if w is not None:
-                active.append(w)
+        if 'context_window' in self._active_kinds:
+            context_limit = resolve_token_trigger(
+                self.max_context_tokens,
+                self.max_context_fraction,
+                request_context.model,
+                self.fallback_context_window,
+                self.context_window,
+            )
+            if context_limit is not None:  # pragma: no branch -- the kind is only active when one is set
+                w = self._build_context_warning(estimate_token_count(messages), context_limit)
+                if w is not None:
+                    active.append(w)
 
         w = self._build_total_tokens_warning(ctx)
         if w is not None:

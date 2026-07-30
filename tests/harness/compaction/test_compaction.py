@@ -271,7 +271,7 @@ class TestFindTokenCutoff:
 
 class TestSlidingWindowCompaction:
     def test_validation_no_trigger(self):
-        with pytest.raises(ValueError, match='At least one of max_messages or max_tokens must be set'):
+        with pytest.raises(ValueError, match='At least one of max_messages, max_tokens, or max_fraction must be set'):
             SlidingWindowCompaction()
 
     def test_validation_negative_max_messages(self):
@@ -488,7 +488,7 @@ class TestWarnNearLimits:
 
 class TestCompaction:
     def test_validation_no_trigger(self):
-        with pytest.raises(ValueError, match='At least one of max_messages or max_tokens must be set'):
+        with pytest.raises(ValueError, match='At least one of max_messages, max_tokens, or max_fraction must be set'):
             SummarizingCompaction(model='test', max_messages=None, max_tokens=None)
 
     def test_validation_negative_max_messages(self):
@@ -1496,7 +1496,7 @@ class TestIterToolPairs:
 
 class TestClearToolResults:
     def test_validation_no_trigger(self):
-        with pytest.raises(ValueError, match='At least one of max_messages or max_tokens must be set'):
+        with pytest.raises(ValueError, match='At least one of max_messages, max_tokens, or max_fraction must be set'):
             ClearToolResults()
 
     def test_validation_negative_max_messages(self):
@@ -1835,7 +1835,7 @@ class TestTieredCompaction:
 
 class TestSummarizingCompactionModel:
     @pytest.mark.anyio
-    async def test_model_inherits_from_ctx_when_none(self):
+    async def test_model_inherits_from_the_request_when_none(self):
         comp = SummarizingCompaction(
             max_messages=3, keep_messages=1, preserve_first_user_message=False, incremental=False
         )
@@ -1851,9 +1851,11 @@ class TestSummarizingCompactionModel:
             MockAgent.return_value = mock_agent_instance
             await comp.before_model_request(ctx, rc)
 
-        # The summarizer agent was constructed with the running agent's model.
-        assert MockAgent.call_args.args[0] is ctx.model
-        # And its usage is threaded into the parent run for honest accounting.
+        # The summarizer agent was constructed with the model the request is going to. Core
+        # starts that as the run's model, so the two differ only where a capability replaced
+        # it -- and then the request's is the one the compaction is being done for.
+        assert MockAgent.call_args.args[0] is rc.model
+        # Its usage is threaded into the parent run for honest accounting.
         assert mock_agent_instance.run.call_args.kwargs['usage'] is ctx.usage
 
     def test_default_prompt_has_structured_sections(self):
@@ -2145,14 +2147,57 @@ class TestHelperBranchCoverage:
         ]
         assert [p.content for p in _extract_system_prompts(msgs)] == ['a', 'b']
 
-    def test_collect_and_format_skip_unknown_part_types(self):
+    def test_a_retry_and_a_thinking_block_are_counted(self):
+        """Both are sent to the provider, and a run under load is where they appear."""
         from pydantic_ai.messages import RetryPromptPart, ThinkingPart
 
         msgs: list[ModelMessage] = [
-            ModelRequest(parts=[RetryPromptPart(content='retry')]),
-            ModelResponse(parts=[ThinkingPart(content='think')]),
+            ModelRequest(parts=[RetryPromptPart(content='r' * 400)]),
+            ModelResponse(parts=[ThinkingPart(content='t' * 400)]),
         ]
-        # Unknown part types contribute no countable text but exercise the skip branches.
+        assert estimate_token_count(msgs) == 200
+        # `_format_messages` renders history for a summarizer prompt, which is a different
+        # question from what the request costs; a retry and a thinking block stay out of it.
+        assert _format_messages(msgs) == ''
+
+    def test_a_provider_side_tool_call_and_its_result_are_counted(self):
+        """A web search runs on the provider's side and its result still lands in the context."""
+        from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
+
+        msgs: list[ModelMessage] = [
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(tool_name='web_search', args={'q': 'x' * 200}, tool_call_id='c1'),
+                    NativeToolReturnPart(tool_name='web_search', content='r' * 200, tool_call_id='c1'),
+                ]
+            )
+        ]
+
+        assert estimate_token_count(msgs) > 100
+
+    def test_instructions_are_counted_once_however_many_turns_carry_them(self):
+        """A request sends one set; summing them would multiply a system prompt by the turn count."""
+        instructions = 'i' * 400
+        one_turn: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='')], instructions=instructions)]
+        four_turns: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='')], instructions=instructions) for _ in range(4)
+        ]
+
+        assert estimate_token_count(one_turn) == 100
+        assert estimate_token_count(four_turns) == 100
+
+    def test_a_history_with_no_instructions_counts_none(self):
+        msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='')])]
+
+        assert estimate_token_count(msgs) == 0
+
+    def test_a_binary_part_is_not_counted_as_characters(self):
+        """`FilePart` carries bytes; its length in characters would mean nothing."""
+        from pydantic_ai.messages import BinaryContent, FilePart
+
+        msgs: list[ModelMessage] = [
+            ModelResponse(parts=[FilePart(content=BinaryContent(data=b'\x00' * 4_000, media_type='image/png'))])
+        ]
         assert estimate_token_count(msgs) == 0
         assert _format_messages(msgs) == ''
 
