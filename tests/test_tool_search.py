@@ -102,7 +102,9 @@ def ag_ui_preserves_tool_kind() -> bool:
     `ToolAvailabilityDeltaPart` is the only one of the three representations that survives, because
     it doesn't ride the tool-call channel at all.
     """
-    if not ag_ui_available():  # pragma: no cover
+    # `lax no cover`, not `no cover`: whether this branch runs depends on whether the `ag-ui` extra is
+    # installed, so it's covered in one CI job and dead in another.
+    if not ag_ui_available():  # pragma: lax no cover
         return False
 
     from importlib.metadata import version
