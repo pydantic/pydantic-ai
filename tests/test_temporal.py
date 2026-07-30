@@ -8084,19 +8084,9 @@ async def test_durability_mcptoolset_in_workflow(allow_model_requests: None, cli
         assert output == snapshot()
 
 
-# --- @agent.toolset returning a FunctionToolset ---
-
-_durability_dynamic_toolset_agent = Agent(
-    TestModel(),
-    name='durability_dynamic_toolset_agent',
-    deps_type=DynamicToolsetDeps,
-    capabilities=[
-        TemporalDurability[DynamicToolsetDeps](deps_type=DynamicToolsetDeps, activity_config=BASE_ACTIVITY_CONFIG)
-    ],
-)
+# --- DynamicToolset returning a FunctionToolset ---
 
 
-@_durability_dynamic_toolset_agent.toolset(id='durability_my_dynamic_tools')
 def _durability_my_dynamic_toolset(ctx: RunContext[DynamicToolsetDeps]) -> FunctionToolset[DynamicToolsetDeps]:
     toolset = FunctionToolset[DynamicToolsetDeps](id='durability_dynamic_weather')
 
@@ -8107,6 +8097,17 @@ def _durability_my_dynamic_toolset(ctx: RunContext[DynamicToolsetDeps]) -> Funct
         return f'Weather in {location} for {user}: sunny.'
 
     return toolset
+
+
+_durability_dynamic_toolset_agent = Agent(
+    TestModel(),
+    name='durability_dynamic_toolset_agent',
+    deps_type=DynamicToolsetDeps,
+    toolsets=[DynamicToolset(_durability_my_dynamic_toolset, id='durability_my_dynamic_tools')],
+    capabilities=[
+        TemporalDurability[DynamicToolsetDeps](deps_type=DynamicToolsetDeps, activity_config=BASE_ACTIVITY_CONFIG)
+    ],
+)
 
 
 @workflow.defn
