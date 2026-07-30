@@ -122,6 +122,7 @@ class WrapperModel(Model):
         return getattr(self.wrapped, item)
 
 
+# TODO(v3): remove the `CompletedStreamedResponse` re-export shim
 def __getattr__(name: str) -> Any:
     if name == 'CompletedStreamedResponse':
         warnings.warn(

@@ -5496,7 +5496,8 @@ async def test_run_event_stream_handler_interrupted_does_not_drain():
 
     async def counting_stream(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
         nonlocal pulled
-        while True:  # pragma: no cover - the test asserts this unbounded stream is never pulled
+        # The test asserts this unbounded stream is never pulled.
+        while True:  # pragma: no cover
             pulled += 1
             yield 'hello'
 

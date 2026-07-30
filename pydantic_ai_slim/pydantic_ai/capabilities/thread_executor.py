@@ -55,6 +55,7 @@ class UseThreadExecutor(AbstractCapability[Any]):
             return await handler()
 
 
+# TODO(v3): remove the `ThreadExecutor` alias, this `__getattr__`, and the forwarding one in `capabilities/__init__.py`
 def __getattr__(name: str) -> object:
     if name == 'ThreadExecutor':
         import warnings
