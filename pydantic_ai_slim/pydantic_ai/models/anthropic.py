@@ -1563,7 +1563,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     elif isinstance(request_part, UserPromptPart):
                         async for content in self._map_user_prompt(request_part):
                             if isinstance(content, CachePoint):
-                                self._add_cache_control_to_last_param(user_content_params, ttl=content.ttl)
+                                # A `CachePoint` asks to cache everything up to that point, and it normally
+                                # attaches to the block before it in this same user message. A
+                                # mid-conversation instruction used to leave one there — it was folded in
+                                # as `<system>`-tagged text — and now goes to its own `system` entry
+                                # instead, so `[SystemPromptPart, UserPromptPart([CachePoint(), ...])]`
+                                # arrives here with nothing to attach to and used to raise. The boundary
+                                # is still well defined whenever the conversation has a previous message:
+                                # it's the end of that message, which is everything the entry and this
+                                # turn build on. Only a `CachePoint` with no prior content anywhere still
+                                # raises, which is the case the error is actually about.
+                                self._add_cache_control_to_last_param(
+                                    user_content_params or _last_message_content(anthropic_messages),
+                                    ttl=content.ttl,
+                                )
                             else:
                                 user_content_params.append(content)
                     elif isinstance(request_part, ToolAvailabilityDeltaPart):
@@ -3156,6 +3169,21 @@ A single period is the cheapest thing that satisfies the rule while asserting no
 behalf; the alternative is degrading the instruction to `<system>`-tagged text, which the recordings
 show the model reads as a preference it may overrule.
 """
+
+
+def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[BetaContentBlockParam]:
+    """The content blocks of the last rendered message, or an empty list if there's nothing to attach to.
+
+    Only used to give a leading `CachePoint` somewhere to land. A `str` content body can't carry
+    `cache_control`, and neither can a conversation that hasn't rendered a message yet, so both return
+    empty and let the caller raise the error that explains the situation.
+    """
+    if not anthropic_messages:
+        return []
+    content = anthropic_messages[-1]['content']
+    # Returned as-is, not copied: the caller attaches `cache_control` by mutating the block in place, so
+    # it has to be the list the message actually holds.
+    return content if isinstance(content, list) else []
 
 
 def _anchor_system_messages(anthropic_messages: list[BetaMessageParam]) -> None:

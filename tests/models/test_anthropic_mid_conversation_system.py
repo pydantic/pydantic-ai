@@ -18,6 +18,7 @@ profile flag, the client-transport gate, and the cache breakpoint that now lands
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -27,6 +28,7 @@ import pytest
 
 from pydantic_ai import (
     Agent,
+    CachePoint,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -37,6 +39,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import ToolDefinition
 
 from .._inline_snapshot import snapshot
@@ -262,6 +265,60 @@ async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
             ],
         }
     )
+
+
+async def test_leading_cache_point_survives_the_instruction_moving_out_of_the_user_turn(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_requests: list[dict[str, Any]]
+):
+    """A `CachePoint` that opens a user turn still has something to attach to once the instruction leaves.
+
+    `[SystemPromptPart, UserPromptPart([CachePoint(), ...])]` used to render the instruction as the user
+    turn's first block, so the `CachePoint` attached to it. On a model that takes the native entry the
+    instruction goes elsewhere, leaving the turn empty at that point — and the request raised
+    `CachePoint cannot be the first content in a user message` where the same history still worked on
+    `claude-sonnet-4-6`. A feature that silently makes existing conversations model-dependent is worse
+    than one that doesn't apply.
+
+    The boundary the `CachePoint` asks for is unchanged, so it lands on the end of the previous message:
+    everything this turn and the instruction build on. The recording is the part that matters — Anthropic
+    accepts `cache_control` on an assistant block in that position.
+    """
+    agent = Agent(AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)))
+
+    history = message_history()
+    history[-1] = ModelRequest(
+        parts=[SystemPromptPart(content=INSTRUCTION), UserPromptPart(content=[CachePoint(), 'Review it again.'])]
+    )
+    result = await agent.run(message_history=history)
+    assert 'def add(a: int, b: int) -> int:' in result.output
+
+    body = single_request_body(vcr)
+    assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
+    assert [message['role'] for message in body['messages']] == snapshot(['user', 'assistant', 'user', 'system'])
+    assert body['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [{'text': 'Looks fine.', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
+        }
+    )
+
+
+def test_cache_point_with_nothing_before_it_still_raises():
+    """The error the message describes — no prior content anywhere — is the one case left raising.
+
+    Falling back to the previous message must not turn this into a silent no-op: a `CachePoint` opening
+    the very first turn has nothing to cache, and saying so is more useful than dropping it.
+    """
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+
+    with pytest.raises(UserError, match='CachePoint cannot be the first content in a user message'):
+        asyncio.run(
+            model._map_message(  # pyright: ignore[reportPrivateUsage]
+                [ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'Hello.'])])],
+                ModelRequestParameters(),
+                AnthropicModelSettings(),
+            )
+        )
 
 
 async def test_mid_conversation_system_prompt_without_user_turn(
