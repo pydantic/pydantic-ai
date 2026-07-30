@@ -210,16 +210,28 @@ class LocalSandbox:
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
             )
+
         # The child is forked before the spawn coroutine's own awaits finish, so a cancellation
         # delivered mid-spawn would leak the process group: asyncio's transport cleanup kills
         # only the direct child, and a shell that backgrounded children may already have
-        # exited. Shield the spawn so the group can be killed once the handle exists.
-        spawn = asyncio.ensure_future(spawn_coroutine)
+        # exited. Shield the spawn so the group can be killed once the handle exists. The
+        # wrapper returns a spawn failure instead of raising it: Python 3.14's `shield`
+        # reports an abandoned inner future's exception to the loop's exception handler.
+        async def guarded_spawn() -> asyncio.subprocess.Process | Exception:
+            try:
+                return await spawn_coroutine
+            except Exception as error:
+                return error
+
+        spawn = asyncio.ensure_future(guarded_spawn())
         try:
-            process = await asyncio.shield(spawn)
+            outcome = await asyncio.shield(spawn)
         except asyncio.CancelledError:
             spawn.add_done_callback(self._kill_abandoned_spawn)
             raise
+        if isinstance(outcome, Exception):
+            raise outcome
+        process = outcome
         communicated = False
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
@@ -246,15 +258,17 @@ class LocalSandbox:
         )
 
     @staticmethod
-    def _kill_abandoned_spawn(spawn: asyncio.Task[asyncio.subprocess.Process]) -> None:
-        # The run that awaited this spawn was cancelled mid-spawn: nobody is left to receive
-        # errors (`exception()` also marks a failed spawn's exception as retrieved), and the
-        # loop's child watcher still reaps the direct child after the group is killed.
-        if spawn.cancelled() or spawn.exception() is not None:
+    def _kill_abandoned_spawn(spawn: asyncio.Task[asyncio.subprocess.Process | Exception]) -> None:
+        # The run that awaited this spawn was cancelled: nobody is left to receive a spawn
+        # failure, and the loop's child watcher still reaps the direct child after the kill.
+        # Cancellation of the spawn task itself happens only at loop shutdown.
+        if spawn.cancelled():  # pragma: no cover
             return
-        process = spawn.result()
+        outcome = spawn.result()
+        if isinstance(outcome, Exception):
+            return
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(outcome.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
 

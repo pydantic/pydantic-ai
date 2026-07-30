@@ -124,6 +124,13 @@ async def test_shell_discipline(tmp_path: Path):
         await sandbox.run(['echo', 'hello'], shell=True)
 
 
+async def test_missing_binary_raises(tmp_path: Path):
+    """A spawn failure propagates as-is: the argv path execs directly, without a shell."""
+    sandbox = LocalSandbox(tmp_path)
+    with pytest.raises(FileNotFoundError):
+        await sandbox.run([str(tmp_path / 'missing-binary')])
+
+
 async def test_nonzero_exit_is_a_result(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
     result = await sandbox.run('echo oops >&2; exit 3', shell=True)
