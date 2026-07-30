@@ -1001,6 +1001,8 @@ class TestSensitiveHeaderStrippingOnRedirects:
             # http→https upgrade on the same host, matching httpx
             ('http://example.com/file', 'https://example.com/file', True),
             ('http://example.com:80/file', 'https://example.com:443/file', True),
+            # Hostnames are case-insensitive.
+            ('https://example.com/file', 'https://EXAMPLE.com/elsewhere', True),
             # `example.com.` (FQDN root label) is the same server as `example.com`
             ('https://example.com./file', 'https://example.com/file', True),
             # cross-host
@@ -1063,6 +1065,16 @@ class TestSensitiveHeaderStrippingOnRedirects:
 
         assert self._header(sent[1], 'authorization') is None
         assert self._header(sent[2], 'authorization') is None
+
+    async def test_invalid_redirect_protocol_rejected(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+        """Unsupported redirect protocols fail before another request is sent."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        client, _ = self._client(self._redirect_response('ftp://example.com/file'))
+        mock_ssrf_client.return_value = client
+
+        with pytest.raises(ValueError, match='URL protocol "ftp" is not allowed'):
+            await safe_download('https://example.com/file', headers={'Authorization': 'Bearer SECRET'})
 
     async def test_upgrade_then_downgrade_compares_previous_hop(
         self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock

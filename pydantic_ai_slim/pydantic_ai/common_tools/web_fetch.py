@@ -65,7 +65,10 @@ class WebFetchLocalTool:
     """Never fetch from these domains (exact hostname match). Raises `ModelRetry` on violation."""
 
     headers: dict[str, str] | None = field(default=None)
-    """Additional HTTP headers to include in the request."""
+    """Additional HTTP headers to include in the request.
+
+    The model controls the URL, so use `allowed_domains` when these include credentials.
+    """
 
     async def __call__(self, url: str) -> WebFetchResult | BinaryContent:
         """Fetches the content of a web page at the given URL and returns it as markdown.
