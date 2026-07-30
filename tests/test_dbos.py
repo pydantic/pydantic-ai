@@ -2053,6 +2053,29 @@ async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
     assert tools['foo'].tool_def.name == 'foo'
 
 
+_mcp_task_dbos_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
+    Agent(
+        TestModel(call_tools=['required_task_tool', 'optional_task_tool']),
+        name='mcp_task_dbos_agent',
+        toolsets=[
+            MCPToolset(
+                StdioTransport(command='python', args=['-m', 'tests.mcp_task_server']),
+                id='mcp_tasks',
+                init_timeout=20,
+                prefer_tasks=False,
+            )
+        ],
+    )
+)
+
+
+async def test_dbos_mcptoolset_preserves_task_routing(dbos: DBOS):
+    """Effective task routing in `ToolDefinition.metadata` survives DBOS steps."""
+    result = await _mcp_task_dbos_agent.run('Call both tools')
+
+    assert result.output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+
+
 def _call_mcp_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Two model steps: call an MCP tool on the first request, return text on the second.
 
