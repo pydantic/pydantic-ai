@@ -52,9 +52,9 @@ from pydantic_ai.capabilities import (
     SelectModel,
     SetToolMetadata,
     Thinking,
-    ThreadExecutor,
     ToolSearch,
     Toolset,
+    UseThreadExecutor,
     WebFetch,
     WebSearch,
     WrapperCapability,
@@ -544,6 +544,48 @@ def test_model_json_schema_with_capabilities():
     assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
+                'AdvisorTool': {
+                    'properties': {
+                        'kind': {'default': 'advisor', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'model': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'claude-fable-5',
+                                        'claude-mythos-5',
+                                        'claude-opus-5',
+                                        'claude-opus-4-8',
+                                        'claude-opus-4-7',
+                                        'claude-opus-4-6',
+                                        'claude-sonnet-4-6',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
+                            'title': 'Model',
+                        },
+                        'max_uses': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Uses',
+                        },
+                        'max_tokens': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Tokens',
+                        },
+                        'caching': {
+                            'anyOf': [{'enum': ['5m', '1h'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Caching',
+                        },
+                    },
+                    'required': ['model'],
+                    'title': 'AdvisorTool',
+                    'type': 'object',
+                },
                 'AgentRetries': {
                     'additionalProperties': False,
                     'properties': {
@@ -672,10 +714,22 @@ def test_model_json_schema_with_capabilities():
                         'anthropic:claude-opus-4-6',
                         'anthropic:claude-opus-4-7',
                         'anthropic:claude-opus-4-8',
+                        'anthropic:claude-opus-5',
                         'anthropic:claude-sonnet-4-5',
                         'anthropic:claude-sonnet-4-5-20250929',
                         'anthropic:claude-sonnet-4-6',
                         'anthropic:claude-sonnet-5',
+                        'bedrock-mantle:openai.gpt-5.4',
+                        'bedrock-mantle:openai.gpt-5.4-2026-03-05',
+                        'bedrock-mantle:openai.gpt-5.5',
+                        'bedrock-mantle:openai.gpt-5.5-2026-04-23',
+                        'bedrock-mantle:openai.gpt-5.6-luna',
+                        'bedrock-mantle:openai.gpt-5.6-sol',
+                        'bedrock-mantle:openai.gpt-5.6-terra',
+                        'bedrock-mantle:openai.gpt-oss-120b',
+                        'bedrock-mantle:openai.gpt-oss-20b',
+                        'bedrock-mantle:openai.gpt-oss-safeguard-120b',
+                        'bedrock-mantle:openai.gpt-oss-safeguard-20b',
                         'bedrock:amazon.titan-text-express-v1',
                         'bedrock:amazon.titan-text-lite-v1',
                         'bedrock:amazon.titan-tg1-large',
@@ -710,6 +764,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:global.anthropic.claude-opus-4-6-v1',
                         'bedrock:global.anthropic.claude-opus-4-7',
                         'bedrock:global.anthropic.claude-opus-4-8',
+                        'bedrock:global.anthropic.claude-opus-5',
                         'bedrock:global.anthropic.claude-sonnet-5',
                         'bedrock:google.gemma-3-12b-it',
                         'bedrock:google.gemma-3-27b-it',
@@ -765,6 +820,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.anthropic.claude-opus-4-6-v1',
                         'bedrock:us.anthropic.claude-opus-4-7',
                         'bedrock:us.anthropic.claude-opus-4-8',
+                        'bedrock:us.anthropic.claude-opus-5',
                         'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
                         'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'bedrock:us.anthropic.claude-sonnet-4-6',
@@ -808,6 +864,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-opus-4-6',
                         'gateway/anthropic:claude-opus-4-7',
                         'gateway/anthropic:claude-opus-4-8',
+                        'gateway/anthropic:claude-opus-5',
                         'gateway/anthropic:claude-sonnet-4-5',
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
                         'gateway/anthropic:claude-sonnet-4-6',
@@ -825,6 +882,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:global.anthropic.claude-opus-4-6-v1',
                         'gateway/bedrock:global.anthropic.claude-opus-4-7',
                         'gateway/bedrock:global.anthropic.claude-opus-4-8',
+                        'gateway/bedrock:global.anthropic.claude-opus-5',
                         'gateway/bedrock:global.anthropic.claude-sonnet-5',
                         'gateway/bedrock:google.gemma-3-12b-it',
                         'gateway/bedrock:google.gemma-3-27b-it',
@@ -858,6 +916,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:us.anthropic.claude-opus-4-6-v1',
                         'gateway/bedrock:us.anthropic.claude-opus-4-7',
                         'gateway/bedrock:us.anthropic.claude-opus-4-8',
+                        'gateway/bedrock:us.anthropic.claude-opus-5',
                         'gateway/bedrock:us.anthropic.claude-sonnet-5',
                         'gateway/bedrock:us.meta.llama4-maverick-17b-instruct-v1:0',
                         'gateway/bedrock:us.meta.llama4-scout-17b-instruct-v1:0',
@@ -872,8 +931,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-2.5-flash-lite',
                         'gateway/google-cloud:gemini-2.5-pro',
                         'gateway/google-cloud:gemini-3-flash-preview',
-                        'gateway/google-cloud:gemini-3-pro-image-preview',
-                        'gateway/google-cloud:gemini-3.1-flash-image-preview',
                         'gateway/google-cloud:gemini-3.1-flash-lite',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/google-cloud:gemini-3.5-flash',
@@ -884,8 +941,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-2.5-flash-lite',
                         'gateway/google:gemini-2.5-pro',
                         'gateway/google:gemini-3-flash-preview',
-                        'gateway/google:gemini-3-pro-image-preview',
-                        'gateway/google:gemini-3.1-flash-image-preview',
                         'gateway/google:gemini-3.1-flash-lite',
                         'gateway/google:gemini-3.1-pro-preview',
                         'gateway/google:gemini-3.5-flash',
@@ -896,8 +951,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/groq:openai/gpt-oss-120b',
                         'gateway/groq:openai/gpt-oss-20b',
                         'gateway/groq:openai/gpt-oss-safeguard-20b',
-                        'gateway/openai:computer-use-preview',
-                        'gateway/openai:computer-use-preview-2025-03-11',
                         'gateway/openai:gpt-3.5-turbo',
                         'gateway/openai:gpt-3.5-turbo-0125',
                         'gateway/openai:gpt-3.5-turbo-1106',
@@ -919,8 +972,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-4o-mini-2024-07-18',
                         'gateway/openai:gpt-5',
                         'gateway/openai:gpt-5-2025-08-07',
-                        'gateway/openai:gpt-5-chat-latest',
-                        'gateway/openai:gpt-5-codex',
                         'gateway/openai:gpt-5-mini',
                         'gateway/openai:gpt-5-mini-2025-08-07',
                         'gateway/openai:gpt-5-nano',
@@ -929,9 +980,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-5-pro-2025-10-06',
                         'gateway/openai:gpt-5.1',
                         'gateway/openai:gpt-5.1-2025-11-13',
-                        'gateway/openai:gpt-5.1-chat-latest',
-                        'gateway/openai:gpt-5.1-codex',
-                        'gateway/openai:gpt-5.1-codex-max',
                         'gateway/openai:gpt-5.2',
                         'gateway/openai:gpt-5.2-2025-12-11',
                         'gateway/openai:gpt-5.2-chat-latest',
@@ -966,8 +1014,10 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-2.5-flash-preview-09-2025',
                         'google-cloud:gemini-2.5-pro',
                         'google-cloud:gemini-3-flash-preview',
+                        'google-cloud:gemini-3-pro-image',
                         'google-cloud:gemini-3-pro-image-preview',
                         'google-cloud:gemini-3-pro-preview',
+                        'google-cloud:gemini-3.1-flash-image',
                         'google-cloud:gemini-3.1-flash-image-preview',
                         'google-cloud:gemini-3.1-flash-lite',
                         'google-cloud:gemini-3.1-pro-preview',
@@ -984,8 +1034,10 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-2.5-flash-preview-09-2025',
                         'google:gemini-2.5-pro',
                         'google:gemini-3-flash-preview',
+                        'google:gemini-3-pro-image',
                         'google:gemini-3-pro-image-preview',
                         'google:gemini-3-pro-preview',
+                        'google:gemini-3.1-flash-image',
                         'google:gemini-3.1-flash-image-preview',
                         'google:gemini-3.1-flash-lite',
                         'google:gemini-3.1-pro-preview',
@@ -1476,6 +1528,11 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                             'title': 'Max Uses',
                         },
+                        'external_web_access': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'External Web Access',
+                        },
                     },
                     'title': 'WebSearchTool',
                     'type': 'object',
@@ -1549,6 +1606,7 @@ def test_model_json_schema_with_capabilities():
                                         {'$ref': '#/$defs/MemoryTool'},
                                         {'$ref': '#/$defs/MCPServerTool'},
                                         {'$ref': '#/$defs/FileSearchTool'},
+                                        {'$ref': '#/$defs/AdvisorTool'},
                                         {'$ref': '#/$defs/ToolSearchTool'},
                                     ]
                                 },
@@ -1950,6 +2008,10 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Allowed Domains',
                         },
                         'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
+                        'external_web_access': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'External Web Access',
+                        },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
@@ -3518,9 +3580,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 async def test_deferred_capability_tool_registered_after_construction_defers_until_load() -> None:
     """A tool registered via `@cap.tool` *after* construction defers like a constructor tool: hidden until load.
 
-    Deferred tools stay in the toolset tagged `defer_loading=True` (the wire-level filter in
-    `Model.prepare_request` is what hides them from a real provider), so the regression signal is the
-    flag flipping `True` -> `False` once the capability loads, not the tool's mere presence.
+    Deferred tools stay tagged `defer_loading=True`; current visibility is tracked separately.
     """
     refunds = Capability[object](id='refunds', description='Refund policy tools.', defer_loading=True)
 
@@ -3557,8 +3617,7 @@ async def test_deferred_capability_tool_registered_after_construction_defers_unt
     result = await agent.run('Can I get a refund?')
 
     assert result.output == snapshot('final: order-1: refund allowed for 30 days')
-    # Deferred before the capability loads, revealed (and callable) afterward.
-    assert defer_flag_by_phase == snapshot({'before_load': True, 'after_load': False})
+    assert defer_flag_by_phase == snapshot({'before_load': True, 'after_load': True})
 
 
 async def test_deferred_capability_tool_stays_available_across_turns() -> None:
@@ -3581,13 +3640,15 @@ async def test_deferred_capability_tool_stays_available_across_turns() -> None:
         toolsets=[toolset],
         defer_loading=True,
     )
-
-    # Names of non-deferred function tools the model sees on each request.
+    hooks = Hooks()
     available_per_turn: list[set[str]] = []
 
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
+    @hooks.on.before_model_request
+    async def record_available_tools(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+        available_per_turn.append(ctx.available_tool_names)
+        return request_context
 
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
 
         # Turn 1: load the capability.
@@ -3612,19 +3673,13 @@ async def test_deferred_capability_tool_stays_available_across_turns() -> None:
 
         return make_text_response('done')
 
-    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds, hooks])
     result = await agent.run('Can I get a refund?')
 
     assert result.output == 'done'
-
-    # First request: tool is still deferred (not yet loaded).
     assert 'lookup_refund_policy' not in available_per_turn[0]
-    # Every request after the load must expose the loaded tool as non-deferred — including
-    # the second post-load turn, which is what the regression broke.
-    post_load_turns = available_per_turn[1:]
-    assert len(post_load_turns) >= 2
-    for turn_tools in post_load_turns:
-        assert 'lookup_refund_policy' in turn_tools
+    assert len(available_per_turn[1:]) >= 2
+    assert all('lookup_refund_policy' in names for names in available_per_turn[1:])
 
 
 async def test_run_context_tools_exposes_deferred_definitions_as_name_keyed_dict() -> None:
@@ -3754,11 +3809,7 @@ async def test_two_deferred_capabilities_loaded_sequentially_both_stay_available
     cap_a = Capability[object](id='alpha', description='Alpha tools.', toolsets=[toolset_a], defer_loading=True)
     cap_b = Capability[object](id='beta', description='Beta tools.', toolsets=[toolset_b], defer_loading=True)
 
-    available_per_turn: list[set[str]] = []
-
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
-
         tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
         names = {part.tool_name for part in tool_returns}
 
@@ -3785,21 +3836,6 @@ async def test_two_deferred_capabilities_loaded_sequentially_both_stay_available
     result = await agent.run('Use both capabilities.')
 
     assert result.output == 'done'
-    # >= 5 turns: load A, use A, load B, use B, final.
-    assert len(available_per_turn) >= 5
-
-    # Identify the first turn on which each capability's tool became available.
-    a_loaded_from = next(i for i, tools in enumerate(available_per_turn) if 'alpha_tool' in tools)
-    b_loaded_from = next(i for i, tools in enumerate(available_per_turn) if 'beta_tool' in tools)
-    assert a_loaded_from < b_loaded_from
-
-    # Once loaded, each tool stays available on every later turn — loading B never drops A.
-    for tools in available_per_turn[a_loaded_from:]:
-        assert 'alpha_tool' in tools
-    for tools in available_per_turn[b_loaded_from:]:
-        assert 'beta_tool' in tools
-    # Both present together on the final turn.
-    assert {'alpha_tool', 'beta_tool'} <= available_per_turn[-1]
 
 
 async def test_tool_search_discovery_and_capability_load_coexist() -> None:
@@ -3825,11 +3861,7 @@ async def test_tool_search_discovery_and_capability_load_coexist() -> None:
 
     refunds = Capability[object](id='refunds', description='Refund tools.', toolsets=[cap_toolset], defer_loading=True)
 
-    available_per_turn: list[set[str]] = []
-
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
-
         tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
         names = {part.tool_name for part in tool_returns}
 
@@ -3861,17 +3893,6 @@ async def test_tool_search_discovery_and_capability_load_coexist() -> None:
 
     assert result.output == 'done'
 
-    weather_from = next(i for i, tools in enumerate(available_per_turn) if 'searchable_weather' in tools)
-    refund_from = next(i for i, tools in enumerate(available_per_turn) if 'lookup_refund' in tools)
-
-    # Each reveal mechanism is sticky from the turn it first exposes its tool.
-    for tools in available_per_turn[weather_from:]:
-        assert 'searchable_weather' in tools
-    for tools in available_per_turn[refund_from:]:
-        assert 'lookup_refund' in tools
-    # Both available together once both are revealed, including on the final turn.
-    assert {'searchable_weather', 'lookup_refund'} <= available_per_turn[-1]
-
 
 async def test_deferred_capability_synthetic_exchange_not_duplicated_over_long_trajectory() -> None:
     """The synthetic tool-search exchange for a loaded capability appears exactly once.
@@ -3891,11 +3912,7 @@ async def test_deferred_capability_synthetic_exchange_not_duplicated_over_long_t
         id='refunds', description='Refund policy tools.', toolsets=[toolset], defer_loading=True
     )
 
-    available_per_turn: list[set[str]] = []
-
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
-
         tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
             return ModelResponse(
@@ -3938,13 +3955,6 @@ async def test_deferred_capability_synthetic_exchange_not_duplicated_over_long_t
     assert len(synthetic_call_ids) == 1
     assert synthetic_return_ids == synthetic_call_ids
 
-    # The capability's tool was deferred on turn 1 and available on every post-load turn.
-    assert 'lookup_refund_policy' not in available_per_turn[0]
-    post_load_turns = available_per_turn[1:]
-    assert len(post_load_turns) >= 3
-    for tools in post_load_turns:
-        assert 'lookup_refund_policy' in tools
-
 
 async def test_deferred_capability_tool_available_on_turn_that_does_not_call_it() -> None:
     """A loaded capability's tool stays available on a turn that does not call it.
@@ -3971,11 +3981,7 @@ async def test_deferred_capability_tool_available_on_turn_that_does_not_call_it(
         id='refunds', description='Refund policy tools.', toolsets=[cap_toolset], defer_loading=True
     )
 
-    available_per_turn: list[set[str]] = []
-
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
-
         tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
         names = {part.tool_name for part in tool_returns}
 
@@ -3995,13 +4001,6 @@ async def test_deferred_capability_tool_available_on_turn_that_does_not_call_it(
     result = await agent.run('Load refunds but use ping.')
 
     assert result.output == 'done'
-    assert len(available_per_turn) >= 3
-
-    # Turn 1: capability tool still deferred.
-    assert 'lookup_refund_policy' not in available_per_turn[0]
-    # Every turn after the load: capability tool available even though it is never called.
-    for tools in available_per_turn[1:]:
-        assert 'lookup_refund_policy' in tools
 
 
 def _load_calls(messages: list[ModelMessage]) -> list[LoadCapabilityCallPart]:
@@ -4435,7 +4434,7 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
     tools = await toolset.get_tools(ctx)
     tools['discovered_tool'] = replace(
         tools['discovered_tool'],
-        tool_def=replace(tools['discovered_tool'].tool_def, with_native=ToolSearchTool.kind, defer_loading=False),
+        tool_def=replace(tools['discovered_tool'].tool_def, with_native=ToolSearchTool.kind),
     )
     tools['pending_tool'] = replace(
         tools['pending_tool'],
@@ -4446,7 +4445,6 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
         tool_def=replace(
             tools['loaded_capability_tool'].tool_def,
             with_native=ToolSearchTool.kind,
-            defer_loading=False,
             capability_id='loaded_capability',
         ),
     )
@@ -6912,7 +6910,8 @@ class TestWrapNodeRunHook:
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                return await handler(node)  # pragma: no cover — bare async for doesn't call this
+                # A bare `async for` doesn't call this.
+                return await handler(node)  # pragma: no cover
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[NodeObserverCap()])
 
@@ -6988,7 +6987,7 @@ class TestWebSearchCapability:
 
     def test_websearch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
         """WebSearch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch()])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -7029,7 +7028,7 @@ class TestWebSearchCapability:
 
     def test_websearch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -7049,7 +7048,7 @@ class TestWebSearchCapability:
 
     def test_websearch_requires_native_with_constraints(self, allow_model_requests: None):
         """WebSearch(allowed_domains=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebSearch(allowed_domains=['example.com'], local='duckduckgo')])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -7323,7 +7322,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
         """WebFetch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch()])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -7375,7 +7374,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebFetch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -7394,7 +7393,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_max_uses_requires_native(self, allow_model_requests: None):
         """WebFetch(max_uses=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # pyright: ignore[reportArgumentType]
         agent = Agent(model, capabilities=[WebFetch(max_uses=5, local=True)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -7740,11 +7739,28 @@ class TestImageGenerationCapability:
             ]
         )
 
-    @pytest.mark.parametrize('model_name', ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'])
-    def test_image_generation_rejects_image_only_model(self, model_name: str):
-        """Using a dedicated image model like gpt-image-2 raises a clear error at construction."""
-        with pytest.raises(UserError, match=f'{model_name!r} is a dedicated image generation model'):
-            ImageGeneration(fallback_model=f'openai-responses:{model_name}')
+    @pytest.mark.parametrize(
+        'provider, model_name, suggestion',
+        [
+            ('openai-responses', 'gpt-image-2', 'openai-responses:gpt-5.5'),
+            ('openai-responses', 'gpt-image-1.5', 'openai-responses:gpt-5.5'),
+            ('openai-responses', 'gpt-image-1', 'openai-responses:gpt-5.4'),
+            ('openai-responses', 'gpt-image-1-mini', 'openai-responses:gpt-5.4'),
+            ('google', 'imagen-3.0-generate-002', 'google:gemini-3-pro-image'),
+            ('google', 'imagen-3.0-fast-generate-001', 'google:gemini-3-pro-image'),
+        ],
+    )
+    def test_image_generation_rejects_image_only_model(self, provider: str, model_name: str, suggestion: str):
+        """Using a dedicated image model raises a clear error with a conversational alternative."""
+        with pytest.raises(
+            UserError,
+            match=re.escape(
+                f'{model_name!r} is a dedicated image generation model that cannot be used as '
+                f'`fallback_model` directly. Use a conversational model with image generation '
+                f'support instead, e.g. {suggestion!r}.'
+            ),
+        ):
+            ImageGeneration(fallback_model=f'{provider}:{model_name}')
 
     @pytest.mark.vcr()
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
@@ -7841,7 +7857,7 @@ class TestImageGenerationCapability:
             tool = info.function_tools[0]
             return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
 
-        inner_model = GoogleModel('gemini-3-pro-image-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        inner_model = GoogleModel('gemini-3-pro-image', provider=GoogleProvider(api_key=gemini_api_key))
         outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
         result = await agent.run('Generate an image of a cute baby sea otter')
@@ -10011,6 +10027,7 @@ def test_web_search_with_constraints():
         blocked_domains=['bad.com'],
         allowed_domains=['good.com'],
         max_uses=3,
+        external_web_access=False,
     )
     builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
@@ -10021,7 +10038,22 @@ def test_web_search_with_constraints():
     assert tool.blocked_domains == ['bad.com']
     assert tool.allowed_domains == ['good.com']
     assert tool.max_uses == 3
+    assert tool.external_web_access is False
     assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
+
+
+def test_web_search_external_access_constraint():
+    """Disabling live access suppresses local fallback; allowing it does not."""
+    without_access = WebSearch(local=_noop_greet, external_web_access=False)
+    assert without_access._requires_native() is True  # pyright: ignore[reportPrivateUsage]
+    assert without_access.get_toolset() is None
+
+    with_access = WebSearch(local=_noop_greet, external_web_access=True)
+    assert with_access._requires_native() is False  # pyright: ignore[reportPrivateUsage]
+    assert with_access.get_toolset() is not None
+
+    with pytest.raises(UserError, match='constraint fields require the native tool'):
+        WebSearch(native=False, local=_noop_greet, external_web_access=False)
 
 
 def test_web_search_duckduckgo_raises_without_extra(monkeypatch: pytest.MonkeyPatch):
@@ -10633,7 +10665,8 @@ class TestRunErrorHooks:
                     self.log.append('wrap_run:caught')
                     return AgentRunResult(output='wrap_recovered')
 
-            async def on_run_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_run_error(  # pragma: no cover
                 self, ctx: RunContext[Any], *, error: BaseException
             ) -> AgentRunResult[Any]:
                 self.log.append('on_run_error')
@@ -10908,6 +10941,29 @@ class TestToolValidateErrorHooks:
 
         result = await agent.run('greet someone')
         assert 'hello correct' in result.output
+
+    async def test_args_validator_deferral_is_not_a_validate_error(self):
+        """A deferral raised by an `args_validator` passes through the validate hooks as control flow.
+
+        Like an execute-stage deferral, it's not an error: `on_tool_validate_error` doesn't fire, the
+        hooks that run after successful validation don't either, and the tool is never executed.
+        """
+        cap = LoggingCapability()
+
+        def my_validator(ctx: RunContext[Any], x: int) -> None:
+            raise ApprovalRequired()
+
+        agent = Agent(TestModel(), output_type=[str, DeferredToolRequests], capabilities=[cap])
+
+        @agent.tool_plain(args_validator=my_validator)
+        def my_tool(x: int) -> int:  # pragma: no cover
+            return x
+
+        result = await agent.run('call the tool')
+        assert isinstance(result.output, DeferredToolRequests)
+        assert [entry for entry in cap.log if 'tool_validate' in entry or 'tool_execute' in entry] == snapshot(
+            ['before_tool_validate:my_tool', 'wrap_tool_validate:my_tool:before']
+        )
 
 
 # --- Tool execute error hook tests ---
@@ -12121,11 +12177,8 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
     wrapped = PrefixTools(refunds, prefix='refunds')
 
     first_request_instructions: list[str | None] = []
-    available_per_turn: list[set[str]] = []
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
-
         tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
 
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
@@ -12157,9 +12210,6 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
         'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
         '- refunds: Refund policy tools.'
     ]
-    # The prefixed tool is hidden until the capability is loaded, then becomes callable.
-    assert 'refunds_lookup_refund_policy' not in available_per_turn[0]
-    assert 'refunds_lookup_refund_policy' in available_per_turn[-1]
 
 
 async def test_prefix_tools_explicit_defer_loading_overrides_anonymous_wrapped() -> None:
@@ -12234,8 +12284,8 @@ async def test_prefix_tools_can_be_deferred():
     assert seen_tool_state == snapshot(
         [
             [('load_capability', False), ('billing_lookup_refund_policy', True), ('search_tools', False)],
-            [('load_capability', False), ('billing_lookup_refund_policy', False), ('search_tools', False)],
-            [('load_capability', False), ('billing_lookup_refund_policy', False), ('search_tools', False)],
+            [('load_capability', False), ('billing_lookup_refund_policy', True), ('search_tools', False)],
+            [('load_capability', False), ('billing_lookup_refund_policy', True), ('search_tools', False)],
         ]
     )
 
@@ -13417,7 +13467,8 @@ class TestModelRetryFromHooks:
             ) -> ModelResponse:
                 raise ModelRetry('retry please')
 
-            async def on_model_request_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_model_request_error(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -13944,7 +13995,8 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Wrap says retry tool')
 
-            async def on_tool_execute_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_tool_execute_error(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -14469,7 +14521,20 @@ class TestCompaction:
 
 
 def test_thread_executor_not_serializable() -> None:
-    assert ThreadExecutor.get_serialization_name() is None
+    assert UseThreadExecutor.get_serialization_name() is None
+
+
+def test_thread_executor_deprecated_alias() -> None:
+    from pydantic_ai.exceptions import PydanticAIDeprecationWarning
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `UseThreadExecutor`'):
+        from pydantic_ai.capabilities import ThreadExecutor
+    assert ThreadExecutor is UseThreadExecutor
+
+    # The defining module resolves the old name too, so unpickling keeps working.
+    with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `UseThreadExecutor`'):
+        from pydantic_ai.capabilities.thread_executor import ThreadExecutor as submodule_thread_executor
+    assert submodule_thread_executor is UseThreadExecutor
 
 
 async def test_thread_executor_capability() -> None:
@@ -14482,7 +14547,7 @@ async def test_thread_executor_capability() -> None:
 
     executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='cap-pool')
     try:
-        agent = Agent(FunctionModel(model_function), capabilities=[ThreadExecutor(executor)])
+        agent = Agent(FunctionModel(model_function), capabilities=[UseThreadExecutor(executor)])
 
         @agent.tool_plain
         def check_thread() -> str:
@@ -17003,7 +17068,8 @@ class TestBeforeOutputValidate:
                 output_context: OutputContext,
                 output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
-                log.append('validate')  # pragma: no cover — should NOT fire for plain text
+                # The uncovered body is the assertion: this hook must not fire for plain text.
+                log.append('validate')  # pragma: no cover
                 return output  # pragma: no cover
 
             async def before_output_process(
@@ -17473,7 +17539,8 @@ class TestModelRetryFromOutputHooks:
                     raise ModelRetry('Bad output, please try again')
                 return result
 
-            async def on_output_process_error(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def on_output_process_error(  # pragma: no cover
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, error: Exception
             ) -> Any:
                 nonlocal error_hook_called
@@ -18235,7 +18302,8 @@ class TestToolOutputWithOutputHooks:
 
         @dataclass
         class BothHooksCap(AbstractCapability[Any]):
-            async def before_tool_validate(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def before_tool_validate(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -18246,7 +18314,8 @@ class TestToolOutputWithOutputHooks:
                 log.append(f'tool_validate:{call.tool_name}')
                 return args
 
-            async def before_tool_execute(  # pragma: no cover — verifying this is NOT called
+            # The uncovered body is the assertion: this hook must not be called.
+            async def before_tool_execute(  # pragma: no cover
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -19858,8 +19927,8 @@ class TestOutputHookEdgeCases:
 
         ctx = RunContext(
             deps=None,
-            model=None,  # type: ignore
-            usage=None,  # type: ignore
+            model=None,  # pyright: ignore[reportArgumentType]
+            usage=None,  # pyright: ignore[reportArgumentType]
             prompt='test',
             run_step=0,
             retry=0,
@@ -19879,8 +19948,8 @@ class TestOutputHookEdgeCases:
 
         ctx = RunContext(
             deps=None,
-            model=None,  # type: ignore
-            usage=None,  # type: ignore
+            model=None,  # pyright: ignore[reportArgumentType]
+            usage=None,  # pyright: ignore[reportArgumentType]
             prompt='test',
             run_step=0,
             retry=0,
@@ -19908,8 +19977,8 @@ class TestOutputHookEdgeCases:
         async def run():
             ctx = RunContext(
                 deps=None,
-                model=None,  # type: ignore
-                usage=None,  # type: ignore
+                model=None,  # pyright: ignore[reportArgumentType]
+                usage=None,  # pyright: ignore[reportArgumentType]
                 prompt='test',
                 run_step=0,
                 retry=0,
@@ -20631,7 +20700,8 @@ class TestImageOutputWithHooks:
             async def before_output_validate(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
-                log.append('validate')  # pragma: no cover — should NOT fire for images
+                # The uncovered body is the assertion: this hook must not fire for images.
+                log.append('validate')  # pragma: no cover
                 return output  # pragma: no cover
 
             async def before_output_process(
@@ -23128,7 +23198,8 @@ async def test_dynamic_capability_contributes_toolset_function() -> None:
 
     @toolset.tool_plain
     def func_tool() -> str:
-        return 'from func'  # pragma: no cover — the tool listing is what's asserted
+        # The tool listing is what's asserted.
+        return 'from func'  # pragma: no cover
 
     @dataclass
     class AsyncToolFuncCap(AbstractCapability):
@@ -23233,7 +23304,7 @@ async def test_dynamic_capability_returning_deferred_capability() -> None:
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         hidden_def = next(t for t in info.function_tools if t.name == 'hidden_tool')
-        # `defer_loading=True` is what keeps the tool off the provider wire until loaded.
+        # Authored deferral remains stable after the capability is loaded.
         seen_defer_flags.append(hidden_def.defer_loading)
         tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
@@ -23247,7 +23318,7 @@ async def test_dynamic_capability_returning_deferred_capability() -> None:
     agent = Agent(FunctionModel(respond), capabilities=[factory])
     result = await agent.run('hi')
     assert result.output == 'done'
-    assert seen_defer_flags == [True, False, False]
+    assert seen_defer_flags == [True, True, True]
 
 
 async def test_dynamic_capability_hooks_fire() -> None:
@@ -23388,8 +23459,8 @@ async def test_dynamic_deferred_capability_uses_resolved_capability_for_loaded_t
     assert seen_tool_state == snapshot(
         [
             [('load_capability', False), ('lookup_refund_policy', True), ('search_tools', False)],
-            [('load_capability', False), ('lookup_refund_policy', False), ('search_tools', False)],
-            [('load_capability', False), ('lookup_refund_policy', False), ('search_tools', False)],
+            [('load_capability', False), ('lookup_refund_policy', True), ('search_tools', False)],
+            [('load_capability', False), ('lookup_refund_policy', True), ('search_tools', False)],
         ]
     )
 

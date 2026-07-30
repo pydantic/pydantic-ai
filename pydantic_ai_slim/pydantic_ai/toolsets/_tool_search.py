@@ -4,7 +4,8 @@
 `defer_loading=True`. Rather than commit to native-vs-local at toolset time (which can't
 know which model will actually serve the request — think `FallbackModel`), the toolset
 emits one entry per deferred tool with both `with_native='tool_search'` and the
-current local visibility on `defer_loading`, then lets
+stable authored `defer_loading` value, then carries current visibility on
+`ModelRequestParameters` and lets
 [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] filter based on the
 specific model's support for the framework-managed tool-search builtin:
 
@@ -12,9 +13,8 @@ specific model's support for the framework-managed tool-search builtin:
   discovery state) and applies its provider-specific wire format — e.g. setting
   `defer_loading=True` on the Anthropic / OpenAI Responses tool param so the provider
   drives discovery server-side.
-* On the local path corpus members with `defer_loading=True` (still undiscovered) are
-  dropped from the wire; discovered ones (`defer_loading=False`) stay so the model can
-  call them by their real name.
+* On the local path still-hidden corpus members are dropped from the wire; revealed
+  ones stay so the model can call them by their real name.
 
 `search_tools`, the local discovery function, carries `unless_native='tool_search'`
 and is dropped by the adapter when the builtin is supported. When the capability commits
@@ -134,9 +134,10 @@ _DEFAULT_PARAMETER_DESCRIPTION = (
 )
 
 
+# Schema source only, never invoked.
 def _search_tools_signature(
     queries: Annotated[list[str], Field(description=_DEFAULT_PARAMETER_DESCRIPTION)],
-) -> ToolSearchReturnContent:  # pragma: no cover - schema source only, never invoked
+) -> ToolSearchReturnContent:  # pragma: no cover
     """Source-of-truth signature for the `search_tools` function tool.
 
     Used by [`Tool`][pydantic_ai.tools.Tool] to derive the JSON schema and validator
@@ -313,17 +314,14 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
-        # Single entry per deferred tool, keyed by its real name. `with_native`
-        # stays set across the run (the tool is part of the search corpus regardless of
-        # current discovery state); `defer_loading` reflects current visibility — flipped
-        # to `False` once the tool is discovered. `Model.prepare_request` reads both
-        # flags together to decide what reaches the wire (see the four-rule filter in
-        # `_resolve_native_tool_swap`).
+        # Single entry per deferred tool, keyed by its real name. Both `with_native`
+        # and `defer_loading` stay set across the run: the former marks membership in
+        # the search corpus, while the latter preserves the tool author's intent.
+        # Current visibility travels separately on `ModelRequestParameters`.
         for name, tool in deferred.items():
             managed_def = replace(
                 tool.tool_def,
                 with_native=_TOOL_SEARCH_BUILTIN_ID,
-                defer_loading=name not in revealed_tool_names,
             )
             result[name] = replace(tool, tool_def=managed_def)
 

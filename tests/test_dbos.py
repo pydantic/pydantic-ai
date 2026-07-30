@@ -1535,6 +1535,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 usage=RequestUsage(
                     input_tokens=71,
                     output_tokens=46,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1582,6 +1583,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 usage=RequestUsage(
                     input_tokens=133,
                     output_tokens=19,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1680,6 +1682,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 usage=RequestUsage(
                     input_tokens=71,
                     output_tokens=46,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1727,6 +1730,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 usage=RequestUsage(
                     input_tokens=133,
                     output_tokens=19,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1795,6 +1799,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 usage=RequestUsage(
                     input_tokens=47,
                     output_tokens=17,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1839,6 +1844,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 usage=RequestUsage(
                     input_tokens=87,
                     output_tokens=17,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1877,6 +1883,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 usage=RequestUsage(
                     input_tokens=116,
                     output_tokens=10,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -2053,6 +2060,29 @@ async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
     assert tools['foo'].tool_def.name == 'foo'
 
 
+_mcp_task_dbos_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
+    Agent(
+        TestModel(call_tools=['required_task_tool', 'optional_task_tool']),
+        name='mcp_task_dbos_agent',
+        toolsets=[
+            MCPToolset(
+                StdioTransport(command='python', args=['-m', 'tests.mcp_task_server']),
+                id='mcp_tasks',
+                init_timeout=20,
+                prefer_tasks=False,
+            )
+        ],
+    )
+)
+
+
+async def test_dbos_mcptoolset_preserves_task_routing(dbos: DBOS):
+    """Effective task routing in `ToolDefinition.metadata` survives DBOS steps."""
+    result = await _mcp_task_dbos_agent.run('Call both tools')
+
+    assert result.output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+
+
 def _call_mcp_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Two model steps: call an MCP tool on the first request, return text on the second.
 
@@ -2133,9 +2163,10 @@ def test_dbos_mcp_wrapper_visit_and_replace():
 
 def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Simple model function for durability tests."""
-    for msg in reversed(messages):  # pragma: no branch - first message carries the prompt
-        for part in msg.parts:  # pragma: no branch - first part is the UserPromptPart
-            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
+    # The first message carries the prompt and its first part is the `UserPromptPart`, so none of these branch.
+    for msg in reversed(messages):  # pragma: no branch
+        for part in msg.parts:  # pragma: no branch
+            if isinstance(part, UserPromptPart):  # pragma: no branch
                 return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
     return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
 
@@ -2661,7 +2692,8 @@ async def test_dbos_durability_resolve_model_id_capability_is_deps_aware(dbos: D
 def _dbos_broken_resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
     if model_id == 'broken-model':
         raise ValueError('resolver exploded')
-    return None  # pragma: no cover - only 'broken-model' flows through this test
+    # Only 'broken-model' flows through this test.
+    return None  # pragma: no cover
 
 
 async def test_dbos_durability_user_resolver_error_propagates(dbos: DBOS) -> None:
@@ -2801,9 +2833,10 @@ def test_dbos_durability_get_serialization_name() -> None:
 
 
 async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-    for msg in reversed(messages):  # pragma: no branch - first message carries the prompt
-        for part in msg.parts:  # pragma: no branch - first part is the UserPromptPart
-            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
+    # The first message carries the prompt and its first part is the `UserPromptPart`, so none of these branch.
+    for msg in reversed(messages):  # pragma: no branch
+        for part in msg.parts:  # pragma: no branch
+            if isinstance(part, UserPromptPart):  # pragma: no branch
                 yield f'Echo: {part.content}'
                 return
     yield 'no prompt'  # pragma: no cover
@@ -3204,7 +3237,8 @@ async def test_dbos_durability_dynamic_capability_tool_runs_in_step(dbos: DBOS) 
 
 def test_dbos_durability_dynamic_capability_requires_id(dbos: DBOS) -> None:
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
-        return Capability()  # pragma: no cover — construction raises before the factory can run
+        # Construction raises before the factory can run.
+        return Capability()  # pragma: no cover
 
     with pytest.raises(UserError, match=r"DynamicCapability\(\.\.\., id='user-tools'\)"):
         Agent(
@@ -3219,7 +3253,8 @@ def test_dbos_durability_bare_capability_func_requires_explicit_wrapper(dbos: DB
     so under durable execution it raises with a hint to wrap it explicitly."""
 
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
-        return Capability()  # pragma: no cover — construction raises before the factory can run
+        # Construction raises before the factory can run.
+        return Capability()  # pragma: no cover
 
     with pytest.raises(UserError, match=r'wrap it explicitly'):
         Agent(
@@ -3310,7 +3345,8 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset_in_iter(dbos: DBOS) -
             'Hello',
             toolsets=[MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='iter_mcp')],
         ):
-            pass  # pragma: no cover — run setup raises before any node runs
+            # Run setup raises before any node runs.
+            pass  # pragma: no cover
 
     with pytest.raises(
         UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
@@ -3319,7 +3355,8 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset_in_iter(dbos: DBOS) -
 
 
 def _per_run_dynamic_factory(ctx: RunContext[Any]) -> FunctionToolset[Any]:
-    return FunctionToolset()  # pragma: no cover — rejected before the factory is resolved
+    # Rejected before the factory is resolved.
+    return FunctionToolset()  # pragma: no cover
 
 
 async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) -> None:

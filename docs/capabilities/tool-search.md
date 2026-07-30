@@ -1,6 +1,6 @@
 # Tool Search
 
-The [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] [capability](overview.md) handles discovery of tools marked with `defer_loading=True`, so agents with large toolsets only pay tokens for the tools the model needs. Like the [provider-adaptive tools](overview.md#provider-adaptive-tools) above, it picks the best path for the active model — native server-executed search on Anthropic and OpenAI Responses, a local `search_tools` function tool elsewhere — and is auto-injected into every agent with zero overhead when no deferred tools exist.
+The [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] [capability](overview.md) handles model-driven discovery of tools marked with `defer_loading=True`, so agents with large toolsets only pay tokens for the tools the model needs. Like the [provider-adaptive tools](overview.md#provider-adaptive-tools) above, it picks the best path for the active model — native server-executed search on Anthropic and OpenAI Responses, a local `search_tools` function tool elsewhere — and is auto-injected into every agent with zero overhead when no deferred tools exist. Deferred [on-demand capabilities](on-demand.md) are application-revealed through `load_capability`; when all deferred tools are capability-owned, Anthropic does not advertise a tool-search surface.
 
 Pass an explicit [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] to pick a specific [`strategy`][pydantic_ai.capabilities.ToolSearch.strategy] (`'keywords'`, `'bm25'`, `'regex'`, or a custom callable) or tune the local fallback:
 

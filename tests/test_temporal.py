@@ -4,19 +4,22 @@ import asyncio
 import inspect
 import os
 import re
+import sys
 import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
+import anyio
 import pytest
 from pydantic import BaseModel, TypeAdapter
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
     AbstractToolset,
@@ -49,6 +52,7 @@ from pydantic_ai import (
     TextContent,
     TextPart,
     TextPartDelta,
+    Tool,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturn,
@@ -123,11 +127,11 @@ try:
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
     from temporalio.contrib.workflow_streams import WorkflowStream
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
-    from temporalio.exceptions import ApplicationError
+    from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
-    from temporalio.workflow import ActivityConfig
+    from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
     from pydantic_ai.durable_exec._toolset import (
         CallToolResult,
@@ -145,17 +149,24 @@ try:
         stream_agent_events,
         workflow_stream_event_handler,
     )
+    from pydantic_ai.durable_exec.temporal._activity_execution import (
+        execute_activity as execute_temporal_activity,
+    )
     from pydantic_ai.durable_exec.temporal._durability import (
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
         _heartbeating,  # pyright: ignore[reportPrivateUsage]
         _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._dynamic_toolset import temporalize_dynamic_toolset
-    from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
+    from pydantic_ai.durable_exec.temporal._function_toolset import (
+        TemporalFunctionToolset,
+        temporalize_function_toolset,
+    )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
     from pydantic_ai.durable_exec.temporal._toolset import (
+        CallToolParams,
         TemporalWrapperToolset,
         resolve_tool_activity_config,
         toolset_temporal_activities,
@@ -163,7 +174,6 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
-import sys
 
 if sys.version_info >= (3, 14):
     pytest.skip(
@@ -295,10 +305,12 @@ def _kill_leaked_temporal_server(port: int) -> None:
             check=False,
             timeout=2,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):  # pragma: lax no cover - no `ss` or unresponsive
+    except (FileNotFoundError, subprocess.TimeoutExpired):  # pragma: lax no cover
+        # No `ss` on this platform, or it was unresponsive.
         return
 
-    for line in result.stdout.splitlines():  # pragma: lax no cover - body fires only on a real leak
+    # The body fires only on a real leak, so it's covered on some runs and not on others.
+    for line in result.stdout.splitlines():  # pragma: lax no cover
         if 'temporal-sdk-py' not in line:
             continue
         match = re.search(r'pid=(\d+)', line)
@@ -383,6 +395,251 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, client: 
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+_cancellation_activity_started: asyncio.Event | None = None
+_cancellation_activity_cancel_absorbed = False
+
+
+async def _cancellation_stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    global _cancellation_activity_cancel_absorbed
+
+    assert _cancellation_activity_started is not None
+    _cancellation_activity_started.set()
+    try:
+        while True:
+            activity.heartbeat()
+            await asyncio.sleep(0.01)
+    except asyncio.CancelledError:
+        _cancellation_activity_cancel_absorbed = True
+        yield 'completed despite activity cancellation'
+
+
+async def _cancellation_event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    try:
+        async for _ in stream:
+            pass
+    except asyncio.CancelledError:
+        pass
+
+
+_cancellation_agent = Agent(
+    FunctionModel(stream_function=_cancellation_stream_model),
+    name='cancellation_backstop_agent',
+    deps_type=type(None),
+    capabilities=[
+        TemporalDurability(
+            event_stream_handler=_cancellation_event_stream_handler,
+            model_activity_config=ActivityConfig(
+                cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+                heartbeat_timeout=timedelta(seconds=1),
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class CancellationBackstopWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _cancellation_agent.run(prompt)).output
+
+
+@activity.defn
+async def _slow_cancellable_activity() -> str:
+    await asyncio.sleep(1)
+    return 'completed slowly'
+
+
+@workflow.defn
+class AnyioScopeActivityCancellationWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        async def run_activity() -> None:
+            await execute_temporal_activity(
+                _slow_cancellable_activity,
+                args=[],
+                start_to_close_timeout=timedelta(seconds=5),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+                cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+            )
+
+        async def run_in_task_group() -> None:
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(run_activity)
+
+        try:
+            await asyncio.wait_for(run_in_task_group(), timeout=0.1)
+        except asyncio.TimeoutError:
+            return 'timed out cleanly'
+        return 'completed'  # pragma: no cover
+
+
+async def test_anyio_scope_cancel_of_activity_await_does_not_wedge(client: Client) -> None:
+    """Exercise the precise anyio/Temporal interaction that cannot be timed reliably through the agent API.
+
+    Agent-level activity awaits use the same executor, and the test below covers the public path.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AnyioScopeActivityCancellationWorkflow],
+        activities=[_slow_cancellable_activity],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            AnyioScopeActivityCancellationWorkflow.run,
+            id=f'{AnyioScopeActivityCancellationWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        assert await handle.result() == 'timed out cleanly'
+        history = await handle.fetch_history()
+
+    assert not [event for event in history.events if 'WORKFLOW_TASK_FAILED' in str(event.event_type)]
+
+
+@workflow.defn
+class WaitForNonStreamingAgentTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            result = await asyncio.wait_for(_wait_for_nonstreaming_agent.run('say hi'), timeout=0.5)
+        except asyncio.TimeoutError:
+            return 'clean-timeout'
+        return f'unexpected-success:{result.output}'  # pragma: no cover
+
+
+async def _slow_nonstreaming_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    await asyncio.sleep(10)
+    return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+
+_wait_for_nonstreaming_agent = Agent(
+    FunctionModel(_slow_nonstreaming_model, model_name='slow-model'),
+    name='wait_for_nonstreaming_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability()],
+)
+
+
+async def test_wait_for_nonstreaming_agent_timeout_does_not_livelock(client: Client) -> None:
+    """The exact MRE shape from #6883 (trigger A): a non-streaming model request as an activity,
+    the workflow body bounding `agent.run()` with `asyncio.wait_for`. Must end in a clean
+    `TimeoutError`, not a deadlock-detector livelock."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WaitForNonStreamingAgentTimeoutWorkflow],
+        plugins=[AgentPlugin(_wait_for_nonstreaming_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        result = await client.execute_workflow(
+            WaitForNonStreamingAgentTimeoutWorkflow.run,
+            id=f'{WaitForNonStreamingAgentTimeoutWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result == 'clean-timeout'
+
+
+async def _wait_for_timeout_stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    while True:
+        activity.heartbeat()
+        await asyncio.sleep(0.01)
+        yield ''
+
+
+async def _consume_wait_for_timeout_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+_wait_for_timeout_agent = Agent(
+    FunctionModel(stream_function=_wait_for_timeout_stream_model),
+    name='wait_for_timeout_agent',
+    deps_type=type(None),
+    capabilities=[
+        TemporalDurability(
+            event_stream_handler=_consume_wait_for_timeout_events,
+            model_activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=10),
+                heartbeat_timeout=timedelta(seconds=1),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+                cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class WaitForAgentTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            await asyncio.wait_for(_wait_for_timeout_agent.run('go slowly'), timeout=0.5)
+        except asyncio.TimeoutError:
+            return 'timed out cleanly'
+        return 'completed'  # pragma: no cover
+
+
+async def test_wait_for_agent_timeout_in_workflow_does_not_livelock(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WaitForAgentTimeoutWorkflow],
+        plugins=[AgentPlugin(_wait_for_timeout_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        result = await client.execute_workflow(
+            WaitForAgentTimeoutWorkflow.run,
+            id=f'{WaitForAgentTimeoutWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result == 'timed out cleanly'
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason='the cancellation backstop needs `Task.cancelling()` (Python 3.11+); on 3.10 the absorbed cancel legitimately completes',
+)
+async def test_temporal_cancellation_backstop_survives_absorbed_activity_cancel(client: Client) -> None:
+    """A cancelled workflow cannot complete after its streaming model activity absorbs cancellation."""
+    global _cancellation_activity_cancel_absorbed, _cancellation_activity_started
+
+    _cancellation_activity_started = asyncio.Event()
+    _cancellation_activity_cancel_absorbed = False
+    workflow_id = f'{CancellationBackstopWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CancellationBackstopWorkflow],
+        plugins=[AgentPlugin(_cancellation_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            CancellationBackstopWorkflow.run,
+            args=['cancel me'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        await _cancellation_activity_started.wait()
+        await handle.cancel()
+
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await handle.result()
+        assert isinstance(exc_info.value.__cause__, TemporalCancelledError)
+        assert _cancellation_activity_cancel_absorbed
+
+        history = await handle.fetch_history()
+
+    await Replayer(
+        workflows=[CancellationBackstopWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(history)
 
 
 async def _migration_event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -3156,6 +3413,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name=IsStr(),
                     timestamp=IsDatetime(),
@@ -3202,6 +3460,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -3283,6 +3542,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -3324,6 +3584,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -3359,6 +3620,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -3803,6 +4065,9 @@ def test_temporal_run_context_serializes_usage():
             input_tokens=123,
             output_tokens=456,
             details={'foo': 1},
+            future_tokens=7,
+            label='original',
+            zero_tokens=0,
         ),
         run_id='run-123',
     )
@@ -3871,6 +4136,77 @@ def test_temporal_run_context_serialization_is_exhaustive():
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to '
         '`TemporalRunContext.serialize_run_context` or to `intentionally_unserialized` (with a reason).'
     )
+
+
+@dataclass
+class MetadataSidecar:
+    label: str
+
+
+async def test_tool_metadata_crosses_activity_boundary_as_json():
+    """`metadata` is untyped, so its values arrive inside an activity as their JSON shapes.
+
+    Not a workflow test: both halves are properties of the activity payloads themselves, and
+    running them through the converter `PydanticAIPlugin` installs pins them directly. Observing
+    the inbound half through the public API would take a tool call whose activity consumes the
+    round-tripped `tool_def` rather than re-resolving its own.
+    """
+    # One value per Python type whose JSON shape differs from the original.
+    metadata: dict[str, Any] = {
+        'set': {'a'},
+        'tuple': (1, 2),
+        'dataclass': MetadataSidecar(label='x'),
+        'bytes': b'\x01',
+        'int_keys': {1: 'one'},
+    }
+    params = CallToolParams(
+        name='analyze',
+        tool_args={},
+        serialized_run_context={},
+        tool_def=ToolDefinition(name='analyze', metadata=metadata),
+    )
+    [decoded_params] = await pydantic_data_converter.decode(
+        await pydantic_data_converter.encode([params]), [CallToolParams]
+    )
+    assert isinstance(decoded_params, CallToolParams)
+    assert decoded_params.tool_def == snapshot(
+        ToolDefinition(
+            name='analyze',
+            metadata={
+                'set': ['a'],
+                'tuple': [1, 2],
+                'dataclass': {'label': 'x'},
+                'bytes': '\x01',
+                'int_keys': {'1': 'one'},
+            },
+        )
+    )
+
+    # And the same for `metadata` coming back out of an activity on a control-flow exception.
+    async def require_approval() -> None:
+        raise ApprovalRequired(metadata=metadata)
+
+    [decoded_result] = await pydantic_data_converter.decode(
+        await pydantic_data_converter.encode([await wrap_tool_call_result(require_approval())]),
+        # The activity's declared return type is this discriminated union, which Temporal resolves
+        # through a `TypeAdapter`; its `type_hints` parameter is annotated as `list[type]`.
+        [cast('type', CallToolResult)],
+    )
+    with pytest.raises(ApprovalRequired) as exc_info:
+        unwrap_tool_call_result(decoded_result)
+    assert exc_info.value.metadata == snapshot(
+        {'set': ['a'], 'tuple': [1, 2], 'dataclass': {'label': 'x'}, 'bytes': '\x01', 'int_keys': {'1': 'one'}}
+    )
+
+    # Only UTF-8-decodable bytes make it across at all; arbitrary binary needs base64 encoding.
+    binary_params = CallToolParams(
+        name='analyze',
+        tool_args={},
+        serialized_run_context={},
+        tool_def=ToolDefinition(name='analyze', metadata={'bytes': b'\xff'}),
+    )
+    with pytest.raises(PydanticSerializationError, match='invalid utf-8 sequence'):
+        await pydantic_data_converter.encode([binary_params])
 
 
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4002,6 +4338,49 @@ async def test_mcptoolset_in_temporal_workflow(allow_model_requests: None, clien
             task_queue=TASK_QUEUE,
         )
         assert 'pydantic' in output.lower() or 'agent' in output.lower()
+
+
+_mcp_task_agent = Agent(
+    TestModel(call_tools=['required_task_tool', 'optional_task_tool']),
+    name='mcp_task_temporal_agent',
+    toolsets=[
+        MCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_task_server']),
+            id='mcp_tasks',
+            init_timeout=20,
+            prefer_tasks=False,
+        )
+    ],
+)
+_mcp_task_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    _mcp_task_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MCPTaskSupportWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _mcp_task_temporal_agent.run(prompt)).output
+
+
+async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
+    """Effective task routing in `ToolDefinition.metadata` survives Temporal activities."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPTaskSupportWorkflow],
+        plugins=[AgentPlugin(_mcp_task_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPTaskSupportWorkflow.run,
+            args=['Call both tools'],
+            id=MCPTaskSupportWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
 
 
 # ============================================================================
@@ -5374,9 +5753,10 @@ async def test_text_content_serialization_in_workflow(client: Client):
 
 def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Simple model function for durability tests that echoes the last user prompt."""
-    for msg in reversed(messages):  # pragma: no branch - first message always carries the prompt
-        for part in msg.parts:  # pragma: no branch - first part is always the UserPromptPart
-            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
+    # The first message always carries the prompt and its first part is always the `UserPromptPart`, so none branch.
+    for msg in reversed(messages):  # pragma: no branch
+        for part in msg.parts:  # pragma: no branch
+            if isinstance(part, UserPromptPart):  # pragma: no branch
                 return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
     return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
 
@@ -5393,6 +5773,84 @@ class SimpleDurableAgentWorkflow:
     async def run(self, prompt: str) -> str:
         result = await simple_durable_agent.run(prompt)
         return result.output
+
+
+@workflow.defn
+class RunSyncDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return simple_durable_agent.run_sync(prompt).output
+
+
+async def test_durability_run_sync_in_workflow_fails_the_workflow(client: Client):
+    """`agent.run_sync()` inside a workflow fails the workflow with a clear error instead of hanging.
+
+    Temporal's workflow event loop leaves `run_until_complete()` (and `is_closed()`) unimplemented, so
+    before this was detected up front, `run_sync()` raised the bare `NotImplementedError` `asyncio`'s
+    abstract loop raises. That type isn't among the plugin's `workflow_failure_exception_types`, so it
+    failed the workflow *task*, which Temporal retries forever -- the caller hung instead of seeing an
+    error. `UserError` is in that list, so the failure now reaches the caller.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunSyncDurableAgentWorkflow],
+        plugins=[AgentPlugin(simple_durable_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                RunSyncDurableAgentWorkflow.run,
+                args=['What is the capital of Mexico?'],
+                id=RunSyncDurableAgentWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+    assert 'does not implement `run_until_complete()`' in str(exc_info.value.cause)
+    assert '`await agent.run()` rather than `agent.run_sync()`' in str(exc_info.value.cause)
+
+
+_sync_graph_builder = GraphBuilder(name='run_sync_graph', input_type=str, output_type=str)
+
+
+@_sync_graph_builder.step
+async def _echo_step(ctx: StepContext[None, None, str]) -> str:
+    return ctx.inputs  # pragma: no cover
+
+
+_sync_graph_builder.add(
+    _sync_graph_builder.edge_from(_sync_graph_builder.start_node).to(_echo_step),
+    _sync_graph_builder.edge_from(_echo_step).to(_sync_graph_builder.end_node),
+)
+_sync_graph = _sync_graph_builder.build()
+
+
+@workflow.defn
+class GraphRunSyncWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return _sync_graph.run_sync(inputs='hello')
+
+
+async def test_durability_graph_run_sync_in_workflow_fails_the_workflow(client: Client):
+    """`Graph.run_sync()` inside a workflow fails the workflow too, not just the workflow task.
+
+    `pydantic_graph`'s sync entry points raise `UnsupportedEventLoopError` directly rather than going
+    through the `pydantic_ai` wrapper that converts it to `UserError`, so the plugin has to recognize
+    that type as well; otherwise this path keeps hanging with a good message nobody ever sees.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[GraphRunSyncWorkflow],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                GraphRunSyncWorkflow.run,
+                id=GraphRunSyncWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+    assert 'does not implement `run_until_complete()`' in str(exc_info.value.cause)
 
 
 async def test_durability_simple_agent_run_in_workflow(client: Client):
@@ -6189,8 +6647,9 @@ _missing_cap_agent = Agent(_durability_fn_model, name='no_cap_in_attr')
 class _MissingCapWorkflow:
     __pydantic_ai_agents__ = [_missing_cap_agent]
 
+    # `configure_worker` rejects before this can execute.
     @workflow.run
-    async def run(self, prompt: str) -> str:  # pragma: no cover - configure_worker rejects before exec
+    async def run(self, prompt: str) -> str:  # pragma: no cover
         result = await _missing_cap_agent.run(prompt)
         return result.output
 
@@ -6203,7 +6662,8 @@ async def test_pydantic_ai_plugin_rejects_bare_agent_without_durability(client: 
             task_queue=TASK_QUEUE,
             workflows=[_MissingCapWorkflow],
         ):
-            pass  # pragma: no cover - error raised before reaching here
+            # The error is raised before reaching here.
+            pass  # pragma: no cover
 
 
 # --- Toolset without ID raises UserError ---
@@ -6221,7 +6681,7 @@ def test_durability_unwrapped_toolset_without_id_is_allowed():
     assert TemporalDurability.from_agent(agent) is not None
 
 
-# --- temporalize returning non-TemporalWrapperToolset (line 294->297 branch) ---
+# --- temporalize returning non-TemporalWrapperToolset (passthrough / unwrapped leaf) ---
 
 
 def test_durability_non_temporal_wrapper_toolset_not_in_registry():
@@ -6690,7 +7150,8 @@ def test_durability_tool_metadata_disables_activity():
     """Tool metadata={'temporal': False} disables activity wrapping for that tool."""
 
     async def slow_tool() -> str:
-        return 'slow'  # pragma: no cover - registered with toolset; test only verifies wrapping
+        # Registered with the toolset; the test only verifies wrapping.
+        return 'slow'  # pragma: no cover
 
     toolset = FunctionToolset[object](id='meta_toolset')
     toolset.add_function(slow_tool, metadata={'temporal': False})
@@ -6719,7 +7180,8 @@ def test_resolve_tool_activity_config_reads_metadata():
     fn_toolset = FunctionToolset[None](id='resolve_meta_toolset')
 
     async def fn_tool() -> str:
-        return 'ok'  # pragma: no cover - registered with toolset; test only resolves metadata
+        # Registered with the toolset; the test only resolves metadata.
+        return 'ok'  # pragma: no cover
 
     fn_toolset.add_function(fn_tool, metadata={'temporal': metadata_config})
     tool_def = ToolDefinition(name='fn_tool', metadata={'temporal': metadata_config})
@@ -7491,6 +7953,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -7532,6 +7995,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -7567,6 +8031,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
                         },
+                        output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -7807,15 +8272,17 @@ _durability_mcp_dynamic_toolset_agent = Agent(
 
 @_durability_mcp_dynamic_toolset_agent.toolset(id='durability_mcp_toolset')
 def _durability_my_mcp_dynamic_toolset(ctx: RunContext[object]) -> MCPToolset[object]:
-    return MCPToolset('https://mcp.deepwiki.com/mcp')  # pragma: no cover - exercised only by the skipped test below
+    # Exercised only by the skipped test below.
+    return MCPToolset('https://mcp.deepwiki.com/mcp')  # pragma: no cover
 
 
 @workflow.defn
 class DurabilityMCPDynamicToolsetAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await _durability_mcp_dynamic_toolset_agent.run(prompt)  # pragma: no cover - skipped test
-        return result.output  # pragma: no cover - skipped test
+        # This body runs only under the skipped test below.
+        result = await _durability_mcp_dynamic_toolset_agent.run(prompt)  # pragma: no cover
+        return result.output  # pragma: no cover
 
 
 @pytest.mark.skip(
@@ -7860,8 +8327,9 @@ _durability_mcptoolset_agent = Agent(
 class DurabilityMCPToolsetAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await _durability_mcptoolset_agent.run(prompt)  # pragma: no cover - skipped test
-        return result.output  # pragma: no cover - skipped test
+        # This body runs only under the skipped test below.
+        result = await _durability_mcptoolset_agent.run(prompt)  # pragma: no cover
+        return result.output  # pragma: no cover
 
 
 @pytest.mark.skip(
@@ -8264,7 +8732,8 @@ async def _opted_out_runtime_tool() -> str:
     return 'tool-result'
 
 
-async def _not_opted_out_runtime_tool() -> str:  # pragma: no cover — rejected before any tool runs
+# Rejected before any tool runs.
+async def _not_opted_out_runtime_tool() -> str:  # pragma: no cover
     return 'other-result'
 
 
@@ -9040,3 +9509,333 @@ async def test_heartbeating_body_error_wins_over_beat_crash(monkeypatch: pytest.
         async with _heartbeating():
             await asyncio.sleep(0.01)
             raise ValueError('request failed')
+
+
+# --- Usage mutated inside an activity ---
+
+
+def _usage_delegation_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call the `delegate` tool once, then finish."""
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(
+                    parts=[TextPart(content=f'Delegate said: {part.content}')],
+                    usage=RequestUsage(input_tokens=5, output_tokens=1),
+                )
+    return ModelResponse(
+        parts=[ToolCallPart(tool_name='delegate', args='{}')],
+        usage=RequestUsage(input_tokens=5, output_tokens=1),
+    )
+
+
+_usage_delegate_agent = Agent(
+    FunctionModel(
+        lambda messages, info: ModelResponse(
+            parts=[TextPart(content='delegated')],
+            usage=RequestUsage(input_tokens=100, output_tokens=10),
+        )
+    ),
+    name='usage_delegate_agent',
+)
+
+usage_delegation_agent = Agent(
+    FunctionModel(_usage_delegation_model_fn),
+    name='usage_delegation_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@usage_delegation_agent.tool
+async def delegate(ctx: RunContext[None]) -> str:
+    """Delegate to another agent, passing the parent run's usage as the docs recommend."""
+    result = await _usage_delegate_agent.run('delegate this', usage=ctx.usage)
+    return result.output
+
+
+@workflow.defn
+class UsageDelegationWorkflow:
+    @workflow.run
+    async def run(self) -> RunUsage:
+        result = await usage_delegation_agent.run('delegate please')
+        return result.usage
+
+
+async def test_delegate_agent_usage_is_not_merged_back_from_activity(client: Client):
+    """Pins the documented Temporal limitation: `ctx.usage` mutations inside an activity are lost.
+
+    A tool running inside an activity gets a deserialized copy of the run's `RunUsage`, so the
+    usage a delegate agent accrues through `usage=ctx.usage` never reaches the workflow-side run:
+    the delegate's 100 input tokens, 10 output tokens, and its request are missing from the
+    workflow result, while the same agent run in-process (below) counts them.
+
+    See https://github.com/pydantic/pydantic-ai/issues/6886.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UsageDelegationWorkflow],
+        plugins=[AgentPlugin(usage_delegation_agent)],
+    ):
+        workflow_usage = await client.execute_workflow(
+            UsageDelegationWorkflow.run,
+            id=UsageDelegationWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert workflow_usage == snapshot(RunUsage(input_tokens=10, output_tokens=2, requests=2, tool_calls=1))
+
+    in_process_result = await usage_delegation_agent.run('delegate please')
+    assert in_process_result.usage == snapshot(RunUsage(requests=3, input_tokens=110, output_tokens=12, tool_calls=1))
+
+
+# --- A static toolset's `prepare` function runs only in workflow code ---
+#
+# The tool-call activity rebuilds the tool from the `ToolDefinition` the workflow prepared (like
+# the MCP path does) instead of listing the toolset's tools again, so `prepare` never runs a
+# second time against the activity's limited `RunContext`, and the definition the model saw is
+# the one the activity enforces. These tests use `UnsandboxedWorkflowRunner` so workflow-side
+# and activity-side calls land on the same module state.
+
+_prepare_run_steps: list[int] = []
+_prepared_descriptions: list[str | None] = []
+
+
+async def _prepare_sleepy_tool(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
+    """Set a timeout on the first call only, so a second call would change the tool's behavior."""
+    _prepare_run_steps.append(ctx.run_step)
+    return replace(
+        tool_def,
+        description=f'prepared {len(_prepare_run_steps)}',
+        timeout=0.01 if len(_prepare_run_steps) == 1 else None,
+    )
+
+
+async def _sleepy_tool() -> str:
+    await asyncio.sleep(0.5)
+    return 'slept'  # pragma: no cover
+
+
+def _prepare_tool_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    _prepared_descriptions.append(info.function_tools[0].description)
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('sleepy_tool', {})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+_prepare_agent = Agent(
+    FunctionModel(_prepare_tool_model),
+    name='durability_prepare_agent',
+    toolsets=[
+        FunctionToolset[object](
+            tools=[Tool(_sleepy_tool, name='sleepy_tool', prepare=_prepare_sleepy_tool)], id='prepare_ts'
+        )
+    ],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityPrepareWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[ModelMessage]:
+        return (await _prepare_agent.run(prompt)).all_messages()
+
+
+async def test_durability_static_tool_prepare_runs_only_in_workflow(client: Client):
+    """`prepare` runs once per model step in workflow code, and the activity honours its `tool_def`.
+
+    Only the first `prepare` call sets `timeout=0.01`, so re-preparing inside the activity would
+    silently drop the timeout that the tool definition the model saw carried.
+    """
+    _prepare_run_steps.clear()
+    _prepared_descriptions.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityPrepareWorkflow],
+        plugins=[AgentPlugin(_prepare_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        messages = await client.execute_workflow(
+            DurabilityPrepareWorkflow.run,
+            args=['go'],
+            id=f'{DurabilityPrepareWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    # One call per model step, both in workflow code; none inside the tool-call activity.
+    assert _prepare_run_steps == snapshot([1, 2])
+    assert _prepared_descriptions == snapshot(['prepared 1', 'prepared 2'])
+    # The `timeout=0.01` from the workflow-side call is what the activity enforced.
+    retry_prompts = [
+        part.content for message in messages for part in message.parts if isinstance(part, RetryPromptPart)
+    ]
+    assert retry_prompts == snapshot(['Timed out after 0.01 seconds.'])
+
+
+async def victim_tool() -> str:
+    return 'victim'  # pragma: no cover
+
+
+_removal_toolset = FunctionToolset[object]([victim_tool], id='removal_ts')
+
+
+def _removal_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # Runs inside the model activity, after the workflow listed this step's tools: dropping the
+    # tool now leaves the workflow calling a tool the activity can no longer resolve.
+    _removal_toolset.tools.pop('victim_tool')
+    return ModelResponse(parts=[ToolCallPart('victim_tool', {})])
+
+
+_removal_agent = Agent(
+    FunctionModel(_removal_model),
+    name='durability_removal_agent',
+    toolsets=[_removal_toolset],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityRemovedToolWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _removal_agent.run(prompt)).output
+
+
+async def test_durability_removed_tool_still_raises_user_error(client: Client):
+    """A tool that's really gone from the toolset still fails with the tool-removal error."""
+    try:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[DurabilityRemovedToolWorkflow],
+            plugins=[AgentPlugin(_removal_agent)],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            with pytest.raises(WorkflowFailureError) as exc_info:
+                await client.execute_workflow(
+                    DurabilityRemovedToolWorkflow.run,
+                    args=['go'],
+                    id=f'{DurabilityRemovedToolWorkflow.__name__}-{uuid.uuid4()}',
+                    task_queue=TASK_QUEUE,
+                )
+    finally:
+        _removal_toolset.add_function(victim_tool)
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == UserError.__name__
+    assert cause.message == snapshot(
+        "Tool 'victim_tool' not found in toolset 'removal_ts'. "
+        'Removing or renaming tools during an agent run is not supported with Temporal.'
+    )
+
+
+async def test_durability_call_tool_activity_without_tool_def_re_prepares_tool():
+    """A tool-call activity scheduled without a `tool_def` still runs, by preparing the tool itself.
+
+    Unit test: the workflow side always sends the prepared `tool_def` now, so only an activity
+    scheduled by a worker predating that field can arrive without one — no workflow run can
+    produce this payload, but a rolling upgrade can.
+    """
+    prepare_run_steps: list[int] = []
+
+    async def prepare_legacy_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        prepare_run_steps.append(ctx.run_step)
+        return tool_def
+
+    async def legacy_tool() -> str:
+        return 'legacy'
+
+    toolset = FunctionToolset[None](
+        tools=[Tool(legacy_tool, name='legacy_tool', prepare=prepare_legacy_tool)], id='legacy_ts'
+    )
+    durable_toolset = temporalize_function_toolset(
+        toolset,
+        activity_name_prefix='test__legacy_call_tool_params',
+        activity_config=BASE_ACTIVITY_CONFIG,
+        tool_activity_config={},
+        deps_type=type(None),
+    )
+    (call_tool_activity,) = durable_toolset.durable_registrations
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123', run_step=3)
+    result = await call_tool_activity(
+        CallToolParams(
+            name='legacy_tool',
+            tool_args={},
+            serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+            tool_def=None,
+        ),
+        None,
+    )
+
+    assert unwrap_tool_call_result(result) == 'legacy'
+    assert prepare_run_steps == [3]
+
+
+_renamed_tool_names: list[list[str]] = []
+
+
+async def registered_tool() -> str:
+    return 'the registered function ran'
+
+
+async def _prepare_renamed_tool(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
+    """Expose the tool to the model under a name the toolset doesn't hold it under."""
+    return replace(tool_def, name='exposed_tool')
+
+
+def _renaming_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    _renamed_tool_names.append([tool_def.name for tool_def in info.function_tools])
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(str(part.content))])
+    return ModelResponse(parts=[ToolCallPart('exposed_tool', {})])
+
+
+_renaming_agent = Agent(
+    FunctionModel(_renaming_model),
+    name='durability_renaming_agent',
+    toolsets=[
+        FunctionToolset[object](
+            tools=[Tool(registered_tool, name='registered_tool', prepare=_prepare_renamed_tool)], id='renaming_ts'
+        )
+    ],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityRenamedToolWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _renaming_agent.run(prompt)).output
+
+
+async def test_durability_prepare_renamed_tool_runs_in_activity(client: Client):
+    """A `prepare` function that renames its tool still resolves to that tool inside the activity.
+
+    The activity looks the tool up by the name the toolset holds it under, which the workflow sends
+    alongside the prepared `tool_def`; looking it up by the model-visible name would raise the
+    tool-removal error for a tool that is still right there. Runs sandboxed, so the workflow's
+    `prepare` result reaches the activity over the wire rather than through shared module state.
+    """
+    _renamed_tool_names.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityRenamedToolWorkflow],
+        plugins=[AgentPlugin(_renaming_agent)],
+    ):
+        output = await client.execute_workflow(
+            DurabilityRenamedToolWorkflow.run,
+            args=['go'],
+            id=f'{DurabilityRenamedToolWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == snapshot('the registered function ran')
+    # The model only ever saw the renamed tool, in both steps.
+    assert _renamed_tool_names == snapshot([['exposed_tool'], ['exposed_tool']])

@@ -47,8 +47,9 @@ from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import (
     AbstractSpan,
-    run_until_complete as run_until_complete,  # re-exported for the sync wrappers
+    run_until_complete as _graph_run_until_complete,
 )
+from pydantic_graph.exceptions import UnsupportedEventLoopError
 from pydantic_graph.util import get_callable_name
 
 from .exceptions import UserError
@@ -72,6 +73,20 @@ _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=sys.platform == 'emscripten')
 _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
+
+
+def run_until_complete(coro: Awaitable[_R]) -> _R:
+    """Run `coro` to completion on the event loop, for use by the sync wrappers.
+
+    Wraps `pydantic_graph`'s `run_until_complete()` to report an event loop that can't be driven by the caller
+    -- like Temporal's workflow event loop -- as a `UserError`, which is how the rest of the library reports
+    usage mistakes, and which durable execution integrations know to treat as a deterministic failure rather
+    than an infrastructure one to retry.
+    """
+    try:
+        return _graph_run_until_complete(coro)
+    except UnsupportedEventLoopError as e:
+        raise UserError(e.message) from e
 
 
 @contextmanager
@@ -263,6 +278,44 @@ async def cancel_and_drain(*tasks: asyncio.Task[Any], msg: object = None) -> Non
     # then can finish normal async `finally` cleanup before we re-raise.
     with anyio.CancelScope(shield=True):
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def raise_if_cancelling() -> None:
+    """Re-assert an external cancellation that a completed step absorbed (level-triggered backstop).
+
+    A step the run awaits — a Temporal activity under `WAIT_CANCELLATION_COMPLETED`, an
+    `event_stream_handler`, a capability hook — can catch the `CancelledError` injected by
+    `task.cancel()` and return normally. asyncio even *delegates* a task's cancellation to the
+    future it is currently awaiting, so an awaited child task that absorbs its cancel silently
+    completes the awaiting task too. Either way the cancellation is an edge the framework never
+    sees, and without a re-check the run would complete as if it was never cancelled.
+
+    Well-behaved consumers of their own cancellation, like `asyncio.timeout()` and AnyIO cancel
+    scopes, balance `Task.cancelling()` back down with `Task.uncancel()`, so a positive count at
+    a step boundary is treated as a still-pending cancellation of the run and re-raised. This is
+    deliberately a *policy*, not a proof of external intent: code awaited by the run that cancels
+    its own task as an internal wake-up and suppresses the `CancelledError` without calling
+    `Task.uncancel()` (a pre-3.11 idiom) will be read as a cancelled run. Call this only after
+    the just-completed step's results have been recorded to message history, so cancellation
+    never discards completed work.
+
+    The re-raise is a fresh `CancelledError`: the originally-injected exception object (and any
+    message it carried) was consumed by whatever absorbed it and cannot be recovered — the
+    cancellation *state* is re-asserted, not the original exception.
+
+    On Python 3.10 `Task.cancelling()` does not exist and this is a no-op: an absorbed external
+    cancellation cannot be reliably detected there, so the cancellation guarantee is documented
+    as best-effort on 3.10.
+    """
+    if sys.version_info < (3, 11):  # pragma: lax no cover
+        return
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:  # pragma: no cover
+        # No running asyncio loop (e.g. a Trio-backed run).
+        return
+    if task is not None and task.cancelling() > 0:
+        raise asyncio.CancelledError('pydantic-ai: re-asserting a cancellation absorbed by a completed step')
 
 
 class Unset:
@@ -833,7 +886,10 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
-    except RuntimeError:  # pragma: lax no cover
+    except RuntimeError:
+        event_loop = None
+
+    if event_loop is None or event_loop.is_closed():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop

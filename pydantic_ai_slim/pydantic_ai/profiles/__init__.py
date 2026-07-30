@@ -78,6 +78,21 @@ class ModelProfile(TypedDict, total=False):
     When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
     `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
     provider's top-level system parameter.
+
+    APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
+    to follow a user turn) still set this to `True`; it's on their model adapters to make the
+    positions the API rejects legal. Preserving the part's authority is worth more than preserving
+    the exact position it was authored at — an instruction only governs the generation that follows
+    it, and that's the same generation either way — so prefer adjusting placement over falling back
+    to the `<system>...</system>` rendering, which the model reads as user-authored. Anthropic slides
+    the entry past intervening user turns and gives it a minimal user turn to follow when nothing
+    legal precedes it.
+
+    `Provider.model_profile` is resolved from the model name alone, so when support also turns on
+    something it can't see — which SDK client the provider was built with, say — the adapter narrows
+    this in its own `Model.profile` override, as Anthropic does for Microsoft Foundry. Narrowing the
+    flag rather than special-casing the adapter's own rendering keeps `Model.prepare_messages` the
+    only place that knows the `<system>...</system>` fallback.
     """
 
     default_structured_output_mode: StructuredOutputMode

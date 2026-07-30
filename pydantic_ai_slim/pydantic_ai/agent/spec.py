@@ -88,7 +88,8 @@ class AgentSpec(BaseModel):
         else:
             try:
                 import yaml
-            except ImportError:  # pragma: no cover — requires PyYAML to not be installed
+            except ImportError:  # pragma: no cover
+                # Reaching this requires PyYAML to not be installed.
                 raise ImportError(
                     'PyYAML is required to load YAML agent specs. Install it with: pip install "pydantic-ai-slim[spec]"'
                 ) from None
@@ -146,7 +147,8 @@ class AgentSpec(BaseModel):
         if fmt == 'yaml':
             try:
                 import yaml
-            except ImportError:  # pragma: no cover — requires PyYAML to not be installed
+            except ImportError:  # pragma: no cover
+                # Reaching this requires PyYAML to not be installed.
                 raise ImportError(
                     'PyYAML is required to save YAML agent specs. Install it with: pip install "pydantic-ai-slim[spec]"'
                 ) from None
@@ -205,7 +207,7 @@ class AgentSpec(BaseModel):
             tool_timeout: float | None = None
             metadata: dict[str, Any] | None = None
             if capability_schema_types:  # pragma: no branch
-                capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore  # noqa: UP007
+                capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore[reportUnknownVariableType, reportInvalidTypeArguments, reportInvalidTypeForm]  # noqa: UP007
 
         json_schema = _AgentSpecSchema.model_json_schema()
         json_schema['title'] = 'AgentSpec'

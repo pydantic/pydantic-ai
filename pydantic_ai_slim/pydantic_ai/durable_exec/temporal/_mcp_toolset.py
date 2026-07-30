@@ -19,6 +19,7 @@ from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
+from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import CallToolParams, GetToolsParams, resolve_tool_activity_config
 
@@ -75,9 +76,8 @@ def temporalize_mcp_toolset(
 
     def resolve_tool_config(tool: ToolsetTool[Any] | None, name: str) -> ToolConfig:
         config = resolve_tool_activity_config(tool, name, tool_activity_config)
-        if (
-            config is False
-        ):  # pragma: no cover — the constructor-dict path raises above; metadata is the only route here
+        # The constructor-dict path raises above, so tool metadata is the only route that reaches here.
+        if config is False:  # pragma: no cover
             raise UserError(
                 f'Temporal activity config for MCP tool {name!r} has been explicitly set to `False` (activity disabled), '
                 'but MCP tools require the use of IO and so cannot be run outside of an activity.'
@@ -86,7 +86,7 @@ def temporalize_mcp_toolset(
 
     async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
         config: ActivityConfig = {'summary': f'get tools: {toolset.id}', **activity_config}
-        return await workflow.execute_activity(
+        return await execute_activity(
             activity=get_tools_activity_def,
             args=[GetToolsParams(serialized_run_context=run_context_type.serialize_run_context(ctx)), ctx.deps],
             **config,
@@ -96,7 +96,7 @@ def temporalize_mcp_toolset(
         ctx: RunContext[AgentDepsT],
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         config: ActivityConfig = {'summary': f'get instructions: {toolset.id}', **activity_config}
-        return await workflow.execute_activity(
+        return await execute_activity(
             activity=get_instructions_activity_def,
             args=[GetToolsParams(serialized_run_context=run_context_type.serialize_run_context(ctx)), ctx.deps],
             **config,
@@ -113,7 +113,7 @@ def temporalize_mcp_toolset(
             'ActivityConfig',
             {'summary': f'call tool: {toolset.id}:{name}', **activity_config, **config},
         )
-        result = await workflow.execute_activity(
+        result = await execute_activity(
             activity=call_tool_activity_def,
             args=[
                 CallToolParams(

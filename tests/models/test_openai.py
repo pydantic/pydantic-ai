@@ -170,7 +170,7 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.usage == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
-    mock_client.index = 0  # type: ignore
+    mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
@@ -1182,6 +1182,7 @@ async def test_openai_audio_url_input(
                 'rejected_prediction_tokens': 0,
                 'text_tokens': 72,
             },
+            output_reasoning_tokens=0,
             requests=1,
         )
     )
@@ -1409,6 +1410,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 usage=RequestUsage(
                     input_tokens=46,
                     output_tokens=11,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1449,6 +1451,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 usage=RequestUsage(
                     input_tokens=503,
                     output_tokens=8,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1503,6 +1506,7 @@ async def test_audio_as_binary_content_input(
                 'rejected_prediction_tokens': 0,
                 'text_tokens': 9,
             },
+            output_reasoning_tokens=0,
             requests=1,
         )
     )
@@ -1582,6 +1586,7 @@ async def test_yaml_document_as_binary_content_input(allow_model_requests: None,
                 usage=RequestUsage(
                     input_tokens=55,
                     output_tokens=77,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1655,6 +1660,7 @@ Each of these interpretations would depend on the broader context in which this 
                 usage=RequestUsage(
                     input_tokens=57,
                     output_tokens=202,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1707,6 +1713,7 @@ async def test_yaml_document_url_input(
                 usage=RequestUsage(
                     input_tokens=3152,
                     output_tokens=18,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -2060,6 +2067,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                 usage=RequestUsage(
                     input_tokens=31,
                     output_tokens=8,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3492,6 +3500,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                 usage=RequestUsage(
                     input_tokens=24,
                     output_tokens=8,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3548,6 +3557,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 usage=RequestUsage(
                     input_tokens=50,
                     output_tokens=15,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3584,6 +3594,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 usage=RequestUsage(
                     input_tokens=75,
                     output_tokens=15,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3642,7 +3653,12 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1915, details={'reasoning_tokens': 1600}),
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=1915,
+                    output_reasoning_tokens=1600,
+                    details={'reasoning_tokens': 1600},
+                ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3682,6 +3698,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 usage=RequestUsage(
                     input_tokens=577,
                     output_tokens=2320,
+                    output_reasoning_tokens=1792,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4052,6 +4069,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 usage=RequestUsage(
                     input_tokens=68,
                     output_tokens=12,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4096,6 +4114,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 usage=RequestUsage(
                     input_tokens=89,
                     output_tokens=36,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4168,6 +4187,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 usage=RequestUsage(
                     input_tokens=42,
                     output_tokens=11,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4206,6 +4226,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 usage=RequestUsage(
                     input_tokens=63,
                     output_tokens=10,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4268,6 +4289,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 usage=RequestUsage(
                     input_tokens=71,
                     output_tokens=12,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4306,6 +4328,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 usage=RequestUsage(
                     input_tokens=92,
                     output_tokens=15,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4382,6 +4405,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 usage=RequestUsage(
                     input_tokens=160,
                     output_tokens=11,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4424,6 +4448,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 usage=RequestUsage(
                     input_tokens=181,
                     output_tokens=25,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4484,6 +4509,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 usage=RequestUsage(
                     input_tokens=109,
                     output_tokens=11,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4522,6 +4548,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 usage=RequestUsage(
                     input_tokens=130,
                     output_tokens=11,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4586,6 +4613,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 usage=RequestUsage(
                     input_tokens=273,
                     output_tokens=11,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4628,6 +4656,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 usage=RequestUsage(
                     input_tokens=294,
                     output_tokens=21,
+                    output_reasoning_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -4816,7 +4845,7 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
     )
-    c.created = None  # type: ignore
+    c.created = None  # pyright: ignore[reportAttributeAccessIssue]
 
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -4831,7 +4860,7 @@ async def test_process_response_no_finish_reason(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
     )
-    c.choices[0].finish_reason = None  # type: ignore
+    c.choices[0].finish_reason = None  # pyright: ignore[reportAttributeAccessIssue]
 
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -4853,7 +4882,7 @@ async def test_openai_unified_service_tier(allow_model_requests: None):
 async def test_service_tier_non_standard_value(allow_model_requests: None):
     """OpenAI-compatible providers can return service_tier values outside the OpenAI Literal."""
     c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
-    c.service_tier = 'standard'  # type: ignore  # simulate provider returning non-OpenAI value
+    c.service_tier = 'standard'  # pyright: ignore[reportAttributeAccessIssue]  # simulate provider returning non-OpenAI value
 
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
@@ -6160,3 +6189,27 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_extra_headers_not_mutated(allow_model_requests: None):
+    """A user-supplied `extra_headers` dict is not mutated in place by the User-Agent setdefault.
+
+    `merge_model_settings` is a shallow merge, so the dict the model receives can be the very
+    object the caller passed to `Agent(..., model_settings=...)`. No-network: the assertion is
+    on whether the caller's object gained a `User-Agent` key, which a cassette matcher wouldn't pin.
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    user_headers = {'X-Custom': 'value'}
+    agent = Agent(m, model_settings=ModelSettings(extra_headers=user_headers))
+
+    await agent.run('hello')
+
+    # The caller's dict is unchanged: no User-Agent leaked into it.
+    assert user_headers == {'X-Custom': 'value'}
+    # But the User-Agent did reach the wire.
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_headers'] == {
+        'X-Custom': 'value',
+        'User-Agent': IsStr(regex=r'pydantic-ai/.*'),
+    }

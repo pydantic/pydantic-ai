@@ -197,6 +197,8 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -346,6 +348,8 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -467,6 +471,8 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -1076,6 +1082,8 @@ Don't include any text or Markdown fencing before or after.
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'prompted',
                         'output_object': {
                             'json_schema': {
@@ -1570,13 +1578,13 @@ async def test_async_response_handler() -> None:
 def test_fallback_on_invalid_type() -> None:
     """Test that invalid fallback_on types raise AssertionError via assert_never."""
     with pytest.raises(AssertionError, match='Expected code to be unreachable'):
-        FallbackModel(success_model, failure_model, fallback_on='invalid')  # type: ignore
+        FallbackModel(success_model, failure_model, fallback_on='invalid')  # pyright: ignore[reportArgumentType]
 
 
 def test_fallback_on_invalid_list_item() -> None:
     """Test that invalid items in fallback_on list raise AssertionError via assert_never."""
     with pytest.raises(AssertionError, match='Expected code to be unreachable'):
-        FallbackModel(success_model, failure_model, fallback_on=['invalid'])  # type: ignore
+        FallbackModel(success_model, failure_model, fallback_on=['invalid'])  # pyright: ignore[reportArgumentType]
 
 
 def test_response_handler_only_exception_propagates() -> None:
@@ -2972,7 +2980,8 @@ def test_fallback_continuation_delay_without_pin_polls_inner_models() -> None:
     model; only the one owning the background job returns a delay (gated on the response's `background`
     marker), so the fallback surfaces it — and returns `None` when no model claims it."""
 
-    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover - never called
+    # Never called.
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
         return ModelResponse(parts=[TextPart('x')])
 
     class _DelayModel(FunctionModel):

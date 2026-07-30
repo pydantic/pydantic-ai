@@ -23,7 +23,7 @@ import httpx
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
-from .. import _deferred_capabilities, _utils
+from .. import _utils
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -135,6 +135,21 @@ class ModelRequestParameters:
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
+    revealed_tool_names: set[str] = field(default_factory=set[str], repr=False)
+    """Names of the deferred tools tool search or capability loading has revealed so far.
+
+    A subset of `function_tools`' names. `ToolDefinition.defer_loading` records what the author asked for
+    and stays set after a reveal, so this answers the separate question of what the model can see *now* —
+    which is what an adapter needs in order to decide what to put on the wire.
+    """
+
+    deferred_capability_ids: set[str] = field(default_factory=set[str], repr=False)
+    """IDs of the run's capabilities configured with `defer_loading=True`.
+
+    The whole configured set, not the loaded subset, so it doesn't change as capabilities load. Adapters
+    use it to recognize a tool as capability-owned — `ToolDefinition.capability_id` in this set — and so
+    to tell a corpus a capability gates apart from one the model may search freely.
+    """
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
@@ -479,12 +494,13 @@ class Model(ABC, Generic[InterfaceClient]):
     def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
         """Pre-process the message history before it's handed to the adapter's message-prep step.
 
-        Currently translates any typed `NativeToolSearch*Part` instances carried over from a
-        prior native turn (e.g. Anthropic / OpenAI Responses) into the local-shape
-        `ToolSearch*Part` instances when the active model's profile doesn't support
-        `ToolSearchTool` — splitting the single `ModelResponse(call+return)` carrying the
-        inline server-side result into `ModelResponse(call) + ModelRequest(return)` so the
-        adapter sees a normal function-call exchange against `search_tools`.
+        Translates typed `NativeToolSearch*Part` instances carried over from a
+        different provider (e.g. Anthropic to OpenAI Responses), or any native
+        provider when the active model doesn't support `ToolSearchTool`, into the
+        local-shape `ToolSearch*Part` instances. This splits the single
+        `ModelResponse(call+return)` carrying the inline server-side result into
+        `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
+        provider-agnostic exchange.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`.
@@ -493,10 +509,14 @@ class Model(ABC, Generic[InterfaceClient]):
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
         """
-        if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
-            from .._tool_search import synthesize_local_tool_search_messages
+        from .._tool_search import synthesize_local_tool_search_messages
 
-            messages = synthesize_local_tool_search_messages(messages)
+        target_provider_name = (
+            self.system
+            if ToolSearchTool in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+            else None
+        )
+        messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
 
         if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages)
@@ -514,7 +534,7 @@ class Model(ABC, Generic[InterfaceClient]):
            `defer_loading` flag for `ToolSearchTool`).
         3. `with_native` matches an *unsupported* native tool → the corpus member can't be
            paired with its native tool on this provider, so its fate turns on discovery:
-           if `defer_loading=True` it's still undiscovered and is dropped from wire (the
+           if it is absent from `revealed_tool_names` it's still undiscovered and is dropped from wire (the
            model has no way to call it); otherwise it's already discovered and stays on wire
            as a plain function tool, but sheds `with_native` — with no native tool present, an
            adapter that derives a native flag from it (e.g. OpenAI's `defer_loading`) would
@@ -559,9 +579,7 @@ class Model(ABC, Generic[InterfaceClient]):
                 f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
             )
 
-        tool_search_resolution = _resolve_tool_search_native_for_capability_owned_corpus(
-            supported_natives, params.function_tools
-        )
+        tool_search_resolution = _resolve_tool_search_native_for_capability_owned_corpus(supported_natives, params)
         supported_natives = tool_search_resolution.native_tools
         tool_search_kept_local = tool_search_resolution.keep_search_tools_local
 
@@ -578,7 +596,7 @@ class Model(ABC, Generic[InterfaceClient]):
             # native tool on this provider; its fate turns on whether it's been discovered yet.
             if t.with_native and t.with_native not in supported_ids:
                 # Still undiscovered → drop: the model has no way to call it on this provider.
-                if t.defer_loading:
+                if t.name not in params.revealed_tool_names:
                     continue
                 # Already discovered → keep it callable as a plain function tool, but shed
                 # `with_native`: with no native tool on the wire, an adapter that derives a native
@@ -1091,6 +1109,7 @@ class CompletedStreamedResponse(StreamedResponse):
         replay_events: bool | list[ModelResponseStreamEvent] | _utils.Unset = _utils.UNSET,
         events: bool | list[ModelResponseStreamEvent] | None = None,
     ):
+        # TODO(v3): remove the `events` alias and its deprecated `__init__` overloads
         if events is not None:
             warnings.warn(
                 '`events` is deprecated; use `replay_events` instead.',
@@ -1102,6 +1121,7 @@ class CompletedStreamedResponse(StreamedResponse):
                 replay_events = events
         if isinstance(replay_events, _utils.Unset):
             replay_events = False
+        # TODO(v3): remove the positional `(model_request_parameters, response)` order and its deprecated overloads
         if isinstance(response, ModelRequestParameters):
             # The positional `(model_request_parameters, response)` order predates the move
             # from `pydantic_ai.models.wrapper` to `pydantic_ai.models`.
@@ -1192,16 +1212,30 @@ ALLOW_MODEL_REQUESTS = True
 This global setting allows you to disable request to most models, e.g. to make sure you don't accidentally
 make costly requests to a model during tests.
 
-The testing models [`TestModel`][pydantic_ai.models.test.TestModel] and
-[`FunctionModel`][pydantic_ai.models.function.FunctionModel] are no affected by this setting.
+The testing models [`TestModel`][pydantic_ai.models.test.TestModel],
+[`FunctionModel`][pydantic_ai.models.function.FunctionModel] and
+[`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] are not affected by this setting, nor is
+[`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel],
+which runs inference locally and so has no per-call provider cost.
 """
 
 
 def check_allow_model_requests() -> None:
     """Check if model requests are allowed.
 
-    If you're defining your own models that have costs or latency associated with their use, you should call this in
-    [`Model.request`][pydantic_ai.models.Model.request] and [`Model.request_stream`][pydantic_ai.models.Model.request_stream].
+    If you're defining your own models that have costs or latency associated with their use, you should call this at the
+    top of each method that sends a request to the provider: [`Model.request`][pydantic_ai.models.Model.request],
+    [`Model.request_stream`][pydantic_ai.models.Model.request_stream],
+    [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens],
+    [`Model.compact_messages`][pydantic_ai.models.Model.compact_messages],
+    [`EmbeddingModel.embed`][pydantic_ai.embeddings.EmbeddingModel.embed] and
+    [`EmbeddingModel.count_tokens`][pydantic_ai.embeddings.EmbeddingModel.count_tokens].
+
+    Methods that produce their result locally don't need it — for example
+    [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel]'s `count_tokens`, which tokenizes with
+    `tiktoken` and never calls the provider. Neither does
+    [`Model.cancel_suspended_response`][pydantic_ai.models.Model.cancel_suspended_response], which deliberately omits it
+    so an already-started job can still be cancelled after the flag is flipped.
 
     Raises:
         RuntimeError: If model requests are not allowed.
@@ -1306,6 +1340,18 @@ def infer_model(  # noqa: C901
         from ..providers.gateway import normalize_gateway_provider
 
         model_kind = normalize_gateway_provider(model_kind)
+
+    if provider_name == 'bedrock-mantle':
+        from ..providers.bedrock_mantle import BedrockMantleProvider, bedrock_mantle_model_profile
+        from .bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
+
+        if not isinstance(provider, BedrockMantleProvider):
+            raise UserError('Bedrock Mantle models require a `BedrockMantleProvider`.')
+        # The profile carries the endpoint family (and raises for non-OpenAI models), so routing reads
+        # it rather than re-deriving the interface here.
+        if bedrock_mantle_model_profile(model_name).get('bedrock_mantle_interface') == 'chat':
+            return BedrockMantleChatModel(model_name, provider=provider)
+        return BedrockMantleResponsesModel(model_name, provider=provider)
 
     # OpenRouter, Cerebras, Ollama and Z.AI need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
@@ -1519,7 +1565,7 @@ class _ToolSearchNativeResolution:
 
 
 def _resolve_tool_search_native_for_capability_owned_corpus(
-    supported_natives: Sequence[AbstractNativeTool], function_tools: Sequence[ToolDefinition]
+    supported_natives: Sequence[AbstractNativeTool], params: ModelRequestParameters
 ) -> _ToolSearchNativeResolution:
     """Resolve tool search's native mode when a deferred capability owns a corpus tool.
 
@@ -1539,11 +1585,7 @@ def _resolve_tool_search_native_for_capability_owned_corpus(
     provider wire. Named-native strategies (`'bm25'`/`'regex'`) have no client-executed
     equivalent, so we raise rather than silently substitute a different algorithm.
     """
-    capability_owns_corpus = any(
-        t.with_native == ToolSearchTool.kind
-        and (t.metadata or {}).get(_deferred_capabilities.DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
-        for t in function_tools
-    )
+    capability_owns_corpus = any(t.capability_id in params.deferred_capability_ids for t in params.function_tools)
     if not capability_owns_corpus:
         return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
 

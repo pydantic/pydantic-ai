@@ -1,5 +1,6 @@
 import datetime
 from collections.abc import Sequence
+from copy import deepcopy
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
@@ -26,17 +27,20 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.native_tools import AdvisorTool, WebSearchTool
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsStr, message, try_import
+from .mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
     from openai.types.chat import ChatCompletion
     from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     from pydantic_ai.models.anthropic import AnthropicModelSettings
     from pydantic_ai.models.openrouter import (
@@ -518,7 +522,13 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
     result = await agent.run('Tell me about Venus')
 
     assert result.usage == snapshot(
-        RunUsage(input_tokens=17, output_tokens=1515, details={'reasoning_tokens': 704}, requests=1)
+        RunUsage(
+            input_tokens=17,
+            output_tokens=1515,
+            details={'reasoning_tokens': 704},
+            output_reasoning_tokens=704,
+            requests=1,
+        )
     )
 
     settings = OpenRouterModelSettings(openrouter_usage={'include': True})
@@ -530,6 +540,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
             input_tokens=17,
             output_tokens=2177,
             details={'is_byok': 0, 'reasoning_tokens': 960, 'image_tokens': 0},
+            output_reasoning_tokens=960,
             requests=1,
         )
     )
@@ -1019,6 +1030,183 @@ async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
     assert extra_body['plugins'] == [{'id': 'web'}]
     assert 'web_search_options' in extra_body
     assert extra_body['web_search_options'] == {'search_context_size': 'high'}
+
+
+async def test_openrouter_prepare_request_does_not_mutate_caller_settings() -> None:
+    """Repeated `prepare_request` calls must not mutate the caller's settings or duplicate plugins.
+
+    `merge_model_settings` can return the model's own `settings` by identity, so the converter's
+    `openrouter_` pops and `extra_body`/`plugins` appends would otherwise leak back onto the
+    caller's object across calls. This is an API-free preparation-path test (no provider request),
+    so it is a unit test rather than a VCR test despite the module-level `vcr` mark.
+    """
+    provider = OpenRouterProvider(api_key='mock-api-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    settings = OpenRouterModelSettings(
+        openrouter_models=['vendor/model'],
+        openrouter_provider={'only': ['provider']},
+        openrouter_usage={'include': True},
+        extra_body={'caller_key': 'kept', 'plugins': [{'id': 'custom'}]},
+    )
+    original = deepcopy(settings)
+    params = ModelRequestParameters(native_tools=[WebSearchTool(search_context_size='medium')])
+
+    first, _ = model.prepare_request(settings, params)
+    assert first is not None
+    second, _ = model.prepare_request(settings, params)
+    assert second is not None
+
+    # The caller's settings object is preserved across both calls.
+    assert settings == original
+
+    first_extra_body = cast(dict[str, Any], first.get('extra_body', {}))
+    second_extra_body = cast(dict[str, Any], second.get('extra_body', {}))
+    # Each prepared request appends exactly one web plugin beside the caller's own (no duplication),
+    # and the caller's `plugins` list itself is never appended to (covered by `settings == original`).
+    assert first_extra_body['plugins'] == [{'id': 'custom'}, {'id': 'web'}]
+    assert second_extra_body['plugins'] == [{'id': 'custom'}, {'id': 'web'}]
+    # openrouter_* values are moved into extra_body without stripping the caller's originals.
+    assert first_extra_body['models'] == ['vendor/model']
+    assert first_extra_body['provider'] == {'only': ['provider']}
+    assert first_extra_body['usage'] == {'include': True}
+    # The caller's pre-existing extra_body entries are preserved.
+    assert first_extra_body['caller_key'] == 'kept'
+    # The openrouter_* keys remain on the original caller settings object.
+    assert settings.get('openrouter_models') == ['vendor/model']
+    assert settings.get('openrouter_provider') == {'only': ['provider']}
+    assert settings.get('openrouter_usage') == {'include': True}
+
+
+def _openrouter_completion(content: str) -> ChatCompletion:
+    """Build a minimal completion that satisfies `_OpenRouterChatCompletion` validation.
+
+    The shared `completion_message` helper builds a plain OpenAI `ChatCompletion`, which lacks
+    the `provider` field OpenRouter responses always carry.
+    """
+    message = ChatCompletionMessage.model_construct(role='assistant', content=content)
+    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
+    return ChatCompletion.model_construct(
+        id='123', choices=[choice], created=1704067200, model='test', object='chat.completion', provider='test'
+    )
+
+
+@pytest.mark.parametrize(
+    'executor,advisor_kwargs,expected_parameters',
+    [
+        pytest.param(
+            'openai/gpt-4.1',
+            {'model': 'anthropic/claude-opus-4.8', 'max_tokens': 2048},
+            {'model': 'anthropic/claude-opus-4.8', 'forward_transcript': False, 'max_completion_tokens': 2048},
+            id='max-tokens-set',
+        ),
+        # claude-3.5-haiku is NOT a valid advisor executor on the Claude API, so the Anthropic
+        # vendor profile excludes AdvisorTool — but the advisor is an OpenRouter gateway feature
+        # available to any executor, so the gateway layer of `OpenRouterProvider.model_profile`
+        # must win over the vendor profile. Also pins that `max_completion_tokens` is omitted
+        # (not null) when `max_tokens` is unset.
+        pytest.param(
+            'anthropic/claude-3.5-haiku',
+            {'model': 'anthropic/claude-opus-4.8'},
+            {'model': 'anthropic/claude-opus-4.8', 'forward_transcript': False},
+            id='any-executor',
+        ),
+    ],
+)
+async def test_openrouter_advisor_tool_request(
+    allow_model_requests: None,
+    executor: str,
+    advisor_kwargs: dict[str, Any],
+    expected_parameters: dict[str, Any],
+) -> None:
+    """`AdvisorTool` maps to an `openrouter:advisor` server-tool entry in the request `tools` array.
+
+    Unit test with a mocked client because our cassette matchers aren't sensitive to the request
+    body, so a VCR test wouldn't pin the mapped payload. `forward_transcript` remains `False` so
+    OpenRouter uses its default context behavior until provider-specific native tool parameters
+    can expose this choice to users.
+    """
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel(executor, provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(model, capabilities=[NativeTool(AdvisorTool(**advisor_kwargs))])
+
+    result = await agent.run('hello')
+
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tools'] == [{'type': 'openrouter:advisor', 'parameters': expected_parameters}]
+
+
+@pytest.mark.parametrize('field_kwargs', [{'caching': '5m'}, {'max_uses': 3}])
+async def test_openrouter_advisor_tool_unsupported_fields(
+    allow_model_requests: None, field_kwargs: dict[str, Any]
+) -> None:
+    """OpenRouter silently ignores the unsupported `caching` and `max_uses` fields.
+
+    This mocked-client test pins the request body because the VCR matcher would not detect these
+    unsupported fields accidentally being forwarded.
+    """
+    c = _openrouter_completion('done')
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenRouterModel('openai/gpt-4.1', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(model, capabilities=[NativeTool(AdvisorTool(model='anthropic/claude-opus-4.8', **field_kwargs))])
+
+    result = await agent.run('hello')
+
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tools'] == [
+        {
+            'type': 'openrouter:advisor',
+            'parameters': {'model': 'anthropic/claude-opus-4.8', 'forward_transcript': False},
+        }
+    ]
+
+
+async def test_openrouter_advisor_tool(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """End-to-end advisor consult through OpenRouter, recorded live.
+
+    In this recorded Chat Completions response, the server-side consultation is not exposed as
+    message parts. The server-tool-use counts in `usage`, surfaced via
+    `provider_details['server_tool_use']`, verify that the advisor was invoked.
+
+    The prompt explicitly asks the executor to consult so the recording reliably contains an
+    advisor exchange.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4o-mini', provider=provider)
+    agent = Agent(model, capabilities=[NativeTool(AdvisorTool(model='~anthropic/claude-opus-latest', max_tokens=1024))])
+
+    result = await agent.run(
+        'Consult your advisor tool for a recommendation first, then answer in one sentence: '
+        'what should I name a Python retry library?'
+    )
+
+    assert result.output
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is not None
+    assert response.provider_details['server_tool_use'] == {'tool_calls_requested': 1, 'tool_calls_executed': 1}
+
+
+async def test_openrouter_advisor_tool_stream(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """Streaming counterpart of `test_openrouter_advisor_tool`.
+
+    The advisor sub-inference does not stream; the server-tool-use counts arrive with the final
+    usage chunk. Asserts they reach `provider_details['server_tool_use']` on the streamed response
+    too, proving the non-streaming and streaming paths surface the advisor consult identically.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4o-mini', provider=provider)
+    agent = Agent(model, capabilities=[NativeTool(AdvisorTool(model='~anthropic/claude-opus-latest', max_tokens=1024))])
+
+    async with agent.run_stream(
+        'Consult your advisor tool for a recommendation first, then answer in one sentence: '
+        'what should I name a Python retry library?'
+    ) as stream:
+        assert await stream.get_output()
+
+    assert stream.response.provider_details is not None
+    assert stream.response.provider_details['server_tool_use'] == {'tool_calls_requested': 1, 'tool_calls_executed': 1}
 
 
 async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrouter_api_key: str) -> None:
