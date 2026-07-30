@@ -16,6 +16,7 @@ import asyncio
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 from contextlib import redirect_stdout
@@ -598,6 +599,9 @@ def test_bash_subprocess_startup_failure_is_an_error_not_a_crash(monkeypatch: py
 
 
 def test_grep_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    if shutil.which('rg') is None:
+        pytest.skip('ripgrep is installed by the gh-aw runtime, not the generic CI runner')
+
     # grep runs ripgrep through the harness shell capability; the adapter keys off
     # ripgrep's exit code (parsed from `run_command`'s trailing `[exit code: N]`)
     # to unwrap the `[stdout]` framing into `file:line:text` matches, and maps
