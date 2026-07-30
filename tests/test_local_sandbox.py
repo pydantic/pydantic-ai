@@ -159,6 +159,56 @@ async def test_cancellation_kills_the_whole_process_group(tmp_path: Path):
     await _assert_process_gone(int(pid_file.read_text()))
 
 
+async def test_cancellation_during_spawn_still_kills_the_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The child is forked before the spawn coroutine finishes, so a cancellation delivered
+    mid-spawn must still tear down the group — asyncio's own transport cleanup kills only the
+    direct child, and the shell here has already exited."""
+    sandbox = LocalSandbox(tmp_path)
+    pid_file = tmp_path / 'pid'
+    release = asyncio.Event()
+    real_create_subprocess_shell = asyncio.create_subprocess_shell
+
+    async def held_spawn(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        process = await real_create_subprocess_shell(*args, **kwargs)
+        await release.wait()
+        return process
+
+    monkeypatch.setattr(asyncio, 'create_subprocess_shell', held_spawn)
+    task = asyncio.create_task(sandbox.run(f'sleep 30 & echo $! > {pid_file}', shell=True))
+    while not pid_file.exists() or not pid_file.read_text().strip():
+        await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    release.set()
+    await _assert_process_gone(int(pid_file.read_text()))
+
+
+async def test_cancellation_during_failing_spawn_is_tolerated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A spawn that fails after its run was cancelled has nobody left to receive the error;
+    the abandoned-spawn cleanup must consume it instead of leaving it unretrieved."""
+    sandbox = LocalSandbox(tmp_path)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def failing_spawn(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        started.set()
+        await release.wait()
+        raise OSError('spawn failed after abandonment')
+
+    monkeypatch.setattr(asyncio, 'create_subprocess_shell', failing_spawn)
+    task = asyncio.create_task(sandbox.run('true', shell=True))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    release.set()
+    # Let the abandoned spawn finish and its done-callback consume the failure.
+    await asyncio.sleep(0.01)
+
+
 async def test_kill_tolerates_an_already_exited_group():
     """A command can finish in the instant between the deadline firing and the kill; the
     only benign `killpg` failure is "already exited". Unreachable deterministically through

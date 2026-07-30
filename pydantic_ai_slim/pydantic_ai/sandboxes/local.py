@@ -189,7 +189,7 @@ class LocalSandbox:
         if shell:
             if not isinstance(command, str):
                 raise TypeError('an argv sequence cannot be combined with shell=True; pass a single command string')
-            process = await asyncio.create_subprocess_shell(
+            spawn_coroutine = asyncio.create_subprocess_shell(
                 command,
                 cwd=cwd or self._root_path,
                 env=merged_env,
@@ -202,7 +202,7 @@ class LocalSandbox:
         else:
             if isinstance(command, str):
                 raise TypeError('a string command requires shell=True; pass an argv sequence otherwise')
-            process = await asyncio.create_subprocess_exec(
+            spawn_coroutine = asyncio.create_subprocess_exec(
                 *command,
                 cwd=cwd or self._root_path,
                 env=merged_env,
@@ -210,6 +210,16 @@ class LocalSandbox:
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
             )
+        # The child is forked before the spawn coroutine's own awaits finish, so a cancellation
+        # delivered mid-spawn would leak the process group: asyncio's transport cleanup kills
+        # only the direct child, and a shell that backgrounded children may already have
+        # exited. Shield the spawn so the group can be killed once the handle exists.
+        spawn = asyncio.ensure_future(spawn_coroutine)
+        try:
+            process = await asyncio.shield(spawn)
+        except asyncio.CancelledError:
+            spawn.add_done_callback(self._kill_abandoned_spawn)
+            raise
         communicated = False
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
@@ -234,6 +244,19 @@ class LocalSandbox:
             stdout=stdout.decode('utf-8', errors='replace'),
             stderr=stderr.decode('utf-8', errors='replace'),
         )
+
+    @staticmethod
+    def _kill_abandoned_spawn(spawn: asyncio.Task[asyncio.subprocess.Process]) -> None:
+        # The run that awaited this spawn was cancelled mid-spawn: nobody is left to receive
+        # errors (`exception()` also marks a failed spawn's exception as retrieved), and the
+        # loop's child watcher still reaps the direct child after the group is killed.
+        if spawn.cancelled() or spawn.exception() is not None:
+            return
+        process = spawn.result()
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
 
     @staticmethod
     def _kill(process: asyncio.subprocess.Process) -> None:
