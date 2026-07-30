@@ -104,7 +104,9 @@ def test_anthropic_provider_model_profile_older_model_still_resolves():
         ('claude-opus-4-7', False),
         ('claude-sonnet-4-6', False),
         ('claude-haiku-4-5', False),
-        # Transport-specific ids are normalized to the bare name before the prefix check.
+        # A Bedrock id is normalized to the bare name before the prefix check. A Vertex-style
+        # `@<date>` suffix isn't — it reaches the check verbatim, which is why an unsupported model
+        # carrying one still resolves to False for the ordinary reason.
         ('us.anthropic.claude-opus-4-8-v1:0', True),
         ('claude-sonnet-4-6@20260101', False),
     ],
