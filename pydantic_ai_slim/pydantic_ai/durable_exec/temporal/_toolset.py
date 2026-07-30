@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from pydantic import ConfigDict, with_config
+from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
 from pydantic.errors import PydanticUserError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
@@ -147,6 +147,18 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
     return retry_policy
 
 
+@with_config(ConfigDict(extra='forbid'))
+class _ValidatedActivityConfig(ActivityConfig):
+    """`ActivityConfig` with validation settings attached, for `_activity_config_adapter`.
+
+    `extra='forbid'` so a misspelled key is reported rather than dropped: without it, validation
+    would silently swallow the typo that `workflow.execute_activity(**config)` currently rejects.
+    """
+
+
+_activity_config_adapter: TypeAdapter[ActivityConfig] = TypeAdapter(_ValidatedActivityConfig)
+
+
 def resolve_tool_activity_config(
     tool: ToolsetTool[Any] | None,
     tool_name: str,
@@ -157,6 +169,13 @@ def resolve_tool_activity_config(
     Reads `tool.tool_def.metadata['temporal']` first, then falls back to the explicit
     `tool_activity_config` dict keyed by tool name. Returns an `ActivityConfig` dict
     (possibly empty), or `False` to skip activity wrapping.
+
+    The config is validated back into Temporal's own types: a `DynamicToolset`'s tools are
+    discovered inside the get-tools activity, so their `ToolDefinition.metadata` returns to the
+    workflow as JSON, where `timedelta(minutes=5)` has become `'PT5M'`, a `RetryPolicy` a plain
+    dict, and an `ActivityCancellationType` an int. Handing those to
+    `workflow.execute_activity` fails the workflow *task*, which Temporal retries forever;
+    a `UserError` for what validation can't restore fails the workflow instead.
     """
     config = cast(
         'ActivityConfig | Literal[False]',
@@ -170,7 +189,10 @@ def resolve_tool_activity_config(
     )
     if config is False:
         return False
-    config = copy.copy(config)
+    try:
+        config = _activity_config_adapter.validate_python(config)
+    except ValidationError as e:
+        raise UserError(f'Tool {tool_name!r} has an invalid Temporal `ActivityConfig`: {e}') from e
     if 'retry_policy' in config:
         config['retry_policy'] = with_non_retryable_errors(config.get('retry_policy'))
     return config
