@@ -19,6 +19,7 @@ from unittest.mock import patch
 import anyio
 import pytest
 from pydantic import BaseModel, TypeAdapter
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
     AbstractToolset,
@@ -158,6 +159,7 @@ try:
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
     from pydantic_ai.durable_exec.temporal._toolset import (
+        CallToolParams,
         TemporalWrapperToolset,
         resolve_tool_activity_config,
         toolset_temporal_activities,
@@ -4127,6 +4129,77 @@ def test_temporal_run_context_serialization_is_exhaustive():
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to '
         '`TemporalRunContext.serialize_run_context` or to `intentionally_unserialized` (with a reason).'
     )
+
+
+@dataclass
+class MetadataSidecar:
+    label: str
+
+
+async def test_tool_metadata_crosses_activity_boundary_as_json():
+    """`metadata` is untyped, so its values arrive inside an activity as their JSON shapes.
+
+    Not a workflow test: both halves are properties of the activity payloads themselves, and
+    running them through the converter `PydanticAIPlugin` installs pins them directly. Observing
+    the inbound half through the public API would take a tool call whose activity consumes the
+    round-tripped `tool_def` rather than re-resolving its own.
+    """
+    # One value per Python type whose JSON shape differs from the original.
+    metadata: dict[str, Any] = {
+        'set': {'a'},
+        'tuple': (1, 2),
+        'dataclass': MetadataSidecar(label='x'),
+        'bytes': b'\x01',
+        'int_keys': {1: 'one'},
+    }
+    params = CallToolParams(
+        name='analyze',
+        tool_args={},
+        serialized_run_context={},
+        tool_def=ToolDefinition(name='analyze', metadata=metadata),
+    )
+    [decoded_params] = await pydantic_data_converter.decode(
+        await pydantic_data_converter.encode([params]), [CallToolParams]
+    )
+    assert isinstance(decoded_params, CallToolParams)
+    assert decoded_params.tool_def == snapshot(
+        ToolDefinition(
+            name='analyze',
+            metadata={
+                'set': ['a'],
+                'tuple': [1, 2],
+                'dataclass': {'label': 'x'},
+                'bytes': '\x01',
+                'int_keys': {'1': 'one'},
+            },
+        )
+    )
+
+    # And the same for `metadata` coming back out of an activity on a control-flow exception.
+    async def require_approval() -> None:
+        raise ApprovalRequired(metadata=metadata)
+
+    [decoded_result] = await pydantic_data_converter.decode(
+        await pydantic_data_converter.encode([await wrap_tool_call_result(require_approval())]),
+        # The activity's declared return type is this discriminated union, which Temporal resolves
+        # through a `TypeAdapter`; its `type_hints` parameter is annotated as `list[type]`.
+        [cast('type', CallToolResult)],
+    )
+    with pytest.raises(ApprovalRequired) as exc_info:
+        unwrap_tool_call_result(decoded_result)
+    assert exc_info.value.metadata == snapshot(
+        {'set': ['a'], 'tuple': [1, 2], 'dataclass': {'label': 'x'}, 'bytes': '\x01', 'int_keys': {'1': 'one'}}
+    )
+
+    # Only UTF-8-decodable bytes make it across at all; arbitrary binary needs base64 encoding.
+    binary_params = CallToolParams(
+        name='analyze',
+        tool_args={},
+        serialized_run_context={},
+        tool_def=ToolDefinition(name='analyze', metadata={'bytes': b'\xff'}),
+    )
+    with pytest.raises(PydanticSerializationError, match='invalid utf-8 sequence'):
+        await pydantic_data_converter.encode([binary_params])
 
 
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
