@@ -1848,7 +1848,9 @@ async def test_tool_call_does_not_reprepare_tool_defs():
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('alpha', {})])
+            # Execute both registered tools so prepare-helper bodies stay covered and we
+            # still prove prepare is discovery-only (not re-run inside each tool task).
+            return ModelResponse(parts=[ToolCallPart('alpha', {}), ToolCallPart('beta', {})])
         return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(
@@ -1864,7 +1866,7 @@ async def test_tool_call_does_not_reprepare_tool_defs():
         return result.output
 
     assert await run_agent() == 'done'
-    # Two model steps × two tools discovered each step; no extra prepares from the tool task.
+    # Two model steps × two tools discovered each step; no extra prepares from the tool tasks.
     assert helpers.prepare_calls == ['alpha', 'beta', 'alpha', 'beta']
 
 
