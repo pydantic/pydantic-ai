@@ -2042,9 +2042,12 @@ async def _reject_forbidden_path_async(ctx: RunContext[ArgsValidatorDeps], path:
 
 
 def _require_approval_for_path(ctx: RunContext[ArgsValidatorDeps], path: SuffixedPath) -> None:
-    """An `args_validator` may also defer the call instead of rejecting or accepting it."""
-    if not ctx.tool_call_approved:
-        raise ApprovalRequired(metadata={'path': path})
+    """An `args_validator` may also defer the call instead of rejecting or accepting it.
+
+    Defers unconditionally: a deferral raised during validation can't be resolved and resumed yet,
+    so what matters here is only that it crosses the activity boundary as a value.
+    """
+    raise ApprovalRequired(metadata={'path': path})
 
 
 def _guarded_toolset() -> FunctionToolset[ArgsValidatorDeps]:

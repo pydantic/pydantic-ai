@@ -3630,9 +3630,12 @@ def _reject_forbidden_path(ctx: RunContext[GuardedDeps], path: GuardedPath) -> N
 
 
 def _require_approval_for_path(ctx: RunContext[GuardedDeps], path: GuardedPath) -> None:
-    """An `args_validator` may also defer the call instead of rejecting or accepting it."""
-    if not ctx.tool_call_approved:
-        raise ApprovalRequired(metadata={'path': path})
+    """An `args_validator` may also defer the call instead of rejecting or accepting it.
+
+    Defers unconditionally: a deferral raised during validation can't be resolved and resumed yet,
+    so what matters here is only that it crosses the step boundary as a value.
+    """
+    raise ApprovalRequired(metadata={'path': path})
 
 
 def _guarded_toolset() -> FunctionToolset[GuardedDeps]:
