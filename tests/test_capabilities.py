@@ -6580,37 +6580,38 @@ class TestProcessEventStream:
         assert len(received_by_observer) == 1
         assert len(received_downstream) > 1
 
-    async def test_consumer_stopping_early_tears_down_the_handler(self):
-        """Abandoning the stream mid-flight cancels the observer instead of leaving it parked.
+    async def test_failing_stream_tears_down_the_handler(self):
+        """When the stream being wrapped fails, the observer is cancelled rather than left parked.
 
-        The handler runs in its own task waiting on the teed stream, so a consumer that breaks out
-        (or an inner stream that raises) has to tear it down explicitly — otherwise it lingers,
-        blocked on `receive`, for the rest of the run.
+        The handler runs in its own task waiting on the teed stream, so an error that stops the
+        wrapper mid-flight has to tear it down; otherwise it lingers, blocked on `receive`. Asserting
+        the handler didn't *finish* would prove nothing (it never finishes either way), so this
+        records how it ended.
         """
-        handler_finished = False
+        state = 'not started'
 
-        async def slow_observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            nonlocal handler_finished
-            async for _event in stream:
+        async def observer(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            nonlocal state
+            try:
+                state = 'receiving'
+                async for _event in stream:
+                    pass
+            except asyncio.CancelledError:
+                state = 'cancelled'
+                raise
+
+        async def exploding_stream() -> AsyncIterator[AgentStreamEvent]:
+            yield PartStartEvent(index=0, part=TextPart(content='hi'))
+            raise RuntimeError('stream boom')
+
+        capability = ProcessEventStream[None](handler=observer)
+        run_ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+        with pytest.raises(RuntimeError, match='stream boom'):
+            async for _event in capability.wrap_run_event_stream(run_ctx, stream=exploding_stream()):
                 pass
-            handler_finished = True  # pragma: no cover — the consumer bails before the stream ends
 
-        agent = Agent(
-            FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[ProcessEventStream(handler=slow_observer)],
-        )
-
-        async with agent.iter('hello') as agent_run:
-            node = agent_run.next_node
-            while not isinstance(node, End):
-                if Agent.is_model_request_node(node):
-                    async with node.stream(agent_run.ctx) as stream:
-                        async for _event in stream:
-                            break  # abandon the stream after the first event
-                    break
-                node = await agent_run.next(node)
-
-        assert handler_finished is False
+        assert state == snapshot('cancelled')
 
     async def test_not_spec_serializable(self):
         """ProcessEventStream holds a callable so it cannot participate in spec-based construction."""
@@ -6770,12 +6771,15 @@ class TestProcessEventStream:
             async for _event in stream:  # pragma: no cover
                 pass
 
-        agent = Agent(RequestOnlyModel(), capabilities=[ProcessEventStream(handler=observer)])
+        model = RequestOnlyModel()
+        assert (model.model_name, model.system) == snapshot(('request-only', 'test'))
+
+        agent = Agent(model, capabilities=[ProcessEventStream(handler=observer)])
 
         with pytest.raises(UserError, match='does not support streamed requests'):
             async with agent.iter('hello') as agent_run:
                 node = agent_run.next_node
-                while not isinstance(node, End):
+                while not isinstance(node, End):  # pragma: no branch — the error ends the loop
                     node = await agent_run.next(node)
 
     async def test_processor_transforms_events_seen_by_manual_stream(self):
