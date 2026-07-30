@@ -253,7 +253,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-opus-5',
         )
     )
-
     # Native tool search requires the `tool_search_tool_bm25_20251119` /
     # `tool_search_tool_regex_20251119` API types, which post-date Claude 4.0. In
     # practice, Anthropic enables it for Sonnet 4.5+, Opus 4.5+, and Haiku 4.5+.
