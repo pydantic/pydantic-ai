@@ -880,13 +880,13 @@ Toolsets support lifecycle hooks for per-run isolation and per-step state manage
 
 ### Custom toolsets and durable execution
 
-The [durable execution](durable_execution/overview.md) integrations checkpoint the I/O of the toolset types they know: `FunctionToolset`, [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and dynamic toolsets. A custom toolset is not one of those, so its own `get_tools()` and `call_tool()` run in workflow or flow code rather than inside an activity, step, or task.
+The [durable execution](durable_execution/overview.md) integrations checkpoint the I/O of the toolset types they know: [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and dynamic toolsets. A custom toolset is not one of those, so its own `get_tools()` and `call_tool()` run in workflow or flow code rather than inside an activity, step, or task.
 
 If your custom toolset is pure — its tool listing and calling perform no I/O and are deterministic given the run context — that's fine, and it works with all three engines as is.
 
 If it performs I/O, or anything else that shouldn't re-run when a workflow replays, recovers, or a flow retries, you're better off with one of these instead:
 
-- Implement it as a `FunctionToolset` subclass, so its tools are ordinary function tools that each engine integrates in its own way (see the engine's docs).
+- Implement it as a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] subclass, so its tools are ordinary function tools that each engine integrates in its own way (see the engine's docs).
 - Return it from a [dynamic toolset](#dynamically-building-a-toolset) or a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability]. The engines wrap those, and the dynamic toolset lists and calls the tools from the toolset it returns inside the durable unit, so both are checkpointed like any other tool I/O. The factory itself runs in workflow/flow code and is re-resolved inside each durable unit, so it needs to be deterministic given the run's dependencies — construct the toolset there and leave the I/O to its `get_tools()` and tools.
 
 Registering the custom toolset through `@agent.toolset` is the smallest version of that second option:
