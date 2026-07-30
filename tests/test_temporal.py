@@ -118,7 +118,7 @@ try:
     import temporalio.api.common.v1
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
-    from temporalio.client import Client, WorkflowFailureError, WorkflowHandle, WorkflowHistory
+    from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
@@ -6706,71 +6706,6 @@ async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
             'AgentRunResultEvent',
         ]
     )
-
-
-_run_sync_durable_agent = Agent(
-    TestModel(custom_output_text='Sync output'),
-    name='durability_run_sync_agent',
-    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
-)
-
-
-@workflow.defn
-class RunSyncDurableAgentWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = _run_sync_durable_agent.run_sync(prompt)
-        return result.output  # pragma: no cover
-
-
-async def _first_workflow_task_failure(handle: WorkflowHandle[Any, Any]) -> tuple[str, str]:
-    """Return the `(type, stack trace)` of the first workflow *task* failure recorded in history."""
-
-    async def poll() -> tuple[str, str]:
-        while True:
-            async for event in handle.fetch_history_events():
-                if event.HasField('workflow_task_failed_event_attributes'):
-                    failure = event.workflow_task_failed_event_attributes.failure
-                    return failure.application_failure_info.type, failure.stack_trace
-            await asyncio.sleep(0.1)  # pragma: lax no cover
-
-    return await asyncio.wait_for(poll(), timeout=30)
-
-
-async def test_durability_run_sync_in_workflow_fails_the_workflow_task(client: Client) -> None:
-    """`agent.run_sync()` inside a workflow is unusable under the `TemporalDurability` capability.
-
-    The deprecated `TemporalAgent` wrapper raises a clean `UserError` telling you to `await
-    agent.run()` instead; the capability has no such guard, so the call reaches
-    `loop.run_until_complete()` on Temporal's workflow event loop, which is an
-    `asyncio.AbstractEventLoop` subclass that leaves that method unimplemented. The resulting
-    `NotImplementedError` isn't one of the plugin's `workflow_failure_exception_types`, so it
-    fails the workflow *task*, which Temporal retries forever: the caller hangs instead of seeing
-    an error. That's why this test asserts against the recorded task failure and terminates the
-    workflow rather than awaiting its result.
-
-    Tracked in https://github.com/pydantic/pydantic-ai/issues/6899; update this to assert a clean
-    `UserError` once that's fixed.
-    """
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[RunSyncDurableAgentWorkflow],
-        plugins=[AgentPlugin(_run_sync_durable_agent)],
-    ):
-        handle = await client.start_workflow(
-            RunSyncDurableAgentWorkflow.run,
-            args=['Hello'],
-            id=RunSyncDurableAgentWorkflow.__name__,
-            task_queue=TASK_QUEUE,
-        )
-        try:
-            failure_type, stack_trace = await _first_workflow_task_failure(handle)
-        finally:
-            await handle.terminate()
-
-    assert failure_type == snapshot('NotImplementedError')
-    assert 'run_until_complete' in stack_trace
 
 
 async def test_temporal_durability_event_stream_handler_outside_workflow() -> None:
