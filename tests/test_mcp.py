@@ -1168,6 +1168,31 @@ class TestMCPToolsetIntegration:
         )
         assert tool.max_retries == expected
 
+    @pytest.mark.parametrize(
+        'toolset_max_retries,ctx_max_retries,expected',
+        [
+            pytest.param(None, 5, 5, id='inherits-ctx'),
+            pytest.param(2, 5, 2, id='explicit-wins'),
+        ],
+    )
+    async def test_get_tools_resolves_retries_via_tool_for_tool_def(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext,
+        toolset_max_retries: int | None,
+        ctx_max_retries: int,
+        expected: int,
+    ):
+        """`get_tools` builds every tool through `tool_for_tool_def`, so the two agree by construction.
+
+        A unit because the retry budget is only observable end-to-end as a count. Pinned because these
+        used to be separate `ToolsetTool` construction sites, and their divergence was the #5180 bug.
+        """
+        toolset = MCPToolset(fastmcp_server, max_retries=toolset_max_retries)
+        tools = await toolset.get_tools(replace(run_context, max_retries=ctx_max_retries))
+        assert tools
+        assert {tool.max_retries for tool in tools.values()} == {expected}
+
     async def test_direct_call_tool_propagates_error_when_configured(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(fastmcp_server, tool_error_behavior='error')
         async with toolset:
