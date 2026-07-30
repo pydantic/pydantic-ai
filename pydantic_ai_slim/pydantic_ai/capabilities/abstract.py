@@ -835,7 +835,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Wraps tool execution. handler() runs the tool.
 
         Defer before calling `handler()`: a deferral raised after it has returned is accepted, but
-        the tool function already ran and its result is discarded.
+        the tool function already ran and its result is discarded. Defer from
+        [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute]
+        instead.
         """
         return await handler(args)
 

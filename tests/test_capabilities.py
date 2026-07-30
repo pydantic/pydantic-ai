@@ -11160,6 +11160,12 @@ class DeferringHookCap(AbstractCapability[Any]):
         self._maybe('after_tool_execute')
         return result
 
+    async def on_tool_execute_error(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Exception
+    ) -> Any:
+        self._maybe('on_tool_execute_error')
+        raise error
+
 
 class TestToolHookDeferrals:
     """A tool call may only be deferred once its arguments are known to be valid.
@@ -11322,6 +11328,26 @@ class TestToolHookDeferrals:
         assert requests.metadata == {deferred[0].tool_call_id: {'from': where}}
         assert [e.args_valid for e in events if isinstance(e, FunctionToolCallEvent)] == [True]
         assert executed == ([0] if where.endswith('_after') or where == 'after_tool_execute' else [])
+
+    @pytest.mark.parametrize('exc_type', [ApprovalRequired, CallDeferred])
+    async def test_execute_error_hook_defers(self, exc_type: type[ApprovalRequired] | type[CallDeferred]):
+        """The execution error hook can replace a tool failure with a deferral."""
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringHookCap(where='on_tool_execute_error', exc_type=exc_type)],
+        )
+
+        @agent.tool(retries=0)
+        def my_tool(ctx: RunContext[Any], x: int) -> int:
+            raise RuntimeError('tool failed')
+
+        result = await agent.run('call the tool')
+        requests = result.output
+        assert isinstance(requests, DeferredToolRequests)
+        deferred = requests.approvals if exc_type is ApprovalRequired else requests.calls
+        assert [call.tool_name for call in deferred] == ['my_tool']
+        assert requests.metadata == {deferred[0].tool_call_id: {'from': 'on_tool_execute_error'}}
 
     async def test_hooks_that_defer_nowhere_leave_the_call_alone(self):
         """Control case: the same capability without a deferral runs the tool and returns its result.
