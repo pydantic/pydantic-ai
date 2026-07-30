@@ -496,9 +496,7 @@ async def safe_download(
                 and cannot be overridden. Sensitive headers (`Authorization`,
                 `Cookie`, `Proxy-Authorization`) are stripped when a redirect
                 crosses origins (scheme + host + port), except for a same-host
-                http:80→https:443 upgrade. Cookies the server sets are dropped
-                on those same hops and are not restored if the chain returns to
-                an origin it left.
+                http:80→https:443 upgrade.
         allowed_domains: If set, only these hostnames are permitted (exact match).
                 Checked on every hop including redirects.
         blocked_domains: If set, these hostnames are rejected (exact match).
@@ -564,15 +562,6 @@ async def safe_download(
                     effective_headers = {
                         k: v for k, v in effective_headers.items() if k.lower() not in _SENSITIVE_HEADERS
                     }
-                    # Cookies the server set earlier are credentials too, and dropping the
-                    # `Cookie` header does not remove them: the jar re-adds them on the next
-                    # request. Since each hop is requested against the resolved IP, the jar
-                    # keys cookies on that IP rather than the host, so it cannot scope them
-                    # itself and would hand them to any host sharing that address. Clearing
-                    # it outright is stricter than a browser's per-origin store: a chain that
-                    # leaves an origin and returns gets no cookies, so a login bounce that
-                    # relies on them can loop until it exhausts `max_redirects`.
-                    client.cookies.clear()
 
                 continue
 

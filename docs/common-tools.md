@@ -123,10 +123,10 @@ print(result.output)
     since the model chooses the URL. If you configure a credential like `Authorization`, use
     `allowed_domains` to restrict which hosts can receive it, and keep in mind that domain filters
     match the hostname only: the model can still direct the credential to plain `http://` or to a
-    non-standard port on an allowed host. On redirects, sensitive headers (`Authorization`, `Cookie`,
-    `Proxy-Authorization`) are only forwarded when the redirect stays on the same origin (scheme,
-    host, and port) or upgrades from `http` to `https` on the same host on the default ports; they
-    are stripped on any other redirect.
+    non-standard port on an allowed host. On redirects, configured sensitive headers
+    (`Authorization`, `Cookie`, `Proxy-Authorization`) are only forwarded when the redirect stays
+    on the same origin (scheme, host, and port) or upgrades from `http` to `https` on the same host
+    on the default ports; they are stripped on any other redirect.
 
 ## Tavily Search Tool
 

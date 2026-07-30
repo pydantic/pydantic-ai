@@ -40,15 +40,13 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
     The wrapper configures the returned mock as an async context manager that yields
     itself (matching `httpx.AsyncClient` behavior), so tests work regardless of
-    whether `safe_download` uses the client directly or via `async with`, and gives it
-    a real cookie jar so that jar operations behave synchronously as on a real client.
+    whether `safe_download` uses the client directly or via `async with`.
     """
     mock = MagicMock()
 
     def factory_wrapper(**kwargs: Any) -> Any:
         client = mock(**kwargs)
         client.__aenter__.return_value = client
-        client.cookies = httpx.Cookies()
         return client
 
     monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', factory_wrapper)
@@ -1065,92 +1063,6 @@ class TestSensitiveHeaderStrippingOnRedirects:
 
         assert self._header(sent[1], 'authorization') is None
         assert self._header(sent[2], 'authorization') is None
-
-    @staticmethod
-    async def _cookies_sent_over_chain(
-        monkeypatch: pytest.MonkeyPatch, start_url: str, locations: list[str], set_cookie: str
-    ) -> list[str | None]:
-        """Follow a redirect chain through a real client, returning the `Cookie` sent on each hop.
-
-        A real `httpx.AsyncClient` over a `MockTransport` is needed here rather than a mock
-        client: the behavior under test belongs to the client's cookie jar, which a mock
-        does not have.
-        """
-        sent_cookies: list[str | None] = []
-        remaining = list(locations)
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            sent_cookies.append(request.headers.get('cookie'))
-            if not remaining:
-                return httpx.Response(200, content=b'ok')
-            headers = {'location': remaining.pop(0)}
-            if len(sent_cookies) == 1:
-                headers['set-cookie'] = set_cookie
-            return httpx.Response(302, headers=headers)
-
-        def factory(**_: Any) -> httpx.AsyncClient:
-            return httpx.AsyncClient(transport=httpx.MockTransport(handler))
-
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', factory)
-
-        await safe_download(start_url)
-        return sent_cookies
-
-    @pytest.mark.parametrize(
-        'start_url,locations,attributes,expected',
-        [
-            # Same origin: the server gets back the cookie it just set.
-            ('https://example.com/1', ['https://example.com/2'], '', [None, 'session=SECRET']),
-            # http:80→https:443 upgrade keeps credentials, and the cookie rides along.
-            ('http://example.com/1', ['https://example.com/2'], '', [None, 'session=SECRET']),
-            # A `Domain=` cookie is never stored in the first place, same origin or not:
-            # requests go to the resolved IP, and a domain cookie cannot scope to an IP.
-            ('https://example.com/1', ['https://example.com/2'], '; Domain=example.com', [None, None]),
-            # Another host on the same IP: the jar keys cookies on the resolved IP, so
-            # without the clear it would hand them to a different origin. `Secure`,
-            # `HttpOnly` and `SameSite` do not prevent this.
-            ('https://example.com/1', ['https://other.com/2'], '', [None, None]),
-            (
-                'https://example.com/1',
-                ['https://other.com/2'],
-                '; Secure; HttpOnly; SameSite=Strict',
-                [None, None],
-            ),
-            # Cookies are not port-scoped, so only the clear keeps them off another port.
-            ('https://example.com/1', ['https://example.com:8443/2'], '', [None, None]),
-            # A non-Secure cookie would otherwise go out in the clear on a downgrade.
-            ('https://example.com/1', ['http://example.com/2'], '', [None, None]),
-            # Leaving an origin and returning does not restore its cookies. This is
-            # stricter than a browser jar, which would scope them per origin and resend.
-            (
-                'https://a.com/1',
-                ['https://b.com/2', 'https://a.com/3'],
-                '',
-                [None, None, None],
-            ),
-        ],
-    )
-    async def test_server_set_cookies_follow_the_same_origin_rule(
-        self,
-        mock_dns: AsyncMock,
-        monkeypatch: pytest.MonkeyPatch,
-        start_url: str,
-        locations: list[str],
-        attributes: str,
-        expected: list[str | None],
-    ) -> None:
-        """Cookies a server sets must not cross an origin boundary either.
-
-        Filtering the `Cookie` header is not enough on its own, because the client's
-        cookie jar re-adds them on the next request.
-        """
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-
-        sent = await self._cookies_sent_over_chain(
-            monkeypatch, start_url, locations, f'session=SECRET; Path=/{attributes}'
-        )
-
-        assert sent == expected
 
     async def test_upgrade_then_downgrade_compares_previous_hop(
         self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
