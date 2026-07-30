@@ -176,6 +176,9 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         self._conversation_id = conversation_id
         self._replayed_items = replayed_items if replayed_items is not None else []
 
+    def set_conversation(self, conversation: Callable[[], Sequence[ModelMessage]]) -> None:
+        """Ignored: xAI restores the conversation itself, so replaying it would say everything twice."""
+
     @property
     def conversation_id(self) -> str | None:
         """The xAI conversation ID used for native session resumption."""

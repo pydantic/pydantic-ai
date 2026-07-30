@@ -52,8 +52,10 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
             _strip_system_prompts(messages)
         elif _has_system_prompt(messages):
             return request_context
+        # `ctx.agent` is always set during an agent run.
         if ctx.agent is None:
-            return request_context  # pragma: no cover — ctx.agent is always set during an agent run
+            # `ctx.agent` is always set during an agent run.
+            return request_context  # pragma: no cover
         # `ctx.model` is an `AbstractModel`, which is a regular `Model` on every path that makes
         # model requests; fall back to the agent's configured model otherwise. The `cast` only
         # pins `Model`'s client type parameter, which `isinstance` can't recover.

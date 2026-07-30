@@ -90,6 +90,7 @@ from ._base import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSessionInput,
+    ResponseCompleteEvent,
     SessionErrorEvent,
     SessionReconnectEvent,
     SessionUsageEvent,
@@ -157,7 +158,7 @@ _TranslatableEvent: TypeAlias = (
     AudioDelta
     | OutputTranscript
     | InputTranscript
-    | TurnCompleteEvent
+    | ResponseCompleteEvent
     | InputSpeechStartEvent
     | InputSpeechEndEvent
     | OutputSpeechStartEvent
@@ -546,6 +547,9 @@ class RealtimeSession:
         self._pump_finished = False
         self._iterator_active = False
         self._stream_exhausted = False
+        # Whether the event stream was ever consumed, which decides whether a pump error still needs
+        # somewhere to go when the session closes — see `close`.
+        self._stream_consumed = False
         self._entered = False
         self._closed = False
         self._closing_error: BaseException | None = None
@@ -563,6 +567,11 @@ class RealtimeSession:
         self._entered = True
         self._loop = asyncio.get_running_loop()
         self._pending_messages.bind(self._notify_asap_pending_messages)
+        if self._profile.get('supports_session_seeding', False):
+            # Offer the conversation for replay, so a provider that keeps no state across sessions can
+            # carry the call through a reconnect instead of resuming with amnesia. Gated on seeding
+            # support because that is the mechanism, and a no-op where the provider resumes natively.
+            self._connection.set_conversation(self.all_messages)
 
         settings = self._instrumentation
         if settings is not None:
@@ -684,6 +693,9 @@ class RealtimeSession:
         and [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] iterators
         finish cleanly, with any buffered items discarded. The surrounding model context owns the
         underlying connection, so it remains open until that context exits.
+
+        Raises whatever ended the session — a provider hangup, an exceeded `usage_limits` — if the event
+        stream was never iterated, since there was nowhere else for it to surface.
         """
         if not self._entered or self._closed:
             return
@@ -722,6 +734,15 @@ class RealtimeSession:
         self._session_span_context = None
         self._session_span_attributes = None
         self._loop = None
+
+        # A session that was never iterated has nowhere else to learn that it failed: the pump's error is
+        # normally raised out of `__aiter__`, so a caller using only `send()` and the
+        # `stream_audio()`/`stream_transcripts()` views would otherwise exit *cleanly* from a provider
+        # hangup — or from an exceeded `usage_limits`, silently spending past a cost cap it asked for.
+        # Not raised when the caller did consume the stream (it either saw the error or chose to stop
+        # listening), nor over an exception already on its way out of the `async with` body.
+        if self._closing_error is None and self._pump_error is not None and not self._stream_consumed:
+            raise self._pump_error
 
     @property
     def closed(self) -> bool:
@@ -1419,7 +1440,7 @@ class RealtimeSession:
                 ),
             )
 
-    def _handle_turn_complete(self, event: TurnCompleteEvent) -> list[RealtimeEvent]:
+    def _handle_turn_complete(self, event: ResponseCompleteEvent) -> list[RealtimeEvent]:
         # Turn boundary for a user turn that wasn't finalized earlier, so history reads user-then-assistant.
         # Gemini emits neither `InputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
         # only partial transcripts — so its user turn is finalized here: `_finalize_user` for a
@@ -1428,6 +1449,14 @@ class RealtimeSession:
         events = self._finalize_user()
         events.extend(self._finalize_untranscribed_user())
         events.extend(self._finalize_assistant_part())
+        # Whether the model will speak again: it always responds to a tool's result, so a response that
+        # called one (or that finalized early *because* it called one, or that left one still running) is
+        # never the last of the exchange. `TurnCompleteEvent` waits for the one that is.
+        more_expected = bool(
+            self._pending_tool_calls
+            or self._response_finalized_before_terminal
+            or any(isinstance(part, ToolCallPart) for part in self._response_parts)
+        )
         already_finalized = bool(
             self._response_finalized_before_terminal
             and not self._response_parts
@@ -1459,7 +1488,12 @@ class RealtimeSession:
         )
         self._pending_interrupted_at_ms = None
         events.append(event)
-        self._record_lifecycle_event('turn complete', interrupted=event.interrupted or None)
+        if not more_expected:
+            events.append(TurnCompleteEvent())
+            # Only the exchange boundary is marked: each response is already a `chat` span, so a marker
+            # per response would say nothing the trace doesn't show, while the turn boundary — where the
+            # model is actually done — has no span of its own.
+            self._record_lifecycle_event('turn complete', interrupted=event.interrupted or None)
         return events
 
     def _handle_tool_call_part(self, call_part: ToolCallPart, *, response_usage_follows: bool) -> list[RealtimeEvent]:
@@ -1637,11 +1671,14 @@ class RealtimeSession:
         anchor, self._pending_user_turn_anchor = self._pending_user_turn_anchor, None
         # No anchor when the first thing we ever hear about the turn is its transcript (text-only sessions
         # seeded with audio, or a provider that reports nothing before it); the turn starts here instead.
-        self._user_turn_anchors[item_id] = anchor[0] if anchor is not None else (self._history[-1] if self._history else None)
+        self._user_turn_anchors[item_id] = (
+            anchor[0] if anchor is not None else (self._history[-1] if self._history else None)
+        )
 
     def _record_user_request(self, item_id: str | None, request: ModelRequest) -> None:
         """Record a finalized user turn at the position it held when it started."""
-        if item_id not in self._user_turn_anchors:  # pragma: no cover - every turn anchors when it opens
+        # Every user turn anchors when it opens, so this is unreachable.
+        if item_id not in self._user_turn_anchors:  # pragma: no cover
             self._history.append(request)
             return
         anchor = self._user_turn_anchors.pop(item_id)
@@ -1750,9 +1787,7 @@ class RealtimeSession:
             item_id = self._user_item_order.popleft()
             part = self._finalized_users_by_id.pop(item_id, None)
             if part is not None:
-                self._record_user_request(
-                    item_id, ModelRequest(parts=[part], conversation_id=self._conversation_id)
-                )
+                self._record_user_request(item_id, ModelRequest(parts=[part], conversation_id=self._conversation_id))
         self._active_users_by_id.clear()
         self._user_transcripts_by_id.clear()
         self._finalized_users_by_id.clear()
@@ -1871,7 +1906,7 @@ class RealtimeSession:
         if isinstance(event, OutputTranscript):
             if not self._accept_item(event.item_id):
                 return []
-            # `is_final` doesn't end the part — the turn ends on `TurnCompleteEvent`; a final transcript just
+            # `is_final` doesn't end the part — the turn ends on `ResponseCompleteEvent`; a final transcript just
             # carries the full text, which `_accumulate_transcript` reconciles against the deltas. Plain
             # text output (`output_text`) becomes a `TextPart`, an audio transcript a `SpeechPart`.
             return self._handle_assistant_transcript(event.text, output_text=event.output_text, item_id=event.item_id)
@@ -1889,7 +1924,7 @@ class RealtimeSession:
             self._segment_input_audio(event.item_id)
             self._record_user_speech_span()
             return [*self._finalize_untranscribed_user(), event]
-        if isinstance(event, TurnCompleteEvent):
+        if isinstance(event, ResponseCompleteEvent):
             return self._handle_turn_complete(event)
         if isinstance(event, PartStartEvent):
             # Providers emit native tool activity as ordinary part events. Buffer the started part for
@@ -2257,7 +2292,7 @@ class RealtimeSession:
         for out in self._translate_event(event):
             self._publish_taps(out)
             await self._queue.put(out)
-        if isinstance(event, TurnCompleteEvent):
+        if isinstance(event, ResponseCompleteEvent):
             await self._drain_pending_messages('when_idle')
         return False
 
@@ -2332,6 +2367,7 @@ class RealtimeSession:
             raise UserError('This realtime session event stream has already ended.')
 
         self._iterator_active = True
+        self._stream_consumed = True
         self._start_pump()
         try:
             while True:

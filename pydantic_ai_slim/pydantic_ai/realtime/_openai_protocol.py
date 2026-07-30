@@ -22,7 +22,7 @@ import json
 import time
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 
 import websockets
@@ -88,9 +88,9 @@ from ._base import (
     RealtimeCodecEvent,
     RealtimeError,
     RealtimeModelProfile,
+    ResponseCompleteEvent,
     SessionErrorEvent,
     ToolCall,
-    TurnCompleteEvent,
     TurnDetection,
     seed_pcm_audio,
     seed_speech_content,
@@ -168,6 +168,45 @@ def tool_def_to_openai(tool: ToolDefinition) -> dict[str, Any]:
     if tool.description:
         result['description'] = tool.description
     return result
+
+
+async def replay_items(
+    messages: Sequence[ModelMessage], *, profile: RealtimeModelProfile, provider_name: str
+) -> list[dict[str, Any]]:
+    """Map a live session's conversation to items that restore it in a freshly dialed session.
+
+    Used when a [reconnect][pydantic_ai.realtime.ReconnectPolicy] gets a session with no server-side
+    state, so the model continues the call rather than resuming with amnesia.
+
+    Media is deliberately left behind: what the model needs is the *conversation*, and re-uploading a
+    long call's retained audio (or a stale video frame) would cost far more than it restores. Stripping
+    it also keeps replay total — a turn whose audio is dropped and has no transcript becomes a
+    content-less placeholder, which seeding already skips, where the strict path would rightly refuse it.
+    """
+    return await seed_items(
+        [replayable for message in messages if (replayable := _without_media(message)) is not None],
+        # Not `replace`d on the caller's profile: these say what *this* seeding pass will carry, not what
+        # the provider supports.
+        profile={**profile, 'supports_seeding_audio': False, 'supports_seeding_images': False},
+        provider_name=provider_name,
+    )
+
+
+def _without_media(message: ModelMessage) -> ModelMessage | None:
+    """Strip audio and images from a message, dropping it entirely when nothing is left to replay."""
+    if isinstance(message, ModelRequest):
+        request_parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            if isinstance(part, SpeechPart):
+                request_parts.append(replace(part, audio=None))
+            elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                if text := [item for item in part.content if isinstance(item, str)]:
+                    request_parts.append(replace(part, content=text))
+            else:
+                request_parts.append(part)
+        return replace(message, parts=request_parts) if request_parts else None
+    response_parts = [replace(part, audio=None) if isinstance(part, SpeechPart) else part for part in message.parts]
+    return replace(message, parts=response_parts) if response_parts else None
 
 
 async def seed_items(
@@ -512,10 +551,10 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
     A response whose only output is function calls is an intermediate step: the session executes the
     tools and the model emits a further `response.done` with the actual answer. Surfacing a
-    `TurnCompleteEvent` here would prematurely signal the end of the turn.
+    `ResponseCompleteEvent` here would prematurely signal the end of the turn.
     """
     if not validate_response_data(data):
-        return TurnCompleteEvent(interrupted=False, provider_details={'status': None})
+        return ResponseCompleteEvent(interrupted=False, provider_details={'status': None})
     event = ResponseDoneEvent.construct(**data)
     response = event.response
     output = response.output
@@ -523,7 +562,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return None
     status = response.status
     response_id = response.id
-    return TurnCompleteEvent(
+    return ResponseCompleteEvent(
         interrupted=status == 'cancelled',
         provider_response_id=response_id if isinstance(response_id, str) else None,
         finish_reason=response_finish_reason(response),

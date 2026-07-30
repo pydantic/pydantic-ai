@@ -30,7 +30,7 @@ from .ws_helpers import collapse_event_types
 
 with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
-    from pydantic_ai.realtime import TurnCompleteEvent
+    from pydantic_ai.realtime import ResponseCompleteEvent
     from pydantic_ai.realtime.google import GoogleRealtimeModel
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
@@ -58,12 +58,12 @@ async def test_gateway_openai_text_in_audio_out(
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, ResponseCompleteEvent):
                     break
 
     # The turn streams audio+transcript parts and ends cleanly, exactly as a direct OpenAI session does.
     assert 'PartStartEvent' in collapse_event_types(events)
-    assert any(isinstance(event, TurnCompleteEvent) for event in events)
+    assert any(isinstance(event, ResponseCompleteEvent) for event in events)
     response = session.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert any(isinstance(part, SpeechPart) for part in response.parts)
@@ -92,12 +92,12 @@ async def test_gateway_gemini_text_in_audio_out(
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, ResponseCompleteEvent):
                     break
 
     # The turn streams audio+transcript parts and ends cleanly, exactly as a direct Gemini session does.
     assert 'PartStartEvent' in collapse_event_types(events)
-    assert any(isinstance(event, TurnCompleteEvent) for event in events)
+    assert any(isinstance(event, ResponseCompleteEvent) for event in events)
     response = session.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     speech = response.parts[-1]

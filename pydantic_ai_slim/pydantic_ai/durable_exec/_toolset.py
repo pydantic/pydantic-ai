@@ -492,6 +492,7 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         if not self._in_durable_context():
             return await self._mcp_toolset.call_tool(name, tool_args, ctx, tool)
         config = self._resolve_tool_config(tool, name)
-        if config is False:  # pragma: no cover — no engine's resolver currently permits inline MCP tools
+        # No engine's resolver currently permits inline MCP tools.
+        if config is False:  # pragma: no cover
             return await self._mcp_toolset.call_tool(name, tool_args, ctx, tool)
         return await self._call_tool_operation(name, tool_args, ctx, tool, config)

@@ -9970,9 +9970,10 @@ async def test_run_handoff_survives_absorbed_cancellation():
         # task's own cancellation still unwinds it and the run ends cancelled — contrast the streaming
         # sibling, where the model consumes the cancel on the run task itself and the run completes.
         pass
-    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
+    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover
+        # This branch and the `else` below fail only on regression.
         pytest.fail('deadlock: run task still pending after cancellation (#6422)')
-    else:  # pragma: no cover - fails only on regression
+    else:  # pragma: no cover
         pytest.fail('run completed instead of ending cancelled')
 
 
@@ -10033,7 +10034,8 @@ async def test_streaming_handoff_survives_absorbed_cancellation():
             # re-asserts the still-pending cancellation at the next step boundary: cancellation
             # always cancels...
             pass
-        else:  # pragma: no cover - fails only on regression
+        else:  # pragma: no cover
+            # Fails only on regression.
             pytest.fail('run completed instead of ending cancelled')
 
     # ...and never discards completed work: the absorbed cancel means the model request
@@ -10078,7 +10080,8 @@ async def test_run_stream_events_aclose_survives_absorbed_cancellation():
         await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
     except asyncio.CancelledError:
         pass  # expected: teardown completed and the run ended cancelled
-    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
+    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover
+        # Fails only on regression.
         pytest.fail('deadlock: run_stream_events teardown still pending after cancellation (#6422)')
 
 
@@ -11241,8 +11244,9 @@ def test_override_none_clears_instructions():
     """Test that passing None for instructions clears all instructions."""
     agent = Agent('test', instructions='BASE')
 
+    # Ignored under the override.
     @agent.instructions
-    def instr_fn() -> str:  # pragma: no cover - ignored under override
+    def instr_fn() -> str:  # pragma: no cover
         return 'ALSO_BASE'
 
     with agent.override(instructions=None):
@@ -14044,12 +14048,13 @@ class _SuspendingStreamModel(Model):
     def continuation_delay(self, response: ModelResponse) -> float | None:
         return self._delay
 
+    # Streaming-only helper.
     async def request(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:  # pragma: no cover - streaming-only helper
+    ) -> ModelResponse:  # pragma: no cover
         raise NotImplementedError
 
     @property

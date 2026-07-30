@@ -117,6 +117,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.realtime import (
     InputSpeechStartEvent,
+    ResponseCompleteEvent,
     SessionErrorEvent,
     SessionReconnectEvent,
     TurnCompleteEvent,
@@ -140,7 +141,10 @@ async def show_transcripts(parts: AsyncIterator[SpeechPart]) -> None:
 def show_tool_status(status: str) -> None: ...
 
 
-def finish_turn(interrupted: bool) -> None: ...
+def finish_response(interrupted: bool) -> None: ...
+
+
+def finish_turn() -> None: ...
 
 
 def show_reconnected(state_restored: bool) -> None: ...
@@ -161,8 +165,10 @@ async def main():
                     show_tool_status('running')
                 case FunctionToolResultEvent():
                     show_tool_status('complete')
-                case TurnCompleteEvent(interrupted=interrupted):
-                    finish_turn(interrupted)
+                case ResponseCompleteEvent(interrupted=interrupted):
+                    finish_response(interrupted)
+                case TurnCompleteEvent():
+                    finish_turn()
                 case SessionReconnectEvent(state_restored=state_restored):
                     show_reconnected(state_restored)
                 case SessionErrorEvent(message=message):
@@ -247,30 +253,37 @@ The remaining realtime control-plane events:
 | [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | OpenAI/Azure/xAI detected the end of speech; Gemini does not emit this event. |
 | [`InputTranscriptionErrorEvent`][pydantic_ai.realtime.InputTranscriptionErrorEvent] | The provider could not transcribe a user audio turn. The session continues, and `item_id` and `content_index` identify the affected turn when available. |
 | [`OutputSpeechStartEvent`][pydantic_ai.realtime.OutputSpeechStartEvent] / [`OutputSpeechEndEvent`][pydantic_ai.realtime.OutputSpeechEndEvent] | The model became, or stopped being, audible. Only on a [WebRTC sideband](#browser-webrtc), where the provider holds the audio — see [Knowing when the model is speaking](#knowing-when-the-model-is-speaking). |
-| [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn — *not* necessarily the exchange: a turn that calls tools can complete more than once (see [Tool calls span turns](#tool-calls-span-turns)). `interrupted` reflects cancellation or barge-in across all providers. |
+| [`ResponseCompleteEvent`][pydantic_ai.realtime.ResponseCompleteEvent] | The model finished one response. A turn that calls tools produces several (see [Tool calls span turns](#tool-calls-span-turns)), so this is *not* the end of the exchange. `interrupted` reflects cancellation or barge-in across all providers. |
+| [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The exchange is over: the model has finished replying and no tool is still running. This is the one to stop consuming on. |
 | [`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] | The connection dropped and was automatically re-established. Conversation state is restored for Gemini and xAI; see [Reconnecting](#reconnecting). |
 | [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] | The provider reported a **recoverable** error mid-session; the session keeps running. Anything that ends the session raises instead — see [Errors](#errors). |
 
 ### Tool calls span turns
 
-A turn that calls a tool does not produce one tidy turn boundary at the end. Every provider splits it
-into several [`ModelResponse`][pydantic_ai.messages.ModelResponse]s — one per step — and some models
-go further: they *speak first and call the tool after*, so a `TurnCompleteEvent` arrives before
-[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], with another after the
-spoken answer. Measured on the same prompt and tool:
+Stop consuming on [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent], not on
+[`ResponseCompleteEvent`][pydantic_ai.realtime.ResponseCompleteEvent] — that is the whole reason the two
+are separate events.
+
+A turn that calls a tool does not produce one tidy boundary at the end. Every provider splits it into
+several [`ModelResponse`][pydantic_ai.messages.ModelResponse]s — one per step, each with its own
+`ResponseCompleteEvent` — and some models go further: they *speak first and call the tool after*, so a
+response completes before [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] ever
+arrives. Measured on the same prompt and tool:
 
 | Model | Events around the tool call |
 | --- | --- |
-| `gpt-realtime`, `gpt-realtime-2.1-mini`, Azure `gpt-realtime`, Gemini Live | `FunctionToolCallEvent` → `FunctionToolResultEvent` → speech → `TurnCompleteEvent` |
-| `gpt-realtime-2.1`, xAI Grok Voice | speech → `FunctionToolCallEvent` → **`TurnCompleteEvent`** → `FunctionToolResultEvent` → speech → `TurnCompleteEvent` |
+| `gpt-realtime`, `gpt-realtime-2.1-mini`, Azure `gpt-realtime`, Gemini Live | `FunctionToolCallEvent` → `FunctionToolResultEvent` → speech → `ResponseCompleteEvent` |
+| `gpt-realtime-2.1`, xAI Grok Voice | speech → `FunctionToolCallEvent` → **`ResponseCompleteEvent`** → `FunctionToolResultEvent` → speech → `ResponseCompleteEvent` |
 
-Note which side of that line each model falls on: it isn't a property of the provider, and it isn't
-stable across generations — `gpt-realtime-2.1` speaks first where `gpt-realtime` and
-`gpt-realtime-2.1-mini` don't. So don't stop consuming on the first `TurnCompleteEvent` if a tool might
-run: keep iterating (as the example above does) and treat the event as "this turn ended", not "the
-exchange is over". The history lands the same everywhere — `ModelRequest`, `ModelResponse`,
-`ModelRequest`, `ModelResponse` — so code that reads
-[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] is unaffected.
+Which side of that line a model falls on is not a property of the provider, and not stable across
+generations: `gpt-realtime-2.1` speaks first where `gpt-realtime` and `gpt-realtime-2.1-mini` don't. So
+there is no per-model rule to write — `TurnCompleteEvent` fires after the response that leaves nothing
+outstanding, whichever one that turns out to be. Reach for `ResponseCompleteEvent` only when you
+genuinely want each step, e.g. to read `interrupted`.
+
+The history lands the same everywhere — `ModelRequest`, `ModelResponse`, `ModelRequest`,
+`ModelResponse` — so code that reads
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] is unaffected either way.
 
 ## Core tasks
 
@@ -921,13 +934,15 @@ model = OpenAIRealtimeModel('gpt-realtime', reconnect=ReconnectPolicy(max_attemp
 session may come back, so a server that accepts a connection and immediately hangs up eventually gives
 up instead of re-dialing forever.
 
-For OpenAI and Azure OpenAI, reconnecting restores the session configuration but **not** server-side
-conversation state (the audio buffer and prior turns), so treat a
-[`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] with `state_restored=False` as the start of a fresh
-turn. Without a
-policy (the default), a connection the server closes — for any reason, including the session cap —
-raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the session iterator, so the app can
-open a new session itself.
+OpenAI and Azure OpenAI keep no server-side state across sessions, so the conversation is **replayed**
+into the new one: the session hands the connection a live view of the call, and a re-dial seeds it back
+before the next turn, reporting `state_restored=True`. Media is left behind — what the model needs is the
+conversation, and re-uploading a long call's retained audio would cost far more than it restores — so a
+turn returns as its transcript. In-flight audio is still lost, so a
+[`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] always starts a fresh *turn*, even
+where prior turns survive. Without a policy (the default), a connection the server closes — for any
+reason, including the session cap — raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the
+session iterator, so the app can open a new session itself.
 
 Gemini and xAI reconnect via native **session resumption**, which restores prior turns. xAI suppresses
 the provider's resumption replay burst from the local event stream and enables resumption automatically
@@ -1011,7 +1026,8 @@ session, and the conversation continues.
 
 [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] accepts one plain-text prompt per call from a
 realtime tool. The default `priority='asap'` sends it into the live conversation promptly;
-`priority='when_idle'` sends it after the next [`TurnCompleteEvent`](#event-reference). Delivered text is
+`priority='when_idle'` sends it after the next [`ResponseCompleteEvent`](#event-reference) (each
+response, not only the end of the exchange). Delivered text is
 recorded as a normal user turn. Multimodal content and prebuilt message/part sequences are rejected
 because the realtime live-input channel cannot preserve their full classic-run semantics.
 

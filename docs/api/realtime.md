@@ -93,7 +93,7 @@ vocabulary yielded by a connection:
 [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript],
 [`ToolCall`][pydantic_ai.realtime.codec.ToolCall],
 [`ToolCallCancelled`][pydantic_ai.realtime.codec.ToolCallCancelled],
-[`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent],
+[`ResponseCompleteEvent`][pydantic_ai.realtime.ResponseCompleteEvent],
 [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent],
 [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent],
 [`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent],
@@ -110,8 +110,9 @@ session. The session translates codec events into the shared vocabulary from
 [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s), tool execution as
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], and the rest as the
-control-plane events above (`TurnCompleteEvent`, `InputSpeechStartEvent`, `InputSpeechEndEvent`, and
-`SessionReconnectEvent`). Usage updates are accumulated on the session and are not yielded.
+control-plane events above (`ResponseCompleteEvent`, `InputSpeechStartEvent`, `InputSpeechEndEvent`, and
+`SessionReconnectEvent`), plus [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent], which the
+session synthesizes rather than reading off the wire. Usage updates are accumulated on the session and are not yielded.
 
 ::: pydantic_ai.realtime
 

@@ -103,6 +103,7 @@ from ._openai_protocol import (
     map_connect_errors,
     map_event,
     realtime_websocket_url,
+    replay_items,
     resolve_base_turn_detection,
     resolve_transcription_model,
     response_finish_reason,
@@ -337,6 +338,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._dial = dial
         self._reconnect = reconnect
         self._restores_state_on_reconnect = False
+        # Set by the session (see `set_conversation`) so a re-dial can replay the call. The API keeps no
+        # state across sessions, so without it a reconnect resumes knowing nothing that was said.
+        self._conversation: Callable[[], Sequence[ModelMessage]] | None = None
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
         self._observes_output_audio = observes_output_audio
@@ -367,6 +371,16 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     @property
     def model_name(self) -> str | None:
         return self._model_name
+
+    def set_conversation(self, conversation: Callable[[], Sequence[ModelMessage]]) -> None:
+        self._conversation = conversation
+        # A reconnect will now replay the call, so it restores state rather than starting blank.
+        self._restores_state_on_reconnect = True
+
+    @property
+    def conversation(self) -> Callable[[], Sequence[ModelMessage]] | None:
+        """The call so far, when a session has offered it for replay on reconnect."""
+        return self._conversation
 
     @property
     def input_transcription_enabled(self) -> bool:
@@ -644,7 +658,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
 
         Returns `(events, superseded)`. `superseded` is `True` when a *different* response is still
         active — a late/cancelled completion arriving after a new turn began — so the caller suppresses
-        its user-facing `TurnCompleteEvent` (which would otherwise finalize the current response's output
+        its user-facing `ResponseCompleteEvent` (which would otherwise finalize the current response's output
         under this old boundary). A frame with no `response` object is malformed/empty; `map_event`
         handles it gracefully, so return early here.
         """
@@ -1065,6 +1079,10 @@ class OpenAIRealtimeModel(RealtimeModel):
         # differ from the requested id (see `RealtimeConnection.model_name`).
         server_model: str | None = None
 
+        # Assigned once the connection exists, which is *after* `dial` is defined but before it can be
+        # called again: a re-dial reads the call so far off it and replays it (see `set_conversation`).
+        connection: OpenAIRealtimeConnection | None = None
+
         async def dial() -> ClientConnection:
             nonlocal cm, server_model
             if cm is not None:
@@ -1080,6 +1098,10 @@ class OpenAIRealtimeModel(RealtimeModel):
                 server_model = model
             await ws.send(json.dumps({'type': 'session.update', 'session': session_config}))
             await expect_event(ws, 'session.updated', timeout=handshake_timeout)
+            if connection is not None and (conversation := connection.conversation) is not None:
+                # A re-dial: the API keeps nothing across sessions, so replay the call to continue it.
+                for item in await replay_items(conversation(), profile=self.profile, provider_name=self.system):
+                    await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             return ws
 
         try:
@@ -1088,17 +1110,18 @@ class OpenAIRealtimeModel(RealtimeModel):
             # retryable rather than fatal.
             with map_connect_errors(self.model):
                 ws = await dial()
-                # Seed prior conversation once, after the initial handshake. Reconnects deliberately don't
-                # re-seed: server state is lost on drop and a `SessionReconnectEvent` starts a fresh turn.
+                # Seed prior conversation after the initial handshake. A *re*-dial replays the call so far
+                # instead (from inside `dial`), which supersedes this history.
                 for item in seed:
                     await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
-            yield OpenAIRealtimeConnection(
+            connection = OpenAIRealtimeConnection(
                 ws,
                 dial=dial,
                 reconnect=self.reconnect,
                 input_transcription_enabled=transcription_enabled,
                 model_name=server_model,
             )
+            yield connection
         finally:
             # Coverage cannot attribute a failed `__aenter__` to the false exit arc; the behavior is
             # exercised by `test_connect_open_failure_propagates_without_teardown`.
