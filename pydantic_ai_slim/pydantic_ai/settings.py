@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
-from httpx import Timeout
 from typing_extensions import TypedDict
+
+if TYPE_CHECKING:
+    from httpx import Timeout
+else:
+    try:
+        from httpx import Timeout
+    except ImportError:
+        # `httpx` reaches us only transitively, via the provider SDKs, but `ModelSettings` is part
+        # of the SDK-less core and pydantic resolves this module's annotations whenever it is nested
+        # in a model. With no `httpx` there is no `Timeout` to construct and no SDK to forward one
+        # to, so collapsing it into the numeric arm of the union is exact rather than lossy.
+        Timeout = float
 
 ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh']
 """The string effort levels for thinking/reasoning configuration."""

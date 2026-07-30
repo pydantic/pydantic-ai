@@ -12,10 +12,10 @@ import socket
 from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 
-import httpx
+import httpx2 as httpx
 
 from ._utils import run_in_executor
-from .models import create_async_http_client
+from .models import get_user_agent
 
 __all__ = ['safe_download']
 
@@ -115,6 +115,17 @@ _CLOUD_METADATA_IPV6: frozenset[ipaddress.IPv6Address] = frozenset(
 )
 
 _MAX_REDIRECTS = 10
+
+
+def _create_client(*, timeout: int) -> httpx.AsyncClient:
+    # Inlined construction; mirrors `pydantic_ai.models.create_async_http_client`. Reverts to that
+    # helper once provider SDKs accept `httpx2` clients (tracked at the call site in safe_download).
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(timeout=timeout, connect=5),
+        headers={'User-Agent': get_user_agent()},
+    )
+
+
 _DEFAULT_TIMEOUT = 30  # seconds
 _SENSITIVE_HEADERS = frozenset(('authorization', 'cookie', 'proxy-authorization'))
 
@@ -503,18 +514,19 @@ async def safe_download(
                 Checked on every hop including redirects.
 
     Returns:
-        The httpx.Response object.
+        The `httpx2.Response` object.
 
     Raises:
         ValueError: If the URL fails SSRF validation, domain validation,
                 or too many redirects occur.
-        httpx.HTTPStatusError: If the response has an error status code.
+        httpx2.HTTPStatusError: If the response has an error status code.
     """
     current_url = url
     redirects_followed = 0
     effective_headers: dict[str, str] = dict(headers) if headers else {}
 
-    async with create_async_http_client(timeout=timeout) as client:
+    # NOTE: replace with `create_async_http_client(timeout=timeout)` once provider SDKs accept httpx2.
+    async with _create_client(timeout=timeout) as client:
         while True:
             # Validate and resolve the current URL
             resolved = await validate_and_resolve_url(current_url, allow_local)

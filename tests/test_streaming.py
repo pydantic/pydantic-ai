@@ -6265,7 +6265,7 @@ async def test_testmodel_stream_cancel_reports_interrupted():
 
     Driven directly against `model.request_stream` (not the continuation composite, which tears segments
     down via `close_stream` rather than `cancel`) so the stream's own `cancel()` fires the simulated
-    `httpx.StreamClosed`, which the cancel-guard suppresses, leaving `get()` reporting `'interrupted'`.
+    transport error, which the cancel-guard suppresses, leaving `get()` reporting `'interrupted'`.
     """
     model = TestModel(custom_output_text='hello world')
     params = models.ModelRequestParameters()

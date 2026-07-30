@@ -10,7 +10,7 @@ import json
 import re
 from dataclasses import KW_ONLY, dataclass, field
 
-import httpx
+import httpx2 as httpx
 from typing_extensions import Any, TypedDict
 
 from pydantic_ai._ssrf import safe_download

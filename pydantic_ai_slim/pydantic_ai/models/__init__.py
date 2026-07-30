@@ -19,7 +19,6 @@ from functools import cache, cached_property
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, get_args, overload
 
-import httpx
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
@@ -68,8 +67,18 @@ from ..usage import RequestUsage
 from ._known_model_names import KnownModelName as KnownModelName
 
 if TYPE_CHECKING:
+    from httpx import AsyncClient
+
     from ..agent.abstract import AbstractAgent
     from ..usage import RunUsage
+else:
+    try:
+        from httpx import AsyncClient
+    except ImportError:
+        # `httpx` reaches us only transitively, via the provider SDKs. `create_async_http_client`
+        # is public, so its annotation must stay resolvable for `typing.get_type_hints()` even
+        # where no SDK — and therefore no client — is installed.
+        AsyncClient = object
 
 DEFAULT_HTTP_TIMEOUT: int = 600
 """Default HTTP timeout in seconds for API requests.
@@ -918,6 +927,16 @@ class StreamedResponse(ABC):
         propagate from chunk reads. Model classes that use other transports
         (for example gRPC or botocore) should override this method.
         """
+        # `httpx` only reaches us transitively, via the provider SDKs, and SDK-less subclasses
+        # (`FunctionModel`, `CompletedStreamedResponse`) inherit this default. The caller spells
+        # its guard `except self.get_stream_cancel_errors():`, which Python evaluates for *any*
+        # exception passing through — an early `break`'s `GeneratorExit` included — so an
+        # unguarded import would mask the real error. No `httpx`, no `httpx` transport to suppress.
+        try:
+            import httpx
+        except ImportError:
+            return ()
+
         return (httpx.StreamError, httpx.TransportError)
 
     async def close_stream(self) -> None:
@@ -1402,7 +1421,7 @@ def infer_model(  # noqa: C901
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx.AsyncClient:
+def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> AsyncClient:
     """Create an HTTPX async client.
 
     Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
@@ -1411,6 +1430,12 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
+    # This client is handed to a provider SDK, which requires `httpx` (and rejects an `httpx2`
+    # client outright), so the SDK that needs it is what puts `httpx` on the path. Imported here
+    # rather than reusing the module-level `AsyncClient`, which is a placeholder without `httpx`:
+    # calling it would build a useless object where this raises a legible `ImportError`.
+    import httpx
+
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},

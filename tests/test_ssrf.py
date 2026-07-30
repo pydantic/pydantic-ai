@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from pydantic_ai._ssrf import (
@@ -49,7 +49,7 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         client.__aenter__.return_value = client
         return client
 
-    monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', factory_wrapper)
+    monkeypatch.setattr('pydantic_ai._ssrf._create_client', factory_wrapper)
     return mock
 
 
@@ -805,9 +805,7 @@ class TestSafeDownload:
         """`safe_download` closes the HTTP client it creates, even on success.
 
         Without proper cleanup, each call to `safe_download` leaks an unclosed
-        `httpx.AsyncClient`. After switching from cached_async_http_client (which
-        reused a global) to `create_async_http_client` (new client per call),
-        the client must be explicitly closed.
+        `httpx.AsyncClient` (one client per call, no shared cache).
 
         Regression test for PR #4421 auto-review feedback.
         https://github.com/pydantic/pydantic-ai/pull/4421
@@ -827,7 +825,7 @@ class TestSafeDownload:
             created_clients.append(client)
             return client
 
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', tracking_create)
+        monkeypatch.setattr('pydantic_ai._ssrf._create_client', tracking_create)
 
         response = await safe_download('https://example.com/file.txt')
         assert response.content == b'test content'
@@ -927,6 +925,39 @@ class TestSafeDownload:
 
         with pytest.raises(ValueError, match='not in the allowed domains'):
             await safe_download('https://example.com/page', allowed_domains=['example.com'])
+
+    async def test_errors_are_httpx2_not_httpx(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+        """`safe_download` propagates `httpx2` errors unchanged, and they are deliberately *not*
+        catchable as the legacy `httpx` equivalents.
+
+        Pinning the negative half matters: reintroducing an `httpx`-catchable compat class would put
+        `httpx` back in `pydantic-ai-slim`'s required dependencies, which is the thing this migration
+        exists to avoid.
+        """
+        import httpx as httpx_legacy
+
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        request = httpx.Request('GET', 'https://example.com/file.txt')
+        response = httpx.Response(404, request=request)
+
+        mock_client = AsyncMock()
+        mock_client.get.return_value = response
+        mock_ssrf_client.return_value = mock_client
+
+        with pytest.raises(httpx.HTTPStatusError) as status_exc:
+            await safe_download('https://example.com/file.txt')
+        assert status_exc.value.response is response
+        assert not isinstance(status_exc.value, httpx_legacy.HTTPStatusError)
+
+        underlying = httpx.ConnectError('connection refused', request=request)
+        mock_client.get.return_value = None
+        mock_client.get.side_effect = underlying
+
+        with pytest.raises(httpx.RequestError) as request_exc:
+            await safe_download('https://example.com/file.txt')
+        assert request_exc.value is underlying
+        assert not isinstance(request_exc.value, httpx_legacy.RequestError)
 
 
 class TestSensitiveHeaderStrippingOnRedirects:
