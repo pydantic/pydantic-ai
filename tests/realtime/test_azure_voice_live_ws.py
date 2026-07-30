@@ -77,7 +77,7 @@ async def test_text_in_audio_out_turn(
     )
 
     assert collapse_event_types(events) == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnCompleteEvent']
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'ResponseCompleteEvent', 'TurnCompleteEvent']
     )
     messages = session.all_messages()
     assert [type(message).__name__ for message in messages] == snapshot(['ModelRequest', 'ModelResponse'])
