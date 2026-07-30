@@ -163,7 +163,7 @@ try:
     )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
-    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
+    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
     from pydantic_ai.durable_exec.temporal._toolset import (
         CallToolParams,
         GetToolsParams,
@@ -4095,8 +4095,6 @@ def test_temporal_run_context_serializes_metadata():
 
 def test_temporal_run_context_excludes_agent():
     """agent is not serialized but defaults to None after deserialization."""
-    from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
-
     agent = Agent('test', name='test_agent')
     ctx = RunContext(
         deps=None,
@@ -4126,8 +4124,6 @@ def test_temporal_run_context_enqueue_raises_inside_activity():
     activity-side (a tool, a `process_tool_call` hook, an `event_stream_handler`) is in a
     durable unit whose result is replayed without re-running it; an enqueue would be dropped.
     """
-    from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
-
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
     serialized = TemporalRunContext.serialize_run_context(ctx)
     reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
@@ -4196,14 +4192,11 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'tool_manager',  # live ToolManager, not serializable (documented on the field)
         'capabilities',  # live capability objects (toolsets/hooks/callables), not serializable
         'root_capability',  # live capability chain, not serializable; reattached from the bound agent by deserialize_run_context
-        'pending_messages',  # live run queue, meaningless outside the running agent
-        'messages',  # not currently exposed inside activities
-        'prompt',  # not currently exposed inside activities
-        'validation_context',  # arbitrary user object, possibly unserializable
-        'trace_include_content',  # tracing config, not run state
-        'instrumentation_version',  # tracing config, not run state
-        'conversation_id',  # not currently exposed inside activities
-        'model_settings',  # not currently exposed inside activities
+        'pending_messages',  # live run queue, meaningless outside the running agent; replaced by an EnqueueGuard
+        'messages',  # full history would be duplicated into every activity payload, against Temporal's 2MB limit
+        'prompt',  # multi-modal BinaryContent would ride in every payload, against Temporal's 2MB limit; text-only subclasses can opt in
+        'validation_context',  # arbitrary user object with no serialization contract
+        'model_settings',  # only set for model requests, which receive it as their own typed activity param
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
         '_event_stream_buffer',  # run-local event buffer drained in workflow code; a public emit surface for activities is a follow-up
     }
@@ -4218,6 +4211,233 @@ def test_temporal_run_context_serialization_is_exhaustive():
     assert not uncategorized, (
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to '
         '`TemporalRunContext.serialize_run_context` or to `intentionally_unserialized` (with a reason).'
+    )
+
+
+async def _serialized_run_context_across_the_wire(ctx: RunContext[Any]) -> dict[str, Any]:
+    """Serialize a run context and put it through Temporal's Pydantic data converter.
+
+    The run context reaches an activity inside `CallToolParams.serialized_run_context`, which is
+    `Any`-typed so `TemporalRunContext` subclasses can add their own fields. The converter has no
+    type to decode against, so it hands back plain JSON — which is what makes rehydration in
+    `TemporalRunContext.__init__` load-bearing rather than decoration.
+    """
+    params = CallToolParams(
+        name='tool', tool_args={}, serialized_run_context=TemporalRunContext.serialize_run_context(ctx), tool_def=None
+    )
+    payloads = await pydantic_data_converter.encode([params])
+    (decoded,) = await pydantic_data_converter.decode(payloads, [CallToolParams])
+    return cast('dict[str, Any]', decoded.serialized_run_context)
+
+
+async def test_temporal_run_context_rehydrates_containers():
+    """Sets and usage arrive inside an activity as the objects they were.
+
+    Everything structured degrades on the untyped hop: before rehydration `discovered_tool_names`
+    and `loaded_capability_ids` arrived as `list`s, so `available_tool_names` raised
+    `TypeError: unsupported operand type(s) for |: 'set' and 'list'` and
+    `loaded_capability_ids.add(...)` raised `AttributeError: 'list' object has no attribute 'add'`.
+    """
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(input_tokens=3),
+        usage_limits=UsageLimits(request_limit=7),
+        run_id='run-123',
+        conversation_id='conv-123',
+        discovered_tool_names={'searched_tool'},
+        loaded_capability_ids={'deferred_capability'},
+        trace_include_content=True,
+        instrumentation_version=4,
+    )
+
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    # What the activity actually receives: sets as lists and models as dicts.
+    assert wire['discovered_tool_names'] == ['searched_tool']
+    assert isinstance(wire['usage'], dict)
+    assert 'prompt' not in wire
+
+    reconstructed = TemporalRunContext.deserialize_run_context(wire, deps=None)
+    assert reconstructed.discovered_tool_names == {'searched_tool'}
+    assert reconstructed.loaded_capability_ids == {'deferred_capability'}
+    # Mutating the loaded-capability set is what the `load_capability` tool body does in-step.
+    reconstructed.loaded_capability_ids.add('loaded_in_activity')
+    assert reconstructed.loaded_capability_ids == {'deferred_capability', 'loaded_in_activity'}
+    # `tool_manager` is `None` inside an activity, so this is the documented fallback path.
+    assert reconstructed.tool_manager is None
+    assert reconstructed.available_tool_names == {'searched_tool'}
+    assert reconstructed.usage == ctx.usage
+    assert reconstructed.usage_limits == ctx.usage_limits
+    assert reconstructed.conversation_id == 'conv-123'
+    assert reconstructed.trace_include_content is True
+    assert reconstructed.instrumentation_version == 4
+
+
+async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting():
+    """An omitted field raises rather than reading as the `RunContext` dataclass default.
+
+    Fields with plain defaults live on the class, so `super().__getattribute__` used to find them:
+    reads of `model_settings` and `validation_context` returned `None` inside an activity,
+    indistinguishable from a run that really had none.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
+    )
+
+    with pytest.raises(UserError) as exc_info:
+        _ = reconstructed.model_settings
+    assert str(exc_info.value) == snapshot(
+        "'model_settings' is not available on 'TemporalRunContext' inside a Temporal activity. To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`."
+    )
+    for name in ('prompt', 'messages', 'validation_context', 'model', 'tracer', 'capabilities'):
+        with pytest.raises(UserError, match=f'{name!r} is not available'):
+            getattr(reconstructed, name)
+
+    # The framework re-attaches these, so they read as `None` rather than raising: `agent` and
+    # `root_capability` come from the worker's agent instance, `tool_manager` is documented as
+    # unavailable and keeps `available_tool_names` working.
+    assert reconstructed.agent is None
+    assert reconstructed.root_capability is None
+    assert reconstructed.tool_manager is None
+    assert reconstructed.available_tool_names == set()
+    # An attribute that isn't a `RunContext` field at all keeps raising plain `AttributeError`.
+    with pytest.raises(AttributeError, match='has no attribute'):
+        getattr(reconstructed, 'not_a_field')
+
+
+class LegacyFieldsRunContext(TemporalRunContext[Any]):
+    """A user subclass with its own field set."""
+
+    @classmethod
+    def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
+        return {
+            'run_id': ctx.run_id,
+            'usage': ctx.usage,
+            'usage_limits': ctx.usage_limits,
+            'discovered_tool_names': ctx.discovered_tool_names,
+            'custom': 'from-subclass',
+        }
+
+
+async def test_temporal_run_context_subclass_with_its_own_field_set():
+    """A subclass that overrides `serialize_run_context` keeps working, errors and all.
+
+    Carrying more fields by default must not require subclasses to be updated: the fields the
+    subclass includes (including its own extra ones) are available, and the ones it leaves out
+    raise the error that points at `serialize_run_context`.
+    """
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(input_tokens=3),
+        prompt='hello',
+        run_id='run-123',
+        conversation_id='conv-123',
+        discovered_tool_names={'searched_tool'},
+    )
+    params = CallToolParams(
+        name='tool',
+        tool_args={},
+        serialized_run_context=LegacyFieldsRunContext.serialize_run_context(ctx),
+        tool_def=None,
+    )
+    payloads = await pydantic_data_converter.encode([params])
+    (decoded,) = await pydantic_data_converter.decode(payloads, [CallToolParams])
+    reconstructed = LegacyFieldsRunContext.deserialize_run_context(decoded.serialized_run_context, deps=None)
+
+    assert reconstructed.run_id == 'run-123'
+    assert reconstructed.usage == ctx.usage
+    assert reconstructed.discovered_tool_names == {'searched_tool'}
+    assert reconstructed.available_tool_names == {'searched_tool'}
+    assert reconstructed.__dict__['custom'] == 'from-subclass'
+    for name in ('prompt', 'conversation_id', 'instrumentation_version'):
+        with pytest.raises(UserError, match=f'{name!r} is not available on {LegacyFieldsRunContext.__name__!r}'):
+            getattr(reconstructed, name)
+
+
+def _run_context_fields_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('report_run_context', {})])
+    else:
+        return ModelResponse(parts=[TextPart('done')])
+
+
+_run_context_fields_agent = Agent(
+    FunctionModel(_run_context_fields_model),
+    name='run_context_fields_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@_run_context_fields_agent.tool
+def report_run_context(ctx: RunContext) -> dict[str, Any]:
+    """Report what a tool running inside an activity sees on its run context."""
+    try:
+        prompt = repr(ctx.prompt)
+    except UserError as e:
+        prompt = str(e)
+    try:
+        messages = repr(ctx.messages)
+    except UserError as e:
+        messages = str(e)
+    return {
+        'prompt': prompt,
+        'conversation_id': ctx.conversation_id,
+        'discovered_tool_names_type': type(ctx.discovered_tool_names).__name__,
+        'available_tool_names': sorted(ctx.available_tool_names),
+        'instrumentation_version': ctx.instrumentation_version,
+        'messages': messages,
+    }
+
+
+@workflow.defn
+class RunContextFieldsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> dict[str, Any]:
+        result = await _run_context_fields_agent.run(prompt)
+        report = next(
+            part.content
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        )
+        return {'report': report, 'conversation_id': result.conversation_id}
+
+
+async def test_run_context_fields_in_temporal_activity(client: Client):
+    """A tool inside an activity correlates to the conversation and lists tools.
+
+    `conversation_id` is carried, and `available_tool_names` works because
+    `discovered_tool_names` is rehydrated as a set. `prompt` and `messages` are not carried, so
+    reading either raises the actionable error.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunContextFieldsWorkflow],
+        plugins=[AgentPlugin(_run_context_fields_agent)],
+    ):
+        output = await client.execute_workflow(
+            RunContextFieldsWorkflow.run,
+            args=['What did I ask?'],
+            id=RunContextFieldsWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    # The tool saw the run's real conversation id, not a `None` default.
+    assert output['report']['conversation_id'] == output['conversation_id']
+    # `available_tool_names` is the `discovered_tool_names` fallback here (no tool search in this
+    # run, so empty), but it returns rather than raising `TypeError` on a `set | list`.
+    assert output['report'] == snapshot(
+        {
+            'prompt': "'prompt' is not available on 'TemporalRunContext' inside a Temporal activity. To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`.",
+            'conversation_id': IsStr(),
+            'discovered_tool_names_type': 'set',
+            'available_tool_names': [],
+            'instrumentation_version': 5,
+            'messages': "'messages' is not available on 'TemporalRunContext' inside a Temporal activity. To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`.",
+        }
     )
 
 
